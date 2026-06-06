@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter "./packages/*" build
+      # Per-package conformance. The node-dependent suites (client/light) and the live oracle
+      # skip cleanly when there is no CSD node (CI has none); the deterministic core
+      # (codec/crypto/tx/vectors) + edge + the pure security checks run and gate every push.
+      - run: pnpm -r --filter "./packages/*" test
+      - run: pnpm exec tsx test/edge.test.ts
+      - run: pnpm exec tsx test/security.test.ts
+      - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)

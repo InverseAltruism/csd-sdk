@@ -3,33 +3,33 @@
 // Trust model (honest): the PoW header chain is the root of trust. We verify, for every header:
 //   1. it links to its parent (prev == headerHash(parent))
 //   2. its PoW is valid (sha256d(header) ≤ target(bits))
-//   3. its `bits` is exactly what the LWMA mandates (re-derived locally) — so a server can't
-//      feed a low-difficulty fork
-// and we follow the MAX-CHAINWORK chain. Inclusion is then provable via merkle proofs against a
-// verified header. What we CANNOT prove from headers alone: that an output is still UNSPENT
-// (no UTXO commitment in the header) — so balances are `rpc-trusted` unless backed by a block
-// scan. Every read carries a `trustLevel` saying which it is. (See ROADMAP §honest-limits.)
+//   3. its `bits` is exactly what the LWMA mandates (re-derived locally from the window) — so a
+//      server cannot feed a low-difficulty fork
+// and we follow the MAX-CHAINWORK chain (reorg-aware: a higher-work branch replaces ours). What
+// we CANNOT prove from headers alone: that an output is still UNSPENT (no UTXO commitment in the
+// header) — so balances are `rpc-trusted` unless backed by a block scan. Every read carries a
+// `trustLevel`. (See ROADMAP §honest-limits.)
+//
+// Two start modes:
+//   • sync(to)                 — full verification from GENESIS (chainwork is absolute).
+//   • syncFromCheckpoint(...)  — seed a TRUSTED header window at a pinned checkpoint, then verify
+//                                forward (practical: no 27k-block genesis fetch). chainwork is
+//                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
   type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
-  verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS,
+  verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW,
 } from "@inversealtruism/csd-codec";
 import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
-import { expectedBits } from "./lwma.js";
+import { expectedBitsFromWindow } from "./lwma.js";
 
-export { expectedBits } from "./lwma.js";
+export { expectedBits, expectedBitsFromWindow } from "./lwma.js";
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
-export interface VerifiedHeader { height: number; hash: string; header: BlockHeader; chainwork: bigint }
-export interface InclusionResult {
-  trustLevel: TrustLevel;
-  included: boolean;
-  blockHeight?: number;
-  confirmations?: number;
-  reason?: string;
-}
+export interface VerifiedHeader { height: number; hash: string; header: BlockHeader; chainwork: bigint; trusted?: boolean }
+export interface InclusionResult { trustLevel: TrustLevel; included: boolean; blockHeight?: number; confirmations?: number; reason?: string }
+export interface ReorgResult { adopted: boolean; rolledBack?: number; newTip?: number; reason?: string }
 
-/** A header provider — defaults to a CsdClient, injectable for tests. */
 export type HeaderProvider = (height: number) => Promise<{ header: BlockHeader; hash: string; txids: string[] }>;
 
 export interface LightClientOptions {
@@ -44,8 +44,10 @@ export class LightClient {
   private readonly client?: CsdClient;
   private readonly provider: HeaderProvider;
   private readonly checkpoints: Record<number, string>;
-  /** Verified header chain, index = height. */
+  /** Verified header chain. chain[i].height = baseHeight + i. */
   readonly chain: VerifiedHeader[] = [];
+  /** Height of chain[0] — 0 for genesis-start, the seed start for checkpoint-start. */
+  baseHeight = 0;
 
   constructor(opts: LightClientOptions = {}) {
     this.client = opts.client ?? (opts.baseUrl ? new CsdClient({ baseUrl: opts.baseUrl }) : undefined);
@@ -59,45 +61,116 @@ export class LightClient {
 
   get tip(): VerifiedHeader | undefined { return this.chain[this.chain.length - 1]; }
   get chainwork(): bigint { return this.tip?.chainwork ?? 0n; }
+  /** Whether every header back to genesis was verified (vs trusted from a checkpoint). */
+  get fullyVerified(): boolean { return this.baseHeight === 0; }
+  private at(height: number): VerifiedHeader | undefined { return this.chain[height - this.baseHeight]; }
+  /** The chronological LWMA window (≤ LWMA_WINDOW headers) immediately preceding `height`. */
+  private windowBefore(height: number): BlockHeader[] {
+    const startIdx = Math.max(0, height - this.baseHeight - LWMA_WINDOW);
+    const endIdx = height - this.baseHeight; // exclusive
+    return this.chain.slice(startIdx, endIdx).map((c) => c.header);
+  }
 
-  /**
-   * Sync + VERIFY headers [from..to] inclusive onto the chain. `from` must be 0 (genesis) or
-   * exactly chain.length (contiguous). Throws on any consensus violation. Returns the new tip.
-   */
-  async sync(to: number, from = this.chain.length): Promise<VerifiedHeader> {
-    if (from !== this.chain.length) throw new Error(`non-contiguous sync: have ${this.chain.length}, asked from ${from}`);
-    for (let h = from; h <= to; h++) {
-      const { header, hash } = await this.provider(h);
-      this.ingest(h, header, hash);
-    }
+  /** Sync + VERIFY headers [from..to] from genesis (or contiguous to the current tip). */
+  async sync(to: number, from = this.baseHeight + this.chain.length): Promise<VerifiedHeader> {
+    if (from !== this.baseHeight + this.chain.length) throw new Error(`non-contiguous sync: tip ${this.baseHeight + this.chain.length - 1}, asked from ${from}`);
+    for (let h = from; h <= to; h++) { const { header, hash } = await this.provider(h); this.ingest(h, header, hash); }
     if (!this.tip) throw new Error("sync produced no tip");
     return this.tip;
   }
 
-  /** Verify a single header at the given height and append it (consensus checks). */
+  /** Verify a single header at `height` and append it (full consensus checks). */
   ingest(height: number, header: BlockHeader, claimedHash?: string): VerifiedHeader {
-    if (height !== this.chain.length) throw new Error(`out-of-order ingest at ${height} (have ${this.chain.length})`);
+    if (height !== this.baseHeight + this.chain.length) throw new Error(`out-of-order ingest at ${height} (tip ${this.baseHeight + this.chain.length - 1})`);
+    const vh = this.verifyOne(height, header, this.windowBefore(height), this.at(height - 1), claimedHash);
+    this.chain.push(vh);
+    return vh;
+  }
+
+  /** Pure verification of one header against a window + parent (no mutation). */
+  private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string): VerifiedHeader {
     const hash = headerHash(header);
     if (claimedHash && claimedHash.toLowerCase() !== hash.toLowerCase()) throw new Error(`header hash mismatch at ${height}`);
-
     if (height === 0) {
       if (hash.toLowerCase() !== GENESIS_HASH.toLowerCase()) throw new Error(`foreign genesis: ${hash}`);
       if (header.bits !== INITIAL_BITS) throw new Error("genesis bits != INITIAL_BITS");
     } else {
-      const parent = this.chain[height - 1]!;
+      if (!parent) throw new Error(`no parent context for height ${height}`);
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
-      const exp = expectedBits(this.chain.map((c) => c.header), height);
+      const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
     if (!powOk(headerHashBytes(header), header.bits)) throw new Error(`invalid PoW at ${height}`);
-
     const cp = this.checkpoints[height];
     if (cp && cp.toLowerCase() !== hash.toLowerCase()) throw new Error(`checkpoint mismatch at ${height}`);
+    return { height, hash, header, chainwork: (parent?.chainwork ?? 0n) + workForBits(header.bits) };
+  }
 
-    const chainwork = (this.chain[height - 1]?.chainwork ?? 0n) + workForBits(header.bits);
-    const vh: VerifiedHeader = { height, hash, header, chainwork };
-    this.chain.push(vh);
-    return vh;
+  /**
+   * Seed a TRUSTED, contiguous header run ending at a pinned checkpoint, so forward sync needs
+   * only a small window — not a 27k-block genesis fetch. The seed is the trust anchor (PoW links
+   * are still spot-checked, but seed bits aren't LWMA-re-derived; that's the explicit trade for
+   * not syncing from genesis). chainwork becomes RELATIVE to the seed. `checkpointHash` MUST match
+   * the last seeded header.
+   */
+  seedTrusted(seed: { height: number; header: BlockHeader; hash?: string }[], checkpointHash: string): void {
+    if (this.chain.length) throw new Error("seedTrusted must be called on a fresh client");
+    if (!seed.length) throw new Error("empty seed");
+    this.baseHeight = seed[0]!.height;
+    let prevHash: string | null = null;
+    for (let i = 0; i < seed.length; i++) {
+      const s = seed[i]!;
+      if (s.height !== this.baseHeight + i) throw new Error("seed not contiguous");
+      const hash = headerHash(s.header);
+      if (s.hash && s.hash.toLowerCase() !== hash.toLowerCase()) throw new Error(`seed header hash mismatch at ${s.height}`);
+      if (prevHash && s.header.prev.toLowerCase() !== prevHash.toLowerCase()) throw new Error(`seed prev link broken at ${s.height}`);
+      // seed bits are trusted, but PoW must still hold (cheap, catches a garbage seed)
+      if (!powOk(headerHashBytes(s.header), s.header.bits)) throw new Error(`seed PoW invalid at ${s.height}`);
+      this.chain.push({ height: s.height, hash, header: s.header, chainwork: (this.chain[i - 1]?.chainwork ?? 0n) + workForBits(s.header.bits), trusted: true });
+      prevHash = hash;
+    }
+    if (this.tip!.hash.toLowerCase() !== checkpointHash.toLowerCase()) throw new Error(`checkpoint hash mismatch: seeded tip ${this.tip!.hash} != ${checkpointHash}`);
+  }
+
+  /** Fetch + seed the LWMA window ending at `checkpointHeight`, asserting its hash, then ready to sync forward. */
+  async syncFromCheckpoint(checkpointHeight: number, checkpointHash: string, context = LWMA_WINDOW): Promise<void> {
+    const start = Math.max(0, checkpointHeight - context);
+    const seed: { height: number; header: BlockHeader; hash: string }[] = [];
+    for (let h = start; h <= checkpointHeight; h++) { const { header, hash } = await this.provider(h); seed.push({ height: h, header, hash }); }
+    this.seedTrusted(seed, checkpointHash);
+  }
+
+  /**
+   * Offer a competing branch (contiguous headers starting one above a common ancestor we hold).
+   * Verifies it from the ancestor; if its cumulative chainwork EXCEEDS our current tip, we roll
+   * back to the ancestor and adopt it (max-work rule). Otherwise we keep our chain.
+   */
+  tryReorg(alt: { height: number; header: BlockHeader; hash?: string }[]): ReorgResult {
+    if (!alt.length) return { adopted: false, reason: "empty branch" };
+    const ancestorHeight = alt[0]!.height - 1;
+    const ancestor = this.at(ancestorHeight);
+    if (!ancestor) return { adopted: false, reason: `no common ancestor at ${ancestorHeight}` };
+    // verify the alt branch off the ancestor, accumulating its own window
+    const verified: VerifiedHeader[] = [];
+    let prev = ancestor;
+    const baseWindow = this.windowBefore(ancestorHeight + 1); // window for the first alt block
+    const window = [...baseWindow];
+    for (let i = 0; i < alt.length; i++) {
+      const a = alt[i]!;
+      if (a.height !== ancestorHeight + 1 + i) return { adopted: false, reason: "alt not contiguous" };
+      let vh: VerifiedHeader;
+      try { vh = this.verifyOne(a.height, a.header, window, prev, a.hash); }
+      catch (e: any) { return { adopted: false, reason: `alt invalid at ${a.height}: ${e?.message}` }; }
+      verified.push(vh); prev = vh;
+      window.push(a.header); if (window.length > LWMA_WINDOW) window.shift();
+    }
+    const altTip = verified[verified.length - 1]!;
+    if (altTip.chainwork <= this.chainwork) return { adopted: false, reason: `alt work ${altTip.chainwork} ≤ current ${this.chainwork}` };
+    // adopt: truncate to ancestor, append the verified alt branch
+    const rolledBack = (this.baseHeight + this.chain.length) - 1 - ancestorHeight;
+    this.chain.length = ancestorHeight - this.baseHeight + 1;
+    for (const v of verified) this.chain.push(v);
+    return { adopted: true, rolledBack, newTip: altTip.height };
   }
 
   /** Verify a tx's inclusion against a verified header (merkle proof built from the block). */
@@ -106,28 +179,27 @@ export class LightClient {
     const t = await this.client.tx(txidHex);
     if (!t.ok || t.height == null) return { trustLevel: "rpc-trusted", included: false, reason: "tx not in a block (mempool/unknown)" };
     const height = t.height;
-    if (height >= this.chain.length) {
-      const gap = height - this.chain.length + 1;
-      if (gap > 256) return { trustLevel: "rpc-trusted", included: false, reason: `tx at height ${height} is ${gap} blocks beyond the synced tip — call sync(${height}) first` };
-      await this.sync(height); // small contiguous extend
+    const tipHeight = this.baseHeight + this.chain.length - 1;
+    if (height < this.baseHeight) return { trustLevel: "rpc-trusted", included: false, reason: `tx below the synced base (${this.baseHeight})` };
+    if (height > tipHeight) {
+      const gap = height - tipHeight;
+      if (gap > 256) return { trustLevel: "rpc-trusted", included: false, reason: `tx at ${height} is ${gap} blocks beyond tip — sync(${height}) first` };
+      await this.sync(height);
     }
-    const verified = this.chain[height];
+    const verified = this.at(height);
     if (!verified) return { trustLevel: "rpc-trusted", included: false, reason: "could not verify the containing header" };
-    // build the merkle branch from the block's ordered tx list and fold it to the VERIFIED root
     const b = await this.client.blockByHeight(height);
     const txids = b.txs.map((x) => x.txid);
     const pos = txids.findIndex((x) => x.toLowerCase() === txidHex.toLowerCase());
     if (pos < 0) return { trustLevel: "rpc-trusted", included: false, reason: "tx not listed in block" };
-    const branch = merkleBranch(txids, pos);
-    const ok = verifyMerkleProof(txidHex, pos, branch, verified.header.merkle);
+    const ok = verifyMerkleProof(txidHex, pos, merkleBranch(txids, pos), verified.header.merkle);
     if (!ok) return { trustLevel: "rpc-trusted", included: false, reason: "merkle proof failed" };
-    return { trustLevel: "verified-inclusion", included: true, blockHeight: height, confirmations: this.chain.length - height };
+    return { trustLevel: "verified-inclusion", included: true, blockHeight: height, confirmations: tipHeight - height + 1 };
   }
 
   /**
-   * Balance for an address. HONEST: this is `rpc-trusted` — a header chain cannot prove an output
-   * is still unspent (no UTXO commitment). A future `scanBalance` will derive it from a Neutrino-
-   * style block scan (`trustLevel: 'scanned'`). Surfaced, never hidden.
+   * Balance for an address. HONEST: `rpc-trusted` — a header chain cannot prove an output is still
+   * unspent (no UTXO commitment). A future Neutrino-style scan would yield `trustLevel:'scanned'`.
    */
   async balance(addr: string): Promise<{ confirmed: number; trustLevel: TrustLevel; note: string }> {
     if (!this.client) throw new Error("no client");
