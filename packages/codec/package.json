@@ -1,5 +1,5 @@
 {
-  "name": "@csd/codec",
+  "name": "@inversealtruism/csd-codec",
   "version": "0.1.0",
   "description": "Compute Substrate consensus codec — bincode (fixint-LE) serialize/deserialize, txid, sighash (CSD_SIG_V1), header serialize/hash, compact-bits→target, merkle. Byte-identical to the Rust node (golden-vector-gated).",
   "type": "module",
@@ -22,7 +22,7 @@
     "@noble/hashes": "1.8.0"
   },
   "devDependencies": {
-    "@csd/vectors": "workspace:*"
+    "@inversealtruism/csd-vectors": "workspace:*"
   },
   "license": "MIT",
   "sideEffects": false

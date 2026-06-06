@@ -1,11 +1,11 @@
-// @csd/codec conformance — every output is checked against the Rust node's golden vectors.
+// @inversealtruism/csd-codec conformance — every output is checked against the Rust node's golden vectors.
 // This is the gate: if any byte diverges from canonical Rust, the build fails.
 import {
   serialize, deserialize, txid, sighash, strippedTx,
   serializeHeader, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
   payloadHash, canonicalJson, bytesToHex, hb,
 } from "../src/index.js";
-import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@csd/vectors";
+import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
 const eq = (n: string, a: unknown, b: unknown) => {

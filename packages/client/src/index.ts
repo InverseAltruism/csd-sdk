@@ -1,8 +1,8 @@
-// @csd/client — a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
+// @inversealtruism/csd-client — a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
 // (a direct node, the Cairn proxy `…/api/rpc`, or — later — a csd:gateways-discovered endpoint)
 // and a pluggable fetch (for tests / non-DOM runtimes). Read + broadcast; no trust assumptions
-// (the light client in @csd/light verifies what this returns).
-import type { Tx, BlockHeader } from "@csd/codec";
+// (the light client in @inversealtruism/csd-light verifies what this returns).
+import type { Tx, BlockHeader } from "@inversealtruism/csd-codec";
 
 export interface RpcHeaderJson { version: number; prev: string; merkle: string; time: number; bits: number; nonce: number }
 export interface RpcTxJson {
@@ -58,7 +58,7 @@ export class CsdClient {
   domains(): Promise<any> { return this.get("/domains"); }
   mempool(): Promise<any> { return this.get("/mempool"); }
 
-  /** Broadcast a node-JSON tx (from @csd/tx `txToNodeJson`). */
+  /** Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`). */
   submit(nodeJsonTx: unknown): Promise<RpcSubmit> { return this.post("/tx/submit", { tx: nodeJsonTx }); }
   templatePropose(body: unknown): Promise<any> { return this.post("/tx/template/propose", body); }
   templateAttest(body: unknown): Promise<any> { return this.post("/tx/template/attest", body); }

@@ -1,11 +1,11 @@
-// @csd/light — the headline gates (P1.1, P1.2):
+// @inversealtruism/csd-light — the headline gates (P1.1, P1.2):
 //   • headers-first sync from GENESIS with full PoW + LWMA(bits) verification, and the
 //     independently-accumulated chainwork MATCHES the node's reported chainwork.
 //   • a known on-chain tx verifies its merkle inclusion against a verified header.
 //   • tampering a header (bad bits / broken prev / bad PoW) is REJECTED.
 import { LightClient, expectedBits } from "../src/index.js";
-import { CsdClient } from "@csd/client";
-import { headerHash } from "@csd/codec";
+import { CsdClient } from "@inversealtruism/csd-client";
+import { headerHash } from "@inversealtruism/csd-codec";
 
 const BASE = process.env.CSD_RPC || "http://127.0.0.1:8790";
 let pass = 0, fail = 0;
@@ -13,7 +13,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 
 let reachable = false;
 try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
-if (!reachable) { console.log(`(no node at ${BASE} — skipping @csd/light live test)`); process.exit(0); }
+if (!reachable) { console.log(`(no node at ${BASE} — skipping @inversealtruism/csd-light live test)`); process.exit(0); }
 
 const client = new CsdClient({ baseUrl: BASE });
 

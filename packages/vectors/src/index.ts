@@ -1,14 +1,14 @@
-// @csd/vectors — the golden conformance contract.
+// @inversealtruism/csd-vectors — the golden conformance contract.
 //
 // These fixtures are transcribed verbatim from the Compute Substrate node's frozen test
 // suite at /opt/substrate_miner/src/compute-substrate/tests/golden_vectors.rs (the canonical
-// source of truth) plus the consensus params. Any @csd/* codec/crypto/header impl whose
+// source of truth) plus the consensus params. Any @inversealtruism/csd-* codec/crypto/header impl whose
 // output diverges from these is wrong. `live.ts` holds additional real on-chain fixtures
 // pulled from the node (regenerate with scripts/gen-live-vectors.ts).
 //
-// Self-contained (no @csd/codec import) so the dependency graph is a clean DAG: codec
+// Self-contained (no @inversealtruism/csd-codec import) so the dependency graph is a clean DAG: codec
 // depends on vectors for its conformance test, never the reverse. VTx is structurally
-// identical to @csd/codec's Tx.
+// identical to @inversealtruism/csd-codec's Tx.
 export type VApp =
   | { type: "None" }
   | { type: "Propose"; domain: string; payloadHash: string; uri: string; expiresEpoch: number }

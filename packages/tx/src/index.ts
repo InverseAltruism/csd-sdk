@@ -1,8 +1,8 @@
-// @csd/tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
+// @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
-import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@csd/codec";
-import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@csd/crypto";
+import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
+import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@inversealtruism/csd-crypto";
 
 export interface Utxo { txid: string; vout: number; value: number; confirmations?: number; coinbase?: boolean }
 export interface Selection { inputs: { txid: string; vout: number; value: number }[]; total: number }
@@ -109,4 +109,4 @@ export function buildAttest(p: { proposalId: string; score: number; confidence: 
   return selectAndAssemble(p.utxos, [], p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score >>> 0, confidence: p.confidence >>> 0 }, p.priv);
 }
 
-export type { Tx, TxInput, TxOutput, App } from "@csd/codec";
+export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";

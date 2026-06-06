@@ -1,8 +1,8 @@
-// @csd/crypto conformance: address derivation, LOW-S determinism, verify, against the
+// @inversealtruism/csd-crypto conformance: address derivation, LOW-S determinism, verify, against the
 // node's funded key (block-21043 era) + property checks.
 import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig } from "../src/index.js";
-import { sighash } from "@csd/codec";
-import { GOLDEN_TX } from "@csd/vectors";
+import { sighash } from "@inversealtruism/csd-codec";
+import { GOLDEN_TX } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };

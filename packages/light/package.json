@@ -1,5 +1,5 @@
 {
-  "name": "@csd/light",
+  "name": "@inversealtruism/csd-light",
   "version": "0.1.0",
   "description": "Compute Substrate light client — headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
   "type": "module",
@@ -9,7 +9,7 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
   "files": ["dist"],
   "scripts": { "build": "tsup src/index.ts --format esm,cjs --dts --clean", "test": "tsx test/light.test.ts" },
-  "dependencies": { "@csd/codec": "workspace:*", "@csd/client": "workspace:*" },
+  "dependencies": { "@inversealtruism/csd-codec": "workspace:*", "@inversealtruism/csd-client": "workspace:*" },
   "license": "MIT",
   "sideEffects": false
 }

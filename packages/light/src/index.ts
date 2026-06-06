@@ -1,4 +1,4 @@
-// @csd/light — Compute Substrate light client.
+// @inversealtruism/csd-light — Compute Substrate light client.
 //
 // Trust model (honest): the PoW header chain is the root of trust. We verify, for every header:
 //   1. it links to its parent (prev == headerHash(parent))
@@ -12,8 +12,8 @@
 import {
   type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
   verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS,
-} from "@csd/codec";
-import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@csd/client";
+} from "@inversealtruism/csd-codec";
+import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
 import { expectedBits } from "./lwma.js";
 
 export { expectedBits } from "./lwma.js";
@@ -136,5 +136,5 @@ export class LightClient {
   }
 }
 
-export { CsdClient, rpcHeaderToHeader } from "@csd/client";
+export { CsdClient, rpcHeaderToHeader } from "@inversealtruism/csd-client";
 export type { RpcTxJson };

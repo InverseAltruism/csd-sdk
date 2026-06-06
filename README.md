@@ -8,12 +8,12 @@ Replaces the four hand-ported codec copies (`csdtx.ts` / `txcodec.ts` / `csd-sig
 
 | Package | What |
 |---|---|
-| **`@csd/codec`** | bincode (fixint-LE) serialize/deserialize · txid · sighash (`CSD_SIG_V1`) · header serialize/hash · compact-bits→target · merkle · content-addressing (`payloadHash`) |
-| **`@csd/crypto`** | secp256k1 keygen/sign(LOW-S, RFC6979)/verify · `hash160` address derivation |
-| **`@csd/tx`** | coin selection (hardened) · `buildSend`/`buildPropose`/`buildAttest` · `signTx` · node-submit JSON |
-| **`@csd/client`** | typed HTTP RPC client (node / Cairn proxy / discovered gateway) — read + broadcast |
-| **`@csd/light`** | headers-first sync · client-side **PoW + LWMA + chainwork** verification · merkle-inclusion proofs · Helios-style verified-RPC facade with an honest **`trustLevel`** |
-| **`@csd/vectors`** | golden conformance fixtures (the contract) — from the node's `golden_vectors.rs` + real on-chain blocks |
+| **`@inversealtruism/csd-codec`** | bincode (fixint-LE) serialize/deserialize · txid · sighash (`CSD_SIG_V1`) · header serialize/hash · compact-bits→target · merkle · content-addressing (`payloadHash`) |
+| **`@inversealtruism/csd-crypto`** | secp256k1 keygen/sign(LOW-S, RFC6979)/verify · `hash160` address derivation |
+| **`@inversealtruism/csd-tx`** | coin selection (hardened) · `buildSend`/`buildPropose`/`buildAttest` · `signTx` · node-submit JSON |
+| **`@inversealtruism/csd-client`** | typed HTTP RPC client (node / Cairn proxy / discovered gateway) — read + broadcast |
+| **`@inversealtruism/csd-light`** | headers-first sync · client-side **PoW + LWMA + chainwork** verification · merkle-inclusion proofs · Helios-style verified-RPC facade with an honest **`trustLevel`** |
+| **`@inversealtruism/csd-vectors`** | golden conformance fixtures (the contract) — from the node's `golden_vectors.rs` + real on-chain blocks |
 
 Zero `Buffer`, browser/MV3/Node-safe. Runtime deps: `@noble/curves`, `@noble/hashes` only.
 
@@ -25,7 +25,7 @@ What it **cannot** prove from headers alone: that an output is still **unspent**
 
 ## Conformance
 
-`pnpm -r test` — 76 tests, gated on `@csd/vectors` (golden) **and the live node**: the codec reproduces every golden vector, real on-chain txids/merkle/header-hashes, and the light client independently re-derives the node's **chainwork** from genesis.
+`pnpm -r test` — 76 tests, gated on `@inversealtruism/csd-vectors` (golden) **and the live node**: the codec reproduces every golden vector, real on-chain txids/merkle/header-hashes, and the light client independently re-derives the node's **chainwork** from genesis.
 
 ## Dev
 
@@ -37,4 +37,4 @@ pnpm -r test       # conformance (CSD_RPC=http://127.0.0.1:8790 for live checks)
 
 ## Status / open questions
 
-Built + tested 2026-06-07. **Not yet published to npm** — the package scope (`@csd/*` chain-neutral vs `@inversealtruism/*`) needs the CSD maintainers' blessing for an official name (roadmap §9). Consumable today via workspace / `file:` deps. Next: migrate Cairn (CLI/server/console) and the wallet onto these (P0.4/0.5), then `@csd/light` WASM-codec decision (P1.4).
+Built + tested 2026-06-07. **Not yet published to npm** — the package scope (`@inversealtruism/csd-*` chain-neutral vs `@inversealtruism/*`) needs the CSD maintainers' blessing for an official name (roadmap §9). Consumable today via workspace / `file:` deps. Next: migrate Cairn (CLI/server/console) and the wallet onto these (P0.4/0.5), then `@inversealtruism/csd-light` WASM-codec decision (P1.4).

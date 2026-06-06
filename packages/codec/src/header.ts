@@ -72,7 +72,7 @@ function minBE(x: bigint): number[] {
 
 /**
  * Encode a 32-byte BE target back to canonical compact `bits` (port of pow.rs
- * target_bytes_to_bits). Needed by the LWMA re-derivation in @csd/light.
+ * target_bytes_to_bits). Needed by the LWMA re-derivation in @inversealtruism/csd-light.
  */
 export function targetToBits(target: Uint8Array): number {
   const x = targetToBigInt(target);

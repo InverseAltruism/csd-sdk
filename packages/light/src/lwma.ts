@@ -4,7 +4,7 @@
 import {
   type BlockHeader, bitsToTarget, targetToBigInt, bigIntToTarget, targetToBits,
   INITIAL_BITS, POW_LIMIT_BITS, LWMA_WINDOW, LWMA_SOLVETIME_MAX_FACTOR, TARGET_BLOCK_SECS,
-} from "@csd/codec";
+} from "@inversealtruism/csd-codec";
 
 const POW_LIMIT_TARGET = targetToBigInt(bitsToTarget(POW_LIMIT_BITS));
 

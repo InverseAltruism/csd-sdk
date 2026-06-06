@@ -1,4 +1,4 @@
-// @csd/crypto — Compute Substrate crypto primitives. Thin, debuggable wrappers over @noble.
+// @inversealtruism/csd-crypto — Compute Substrate crypto primitives. Thin, debuggable wrappers over @noble.
 //   address  = hash160(compressed pubkey)  (raw 20-byte hash160, 0x-hex; no base58/bech32)
 //   sign     = secp256k1 ECDSA, RFC6979 deterministic, LOW-S enforced, compact 64-byte
 // (Matches consensus crypto/mod.rs + the proven csdcore.ts.)

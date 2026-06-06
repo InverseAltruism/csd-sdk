@@ -20,11 +20,11 @@ importers:
 
   packages/client:
     dependencies:
-      '@csd/codec':
+      '@inversealtruism/csd-codec':
         specifier: workspace:*
         version: link:../codec
     devDependencies:
-      '@csd/vectors':
+      '@inversealtruism/csd-vectors':
         specifier: workspace:*
         version: link:../vectors
 
@@ -34,13 +34,13 @@ importers:
         specifier: 1.8.0
         version: 1.8.0
     devDependencies:
-      '@csd/vectors':
+      '@inversealtruism/csd-vectors':
         specifier: workspace:*
         version: link:../vectors
 
   packages/crypto:
     dependencies:
-      '@csd/codec':
+      '@inversealtruism/csd-codec':
         specifier: workspace:*
         version: link:../codec
       '@noble/curves':
@@ -50,29 +50,29 @@ importers:
         specifier: 1.8.0
         version: 1.8.0
     devDependencies:
-      '@csd/vectors':
+      '@inversealtruism/csd-vectors':
         specifier: workspace:*
         version: link:../vectors
 
   packages/light:
     dependencies:
-      '@csd/client':
+      '@inversealtruism/csd-client':
         specifier: workspace:*
         version: link:../client
-      '@csd/codec':
+      '@inversealtruism/csd-codec':
         specifier: workspace:*
         version: link:../codec
 
   packages/tx:
     dependencies:
-      '@csd/codec':
+      '@inversealtruism/csd-codec':
         specifier: workspace:*
         version: link:../codec
-      '@csd/crypto':
+      '@inversealtruism/csd-crypto':
         specifier: workspace:*
         version: link:../crypto
     devDependencies:
-      '@csd/vectors':
+      '@inversealtruism/csd-vectors':
         specifier: workspace:*
         version: link:../vectors
 

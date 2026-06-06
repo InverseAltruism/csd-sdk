@@ -1,7 +1,7 @@
-// @csd/tx — builder + coin-selection conformance + adversarial guards.
+// @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
 import { selectInputs, buildSend, buildPropose, buildAttest, signTx, txToNodeJson } from "../src/index.js";
-import { txid, sighash, MIN_FEE_PROPOSE } from "@csd/codec";
-import { addrFromPriv, verifyDigest } from "@csd/crypto";
+import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
+import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };

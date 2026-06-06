@@ -1,4 +1,4 @@
-// Shape sanity for the golden fixtures (the real conformance gate is @csd/codec's test).
+// Shape sanity for the golden fixtures (the real conformance gate is @inversealtruism/csd-codec's test).
 import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, GOLDEN_GENESIS, TX_VECTORS, HEADER_VECTORS } from "../src/index.js";
 
 let pass = 0, fail = 0;

@@ -1,5 +1,5 @@
 {
-  "name": "@csd/crypto",
+  "name": "@inversealtruism/csd-crypto",
   "version": "0.1.0",
   "description": "Compute Substrate crypto primitives — secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
   "type": "module",
@@ -21,13 +21,13 @@
     "test": "tsx test/crypto.test.ts"
   },
   "dependencies": {
-    "@csd/codec": "workspace:*",
+    "@inversealtruism/csd-codec": "workspace:*",
     "@noble/curves": "1.9.7",
     "@noble/hashes": "1.8.0"
   },
   "license": "MIT",
   "sideEffects": false,
   "devDependencies": {
-    "@csd/vectors": "workspace:*"
+    "@inversealtruism/csd-vectors": "workspace:*"
   }
 }

@@ -1,9 +1,9 @@
-// @csd/client — live integration against the local node (skips cleanly if unreachable).
+// @inversealtruism/csd-client — live integration against the local node (skips cleanly if unreachable).
 // The strong gate: fetch REAL on-chain txs, rebuild the Tx via rpcTxToTx, and confirm our
 // codec's txid matches the on-chain txid — proving serialize/strip against real scriptSig data
 // (no spending). Also re-verify each block's merkle root + header hash from RPC JSON.
 import { CsdClient, rpcTxToTx, rpcHeaderToHeader } from "../src/index.js";
-import { txid, headerHash, merkleRoot } from "@csd/codec";
+import { txid, headerHash, merkleRoot } from "@inversealtruism/csd-codec";
 
 const BASE = process.env.CSD_RPC || "http://127.0.0.1:8790";
 let pass = 0, fail = 0;
@@ -11,7 +11,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 
 let reachable = false;
 try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
-if (!reachable) { console.log(`(no node at ${BASE} — skipping @csd/client live test)`); process.exit(0); }
+if (!reachable) { console.log(`(no node at ${BASE} — skipping @inversealtruism/csd-client live test)`); process.exit(0); }
 
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();
