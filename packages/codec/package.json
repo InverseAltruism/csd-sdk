@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-codec",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compute Substrate consensus codec — bincode (fixint-LE) serialize/deserialize, txid, sighash (CSD_SIG_V1), header serialize/hash, compact-bits→target, merkle. Byte-identical to the Rust node (golden-vector-gated).",
   "type": "module",
   "main": "./dist/index.cjs",
