@@ -8,6 +8,24 @@ importers:
 
   .:
     devDependencies:
+      '@inversealtruism/csd-client':
+        specifier: workspace:*
+        version: link:packages/client
+      '@inversealtruism/csd-codec':
+        specifier: workspace:*
+        version: link:packages/codec
+      '@inversealtruism/csd-crypto':
+        specifier: workspace:*
+        version: link:packages/crypto
+      '@inversealtruism/csd-light':
+        specifier: workspace:*
+        version: link:packages/light
+      '@inversealtruism/csd-tx':
+        specifier: workspace:*
+        version: link:packages/tx
+      '@inversealtruism/csd-vectors':
+        specifier: workspace:*
+        version: link:packages/vectors
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(tsx@4.22.4)(typescript@5.9.3)
