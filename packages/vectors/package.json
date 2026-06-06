@@ -21,5 +21,14 @@
     "test": "tsx test/vectors.test.ts"
   },
   "license": "MIT",
-  "sideEffects": false
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/vectors"
+  },
+  "homepage": "https://cairn-substrate.com"
 }

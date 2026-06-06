@@ -27,5 +27,14 @@
   "sideEffects": false,
   "devDependencies": {
     "@inversealtruism/csd-vectors": "workspace:*"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://cairn-substrate.com"
 }
