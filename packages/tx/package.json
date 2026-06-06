@@ -1,0 +1,16 @@
+{
+  "name": "@csd/tx",
+  "version": "0.1.0",
+  "description": "Compute Substrate transaction builder — coin selection, fee sizing, buildSend/Propose/Attest, signTx, node-submit JSON. p2pkh-only, SafeInteger-guarded.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm,cjs --dts --clean", "test": "tsx test/tx.test.ts" },
+  "dependencies": { "@csd/codec": "workspace:*", "@csd/crypto": "workspace:*" },
+  "devDependencies": { "@csd/vectors": "workspace:*" },
+  "license": "MIT",
+  "sideEffects": false
+}

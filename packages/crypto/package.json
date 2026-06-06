@@ -1,0 +1,33 @@
+{
+  "name": "@csd/crypto",
+  "version": "0.1.0",
+  "description": "Compute Substrate crypto primitives — secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/crypto.test.ts"
+  },
+  "dependencies": {
+    "@csd/codec": "workspace:*",
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "@csd/vectors": "workspace:*"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@csd/client",
+  "version": "0.1.0",
+  "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway) — tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/client.test.ts"
+  },
+  "dependencies": {
+    "@csd/codec": "workspace:*"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "@csd/vectors": "workspace:*"
+  }
+}

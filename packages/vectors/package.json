@@ -1,0 +1,25 @@
+{
+  "name": "@csd/vectors",
+  "version": "0.1.0",
+  "description": "Golden conformance vectors for Compute Substrate — the contract every @csd/* impl must match. Sourced from the Rust node's frozen tests/golden_vectors.rs + real on-chain data.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/vectors.test.ts"
+  },
+  "license": "MIT",
+  "sideEffects": false
+}
