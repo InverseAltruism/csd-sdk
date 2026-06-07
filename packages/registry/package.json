@@ -1,7 +1,7 @@
 {
   "name": "@inversealtruism/csd-registry",
-  "version": "0.1.0",
-  "description": "Compute Substrate L3 registries — peer/gateway/identity discovery built entirely on the Propose/Attest primitive. Pure deterministic resolvers (replay an epoch set → identical result anywhere) + commit-reveal identity + client-side or indexer-served discovery. No new tx types, no fork.",
+  "version": "0.1.1",
+  "description": "Compute Substrate L3 registries \u2014 peer/gateway/identity discovery built entirely on the Propose/Attest primitive. Pure deterministic resolvers (replay an epoch set \u2192 identical result anywhere) + commit-reveal identity + client-side or indexer-served discovery. No new tx types, no fork.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -13,7 +13,11 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx test/registry.test.ts"
@@ -24,7 +28,9 @@
   },
   "license": "MIT",
   "sideEffects": false,
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
