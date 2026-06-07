@@ -138,7 +138,10 @@ export function verifyMerkleProof(txidHex: string, pos: number, branchHex: strin
     cur = sha256d(buf);
     idx >>= 1;
   }
-  return hx(cur).toLowerCase() === merkleRootHex.toLowerCase();
+  // Normalize the expected root through hb→hx so the check is insensitive to a `0x` prefix or
+  // case. Without this, a correctly-valued but unprefixed root makes a VALID proof verify as
+  // false — a dangerous asymmetry for a verifier (good data looks rejected).
+  return hx(cur) === hx(hb(merkleRootHex));
 }
 
 /** Build the merkle branch for tx at index `pos` from the full ordered txid list. */
