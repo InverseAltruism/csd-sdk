@@ -1,27 +1,19 @@
-# csd-sdk — Compute Substrate SDK + Light Client (L0)
+# csd-sdk — the developer toolkit for Compute Substrate
 
-> One canonical, golden-vector-tested toolkit for building on **Compute Substrate (CSD)** — plus a light client that turns an untrusted RPC into a locally-verified one. **L0** of the [no-fork ecosystem roadmap](../cairn/docs/ecosystem/ROADMAP.md).
+**Build apps, wallets, and bots on the Compute Substrate (CSD) blockchain in JavaScript or
+TypeScript** — create and sign transactions, read the chain, and *verify the chain yourself*
+instead of trusting whatever server you're talking to.
 
-Replaces the four hand-ported codec copies (`csdtx.ts` / `txcodec.ts` / `csd-signer.ts` / `txclient.ts`) with one source of truth, **byte-identical to the Rust node** (gated on golden vectors + verified against live mainnet).
-
-## Packages
-
-| Package | What |
-|---|---|
-| **`@inversealtruism/csd-codec`** | bincode (fixint-LE) serialize/deserialize · txid · sighash (`CSD_SIG_V1`) · header serialize/hash · compact-bits→target · merkle · content-addressing (`payloadHash`) |
-| **`@inversealtruism/csd-crypto`** | secp256k1 keygen/sign(LOW-S, RFC6979)/verify · `hash160` address derivation |
-| **`@inversealtruism/csd-tx`** | coin selection (hardened) · `buildSend`/`buildPropose`/`buildAttest` · `signTx` · node-submit JSON |
-| **`@inversealtruism/csd-client`** | typed HTTP RPC client (node / Cairn proxy / discovered gateway) — read + broadcast |
-| **`@inversealtruism/csd-light`** | headers-first sync · client-side **PoW + LWMA + chainwork** verification · merkle-inclusion proofs · Helios-style verified-RPC facade with an honest **`trustLevel`** |
-| **`@inversealtruism/csd-vectors`** | golden conformance fixtures (the contract) — from the node's `golden_vectors.rs` + real on-chain blocks |
-
-Zero `Buffer`, browser/MV3/Node-safe. Runtime deps: `@noble/curves`, `@noble/hashes` only.
-
-## Quickstart
+It works the same in Node, the browser, and a Chrome extension (no `Buffer`, only two small
+audited crypto dependencies). Everything it produces is **byte-for-byte identical to the official
+Rust node** — checked on every release against the node's own test vectors and against real
+mainnet transactions, so a transaction you build here is one the network will accept.
 
 ```
 npm i @inversealtruism/csd-codec @inversealtruism/csd-crypto @inversealtruism/csd-tx @inversealtruism/csd-client @inversealtruism/csd-light
 ```
+
+## What you can do with it
 
 ```js
 import { keygen } from "@inversealtruism/csd-crypto";
@@ -29,13 +21,14 @@ import { buildSend } from "@inversealtruism/csd-tx";
 import { CsdClient } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 
+// 1) make a key, read your coins, send some — fully client-side signing
 const client = new CsdClient({ baseUrl: "https://cairn-substrate.com/api/rpc" });
 const me = keygen();
 const utxos = (await client.utxos(me.addr)).utxos;
 const tx = buildSend({ outputs: [{ to: "0x…40", value: 100_000 }], fee: 200_000, utxos, priv: me.priv });
 await client.submit(tx.nodeJson);
 
-// verify the chain yourself — no trust in the RPC
+// 2) don't trust the server — verify your transaction is really in the chain
 const light = new LightClient({ client });
 const tip = await client.tip();
 await light.syncFromCheckpoint(tip.height - 20, (await client.blockByHeight(tip.height - 20)).hash);
@@ -43,37 +36,58 @@ await light.sync(tip.height);
 const inc = await light.verifyTxInclusion(tx.txid); // { trustLevel: "verified-inclusion", … }
 ```
 
-Full runnable walkthrough: [`examples/quickstart.mjs`](./examples/quickstart.mjs).
+Runnable walkthrough: [`examples/quickstart.mjs`](./examples/quickstart.mjs).
 
-## Trust model (honest limits)
+## The pieces (install only what you need)
 
-The PoW header chain is the root of trust. The light client verifies, for every header: prev-link, valid PoW (`sha256d(header) ≤ target(bits)`), and that `bits` is exactly what the **LWMA** mandates (re-derived locally) — then follows the **max-chainwork** chain (reorg-aware: a higher-work branch rolls back + replaces). Sync from **genesis** (chainwork absolute, `fullyVerified`) or from a pinned **checkpoint** (`syncFromCheckpoint` — practical, no full-history fetch; chainwork relative, `fullyVerified === false`). Inclusion is provable via merkle proofs against a verified header.
+| Package | What it gives you |
+|---|---|
+| **`@inversealtruism/csd-codec`** | Encode/decode transactions and block headers exactly as the chain does; transaction IDs, signing hashes, merkle proofs, and content hashing. |
+| **`@inversealtruism/csd-crypto`** | Make keys and addresses; sign and verify with secp256k1 (low-S / RFC-6979, the same rules consensus enforces). |
+| **`@inversealtruism/csd-tx`** | Pick coins and build ready-to-broadcast `send` / `propose` / `attest` transactions, signed locally. |
+| **`@inversealtruism/csd-client`** | A typed client for reading the chain and broadcasting (point it at a node, a hosted proxy, or a gateway). |
+| **`@inversealtruism/csd-light`** | A **light client**: sync block headers, check the proof-of-work and difficulty yourself, and prove a transaction is included — so an untrusted RPC can't lie to you. |
+| **`@inversealtruism/csd-vectors`** | The shared test fixtures that pin every package to the official node's behaviour. |
 
-What it **cannot** prove from headers alone: that an output is still **unspent** (CSD's header has no UTXO-set commitment). So balances are `rpc-trusted` unless backed by a (future) Neutrino-style block scan (`scanned`). Every read says which via `trustLevel` — never hidden. The clean fix (a TXO-accumulator header commitment) is consensus-level → **advocacy track only**.
+## Why the light client matters
 
-## Conformance
+A normal app asks a server "is my transaction confirmed?" and believes the answer. The light
+client instead downloads block headers and checks them itself: each header links to the previous
+one, its proof-of-work is valid, and its difficulty is exactly what the network's rules require.
+Then it proves your transaction belongs to a verified block with a merkle proof. So you get a real
+answer rooted in proof-of-work — not the server's word.
 
-The suite is **non-self-fulfilling** — checked against independent oracles, not the SDK's own output:
-- **47/47 real on-chain signatures** (created by other software, accepted by the Rust node) verify against the SDK's independently-computed sighash.
-- The node's own `/tx/template` `signing_hash` + `unsigned_txid` match the SDK; an SDK-**built** tx is **accepted into the node mempool**.
-- The light client independently re-derives the node's **chainwork from genesis** and the **LWMA `bits` at every block** (spot-checked across the full height range, incl. high-difficulty regimes).
-- 21/21 real txs survive `serialize→deserialize→serialize` byte-identical; reorg adopt/reject + checkpoint-start verified against real blocks.
+**What it can and can't prove (stated plainly):**
+- ✅ *Inclusion* — "this transaction is in the chain" is fully provable.
+- ⚠️ *Balance* — a header chain can't prove a coin is still **unspent** (CSD headers don't commit to
+  the coin set), so balance reads are marked `rpc-trusted`. Every result tells you its trust level —
+  nothing is hidden behind a confident-looking number.
 
-`pnpm -r test` (per-package; node-dependent suites skip cleanly) · `CSD_RPC=… pnpm test:e2e` (oracle/edge/security). CI runs the deterministic core on every push.
+## Trustworthiness — tested against independent oracles
 
-## Dev
+The test suite never grades its own homework. It checks the SDK against things it doesn't control:
+
+- **47+ real signatures** made by other software and already accepted by the network verify against
+  the SDK's independently-computed signing hash.
+- The node's own transaction-template hashes match the SDK's, and a transaction **built by the SDK
+  is accepted into the live node's mempool**.
+- The light client re-derives the chain's total work from genesis and the difficulty at every block,
+  and matches the node exactly — including a tamper test where a forged header is rejected.
+- Real transactions survive an encode→decode→encode round-trip byte-for-byte.
 
 ```
 pnpm install
-pnpm -r build      # tsup → ESM + CJS + d.ts per package
-pnpm -r test       # conformance (CSD_RPC=http://127.0.0.1:8790 for live checks)
+pnpm -r build      # build every package
+pnpm -r test       # offline conformance (set CSD_RPC=… to also run the live checks)
 ```
 
-## Status
+## Status & honest limits
 
-**Published on npm** under `@inversealtruism/csd-*` (v0.1.x). Built + verified 2026-06-07 against the live mainnet node. The codec/crypto/tx/client core is production-grade; the light client is a verified v1 with the documented limits below.
+Published on npm as `@inversealtruism/csd-*`, verified against live mainnet. The transaction +
+crypto core is production-grade; the light client is a verified v1 with two known limits:
 
-### Known limits (v1)
-- **Light-client full-genesis sync fetches whole blocks** (the node exposes no headers-only endpoint), so syncing all history is heavy — use `syncFromCheckpoint` in practice. A node-side `/headers/:from/:count` would make genesis sync cheap (advocacy track, non-consensus).
-- **Balances are `rpc-trusted`** — a header chain can't prove non-spend (no UTXO commitment); a Neutrino-style scan (`scanned`) is future work.
-- The official package scope (`@csd/*` vs `@inversealtruism/*`) is still open pending CSD-maintainer coordination.
+- **Syncing all history is heavy** (the node has no headers-only endpoint), so in practice start
+  from a recent checkpoint with `syncFromCheckpoint` rather than from genesis.
+- **Balances are `rpc-trusted`** (see above) until a future block-scan mode lands.
+
+MIT licensed.
