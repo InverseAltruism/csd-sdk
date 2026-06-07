@@ -6,11 +6,26 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
-export function canonicalJson(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v);
-  if (Array.isArray(v)) return "[" + v.map(canonicalJson).join(",") + "]";
+// Max nesting depth — `canonicalJson` is recursive and is routinely run over UNTRUSTED content
+// (indexers/wallets/verifiers hash attacker-supplied JSON), so an unbounded depth is a
+// stack-overflow DoS. 256 is far beyond any real content record.
+const MAX_DEPTH = 256;
+
+export function canonicalJson(v: unknown, depth = 0): string {
+  if (depth > MAX_DEPTH) throw new Error("canonicalJson: max nesting depth exceeded");
+  if (v === null || typeof v !== "object") {
+    // `undefined` is not valid JSON; JSON.stringify(undefined) returns the literal `undefined`,
+    // which (a) can't be re-parsed — breaking the served-bytes==canonical self-certification —
+    // and (b) collides {a:undefined,b:1} with {b:1}. Encode it as null, consistently.
+    if (v === undefined) return "null";
+    return JSON.stringify(v);
+  }
+  if (Array.isArray(v)) return "[" + v.map((x) => canonicalJson(x, depth + 1)).join(",") + "]";
   const o = v as Record<string, unknown>;
-  return "{" + Object.keys(o).sort().map((k) => JSON.stringify(k) + ":" + canonicalJson(o[k])).join(",") + "}";
+  // Drop keys whose value is `undefined` (matches JSON.stringify object semantics) so the output
+  // is always valid, re-parseable JSON and the hash is stable regardless of how undefined arose.
+  return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined)
+    .map((k) => JSON.stringify(k) + ":" + canonicalJson(o[k], depth + 1)).join(",") + "}";
 }
 
 /** payload_hash for a content record (0x-hex sha256 of its canonical JSON). */

@@ -58,6 +58,21 @@ eq("a wrong position fails verification", verifyMerkleProof(leaves[0]!, 1, merkl
 console.log("\n— content addressing —");
 eq("canonicalJson sorts keys + is compact", canonicalJson({ b: 1, a: [2, { d: 4, c: 3 }] }), '{"a":[2,{"c":3,"d":4}],"b":1}');
 eq("payloadHash is a 0x..64 sha256", /^0x[0-9a-f]{64}$/.test(payloadHash({ x: 1 })), true);
+// hardening: undefined values are dropped (valid, re-parseable JSON) — no {a:undefined} collision
+eq("canonicalJson drops undefined keys", canonicalJson({ a: undefined, b: 1 }), '{"b":1}');
+eq("canonicalJson {a:undefined,b:1} == {b:1}", payloadHash({ a: undefined, b: 1 }), payloadHash({ b: 1 }));
+eq("canonicalJson output is always valid JSON", (() => { try { JSON.parse(canonicalJson({ a: undefined, b: [undefined, 1] })); return true; } catch { return false; } })(), true);
+// hardening: deep nesting throws (DoS guard) rather than overflowing the stack
+{
+  let deep: any = 1; for (let i = 0; i < 5000; i++) deep = [deep];
+  let threw = false; try { canonicalJson(deep); } catch { threw = true; }
+  eq("canonicalJson rejects pathologically deep input (no stack overflow)", threw, true);
+}
+
+console.log("\n— u64 encoding guards (consensus primitive) —");
+eq("u64 rejects a Number ≥ 2^53 (precision loss)", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [], outputs: [{ value: 9007199254740993, scriptPubkey: "0x" + "cd".repeat(20) }] } as any); return false; } catch { return true; } })(), true);
+eq("u64 rejects a negative value", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [], outputs: [{ value: -1, scriptPubkey: "0x" + "cd".repeat(20) }] } as any); return false; } catch { return true; } })(), true);
+eq("u64 ACCEPTS a large value as bigint (no precision loss)", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [], outputs: [{ value: 90000000000000000n, scriptPubkey: "0x" + "cd".repeat(20) }] } as any); return true; } catch { return false; } })(), true);
 
 console.log("\n— real mainnet blocks (live regression) —");
 for (const b of LIVE_BLOCKS) {

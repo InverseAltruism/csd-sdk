@@ -15,8 +15,24 @@ export function u32(n: number): Uint8Array {
   return b;
 }
 export function u64(n: number | bigint): Uint8Array {
+  // REJECT inputs that can't be encoded faithfully. A `number` ≥ 2^53 has already lost precision
+  // (so two different intended amounts could sign to identical bytes), and a negative would wrap
+  // to a huge u64. CSD supply (~1e17 sats) exceeds 2^53, so callers MUST pass amounts in that
+  // range as bigint. This guards the consensus primitive itself, not just the tx-builder layer.
+  let v: bigint;
+  if (typeof n === "bigint") {
+    v = n;
+  } else {
+    if (!Number.isSafeInteger(n)) {
+      throw new Error(`u64: unsafe number ${n} — pass values ≥ 2^53 (or negatives) as bigint`);
+    }
+    v = BigInt(n);
+  }
+  if (v < 0n || v > 0xffff_ffff_ffff_ffffn) {
+    throw new Error(`u64: value ${v} out of range [0, 2^64)`);
+  }
   const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigUint64(0, BigInt(n), true);
+  new DataView(b.buffer).setBigUint64(0, v, true);
   return b;
 }
 export const lenBytes = (b: Uint8Array): Uint8Array => concatBytes(u64(b.length), b);
