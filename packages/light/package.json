@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/light.test.ts"
+    "test": "tsx test/light-offline.test.ts && tsx test/light.test.ts"
   },
   "dependencies": {
     "@inversealtruism/csd-codec": "workspace:*",

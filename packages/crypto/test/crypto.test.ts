@@ -22,14 +22,19 @@ const a = signDigest(sh, PRIV), b = signDigest(sh, PRIV);
 ok("signDigest is deterministic (RFC6979)", a.sig64 === b.sig64);
 ok("signature verifies", verifyDigest(a.sig64, a.pub33, sh));
 ok("verify rejects a wrong digest", !verifyDigest(a.sig64, a.pub33, "0x" + "00".repeat(32)));
-// LOW-S: flip to high-S and ensure verify rejects (malleability guard)
-ok("verify rejects a high-S twin", (() => {
-  const s = a.sig64.slice(2);
-  // can't trivially construct high-S here without curve math; assert the lowS sig's S is in lower half
-  const S = BigInt("0x" + s.slice(64));
+// LOW-S malleability guard: actually CONSTRUCT the high-S twin (s' = N - s) of the valid signature
+// and assert verifyDigest REJECTS it. (r, N-s) is a valid ECDSA pair; accepting it would allow
+// signature/txid malleability. The old test only checked the genuine sig's S was low (tautology).
+{
+  const raw = a.sig64.replace(/^0x/, "");
+  const r = raw.slice(0, 64);
+  const S = BigInt("0x" + raw.slice(64));
   const N = BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
-  return S <= N / 2n;
-})());
+  ok("the genuine signature is low-S", S <= N / 2n);
+  const highSig = "0x" + r + (N - S).toString(16).padStart(64, "0");
+  ok("the constructed twin is genuinely high-S", N - S > N / 2n);
+  ok("verify REJECTS the high-S twin (malleability blocked)", verifyDigest(highSig, a.pub33, sh) === false);
+}
 ok("buildScriptSig is 99 bytes (0x40+64+0x21+33)", buildScriptSig(a.sig64, a.pub33).slice(2).length / 2 === 99);
 
 const g = keygen();
