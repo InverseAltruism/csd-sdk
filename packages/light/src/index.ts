@@ -17,12 +17,15 @@
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
   type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
-  verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW,
+  verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
 } from "@inversealtruism/csd-codec";
 import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
 import { expectedBitsFromWindow } from "./lwma.js";
 
 export { expectedBits, expectedBitsFromWindow } from "./lwma.js";
+
+/** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
+const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBits(bits); return s > MAX_U128 ? MAX_U128 : s; };
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
@@ -103,7 +106,7 @@ export class LightClient {
     if (!powOk(headerHashBytes(header), header.bits)) throw new Error(`invalid PoW at ${height}`);
     const cp = this.checkpoints[height];
     if (cp && cp.toLowerCase() !== hash.toLowerCase()) throw new Error(`checkpoint mismatch at ${height}`);
-    return { height, hash, header, chainwork: (parent?.chainwork ?? 0n) + workForBits(header.bits) };
+    return { height, hash, header, chainwork: satAddWork(parent?.chainwork ?? 0n, header.bits) };
   }
 
   /**
@@ -126,7 +129,7 @@ export class LightClient {
       if (prevHash && s.header.prev.toLowerCase() !== prevHash.toLowerCase()) throw new Error(`seed prev link broken at ${s.height}`);
       // seed bits are trusted, but PoW must still hold (cheap, catches a garbage seed)
       if (!powOk(headerHashBytes(s.header), s.header.bits)) throw new Error(`seed PoW invalid at ${s.height}`);
-      this.chain.push({ height: s.height, hash, header: s.header, chainwork: (this.chain[i - 1]?.chainwork ?? 0n) + workForBits(s.header.bits), trusted: true });
+      this.chain.push({ height: s.height, hash, header: s.header, chainwork: satAddWork(this.chain[i - 1]?.chainwork ?? 0n, s.header.bits), trusted: true });
       prevHash = hash;
     }
     if (this.tip!.hash.toLowerCase() !== checkpointHash.toLowerCase()) throw new Error(`checkpoint hash mismatch: seeded tip ${this.tip!.hash} != ${checkpointHash}`);

@@ -1,6 +1,7 @@
 // Block header codec + PoW. Header is a fixed 84-byte little-endian struct; hash = sha256d.
 // (chain/index.rs serialize_header + header_hash; chain/pow.rs bits→target + check.)
 import { hb, hx, hbFixed, u32, u64, sha256d } from "./bytes.js";
+import { MAX_U128 } from "./params.js";
 
 export interface BlockHeader {
   version: number;
@@ -98,11 +99,17 @@ export function powOk(headerHashBE: Uint8Array, bits: number): boolean {
   return targetToBigInt(headerHashBE) <= targetToBigInt(target);
 }
 
-/** Chainwork contributed by a header at difficulty `bits`: 2^256 / (target + 1). */
+/**
+ * Chainwork contributed by a header at difficulty `bits`: floor(2^256 / (target + 1)), CLAMPED to
+ * u128 — faithful to the node's `work_from_bits` (pow.rs), which returns `w.to_u128().unwrap_or(MAX)`.
+ * A no-op at any realistic difficulty (work ≪ 2^128), but keeps the SDK a byte-exact port at extremes
+ * instead of diverging from the node's u128 accounting (finding A-S4).
+ */
 export function workForBits(bits: number): bigint {
   const target = targetToBigInt(bitsToTarget(bits));
   if (target === 0n) return 0n;
-  return (1n << 256n) / (target + 1n);
+  const w = (1n << 256n) / (target + 1n);
+  return w > MAX_U128 ? MAX_U128 : w;
 }
 
 // ── merkle (Bitcoin-style: leaves = txids, odd row duplicates the last) ──

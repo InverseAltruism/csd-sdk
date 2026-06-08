@@ -35,8 +35,12 @@ export const MIN_FEE_PROPOSE = 25_000_000; // 0.25 CSD
 export const MIN_FEE_ATTEST = 5_000_000; // 0.05 CSD
 
 /** Consensus tx limits. */
+export const MAX_TX_BYTES = 100_000; // 100 KB (node params: MAX_TX_BYTES)
 export const MAX_TX_INPUTS = 512;
 export const MAX_TX_OUTPUTS = 512;
+
+/** Largest u128 — the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
+export const MAX_U128 = (1n << 128n) - 1n;
 
 /** block_reward(height) — INITIAL_REWARD halved every HALVING_INTERVAL, 0 after MAX_HALVINGS. */
 export function blockReward(height: number): number {

@@ -3,7 +3,7 @@
 import {
   serialize, deserialize, txid, sighash, strippedTx,
   serializeHeader, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
-  payloadHash, canonicalJson, bytesToHex, hb,
+  payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128, MAX_TX_BYTES,
 } from "../src/index.js";
 import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
 
@@ -80,6 +80,22 @@ for (const b of LIVE_BLOCKS) {
   eq(`block ${b.height}: powOk(hash, bits) == true`, powOk(hb(b.hash), b.header.bits), true);
   eq(`block ${b.height}: merkleRoot(txids) == header.merkle`, merkleRoot(b.txids), b.header.merkle);
 }
+
+console.log("\n— deserialize untrusted-input guards (C-S1: match node MAX_TX limits + canonicality) —");
+const throwsD = (b: Uint8Array) => { try { deserialize(b); return false; } catch { return true; } };
+const validBytes = serialize(TX_VECTORS[0]!.tx);
+eq("deserialize accepts a valid tx", throwsD(validBytes), false);
+eq("deserialize REJECTS trailing bytes (non-canonical)", throwsD(new Uint8Array([...validBytes, 0x00])), true);
+eq("deserialize REJECTS oversized input (> MAX_TX_BYTES)", throwsD(new Uint8Array(MAX_TX_BYTES + 1)), true);
+// version(4)=1 ‖ nIn(8 LE)=513 → caps before any allocation/loop
+eq("deserialize REJECTS too many inputs (513 > 512) before allocating", throwsD(new Uint8Array([1,0,0,0, 1,2,0,0,0,0,0,0])), true);
+// version ‖ nIn=0 ‖ nOut=513
+eq("deserialize REJECTS too many outputs (513 > 512) before allocating", throwsD(new Uint8Array([1,0,0,0, 0,0,0,0,0,0,0,0, 1,2,0,0,0,0,0,0])), true);
+
+console.log("\n— chainwork u128 faithfulness (A-S4: clamp per-block work to u128 like the node) —");
+eq("workForBits clamps an extreme low-target to MAX_U128", workForBits(0x10000001) === MAX_U128, true);
+eq("workForBits at real difficulty is NOT clamped (< MAX_U128)", workForBits(LIVE_BLOCKS[0]!.header.bits) < MAX_U128, true);
+eq("workForBits at real difficulty is > 0", workForBits(LIVE_BLOCKS[0]!.header.bits) > 0n, true);
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

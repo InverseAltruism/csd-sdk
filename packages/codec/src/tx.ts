@@ -14,7 +14,7 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, utf8ToBytes } from "@noble/hashes/utils";
 import { hb, hx, hbFixed, u32, u64, lenBytes, sha256d } from "./bytes.js";
-import { CHAIN_ID_HASH } from "./params.js";
+import { CHAIN_ID_HASH, MAX_TX_BYTES, MAX_TX_INPUTS, MAX_TX_OUTPUTS } from "./params.js";
 
 export type App =
   | { type: "None" }
@@ -87,17 +87,27 @@ function readApp(r: Reader): App {
   throw new Error(`unknown AppPayload variant ${tag}`);
 }
 
-/** Parse consensus bincode bytes back into a Tx (mirror of `serialize`). */
+/**
+ * Parse consensus bincode bytes back into a Tx (mirror of `serialize`). Enforces the SAME limits the
+ * Rust node does at the mempool boundary (MAX_TX_BYTES / MAX_TX_INPUTS / MAX_TX_OUTPUTS) and rejects
+ * trailing bytes, so decoding untrusted bytes (e.g. from a gateway) can't be coerced into an
+ * over-allocation, and a non-canonical encoding doesn't parse "successfully" (finding C-S1). The
+ * length caps are checked BEFORE the read loops so a forged huge count is rejected immediately.
+ */
 export function deserialize(bytes: Uint8Array): Tx {
+  if (bytes.length > MAX_TX_BYTES) throw new Error(`tx too large (${bytes.length} > MAX_TX_BYTES=${MAX_TX_BYTES})`);
   const r = new Reader(bytes);
   const version = r.u32();
   const nIn = Number(r.u64());
+  if (nIn > MAX_TX_INPUTS) throw new Error(`too many inputs (${nIn} > MAX_TX_INPUTS=${MAX_TX_INPUTS})`);
   const inputs: TxInput[] = [];
   for (let i = 0; i < nIn; i++) inputs.push({ prevTxid: r.fixedHex(32), vout: r.u32(), scriptSig: hx(r.vec()) });
   const nOut = Number(r.u64());
+  if (nOut > MAX_TX_OUTPUTS) throw new Error(`too many outputs (${nOut} > MAX_TX_OUTPUTS=${MAX_TX_OUTPUTS})`);
   const outputs: TxOutput[] = [];
   for (let i = 0; i < nOut; i++) outputs.push({ value: r.u64(), scriptPubkey: r.fixedHex(20) });
   const locktime = r.u32();
   const app = readApp(r);
+  if (r.offset !== bytes.length) throw new Error(`trailing bytes after tx (${bytes.length - r.offset} extra) — non-canonical encoding`);
   return { version, inputs, outputs, locktime, app };
 }
