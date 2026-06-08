@@ -46,5 +46,15 @@ ok("nodeJson outputs carry byte-array script_pubkey(20)", nj.outputs[0].script_p
 const njp = txToNodeJson(prop.tx!);
 ok("nodeJson Propose is externally-tagged {Propose:{…}}", !!njp.app.Propose && Array.isArray(njp.app.Propose.payload_hash));
 
+console.log("\n— u64 submit-JSON faithfulness (regression: C-S2/A2 — no silent >2^53 truncation) —");
+const throws = (n: string, fn: () => unknown) => { let t = false; try { fn(); } catch { t = true; } ok(n, t); };
+const baseTx = { version: 1, locktime: 0, app: { type: "None" } as const, inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [{ value: 1000, scriptPubkey: RCPT }] };
+ok("MAX_SAFE_INTEGER value round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: Number.MAX_SAFE_INTEGER, scriptPubkey: RCPT }] }).outputs[0].value === Number.MAX_SAFE_INTEGER);
+ok("bigint value within safe range round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: 9007199254740991n, scriptPubkey: RCPT }] }).outputs[0].value === 9007199254740991);
+throws("REFUSES output value > 2^53 (would corrupt sign==submit) instead of Number()-truncating", () => txToNodeJson({ ...baseTx, outputs: [{ value: 9007199254740993n, scriptPubkey: RCPT }] }));
+throws("REFUSES negative output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: -1, scriptPubkey: RCPT }] }));
+throws("REFUSES non-integer output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1.5, scriptPubkey: RCPT }] }));
+throws("REFUSES Propose expires_epoch > 2^53", () => txToNodeJson({ ...baseTx, app: { type: "Propose", domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 9007199254740993n } }));
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

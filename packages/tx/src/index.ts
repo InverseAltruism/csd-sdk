@@ -43,16 +43,32 @@ export function txSize(tx: Tx): number { return serialize(tx).length; }
 // ── node-submit JSON (serde external tagging; hashes as byte arrays) ──
 const bytesArr = (hex: string): number[] => Array.from(hex.startsWith("0x") ? hexToU8(hex.slice(2)) : hexToU8(hex));
 function hexToU8(h: string): Uint8Array { const o = new Uint8Array(h.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16); return o; }
+/**
+ * Encode a u64 field for the node's serde-JSON submit shape. The node parses these from a BARE JSON
+ * integer (serde u64 — full precision, but rejects strings); JS Numbers lose precision above 2^53 and
+ * JSON cannot emit a bigint as a bare literal. So a value beyond MAX_SAFE_INTEGER cannot be submitted
+ * faithfully — REFUSE it loudly rather than `Number()`-truncating, which would make the SUBMITTED json
+ * differ from the SIGNED bytes (the sig/txid commit to the exact u64). Mirrors the codec u64 guard.
+ * At CSD emission rates 2^53 sats (~90M CSD) is unreachable for years; >2^53-sat single outputs are a
+ * documented limit, not a silent corruption. (Confirms/closes finding C-S2/A2, 2026-06-08 baseline.)
+ */
+function u64Json(v: number | bigint, field: string): number {
+  if (typeof v === "number" && !Number.isInteger(v)) throw new Error(`${field} must be an integer, got ${v}`);
+  const n = typeof v === "bigint" ? v : BigInt(v);
+  if (n < 0n) throw new Error(`${field} must be non-negative, got ${v}`);
+  if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${field}=${v} exceeds JSON-safe u64 range (2^53-1); cannot submit without value corruption`);
+  return Number(n);
+}
 function appToJson(app: App): unknown {
   if (app.type === "None") return "None";
-  if (app.type === "Propose") return { Propose: { domain: app.domain, payload_hash: bytesArr(app.payloadHash), uri: app.uri, expires_epoch: Number(app.expiresEpoch) } };
+  if (app.type === "Propose") return { Propose: { domain: app.domain, payload_hash: bytesArr(app.payloadHash), uri: app.uri, expires_epoch: u64Json(app.expiresEpoch, "expires_epoch") } };
   return { Attest: { proposal_id: bytesArr(app.proposalId), score: app.score, confidence: app.confidence } };
 }
 export function txToNodeJson(tx: Tx): any {
   return {
     version: tx.version, locktime: tx.locktime, app: appToJson(tx.app),
     inputs: tx.inputs.map((i) => ({ prevout: { txid: bytesArr(i.prevTxid), vout: i.vout }, script_sig: bytesArr(i.scriptSig) })),
-    outputs: tx.outputs.map((o) => ({ value: Number(o.value), script_pubkey: bytesArr(o.scriptPubkey) })),
+    outputs: tx.outputs.map((o) => ({ value: u64Json(o.value, "output.value"), script_pubkey: bytesArr(o.scriptPubkey) })),
   };
 }
 
