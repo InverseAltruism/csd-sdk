@@ -1,6 +1,6 @@
 # csd-sdk -- the developer toolkit for Compute Substrate
 
-**Build dapps, wallets, bots and more on the Compute Substrate in JavaScript or
+**Build dapps, wallets, bots and more on Compute Substrate in JavaScript or
 TypeScript** - create and sign transactions, read the chain, and *verify the chain yourself*
 instead of trusting whatever server you're talking to.
 
