@@ -182,12 +182,15 @@ export class LightClient {
     const t = await this.client.tx(txidHex);
     if (!t.ok || t.height == null) return { trustLevel: "rpc-trusted", included: false, reason: "tx not in a block (mempool/unknown)" };
     const height = t.height;
-    const tipHeight = this.baseHeight + this.chain.length - 1;
+    let tipHeight = this.baseHeight + this.chain.length - 1;
     if (height < this.baseHeight) return { trustLevel: "rpc-trusted", included: false, reason: `tx below the synced base (${this.baseHeight})` };
     if (height > tipHeight) {
       const gap = height - tipHeight;
       if (gap > 256) return { trustLevel: "rpc-trusted", included: false, reason: `tx at ${height} is ${gap} blocks beyond tip — sync(${height}) first` };
       await this.sync(height);
+      // sync() advanced the tip — recompute it, else `confirmations` below uses the STALE pre-sync
+      // tip and under-reports (≤0) the depth of a tx that is actually at depth ≥1.
+      tipHeight = this.baseHeight + this.chain.length - 1;
     }
     const verified = this.at(height);
     if (!verified) return { trustLevel: "rpc-trusted", included: false, reason: "could not verify the containing header" };

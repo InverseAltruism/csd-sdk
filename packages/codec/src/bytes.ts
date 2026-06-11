@@ -10,8 +10,15 @@ export const hx = (b: Uint8Array): string => "0x" + bytesToHex(b);
 export const sha256d = (b: Uint8Array): Uint8Array => sha256(sha256(b));
 
 export function u32(n: number): Uint8Array {
+  // REJECT out-of-range like u64() does (symmetry the consensus encoder must keep): `n >>> 0`
+  // silently wraps, so `version = 2^32+1` would sign as `1`, and crucially `vout = -1` would wrap
+  // to 0xffffffff — the coinbase sentinel — making stripped-tx mis-classify the input. A real
+  // coinbase passes vout = 4294967295 explicitly (a valid u32), so [0, 2^32) stays accepted.
+  if (!Number.isSafeInteger(n) || n < 0 || n > 0xffff_ffff) {
+    throw new Error(`u32: value ${n} out of range [0, 2^32)`);
+  }
   const b = new Uint8Array(4);
-  new DataView(b.buffer).setUint32(0, n >>> 0, true);
+  new DataView(b.buffer).setUint32(0, n, true);
   return b;
 }
 export function u64(n: number | bigint): Uint8Array {

@@ -74,6 +74,13 @@ eq("u64 rejects a Number ≥ 2^53 (precision loss)", (() => { try { serialize({ 
 eq("u64 rejects a negative value", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [], outputs: [{ value: -1, scriptPubkey: "0x" + "cd".repeat(20) }] } as any); return false; } catch { return true; } })(), true);
 eq("u64 ACCEPTS a large value as bigint (no precision loss)", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [], outputs: [{ value: 90000000000000000n, scriptPubkey: "0x" + "cd".repeat(20) }] } as any); return true; } catch { return false; } })(), true);
 
+console.log("\n— u32 encoding guards (symmetry with u64; no silent >>>0 wrap) —");
+const serU32 = (patch: any) => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [{ prevTxid: "0x" + "11".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [], ...patch } as any); return false; } catch { return true; } };
+eq("u32 rejects version ≥ 2^32 (would wrap to a different signed value)", serU32({ version: 4294967296 }), true);
+eq("u32 rejects a negative vout (would wrap to the 0xffffffff coinbase sentinel)", serU32({ inputs: [{ prevTxid: "0x" + "11".repeat(32), vout: -1, scriptSig: "0x" }] }), true);
+eq("u32 ACCEPTS vout = 4294967295 (real coinbase sentinel, a valid u32)", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "None" }, inputs: [{ prevTxid: "0x".padEnd(66, "0"), vout: 4294967295, scriptSig: "0x" }], outputs: [] } as any); return true; } catch { return false; } })(), true);
+eq("u32 rejects an Attest score ≥ 2^32", (() => { try { serialize({ version: 1, locktime: 0, app: { type: "Attest", proposalId: "0x" + "22".repeat(32), score: 4294967296, confidence: 0 }, inputs: [{ prevTxid: "0x" + "11".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [] } as any); return false; } catch { return true; } })(), true);
+
 console.log("\n— real mainnet blocks (live regression) —");
 for (const b of LIVE_BLOCKS) {
   eq(`block ${b.height}: headerHash == on-chain hash`, headerHash(b.header), b.hash);

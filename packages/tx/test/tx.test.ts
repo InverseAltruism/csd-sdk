@@ -30,6 +30,9 @@ ok("signed tx verifies against the sighash", (() => { const sh = sighash({ ...se
 ok("txid recomputes", send.txid === txid(send.tx!));
 ok("rejects a bad recipient", buildSend({ outputs: [{ to: "0xnothex", value: 1 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === false);
 ok("rejects insufficient balance", buildSend({ outputs: [{ to: RCPT, value: 10_000 }], fee: 1, utxos: [utxo(100)], priv: PRIV }).ok === false);
+// node mempool requires feerate_ppm = fee*1e6/bytes ≥ 1; fee:0 builds a tx the node bounces
+ok("rejects fee:0 (below the node feerate floor — was a silent build-success/broadcast-fail)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 0, utxos: [utxo(1000)], priv: PRIV }).ok === false);
+ok("accepts fee:1 (a sub-MB tx needs only 1 base unit to clear the feerate floor)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === true);
 
 console.log("\n— buildPropose / buildAttest —");
 const prop = buildPropose({ domain: "csd:test", payloadHash: "0x" + "ab".repeat(32), uri: "cairn:v1:abcdef", expiresEpoch: 9999, fee: MIN_FEE_PROPOSE, utxos: [utxo(MIN_FEE_PROPOSE * 2)], priv: PRIV });
@@ -37,6 +40,9 @@ ok("buildPropose ok + app=Propose", prop.ok && prop.tx!.app.type === "Propose");
 ok("propose rejects sub-minimum fee", buildPropose({ domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 1, fee: 1, utxos: [utxo(1e8)], priv: PRIV }).ok === false);
 const att = buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 80, confidence: 60, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV });
 ok("buildAttest ok + app=Attest", att.ok && att.tx!.app.type === "Attest");
+ok("buildAttest accepts the CONF_TOKEN_FILL marker confidence=1_000_000", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 100, confidence: 1_000_000, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV }).ok === true);
+ok("buildAttest REJECTS score ≥ 2^32 (no silent >>>0 wrap)", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 4294967296, confidence: 0, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV }).ok === false);
+ok("buildAttest REJECTS a negative confidence", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 0, confidence: -1, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV }).ok === false);
 
 console.log("\n— node JSON shape —");
 const nj = txToNodeJson(send.tx!);

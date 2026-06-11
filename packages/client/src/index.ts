@@ -46,10 +46,20 @@ export class CsdClient {
     return r.json() as Promise<T>;
   }
 
+  // The node returns application errors as `{ok:false, err}` with HTTP **200**, so a bare `get()`
+  // can't see them. For endpoints whose `{ok:false}` result is useless to the caller (a missing
+  // block), surface it as a thrown error — otherwise a beyond-tip/not-found block flows downstream
+  // as a malformed object and crashes opaquely (e.g. the light client reading `header.prev`).
+  private async getOk<T extends { ok: boolean; err?: string | null }>(path: string): Promise<T> {
+    const j = await this.get<T>(path);
+    if (j && j.ok === false) throw new Error(`GET ${path} → node error: ${j.err ?? "ok:false"}`);
+    return j;
+  }
+
   tip(): Promise<RpcTip> { return this.get("/tip"); }
   health(): Promise<any> { return this.get("/health"); }
-  blockByHeight(h: number): Promise<RpcBlock> { return this.get(`/block/height/${h}`); }
-  blockByHash(hash: string): Promise<RpcBlock> { return this.get(`/block/${hash}`); }
+  blockByHeight(h: number): Promise<RpcBlock> { return this.getOk(`/block/height/${h}`); }
+  blockByHash(hash: string): Promise<RpcBlock> { return this.getOk(`/block/${hash}`); }
   tx(id: string): Promise<{ ok: boolean; txid: string; block_hash?: string; height?: number; time?: number; tx?: RpcTxJson; err?: string }> { return this.get(`/tx/${id}`); }
   utxos(addr: string): Promise<RpcUtxos> { return this.get(`/utxos/${addr}`); }
   proposal(id: string): Promise<any> { return this.get(`/proposal/${id}`); }
@@ -58,8 +68,19 @@ export class CsdClient {
   domains(): Promise<any> { return this.get("/domains"); }
   mempool(): Promise<any> { return this.get("/mempool"); }
 
-  /** Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`). */
+  /**
+   * Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`).
+   * ⚠ The node returns `{ok:false, err}` with HTTP 200 on REJECTION — and **`txid` is populated even
+   * then** (it's the computed id of the rejected tx). Callers MUST check `.ok`; reading `.txid`
+   * alone mistakes a rejected tx for a broadcast one. Use `submitOrThrow` if you want a hard failure.
+   */
   submit(nodeJsonTx: unknown): Promise<RpcSubmit> { return this.post("/tx/submit", { tx: nodeJsonTx }); }
+  /** As `submit`, but throws on node rejection (`ok:false`) instead of returning a misleading txid. */
+  async submitOrThrow(nodeJsonTx: unknown): Promise<RpcSubmit> {
+    const r = await this.submit(nodeJsonTx);
+    if (!r.ok) throw new Error(`tx rejected by node: ${r.err ?? "unknown error"}`);
+    return r;
+  }
   templatePropose(body: unknown): Promise<any> { return this.post("/tx/template/propose", body); }
   templateAttest(body: unknown): Promise<any> { return this.post("/tx/template/attest", body); }
 }

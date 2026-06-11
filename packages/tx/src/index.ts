@@ -102,7 +102,17 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
   const outputs: TxOutput[] = [...outs];
   if (change > 0) outputs.push({ value: change, scriptPubkey: addr });
   const tx: Tx = { version: 1, locktime: 0, app, inputs: sel.inputs.map((i) => ({ prevTxid: i.txid, vout: i.vout, scriptSig: "0x" })), outputs };
-  return { ok: true, ...signTx(tx, priv), change, inTotal: sel.total, fee };
+  const signed = signTx(tx, priv);
+  // Node mempool rule (net/mempool.rs): feerate_ppm = fee*1e6/bytes must be ≥ MIN_FEERATE_PPM (=1),
+  // i.e. fee*1e6 ≥ (signed) tx_bytes. Without this, buildSend({fee:0}) returns ok:true for a tx the
+  // node rejects with "feerate too low" — a silent build-success/broadcast-failure (the same
+  // looks-like-success class as the lagging-mempool fund-burn incident). Propose/Attest clear this
+  // trivially via their own floors; this guards the None path.
+  const bytes = serialize(signed.tx).length;
+  if (fee * 1_000_000 < bytes) {
+    return { ok: false, error: `fee ${fee} below the node feerate floor (need ≥ ${Math.ceil(bytes / 1_000_000)} for a ${bytes}-byte tx)` };
+  }
+  return { ok: true, ...signed, change, inTotal: sel.total, fee };
 }
 
 /** Build + sign a 1→many transfer (None app). Change → sender. */
@@ -122,7 +132,12 @@ export function buildPropose(p: { domain: string; payloadHash: string; uri: stri
 /** Build + sign an Attest (fee = weight). */
 export function buildAttest(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string }): BuildResult {
   if (p.fee < MIN_FEE_ATTEST) return { ok: false, error: `attest fee must be ≥ ${MIN_FEE_ATTEST} (0.05 CSD)` };
-  return selectAndAssemble(p.utxos, [], p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score >>> 0, confidence: p.confidence >>> 0 }, p.priv);
+  // REJECT (don't silently `>>>0`-wrap) out-of-range score/confidence: a wrap changes the caller's
+  // intent into different signed bytes (e.g. CairnX's CONF_TOKEN_FILL=1_000_000 marker must commit
+  // exactly). The codec u32 guard would also catch it now, but failing here gives a clear field name.
+  if (!Number.isSafeInteger(p.score) || p.score < 0 || p.score > 0xffff_ffff) return { ok: false, error: `score ${p.score} out of u32 range` };
+  if (!Number.isSafeInteger(p.confidence) || p.confidence < 0 || p.confidence > 0xffff_ffff) return { ok: false, error: `confidence ${p.confidence} out of u32 range` };
+  return selectAndAssemble(p.utxos, [], p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv);
 }
 
 export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";
