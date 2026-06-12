@@ -16,6 +16,7 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-lockstep.mjs   # lockstep release invariant (CONSENSUS_CHANGES.md)
       - run: pnpm -r --filter "./packages/*" build
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
       # skip cleanly when there is no CSD node (CI has none); the deterministic core
