@@ -3,3 +3,11 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .npmrc
+
+# secrets — never commit env/keys
+.env
+.env.*
+*.log
+**/*key*.json
+**/*.priv
+.claude/
