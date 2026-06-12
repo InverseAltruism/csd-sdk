@@ -36,6 +36,12 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  packages/cairnx:
+    dependencies:
+      '@inversealtruism/csd-codec':
+        specifier: workspace:*
+        version: link:../codec
+
   packages/client:
     dependencies:
       '@inversealtruism/csd-codec':

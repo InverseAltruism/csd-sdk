@@ -1,0 +1,29 @@
+{
+  "name": "@inversealtruism/cairnx-core",
+  "version": "0.1.5",
+  "description": "CairnX — tokens, atomic DvP trades and leased .csd names on Compute Substrate, as a pure deterministic convention library (Ordinals/Runes class). Ships the normative CONVENTION.md and the conformance vectors.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md", "CONVENTION.md", "test/vectors"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/vectors.test.ts"
+  },
+  "dependencies": {
+    "@inversealtruism/csd-codec": "workspace:*"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/InverseAltruism/csd-sdk.git", "directory": "packages/cairnx" },
+  "homepage": "https://cairn-substrate.com/trade"
+}
