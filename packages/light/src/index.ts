@@ -35,10 +35,15 @@ export interface ReorgResult { adopted: boolean; rolledBack?: number; newTip?: n
 
 export type HeaderProvider = (height: number) => Promise<{ header: BlockHeader; hash: string; txids: string[] }>;
 
+export type HeadersBatchProvider = (from: number, count: number) => Promise<{ header: BlockHeader; hash: string }[]>;
+
 export interface LightClientOptions {
   client?: CsdClient;
   baseUrl?: string;
   headerProvider?: HeaderProvider;
+  /** Optional BATCH header source (e.g. an indexer /headers/{from}/{count} endpoint): sync()
+   *  prefers it, collapsing per-height full-block fetches into a few header-only requests. */
+  headersBatchProvider?: HeadersBatchProvider;
   /** Pin checkpoints {height: expectedHash} to bound/accelerate sync (optional). */
   checkpoints?: Record<number, string>;
 }
@@ -52,8 +57,11 @@ export class LightClient {
   /** Height of chain[0] — 0 for genesis-start, the seed start for checkpoint-start. */
   baseHeight = 0;
 
+  private readonly batch?: HeadersBatchProvider;
+
   constructor(opts: LightClientOptions = {}) {
     this.client = opts.client ?? (opts.baseUrl ? new CsdClient({ baseUrl: opts.baseUrl }) : undefined);
+    this.batch = opts.headersBatchProvider;
     this.checkpoints = opts.checkpoints ?? {};
     this.provider = opts.headerProvider ?? (async (h: number) => {
       if (!this.client) throw new Error("LightClient needs a client/baseUrl or a headerProvider");
@@ -77,7 +85,16 @@ export class LightClient {
   /** Sync + VERIFY headers [from..to] from genesis (or contiguous to the current tip). */
   async sync(to: number, from = this.baseHeight + this.chain.length): Promise<VerifiedHeader> {
     if (from !== this.baseHeight + this.chain.length) throw new Error(`non-contiguous sync: tip ${this.baseHeight + this.chain.length - 1}, asked from ${from}`);
-    for (let h = from; h <= to; h++) { const { header, hash } = await this.provider(h); this.ingest(h, header, hash); }
+    if (this.batch) {
+      for (let h = from; h <= to; ) {
+        const want = Math.min(512, to - h + 1);
+        const rows = await this.batch(h, want);
+        if (!rows.length) throw new Error(`batch provider returned no headers at ${h}`);
+        for (const r of rows.slice(0, want)) { this.ingest(h, r.header, r.hash); h++; }
+      }
+    } else {
+      for (let h = from; h <= to; h++) { const { header, hash } = await this.provider(h); this.ingest(h, header, hash); }
+    }
     if (!this.tip) throw new Error("sync produced no tip");
     return this.tip;
   }
@@ -212,6 +229,50 @@ export class LightClient {
     const u = await this.client.utxos(addr);
     return { confirmed: u.confirmed_balance, trustLevel: "rpc-trusted", note: "balance is RPC-trusted; a header chain cannot prove non-spend (no UTXO commitment)" };
   }
+
+  /**
+   * Serialize the verified chain for persistence. A long-lived consumer (wallet, bridge differ)
+   * snapshots on shutdown and `fromSnapshot`s on boot instead of re-fetching FULL BLOCK BODIES
+   * for the whole window every restart (the default provider's per-header cost). Headers only —
+   * tiny (≈100 bytes/height as JSON).
+   */
+  toSnapshot(): ChainSnapshot {
+    return {
+      v: 1, baseHeight: this.baseHeight,
+      headers: this.chain.map((c) => ({ height: c.height, hash: c.hash, header: c.header, chainwork: c.chainwork.toString(), trusted: c.trusted ?? false })),
+    };
+  }
+
+  /**
+   * Restore from a snapshot. The load RE-VERIFIES cheaply — hash recomputation, prev links, PoW
+   * on every header (the same posture as `seedTrusted`: a tampered snapshot file cannot smuggle
+   * a fake chain past the PoW; bits of trusted-seed headers are not LWMA-re-derived, matching
+   * how they were accepted originally). chainwork is recomputed, never read from the file.
+   */
+  static fromSnapshot(s: ChainSnapshot, opts: LightClientOptions = {}): LightClient {
+    if (s.v !== 1 || !Array.isArray(s.headers) || !s.headers.length) throw new Error("bad snapshot");
+    const lc = new LightClient(opts);
+    lc.baseHeight = s.baseHeight;
+    let prevHash: string | null = null;
+    let work = 0n;
+    for (let i = 0; i < s.headers.length; i++) {
+      const e = s.headers[i]!;
+      if (e.height !== s.baseHeight + i) throw new Error(`snapshot not contiguous at ${e.height}`);
+      const hash = headerHash(e.header);
+      if (hash.toLowerCase() !== e.hash.toLowerCase()) throw new Error(`snapshot hash mismatch at ${e.height}`);
+      if (prevHash && e.header.prev.toLowerCase() !== prevHash) throw new Error(`snapshot prev link broken at ${e.height}`);
+      if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${e.height}`);
+      work = satAddWork(work, e.header.bits);
+      lc.chain.push({ height: e.height, hash, header: e.header, chainwork: work, ...(e.trusted ? { trusted: true } : {}) });
+      prevHash = hash.toLowerCase();
+    }
+    return lc;
+  }
+}
+
+export interface ChainSnapshot {
+  v: 1; baseHeight: number;
+  headers: { height: number; hash: string; header: BlockHeader; chainwork: string; trusted: boolean }[];
 }
 
 export { CsdClient, rpcHeaderToHeader } from "@inversealtruism/csd-client";

@@ -62,5 +62,20 @@ throws("REFUSES negative output value", () => txToNodeJson({ ...baseTx, outputs:
 throws("REFUSES non-integer output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1.5, scriptPubkey: RCPT }] }));
 throws("REFUSES Propose expires_epoch > 2^53", () => txToNodeJson({ ...baseTx, app: { type: "Propose", domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 9007199254740993n } }));
 
+console.log("\n— DvP value outputs on Propose/Attest (consensus F4) —");
+{
+  const dvp = buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 100, confidence: 100, fee: 5_000_000,
+    outputs: [{ to: RCPT, value: 40_000_000 }], utxos: [utxo(2e8)], priv: PRIV });
+  ok("attest+payment builds (atomic DvP shape)", dvp.ok === true);
+  ok("payment output present with exact value", dvp.tx!.outputs.some((o) => o.value === 40_000_000 && String(o.scriptPubkey).toLowerCase() === RCPT.toLowerCase()));
+  ok("change returns to sender", dvp.tx!.outputs.some((o) => String(o.scriptPubkey).toLowerCase() === addrFromPriv(PRIV).toLowerCase()));
+  const bad = buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 100, confidence: 100, fee: 5_000_000,
+    outputs: [{ to: RCPT, value: 0 }], utxos: [utxo(2e8)], priv: PRIV });
+  ok("zero-value output refused", bad.ok === false);
+  const dvpP = buildPropose({ domain: "cairnx:v1", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 10,
+    fee: 25_000_000, outputs: [{ to: RCPT, value: 100_000_000 }], utxos: [utxo(3e8)], priv: PRIV });
+  ok("propose+fee-output builds (fee-bearing record shape)", dvpP.ok === true && dvpP.tx!.outputs.some((o) => o.value === 100_000_000));
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

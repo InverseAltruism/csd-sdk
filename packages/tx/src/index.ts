@@ -123,21 +123,40 @@ export function buildSend(p: { outputs: { to: string; value: number }[]; fee: nu
   return selectAndAssemble(p.utxos, outs, p.fee, { type: "None" }, p.priv);
 }
 
-/** Build + sign a Propose (fee paid via input−change; no value output beyond change). */
-export function buildPropose(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string }): BuildResult {
+// Consensus fact F4: a Propose/Attest tx's value outputs are UNRESTRICTED — one tx can carry an
+// app payload AND pay arbitrary addresses. That is the chain's native delivery-versus-payment
+// kernel (a CairnX "fill" = an Attest whose same tx pays the seller; a fee-bearing record = a
+// Propose whose same tx pays the treasury). `outputs` makes that shape first-class so consumers
+// stop re-implementing the validate→select→change→sign pipeline (and silently losing this
+// file's hardening, e.g. the feerate floor).
+const valueOuts = (outputs?: { to: string; value: number }[]): TxOutput[] | { error: string } => {
+  const outs: TxOutput[] = [];
+  for (const o of outputs ?? []) {
+    if (!(Number(o.value) > 0)) return { error: "each value output must be positive" };
+    outs.push({ value: Number(o.value), scriptPubkey: String(o.to) });
+  }
+  return outs;
+};
+
+/** Build + sign a Propose. Optional `outputs` ride in the SAME tx (atomic payment + record). */
+export function buildPropose(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[] }): BuildResult {
   if (p.fee < MIN_FEE_PROPOSE) return { ok: false, error: `propose fee must be ≥ ${MIN_FEE_PROPOSE} (0.25 CSD)` };
-  return selectAndAssemble(p.utxos, [], p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv);
+  const outs = valueOuts(p.outputs);
+  if ("error" in outs) return { ok: false, error: outs.error };
+  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv);
 }
 
-/** Build + sign an Attest (fee = weight). */
-export function buildAttest(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string }): BuildResult {
+/** Build + sign an Attest (fee = weight). Optional `outputs` ride in the SAME tx (atomic DvP). */
+export function buildAttest(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[] }): BuildResult {
   if (p.fee < MIN_FEE_ATTEST) return { ok: false, error: `attest fee must be ≥ ${MIN_FEE_ATTEST} (0.05 CSD)` };
   // REJECT (don't silently `>>>0`-wrap) out-of-range score/confidence: a wrap changes the caller's
   // intent into different signed bytes (e.g. CairnX's CONF_TOKEN_FILL=1_000_000 marker must commit
   // exactly). The codec u32 guard would also catch it now, but failing here gives a clear field name.
   if (!Number.isSafeInteger(p.score) || p.score < 0 || p.score > 0xffff_ffff) return { ok: false, error: `score ${p.score} out of u32 range` };
   if (!Number.isSafeInteger(p.confidence) || p.confidence < 0 || p.confidence > 0xffff_ffff) return { ok: false, error: `confidence ${p.confidence} out of u32 range` };
-  return selectAndAssemble(p.utxos, [], p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv);
+  const outs = valueOuts(p.outputs);
+  if ("error" in outs) return { ok: false, error: outs.error };
+  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv);
 }
 
 export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";

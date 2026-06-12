@@ -19,31 +19,56 @@ export interface RpcUtxo { txid: string; vout: number; value: number; height: nu
 export interface RpcUtxos { ok: boolean; addr20: string; count: number; confirmed_balance: number; utxos: RpcUtxo[] }
 export interface RpcSubmit { ok: boolean; txid: string; mempool_len?: number; err?: string | null }
 
-export interface ClientOptions { baseUrl: string; fetch?: typeof fetch; timeoutMs?: number }
+export interface RpcProposal {
+  ok?: boolean; txid: string; domain: string; payload_hash: string; uri: string;
+  expires_epoch: number; proposer: string; height: number; attestations?: unknown[];
+  [k: string]: unknown;
+}
+export interface RpcTxInfo { ok: boolean; txid: string; block_hash?: string; height?: number; time?: number; tx?: RpcTxJson; err?: string }
+export interface RpcHealth { ok: boolean; height?: number; peers?: number; mempool_len?: number; [k: string]: unknown }
+export interface WaitForTxResult { txid: string; height: number; confirmations: number }
+
+export interface ClientOptions {
+  baseUrl: string; fetch?: typeof fetch; timeoutMs?: number;
+  /** retry NETWORK failures (timeouts, refused, 5xx) this many times with jittered backoff.
+   *  NEVER retries an application result (`ok:false`) or 4xx — those are answers, not outages. */
+  retries?: number;
+}
 
 export class CsdClient {
   private readonly base: string;
   private readonly f: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly retries: number;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
     this.f = opts.fetch ?? globalThis.fetch;
     this.timeoutMs = opts.timeoutMs ?? 10_000;
+    this.retries = Math.max(0, opts.retries ?? 0);
     if (!this.f) throw new Error("no fetch available — pass opts.fetch");
   }
 
-  private async get<T>(path: string): Promise<T> {
-    const r = await this.f(`${this.base}${path}`, { signal: AbortSignal.timeout(this.timeoutMs) });
-    if (!r.ok) throw new Error(`GET ${path} → HTTP ${r.status}`);
-    return r.json() as Promise<T>;
+  private async req<T>(path: string, init?: RequestInit): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await this.f(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
+        if (r.status >= 500 && attempt < this.retries) { lastErr = new Error(`HTTP ${r.status}`); }
+        else if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`);
+        else return (await r.json()) as T;
+      } catch (e) {
+        if (attempt >= this.retries) throw e;
+        lastErr = e;
+      }
+      // full-jitter backoff: 250ms·2^attempt, capped at 5s
+      const cap = Math.min(5_000, 250 * 2 ** attempt);
+      await new Promise((res) => setTimeout(res, Math.floor(Math.random() * cap)));
+      void lastErr;
+    }
   }
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    const r = await this.f(`${this.base}${path}`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!r.ok) throw new Error(`POST ${path} → HTTP ${r.status}`);
-    return r.json() as Promise<T>;
+  private get<T>(path: string): Promise<T> { return this.req<T>(path); }
+  private post<T>(path: string, body: unknown): Promise<T> {
+    return this.req<T>(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   }
 
   // The node returns application errors as `{ok:false, err}` with HTTP **200**, so a bare `get()`
@@ -60,13 +85,38 @@ export class CsdClient {
   health(): Promise<any> { return this.get("/health"); }
   blockByHeight(h: number): Promise<RpcBlock> { return this.getOk(`/block/height/${h}`); }
   blockByHash(hash: string): Promise<RpcBlock> { return this.getOk(`/block/${hash}`); }
-  tx(id: string): Promise<{ ok: boolean; txid: string; block_hash?: string; height?: number; time?: number; tx?: RpcTxJson; err?: string }> { return this.get(`/tx/${id}`); }
+  tx(id: string): Promise<RpcTxInfo> { return this.get(`/tx/${id}`); }
   utxos(addr: string): Promise<RpcUtxos> { return this.get(`/utxos/${addr}`); }
-  proposal(id: string): Promise<any> { return this.get(`/proposal/${id}`); }
-  proposals(domain: string, limit = 40): Promise<any> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
-  topDomain(domain: string, epoch?: number): Promise<any> { return this.get(epoch == null ? `/top/${encodeURIComponent(domain)}` : `/top/${encodeURIComponent(domain)}/${epoch}`); }
-  domains(): Promise<any> { return this.get("/domains"); }
-  mempool(): Promise<any> { return this.get("/mempool"); }
+  proposal(id: string): Promise<RpcProposal> { return this.get(`/proposal/${id}`); }
+  proposals(domain: string, limit = 40): Promise<RpcProposal[]> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
+  topDomain(domain: string, epoch?: number): Promise<unknown> { return this.get(epoch == null ? `/top/${encodeURIComponent(domain)}` : `/top/${encodeURIComponent(domain)}/${epoch}`); }
+  domains(): Promise<string[]> { return this.get("/domains"); }
+  mempool(): Promise<unknown> { return this.get("/mempool"); }
+
+  /**
+   * Await a txid reaching `confirmations` (default 1) — the submit-then-confirm flow every
+   * consumer was hand-rolling. Polls /tx + /tip; resolves {txid, height, confirmations};
+   * rejects on timeout (default 10 min — CSD blocks are ~2 min but the live miner is lumpy).
+   * A tx that drops OUT of the chain mid-wait (reorg) keeps polling until it re-confirms or
+   * times out — never resolves on a stale sighting.
+   */
+  async waitForTx(txid: string, opts: { confirmations?: number; timeoutMs?: number; pollMs?: number } = {}): Promise<WaitForTxResult> {
+    const want = Math.max(1, opts.confirmations ?? 1);
+    const deadline = Date.now() + (opts.timeoutMs ?? 600_000);
+    const poll = Math.max(500, opts.pollMs ?? 5_000);
+    for (;;) {
+      try {
+        const t = await this.tx(txid);
+        if (t.ok && t.height != null) {
+          const tip = await this.tip();
+          const conf = tip.height - t.height + 1;
+          if (conf >= want) return { txid, height: t.height, confirmations: conf };
+        }
+      } catch { /* transient read failure — keep waiting */ }
+      if (Date.now() > deadline) throw new Error(`waitForTx ${txid}: not at ${want} confirmation(s) within ${opts.timeoutMs ?? 600_000}ms`);
+      await new Promise((res) => setTimeout(res, poll));
+    }
+  }
 
   /**
    * Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`).

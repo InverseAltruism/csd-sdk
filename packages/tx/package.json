@@ -1,7 +1,7 @@
 {
   "name": "@inversealtruism/csd-tx",
-  "version": "0.1.4",
-  "description": "Compute Substrate transaction builder — coin selection, fee sizing, buildSend/Propose/Attest, signTx, node-submit JSON. p2pkh-only, SafeInteger-guarded.",
+  "version": "0.1.5",
+  "description": "Compute Substrate transaction builder \u2014 coin selection, fee sizing, buildSend/Propose/Attest, signTx, node-submit JSON. p2pkh-only, SafeInteger-guarded.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
