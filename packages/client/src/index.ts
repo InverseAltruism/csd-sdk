@@ -33,6 +33,13 @@ export interface ClientOptions {
   /** retry NETWORK failures (timeouts, refused, 5xx) this many times with jittered backoff.
    *  NEVER retries an application result (`ok:false`) or 4xx — those are answers, not outages. */
   retries?: number;
+  /**
+   * Hard ceiling (bytes) on a response body before it is parsed. A lying/malicious node can
+   * otherwise stream a multi-hundred-MB body that the verifier buffers (`await r.json()`) and
+   * OOM-crashes BEFORE any PoW/merkle/LWMA check runs — a remote DoS of the trusted light-client
+   * path (audit M2). Default 16 MiB ≫ any real block; raise it for an unusually large block source.
+   */
+  maxResponseBytes?: number;
 }
 
 export class CsdClient {
@@ -40,8 +47,10 @@ export class CsdClient {
   private readonly f: typeof fetch;
   private readonly timeoutMs: number;
   private readonly retries: number;
+  private readonly maxBytes: number;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
+    this.maxBytes = Math.max(1, opts.maxResponseBytes ?? 16 * 1024 * 1024);
     // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
     // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
     // `globalThis.fetch` and invoking it via `this.f` did exactly that, so any browser consumer that
@@ -60,7 +69,7 @@ export class CsdClient {
         const r = await this.f(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
         if (r.status >= 500 && attempt < this.retries) { lastErr = new Error(`HTTP ${r.status}`); }
         else if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`);
-        else return (await r.json()) as T;
+        else return (await this.readCapped(r, path)) as T;
       } catch (e) {
         if (attempt >= this.retries) throw e;
         lastErr = e;
@@ -71,6 +80,41 @@ export class CsdClient {
       void lastErr;
     }
   }
+  /**
+   * Read a response body as JSON with a hard byte ceiling (`maxResponseBytes`). Rejects an
+   * oversized `Content-Length` up front, and otherwise streams the body and aborts the moment
+   * it exceeds the cap — so a malicious node cannot make us buffer a giant body and OOM before
+   * we ever validate it (audit M2). Falls back to a size-checked `text()` on runtimes without a
+   * streaming body (older MV3/Node), preserving the cap as a best effort.
+   */
+  private async readCapped(r: Response, path: string): Promise<unknown> {
+    const max = this.maxBytes;
+    const cl = r.headers.get("content-length");
+    if (cl && Number(cl) > max) throw new Error(`GET ${path} → response too large (${cl} > ${max} bytes)`);
+    const body = (r as { body?: ReadableStream<Uint8Array> | null }).body;
+    if (!body || typeof body.getReader !== "function") {
+      const t = await r.text();
+      if (t.length > max) throw new Error(`GET ${path} → response too large (${t.length} > ${max} bytes)`);
+      return JSON.parse(t);
+    }
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.length;
+        if (total > max) { try { await reader.cancel(); } catch { /* no-op */ } throw new Error(`GET ${path} → response exceeded ${max} bytes`); }
+        chunks.push(value);
+      }
+    }
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    return JSON.parse(new TextDecoder().decode(buf));
+  }
+
   private get<T>(path: string): Promise<T> { return this.req<T>(path); }
   private post<T>(path: string, body: unknown): Promise<T> {
     return this.req<T>(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

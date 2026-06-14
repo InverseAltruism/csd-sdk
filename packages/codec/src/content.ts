@@ -1,6 +1,11 @@
 // Content addressing — how an off-chain payload maps to the on-chain `payload_hash`.
 // CSD Content Convention v1: payload_hash = sha256(canonicalJson(content)).
-// Canonical JSON = recursively sorted keys, compact (no insignificant whitespace), UTF-8.
+// Canonical JSON = keys recursively sorted by **UTF-16 code unit** (JS `Array.prototype.sort` /
+// String `<`), compact (no insignificant whitespace), then serialized as UTF-8. The sort is by
+// UTF-16 code unit, NOT Unicode-codepoint or UTF-8-byte order — these agree for all BMP-below-
+// U+FFFF text but DIVERGE at the astral boundary (U+FFFF sorts AFTER an astral key under UTF-16
+// but BEFORE it under codepoint/UTF-8). A non-JS port MUST replicate UTF-16-code-unit key order
+// (or pre-reject keys with codepoints > U+FFFF) or it will hash some objects differently.
 // (This is the ecosystem convention L1's content swarm keys on; lifted from Cairn's
 // proven `stableStringify`/`buildCommitment`.)
 import { sha256 } from "@noble/hashes/sha256";

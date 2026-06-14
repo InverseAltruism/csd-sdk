@@ -65,6 +65,24 @@ function isWellFormedDeep(v: unknown): boolean {
 }
 
 /**
+ * True iff `r` has NO key outside `allowed`. The value-bearing records (deploy/mint/transfer/
+ * offer/bid) historically validated only the keys they READ, silently ignoring any extra key —
+ * which let a decoy object key ride along on a value-bearing record. A decoy key in the astral
+ * range (e.g. U+10000) sorts BEFORE a BMP key under JS UTF-16 `Array.sort` but AFTER it under a
+ * Rust/Go/Python UTF-8-byte/codepoint sort, so the SAME object canonicalizes to different bytes
+ * and two honest resolvers disagree on whether the record applied — a cross-language consensus
+ * fork (audit M1). An exact-key allowlist makes such decoy keys an invalid no-op everywhere.
+ * (ncommit/nxfer/nset/nrenew/tmeta/ocancel already enforce this via Object.keys length.)
+ */
+const onlyKeys = (r: Record<string, unknown>, allowed: ReadonlySet<string>): boolean =>
+  Object.keys(r).every((k) => allowed.has(k));
+const DEPLOY_KEYS = new Set(["v", "t", "ticker", "name", "decimals", "supply", "mint", "mintLimit"]);
+const MINT_KEYS = new Set(["v", "t", "ticker", "amount"]);
+const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo", "ts"]);
+const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
+const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
+
+/**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
  * per CONVENTION §3, invalid is a no-op, never an error that poisons the replay.
  * Requirements enforced here: uri is canonical JSON of the record, ≤512 bytes,
@@ -91,6 +109,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
 
   switch (r.t) {
     case "deploy": {
+      if (!onlyKeys(r, DEPLOY_KEYS)) return null;
       if (!isTicker(r.ticker)) return null;
       // `.length` = UTF-16 code units IS the consensus unit (CONVENTION A6): an astral codepoint is 2
       // units, so a port counting codepoints/bytes would fork at the 32-unit boundary. Keep `.length`.
@@ -103,17 +122,23 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       return r as unknown as DeployRecord;
     }
     case "mint": {
+      if (!onlyKeys(r, MINT_KEYS)) return null;
       if (!isTicker(r.ticker)) return null;
       if (r.amount !== undefined && parseAmount(r.amount) === null) return null;
       return r as unknown as MintRecord;
     }
     case "transfer": {
+      if (!onlyKeys(r, TRANSFER_KEYS)) return null;
       if (!isTicker(r.ticker) || !isAddr(r.to) || parseAmount(r.amount) === null) return null;
       if (r.memo !== undefined && (typeof r.memo !== "string" || r.memo.length > 64)) return null;
-      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isInteger(r.ts))) return null;
+      // Number.isSafeInteger (not just isInteger): a `ts` ≥ 2^53 (or 1e21, which IS an integer)
+      // serializes as the JS-specific "1e+21" / loses precision, forking the canonical bytes vs a
+      // u64/decimal porter (audit M1). Bounding to the safe range makes every honest impl agree.
+      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isSafeInteger(r.ts))) return null;
       return r as unknown as TransferRecord;
     }
     case "offer": {
+      if (!onlyKeys(r, OFFER_KEYS)) return null;
       const g = r.give as Record<string, unknown> | undefined;
       const w = r.want as Record<string, unknown> | undefined;
       if (!g || !w || typeof g !== "object" || Array.isArray(g) || typeof w !== "object" || Array.isArray(w)) return null;
@@ -141,7 +166,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       if (r.bid !== undefined && !isHash(r.bid)) return null;
       if (r.taker !== undefined && !isAddr(r.taker)) return null;
       if (r.memo !== undefined && (typeof r.memo !== "string" || r.memo.length > 64)) return null;
-      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isInteger(r.ts))) return null;
+      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isSafeInteger(r.ts))) return null;
       return r as unknown as OfferRecord;
     }
     case "ocancel": {
@@ -154,6 +179,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       return r as unknown as OfferCancelAllRecord;
     }
     case "bid": {
+      if (!onlyKeys(r, BID_KEYS)) return null;
       const w = r.want as Record<string, unknown> | undefined;
       const g = r.give as Record<string, unknown> | undefined;
       if (!w || !g || typeof w !== "object" || Array.isArray(w) || typeof g !== "object" || Array.isArray(g)) return null;
@@ -163,7 +189,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       else return null;
       if (Object.keys(g).sort().join(",") !== "value" || parseAmount(g.value) === null) return null; // CSD > 0
       if (r.memo !== undefined && (typeof r.memo !== "string" || r.memo.length > 64)) return null;
-      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isInteger(r.ts))) return null;
+      if (r.ts !== undefined && (typeof r.ts !== "number" || !Number.isSafeInteger(r.ts))) return null;
       return r as unknown as BidRecord;
     }
     // ── names (v1.1) ──
