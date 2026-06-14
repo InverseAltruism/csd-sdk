@@ -77,5 +77,24 @@ console.log("\n— DvP value outputs on Propose/Attest (consensus F4) —");
   ok("propose+fee-output builds (fee-bearing record shape)", dvpP.ok === true && dvpP.tx!.outputs.some((o) => o.value === 100_000_000));
 }
 
+console.log("\n— max-fee backstop (UTXO-VALUE-1: no silent fund-burn via absurd fee) —");
+{
+  // honest fees pass: a tiny transfer fee, and a fee-only Propose at its 0.25 CSD floor.
+  ok("normal transfer fee passes the backstop", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1e9)], priv: PRIV }).ok === true);
+  ok("Propose at the 0.25 CSD floor passes (under the 1 CSD abs cap)", buildPropose({ domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [utxo(1e9)], priv: PRIV }).ok === true);
+  // ATTACK: a hostile RPC under-reports the input → the wrapper assembles a tx whose fee swallows
+  // almost the whole input (change collapsed). Simulate by requesting an absurd fee on a small input.
+  const burn = buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 990_000_000, utxos: [utxo(1_000_000_100)], priv: PRIV });
+  ok("REFUSES an absurd fee that would burn ~all of the input (collapsed change)", burn.ok === false && /max-fee backstop/.test(String(burn.error)));
+  // the backstop is both-conditions: a fee above 1 CSD but well within 10% of a large input is fine.
+  ok("a 1+ CSD fee on a large input (≤10%) still passes", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 200_000_000, utxos: [utxo(5_000_000_000)], priv: PRIV }).ok === true);
+  // explicit override: a caller can deliberately authorize a higher fee.
+  ok("maxFee override lets a deliberate high fee through", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 990_000_000, utxos: [utxo(1_000_000_100)], priv: PRIV, maxFee: 1_000_000_000 }).ok === true);
+  ok("a too-low maxFee can also tighten the cap (rejects an otherwise-fine fee)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 200_000_000, utxos: [utxo(5_000_000_000)], priv: PRIV, maxFee: 50_000_000 }).ok === false);
+  // an attest's weight IS the user's deliberate stake — never blocked by the default backstop.
+  ok("attest weight (its fee) is honored even above the abs cap", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 1, confidence: 1, fee: 300_000_000, utxos: [utxo(5e9)], priv: PRIV }).ok === true);
+  ok("REFUSES a negative maxFee (range-guarded)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1e9)], priv: PRIV, maxFee: -1 }).ok === false);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
