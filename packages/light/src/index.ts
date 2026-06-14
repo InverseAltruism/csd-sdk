@@ -44,7 +44,8 @@ export interface LightClientOptions {
   /** Optional BATCH header source (e.g. an indexer /headers/{from}/{count} endpoint): sync()
    *  prefers it, collapsing per-height full-block fetches into a few header-only requests. */
   headersBatchProvider?: HeadersBatchProvider;
-  /** Pin checkpoints {height: expectedHash} to bound/accelerate sync (optional). */
+  /** Pin checkpoints {height: expectedHash}: any header at a pinned height — whether synced forward,
+   *  seeded, or restored from a snapshot — must match, else it's rejected (optional trust anchor). */
   checkpoints?: Record<number, string>;
 }
 
@@ -80,6 +81,11 @@ export class LightClient {
     const startIdx = Math.max(0, height - this.baseHeight - LWMA_WINDOW);
     const endIdx = height - this.baseHeight; // exclusive
     return this.chain.slice(startIdx, endIdx).map((c) => c.header);
+  }
+  /** Enforce a pinned checkpoint hash, if one is configured for this height (the only trust anchor). */
+  private pinCheckpoint(height: number, hash: string): void {
+    const cp = this.checkpoints[height];
+    if (cp && cp.toLowerCase() !== hash.toLowerCase()) throw new Error(`checkpoint mismatch at ${height}`);
   }
 
   /** Sync + VERIFY headers [from..to] from genesis (or contiguous to the current tip). */
@@ -121,8 +127,7 @@ export class LightClient {
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
     if (!powOk(headerHashBytes(header), header.bits)) throw new Error(`invalid PoW at ${height}`);
-    const cp = this.checkpoints[height];
-    if (cp && cp.toLowerCase() !== hash.toLowerCase()) throw new Error(`checkpoint mismatch at ${height}`);
+    this.pinCheckpoint(height, hash);
     return { height, hash, header, chainwork: satAddWork(parent?.chainwork ?? 0n, header.bits) };
   }
 
@@ -146,6 +151,7 @@ export class LightClient {
       if (prevHash && s.header.prev.toLowerCase() !== prevHash.toLowerCase()) throw new Error(`seed prev link broken at ${s.height}`);
       // seed bits are trusted, but PoW must still hold (cheap, catches a garbage seed)
       if (!powOk(headerHashBytes(s.header), s.header.bits)) throw new Error(`seed PoW invalid at ${s.height}`);
+      this.pinCheckpoint(s.height, hash); // honour any pinned hash inside the seed window
       this.chain.push({ height: s.height, hash, header: s.header, chainwork: satAddWork(this.chain[i - 1]?.chainwork ?? 0n, s.header.bits), trusted: true });
       prevHash = hash;
     }
@@ -244,10 +250,14 @@ export class LightClient {
   }
 
   /**
-   * Restore from a snapshot. The load RE-VERIFIES cheaply — hash recomputation, prev links, PoW
-   * on every header (the same posture as `seedTrusted`: a tampered snapshot file cannot smuggle
-   * a fake chain past the PoW; bits of trusted-seed headers are not LWMA-re-derived, matching
-   * how they were accepted originally). chainwork is recomputed, never read from the file.
+   * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, PoW on every
+   * header, AND `bits` re-derived from the LWMA window for every NON-trusted (forward-synced)
+   * header, exactly as the live `sync`/`verifyOne` path accepted it. Only the original seed window
+   * (`trusted`) skips LWMA — the same posture `seedTrusted` allows for the checkpoint trade — but a
+   * snapshot cannot smuggle trust past the pinned checkpoint hash: if `checkpoints` is configured,
+   * any restored header at a pinned height must match. So a localStorage-poisoned snapshot that
+   * inserts a min-difficulty (POW_LIMIT) header is REJECTED here, not restored as verified.
+   * chainwork is recomputed, never read from the file.
    */
   static fromSnapshot(s: ChainSnapshot, opts: LightClientOptions = {}): LightClient {
     if (s.v !== 1 || !Array.isArray(s.headers) || !s.headers.length) throw new Error("bad snapshot");
@@ -262,6 +272,13 @@ export class LightClient {
       if (hash.toLowerCase() !== e.hash.toLowerCase()) throw new Error(`snapshot hash mismatch at ${e.height}`);
       if (prevHash && e.header.prev.toLowerCase() !== prevHash) throw new Error(`snapshot prev link broken at ${e.height}`);
       if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${e.height}`);
+      // NON-trusted (forward-synced) headers must satisfy the LWMA the live path enforced — else a
+      // poisoned snapshot could restore a low-difficulty chain whose PoW alone trivially passes.
+      if (!e.trusted && e.height > 0) {
+        const exp = expectedBitsFromWindow(lc.windowBefore(e.height), e.height);
+        if (e.header.bits !== exp) throw new Error(`snapshot bad bits at ${e.height}: ${e.header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
+      }
+      lc.pinCheckpoint(e.height, hash); // the baked checkpoint hash is the one true anchor
       work = satAddWork(work, e.header.bits);
       lc.chain.push({ height: e.height, hash, header: e.header, chainwork: work, ...(e.trusted ? { trusted: true } : {}) });
       prevHash = hash.toLowerCase();

@@ -2,8 +2,9 @@
 // REAL mainnet headers. The live light.test.ts exits 0 when no node is reachable, so without this
 // the entire light client (PoW + LWMA re-derivation + checkpoint seed + inclusion + tamper
 // rejection) was UNTESTED in CI. Real headers are used so PoW/LWMA are genuine, not synthetic.
-import { LightClient, type HeaderProvider } from "../src/index.js";
-import { LWMA_WINDOW, verifyMerkleProof, merkleBranch, type BlockHeader } from "@inversealtruism/csd-codec";
+import { LightClient, expectedBitsFromWindow, type HeaderProvider } from "../src/index.js";
+import { LWMA_WINDOW, verifyMerkleProof, merkleBranch, headerHash, headerHashBytes, powOk,
+  POW_LIMIT_BITS, type BlockHeader } from "@inversealtruism/csd-codec";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -76,6 +77,56 @@ if (inclBlock) {
   lc4.seedTrusted(seed, cpHash);
   let threw = false; try { const h = byH.get(CP + 5)!; lc4.ingest(CP + 5, h.header, h.hash); } catch { threw = true; }
   ok("out-of-order ingest (skipping heights) is REJECTED", threw);
+}
+
+// 6) SG-2: a localStorage-POISONED snapshot (a MIN-DIFFICULTY header spliced into the saved chain)
+//    must be REJECTED on restore — not silently restored and later trusted as `verified-inclusion`.
+//    A real attacker forges hash + PoW to match: at POW_LIMIT (min difficulty) the PoW grind is cheap,
+//    so PoW alone passes and ONLY the SG-2 LWMA re-derivation catches it. Grinding ~min-difficulty PoW
+//    is too slow to do inline every CI run, so we bake the ground nonce as a fixed test vector against
+//    the fixture's NON-trusted tip header (no child prev-link to break). The vector is asserted to
+//    still pass PoW; if the fixture's tip bytes ever change, that assert fails loudly → regrind it.
+{
+  const honest = new LightClient({ headerProvider: provider });
+  honest.seedTrusted(seed, cpHash);
+  await honest.sync(FX.tip);
+  const snap = honest.toSnapshot();
+  const lastSnap = snap.headers[snap.headers.length - 1]!; // the forward-synced tip (trusted === false)
+  ok("snapshot tip is a NON-trusted forward-synced header (LWMA applies)", lastSnap.trusted === false);
+
+  // ground OFFLINE (test/_regrind-poison-nonce.mjs) against the committed fixture tip @27671.
+  const POISON_NONCE = 6926799;
+  const poison = { ...lastSnap.header, bits: POW_LIMIT_BITS, nonce: POISON_NONCE } as BlockHeader;
+  ok("the baked min-difficulty poison header passes PoW (else: regrind the vector)", powOk(headerHashBytes(poison), POW_LIMIT_BITS));
+  const lwmaExp = expectedBitsFromWindow(snap.headers.slice(-1 - LWMA_WINDOW, -1).map((e) => e.header), lastSnap.height);
+  ok("the poison's min-difficulty bits differ from the LWMA expectation", POW_LIMIT_BITS !== lwmaExp);
+
+  const pEntry = { ...lastSnap, header: poison, hash: headerHash(poison) }; // re-hash → the hash check passes (forged)
+  const poisonedSnap = { ...snap, headers: [...snap.headers.slice(0, -1), pEntry] };
+  let threw = false, msg = "";
+  try { LightClient.fromSnapshot(poisonedSnap); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
+  ok("a min-difficulty poisoned snapshot header is REJECTED by LWMA on restore (not verified-inclusion)", threw && /bits/.test(msg));
+
+  // and the honest snapshot still restores cleanly (no false-positive rejection)
+  let restored = false;
+  try { const r = LightClient.fromSnapshot(snap); restored = r.tip!.height === FX.tip && r.tip!.hash === lastSnap.hash; } catch { restored = false; }
+  ok("the un-poisoned snapshot restores cleanly to the right tip", restored);
+}
+
+// 7) SG-2: the `checkpoints` option is no longer inert — a restored header at a pinned height that
+//    doesn't match the pinned hash is REJECTED (the baked checkpoint is the one trust anchor).
+{
+  const honest = new LightClient({ headerProvider: provider });
+  honest.seedTrusted(seed, cpHash);
+  await honest.sync(FX.tip);
+  const snap = honest.toSnapshot();
+  let threw = false;
+  try { LightClient.fromSnapshot(snap, { checkpoints: { [FX.tip]: "0x" + "00".repeat(32) } }); } catch { threw = true; }
+  ok("fromSnapshot HONOURS a pinned checkpoint (wrong pinned hash rejected)", threw);
+  // the matching pin passes
+  let okPin = false;
+  try { const r = LightClient.fromSnapshot(snap, { checkpoints: { [FX.tip]: snap.headers[snap.headers.length - 1]!.hash } }); okPin = r.tip!.height === FX.tip; } catch { okPin = false; }
+  ok("fromSnapshot accepts a CORRECT pinned checkpoint", okPin);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

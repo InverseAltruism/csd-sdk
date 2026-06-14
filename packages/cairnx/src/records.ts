@@ -29,6 +29,42 @@ export function nameCommit(name: string, salt: string, owner: string): string {
 }
 
 /**
+ * True iff a JS string is well-formed UTF-16 (no lone/unpaired surrogate). A lone surrogate has NO
+ * valid UTF-8 encoding, so per CONVENTION A1 ("raw UTF-8, never escaped") its canonical form is
+ * UNDEFINABLE: V8's JSON.stringify escapes it to ASCII `\uXXXX` and accepts, while a spec-conformant
+ * raw-UTF-8 resolver (Rust serde_json / Python / Go) rejects or mangles it to U+FFFD. That is a
+ * cross-language consensus FORK on identical chain bytes. We use the native primitive where present
+ * (Node ≥20 / modern V8) and fall back to a manual surrogate scan for older runtimes.
+ */
+function strWellFormed(s: string): boolean {
+  const wf = (String.prototype as { isWellFormed?: (this: string) => boolean }).isWellFormed;
+  if (typeof wf === "function") return wf.call(s);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {                 // high surrogate: must be followed by a low one
+      const n = s.charCodeAt(i + 1);
+      if (!(n >= 0xdc00 && n <= 0xdfff)) return false;
+      i++;
+    } else if (c >= 0xdc00 && c <= 0xdfff) {          // lone low surrogate
+      return false;
+    }
+  }
+  return true;
+}
+/** Recursively reject any non-well-formed UTF-16 string anywhere in a decoded record (keys + values). */
+function isWellFormedDeep(v: unknown): boolean {
+  if (typeof v === "string") return strWellFormed(v);
+  if (Array.isArray(v)) return v.every(isWellFormedDeep);
+  if (v && typeof v === "object") {
+    for (const [k, val] of Object.entries(v)) {
+      if (!strWellFormed(k)) return false;
+      if (!isWellFormedDeep(val)) return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
  * per CONVENTION §3, invalid is a no-op, never an error that poisons the replay.
  * Requirements enforced here: uri is canonical JSON of the record, ≤512 bytes,
@@ -44,6 +80,11 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
     if (canonicalJson(obj) !== uri) return null;
     if (payloadHash(obj).toLowerCase() !== payloadHashHex.toLowerCase()) return null;
   } catch { return null; }
+  // Determinism gate (CONVENTION A1/A5): a record carrying any non-well-formed UTF-16 string (lone
+  // surrogate) is canonically UNDEFINABLE across languages, so it is an INVALID no-op everywhere —
+  // never an ASCII-escaped record that one resolver credits and another rejects. Must run AFTER the
+  // canonical gate (the uri itself is pure-ASCII `\uXXXX`; the surrogate only exists in `obj`).
+  if (!isWellFormedDeep(obj)) return null;
 
   const r = obj as Record<string, unknown>;
   if (r.v !== 1 || typeof r.t !== "string") return null;
@@ -51,6 +92,8 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
   switch (r.t) {
     case "deploy": {
       if (!isTicker(r.ticker)) return null;
+      // `.length` = UTF-16 code units IS the consensus unit (CONVENTION A6): an astral codepoint is 2
+      // units, so a port counting codepoints/bytes would fork at the 32-unit boundary. Keep `.length`.
       if (r.name !== undefined && (typeof r.name !== "string" || r.name.length > 32)) return null;
       if (typeof r.decimals !== "number" || !Number.isInteger(r.decimals) || r.decimals < 0 || r.decimals > 8) return null;
       if (parseAmount(r.supply) === null) return null;
