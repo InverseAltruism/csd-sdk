@@ -85,8 +85,24 @@ export function signTx(tx: Tx, priv: string): Signed {
 
 export interface BuildResult extends Partial<Signed> { ok: boolean; error?: string; change?: number; inTotal?: number; fee?: number }
 
-function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: App, priv: string): BuildResult {
+// ── max-fee backstop (UTXO-VALUE-1) ──────────────────────────────────────────────────────────
+// A CSD fee is IMPLICIT (Σin − Σout) and the chain enforces NO maximum (net/mempool.rs only has a
+// MIN feerate; max_feerate_ppm is an eviction-sort hint, not a rejection rule). So if a hostile/buggy
+// RPC UNDER-reports a UTXO's value, coin selection computes too-small a change and the difference is
+// silently burned to the miner as fee — the user's own funds, gone, with no on-chain protection.
+// This is the universal client-side backstop: NO consumer of these builders can silently assemble an
+// absurd fee. The cap is deliberately GENEROUS so every honest fee passes (a fee-only Propose is
+// 0.25 CSD; a transfer fee is ~0.01 CSD) and only a clearly-abnormal fee — one that is BOTH above a
+// 1 CSD absolute floor AND more than ~10% of the inputs (the collapsed-change signature) — is
+// refused. A caller that legitimately wants a larger fee passes an explicit `maxFee` override.
+export const MAX_FEE_BACKSTOP = 100_000_000;   // 1 CSD absolute floor — every honest fee is well under this
+const MAX_FEE_INPUT_FRACTION = 0.10;           // …and ≤ 10% of inputs; a burned-change fee is ~100% of inputs
+/** The largest fee selectAndAssemble will assemble for this input total without an explicit override. */
+function feeCap(inTotal: number): number { return Math.max(MAX_FEE_BACKSTOP, Math.floor(inTotal * MAX_FEE_INPUT_FRACTION)); }
+
+function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: App, priv: string, maxFee?: number): BuildResult {
   if (!Number.isSafeInteger(fee) || fee < 0) return { ok: false, error: "fee out of range" };
+  if (maxFee !== undefined && (!Number.isSafeInteger(maxFee) || maxFee < 0)) return { ok: false, error: "maxFee out of range" };
   let sumOut = 0;
   for (const o of outs) {
     if (!isValidAddr(String(o.scriptPubkey))) return { ok: false, error: "each recipient must be a 0x… 20-byte address" };
@@ -99,6 +115,12 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
   const sel = selectInputs(utxos, need);
   if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
   const change = sel.total - need;
+  // Max-fee backstop: refuse to assemble a tx whose implied fee is clearly abnormal (the silent
+  // fund-burn class). `cap` is generous; an explicit `maxFee` raises (or lowers) it deliberately.
+  const cap = maxFee !== undefined ? maxFee : feeCap(sel.total);
+  if (fee > cap) {
+    return { ok: false, error: `fee ${fee} exceeds the max-fee backstop (${cap}); pass maxFee to override if this is intentional` };
+  }
   const outputs: TxOutput[] = [...outs];
   if (change > 0) outputs.push({ value: change, scriptPubkey: addr });
   const tx: Tx = { version: 1, locktime: 0, app, inputs: sel.inputs.map((i) => ({ prevTxid: i.txid, vout: i.vout, scriptSig: "0x" })), outputs };
@@ -115,12 +137,16 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
   return { ok: true, ...signed, change, inTotal: sel.total, fee };
 }
 
-/** Build + sign a 1→many transfer (None app). Change → sender. */
-export function buildSend(p: { outputs: { to: string; value: number }[]; fee: number; utxos: Utxo[]; priv: string }): BuildResult {
+/**
+ * Build + sign a 1→many transfer (None app). Change → sender.
+ * `maxFee` (optional) overrides the generous max-fee backstop — pass it only to deliberately
+ * authorize a fee above the default cap (default: max(1 CSD, 10% of inputs)).
+ */
+export function buildSend(p: { outputs: { to: string; value: number }[]; fee: number; utxos: Utxo[]; priv: string; maxFee?: number }): BuildResult {
   if (!p.outputs?.length) return { ok: false, error: "at least one output required" };
   for (const o of p.outputs) if (!(Number(o.value) > 0)) return { ok: false, error: "each send amount must be positive" };
   const outs: TxOutput[] = p.outputs.map((o) => ({ value: Number(o.value), scriptPubkey: String(o.to) }));
-  return selectAndAssemble(p.utxos, outs, p.fee, { type: "None" }, p.priv);
+  return selectAndAssemble(p.utxos, outs, p.fee, { type: "None" }, p.priv, p.maxFee);
 }
 
 // Consensus fact F4: a Propose/Attest tx's value outputs are UNRESTRICTED — one tx can carry an
@@ -138,16 +164,22 @@ const valueOuts = (outputs?: { to: string; value: number }[]): TxOutput[] | { er
   return outs;
 };
 
-/** Build + sign a Propose. Optional `outputs` ride in the SAME tx (atomic payment + record). */
-export function buildPropose(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[] }): BuildResult {
+/** Build + sign a Propose. Optional `outputs` ride in the SAME tx (atomic payment + record). `maxFee` overrides the backstop. */
+export function buildPropose(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[]; maxFee?: number }): BuildResult {
   if (p.fee < MIN_FEE_PROPOSE) return { ok: false, error: `propose fee must be ≥ ${MIN_FEE_PROPOSE} (0.25 CSD)` };
   const outs = valueOuts(p.outputs);
   if ("error" in outs) return { ok: false, error: outs.error };
-  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv);
+  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv, p.maxFee);
 }
 
-/** Build + sign an Attest (fee = weight). Optional `outputs` ride in the SAME tx (atomic DvP). */
-export function buildAttest(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[] }): BuildResult {
+/**
+ * Build + sign an Attest (fee = weight). Optional `outputs` ride in the SAME tx (atomic DvP).
+ * Here the fee IS the user's deliberate attestation weight (stake) and is the SIGNED fee, so the
+ * default backstop is the generous max(explicit weight, cap) — the explicit weight is always
+ * honored as intent, and any larger implied burn (e.g. from an under-reporting RPC) is still caught
+ * at the RPC-facing layers that compute change from verified values. Pass `maxFee` to tighten/raise.
+ */
+export function buildAttest(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[]; maxFee?: number }): BuildResult {
   if (p.fee < MIN_FEE_ATTEST) return { ok: false, error: `attest fee must be ≥ ${MIN_FEE_ATTEST} (0.05 CSD)` };
   // REJECT (don't silently `>>>0`-wrap) out-of-range score/confidence: a wrap changes the caller's
   // intent into different signed bytes (e.g. CairnX's CONF_TOKEN_FILL=1_000_000 marker must commit
@@ -156,7 +188,10 @@ export function buildAttest(p: { proposalId: string; score: number; confidence: 
   if (!Number.isSafeInteger(p.confidence) || p.confidence < 0 || p.confidence > 0xffff_ffff) return { ok: false, error: `confidence ${p.confidence} out of u32 range` };
   const outs = valueOuts(p.outputs);
   if ("error" in outs) return { ok: false, error: outs.error };
-  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv);
+  // The attest weight is deliberate; default the cap to honor it (never block the user's own stake),
+  // while still allowing an explicit override to tighten it.
+  const maxFee = p.maxFee !== undefined ? p.maxFee : Math.max(p.fee, MAX_FEE_BACKSTOP);
+  return selectAndAssemble(p.utxos, outs, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv, maxFee);
 }
 
 export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";

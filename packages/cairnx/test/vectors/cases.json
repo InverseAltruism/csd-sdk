@@ -2668,6 +2668,241 @@
      }
     }
    }
+  },
+  {
+   "name": "determinism-extra-astral-key-on-transfer-rejected",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"100000\",\"t\":\"deploy\",\"ticker\":\"GIV\",\"v\":1}",
+     "payloadHash": "0xd1d3091a6ccb1d6e94cff25b3ab4ae60cd895a8e232c3138b27f2d7f878a16ca",
+     "height": 32000,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000002",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"GIV\",\"v\":1}",
+     "payloadHash": "0x438834f4c28d899a276bb79ae51aa3c747ce532800695eb57cbb87eb4bb32e80",
+     "height": 32000,
+     "pos": 2,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000003",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"500\",\"t\":\"transfer\",\"ticker\":\"GIV\",\"to\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"v\":1,\"𐀀\":0}",
+     "payloadHash": "0xb8672f90d326f1ab8edafc99dce05f1b7906ba2b5e93c2b39f672c3fc42cfbdd",
+     "height": 32001,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"7\",\"t\":\"transfer\",\"ticker\":\"GIV\",\"to\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"v\":1}",
+     "payloadHash": "0xa28e32145524e8b491eff1f5c3fb04ea0747f242f9a8c7ffe57c2b2eb0087c2e",
+     "height": 32002,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 32100,
+   "expectedState": {
+    "balances": {
+     "GIV": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+       "available": "993",
+       "locked": "0"
+      },
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+       "available": "7",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "100000000",
+    "names": {},
+    "offers": {},
+    "tipHeight": 32100,
+    "tokens": {
+     "GIV": {
+      "decimals": 0,
+      "deployId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "deployer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "height": 32000,
+      "mint": "issuer",
+      "minted": "1000",
+      "supply": "100000",
+      "ticker": "GIV"
+     }
+    }
+   }
+  },
+  {
+   "name": "determinism-large-ts-on-transfer-rejected",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000011",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"100000\",\"t\":\"deploy\",\"ticker\":\"TSX\",\"v\":1}",
+     "payloadHash": "0x8d3adb22c30e5b5add9953be52112202d68a1fd70fdd703cd3c581323d158472",
+     "height": 32000,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000012",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"TSX\",\"v\":1}",
+     "payloadHash": "0x33c9fd6b1c1462a34e828802d5b93b5db76e631430ef65080decf19cd21398dc",
+     "height": 32000,
+     "pos": 2,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000013",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"500\",\"t\":\"transfer\",\"ticker\":\"TSX\",\"to\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"ts\":1e+21,\"v\":1}",
+     "payloadHash": "0x57286a9bfaaf63134b10f5972ecf3d55f697d3a4c3549ed880fda94877528681",
+     "height": 32001,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000014",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"9\",\"t\":\"transfer\",\"ticker\":\"TSX\",\"to\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"ts\":1781000000,\"v\":1}",
+     "payloadHash": "0x1233d2086a68c1aabf4c0087a35458f0fcbff06f2666cbb0148abf0ac421894e",
+     "height": 32002,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 32100,
+   "expectedState": {
+    "balances": {
+     "TSX": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+       "available": "991",
+       "locked": "0"
+      },
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+       "available": "9",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "100000000",
+    "names": {},
+    "offers": {},
+    "tipHeight": 32100,
+    "tokens": {
+     "TSX": {
+      "decimals": 0,
+      "deployId": "0x0000000000000000000000000000000000000000000000000000000000000011",
+      "deployer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "height": 32000,
+      "mint": "issuer",
+      "minted": "1000",
+      "supply": "100000",
+      "ticker": "TSX"
+     }
+    }
+   }
+  },
+  {
+   "name": "determinism-unsafe-expiresEpoch-offer-rejected",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000021",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"decimals\":0,\"mint\":\"open\",\"mintLimit\":\"100000\",\"supply\":\"100000\",\"t\":\"deploy\",\"ticker\":\"EXP\",\"v\":1}",
+     "payloadHash": "0x25d08a31672da2fd684052624815c4f86e04d21137301826325b21129fed6f9f",
+     "height": 32000,
+     "pos": 1,
+     "expiresEpoch": 1498,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000022",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"EXP\",\"v\":1}",
+     "payloadHash": "0x0547a5fd92b81e586d826bc011134635eac294f1a859c707049e51734ed4c445",
+     "height": 32000,
+     "pos": 2,
+     "expiresEpoch": 1498,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x0000000000000000000000000000000000000000000000000000000000000023",
+     "proposer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "uri": "{\"give\":{\"amount\":\"100\",\"ticker\":\"EXP\"},\"t\":\"offer\",\"taker\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"v\":1,\"want\":{\"value\":\"1000\"}}",
+     "payloadHash": "0xbb21c4f5431d4d6660ff18ca7e5dea8b68fa492c0fe090a2f4535cdc1826b1f7",
+     "height": 32001,
+     "pos": 1,
+     "expiresEpoch": 9007199254740992,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 32100,
+   "expectedState": {
+    "balances": {
+     "EXP": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+       "available": "1000",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "100000000",
+    "names": {},
+    "offers": {},
+    "tipHeight": 32100,
+    "tokens": {
+     "EXP": {
+      "decimals": 0,
+      "deployId": "0x0000000000000000000000000000000000000000000000000000000000000021",
+      "deployer": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "height": 32000,
+      "mint": "open",
+      "mintLimit": "100000",
+      "minted": "1000",
+      "supply": "100000",
+      "ticker": "EXP"
+     }
+    }
+   }
   }
  ]
 }

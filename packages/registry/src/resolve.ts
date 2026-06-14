@@ -111,7 +111,14 @@ export function reverseIdentity(records: ChainRecord[], address: string, opts: R
   let best: ResolvedIdentity | null = null;
   for (const h of handles) {
     const res = resolveIdentity(records, h, opts);
-    if (res && res.address.toLowerCase() === addr && (!best || res.weight > best.weight)) best = res;
+    // Highest weight wins; ties broken by the SAME stable anchor key the forward path uses
+    // (proposalId asc — a unique txid). Without this tiebreak the winner depended on `handles`
+    // iteration (= record feed) order, so two honest indexers/clients fed the same chain in a
+    // different order could return DIFFERENT primary names for an address that owns ≥2 equal-weight
+    // handles — a determinism fork of the L3 recompute-to-verify guarantee (audit M4).
+    if (res && res.address.toLowerCase() === addr &&
+        (!best || res.weight > best.weight ||
+         (res.weight === best.weight && res.proposalId < best.proposalId))) best = res;
   }
   return best;
 }

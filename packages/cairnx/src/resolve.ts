@@ -240,6 +240,11 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         }
         const payto = (rec.want.payto ?? who).toLowerCase();
         if (payto === TREASURY_ADDR) { note(ev, ev.id, "offer", false, "payto cannot be the protocol treasury"); continue; }
+        // expiresEpoch is an unbounded on-chain u64; one ≥ 2^53 is stored verbatim into the OPEN
+        // offer's canonical state and serializes as the JS-specific "1e+21"/loses precision —
+        // forking sha256(canonicalState) vs a u64/decimal resolver (audit M1). No live offer is
+        // anywhere near 2^53 (max ~1e5), so rejecting the unrepresentable range is replay-identical.
+        if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "offer", false, "expiresEpoch out of safe-integer range"); continue; }
         if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "offer", false, "already expired at anchor"); continue; }
         const give: Give = rec.give;
         if (isNameGive(give)) {
@@ -283,6 +288,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
 
       } else if (rec.t === "bid") {
         if (!v12) { note(ev, ev.id, "bid", false, "bids need v1.2"); continue; }
+        if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "bid", false, "expiresEpoch out of safe-integer range"); continue; }
         if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "bid", false, "already expired at anchor"); continue; }
         bids.set(ev.id, {
           id: ev.id, bidder: who, want: rec.want, give: rec.give,
