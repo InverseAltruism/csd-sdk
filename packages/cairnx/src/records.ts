@@ -81,6 +81,7 @@ const MINT_KEYS = new Set(["v", "t", "ticker", "amount"]);
 const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo", "ts"]);
 const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
 const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
+const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
 
 /**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
@@ -199,6 +200,11 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       return r as unknown as NameCommitRecord;
     }
     case "name": {
+      // onlyKeys closes the last cross-language determinism fork (audit M1 / cairn-redteam FORK-1):
+      // `name` is a value-bearing record (claims ownership + pays the reg fee), so a decoy astral-codepoint
+      // key would canonicalize differently under UTF-16 vs codepoint/byte sort and fork two honest resolvers.
+      // The other value records (deploy/mint/transfer/offer/bid) were already gated; this was the one gap.
+      if (!onlyKeys(r, NAME_KEYS)) return null;
       if (!isName(r.name)) return null;
       if (r.salt !== undefined && (typeof r.salt !== "string" || !/^[0-9a-fA-F]{16,128}$/.test(r.salt))) return null;
       return r as unknown as NameRecord;
