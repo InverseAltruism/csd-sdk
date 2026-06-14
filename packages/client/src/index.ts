@@ -42,7 +42,12 @@ export class CsdClient {
   private readonly retries: number;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
-    this.f = opts.fetch ?? globalThis.fetch;
+    // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
+    // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
+    // `globalThis.fetch` and invoking it via `this.f` did exactly that, so any browser consumer that
+    // didn't pass `opts.fetch` (e.g. cairn-sdk dApps) broke. A caller-supplied fetch is used as-is.
+    const gf = globalThis.fetch;
+    this.f = opts.fetch ?? (gf ? gf.bind(globalThis) : gf);
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.retries = Math.max(0, opts.retries ?? 0);
     if (!this.f) throw new Error("no fetch available — pass opts.fetch");
