@@ -177,12 +177,16 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         const cur = names.get(rec.name);
         const epClaim = epochOf(ev.height);
         // v1.5: a LAPSED lease makes the name unowned again — claimable by anyone at the
-        // decaying premium (squat recapture). Fresh basis: displacement/viaFill history is void.
+        // decaying premium (squat recapture). The prior holder's basis is void, BUT the premium
+        // re-claim establishes a fresh PAID basis, so it is itself displacement-immune (viaFill):
+        // without this, a griefer who pre-commits the name before the lapse could reveal a
+        // back-dated claim within COMMIT_MAX_BLOCKS and take the just-reclaimed name from the
+        // premium payer for only the base reg fee — stealing it AND bypassing the premium entirely.
         if (cur && v15 && lapsed(cur, epClaim)) {
           const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(cur) + NAME_GRACE_EPOCHS));
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
           for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
-          names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
+          names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
           feesPaid += fee;
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
           continue;
