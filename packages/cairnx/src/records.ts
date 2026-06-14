@@ -20,7 +20,7 @@ export function parseAmount(s: unknown, opts: { allowZero?: boolean } = {}): big
 const isAddr = (a: unknown): a is string => typeof a === "string" && ADDR_RE.test(a);
 const isTicker = (t: unknown): t is string => typeof t === "string" && TICKER_RE.test(t);
 const isHash = (h: unknown): h is string => typeof h === "string" && HASH_RE.test(h);
-/** A claimable name: lowercase-ASCII, 3–32, no leading/trailing hyphen, not reserved. */
+/** A claimable name: lowercase-ASCII, 1–32, no leading/trailing hyphen, not reserved. */
 export const isName = (n: unknown): n is string => typeof n === "string" && NAME_RE.test(n) && !RESERVED_NAMES.has(n);
 
 /** Deterministic commit hash for front-run-proof name registration (commit-reveal). */
