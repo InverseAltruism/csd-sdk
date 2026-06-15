@@ -463,8 +463,14 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // the price and the rebate landing on the same address must be checked against their SUM, never
         // satisfied by max(). (payto can never be the treasury — rejected at offer creation — so those
         // two never collide.) For a pre-v1.6 offer (rebate=0n) this reduces to the old two checks exactly.
-        const need = new Map<string, bigint>([[o.want.payto, want], [TREASURY_ADDR, fee]]);
-        if (rebate > 0n) need.set(o.seller, (need.get(o.seller) ?? 0n) + rebate);
+        const need = new Map<string, bigint>();
+        const addNeed = (a: string, v: bigint) => need.set(a, (need.get(a) ?? 0n) + v);
+        addNeed(o.want.payto, want);            // seller payment
+        addNeed(TREASURY_ADDR, fee);            // treasury fee
+        if (rebate > 0n) addNeed(o.seller, rebate); // v1.6 maker rebate
+        // ACCUMULATE (not a Map literal): if any two recipients ever coincide (e.g. payto==seller, the
+        // common case; or a hypothetical payto==treasury) the required amounts SUM — a literal would
+        // silently overwrite and drop one, letting a fill underpay. Defense-in-depth on the value gate.
         let unpaid: string | undefined;
         for (const [addr, amt] of need) if (BigInt(pt[addr] ?? "0") < amt) {
           unpaid = addr === TREASURY_ADDR ? "protocol fee unpaid" : (rebate > 0n && addr === o.seller) ? "maker rebate unpaid (v1.6)" : "payment below want.value";

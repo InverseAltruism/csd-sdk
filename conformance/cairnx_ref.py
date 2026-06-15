@@ -613,8 +613,10 @@ def resolve(events, tip_height):
                 # v1.6 maker rebate on a BID-ANSWERED whole fill (derived from creation height + bid link)
                 rebate = maker_rebate(want) if (o["height"] >= V16_HEIGHT and o.get("bid") is not None) else 0
                 # combined same-tx output gate (handles payto==o.seller by SUMMING; payto!=treasury always)
-                need = {o["want"]["payto"]: want, TREASURY_ADDR: fee}
-                if rebate > 0: need[o["seller"]] = need.get(o["seller"], 0) + rebate
+                need = {}
+                def _addn(a, v): need[a] = need.get(a, 0) + v
+                _addn(o["want"]["payto"], want); _addn(TREASURY_ADDR, fee)
+                if rebate > 0: _addn(o["seller"], rebate)  # ACCUMULATE — coinciding recipients SUM, never overwrite
                 if any(int(pt.get(a, "0")) < amt for a, amt in need.items()): continue
                 paid = int(pt.get(o["want"]["payto"], "0"))
                 if is_name_give(o["give"]):
