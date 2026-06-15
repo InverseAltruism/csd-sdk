@@ -18,6 +18,7 @@
     "LICENSE",
     "README.md",
     "CONVENTION.md",
+    "MAKERS.md",
     "test/vectors"
   ],
   "scripts": {
