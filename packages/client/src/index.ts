@@ -3,6 +3,7 @@
 // and a pluggable fetch (for tests / non-DOM runtimes). Read + broadcast; no trust assumptions
 // (the light client in @inversealtruism/csd-light verifies what this returns).
 import type { Tx, BlockHeader } from "@inversealtruism/csd-codec";
+import { txid as codecTxid } from "@inversealtruism/csd-codec";
 
 export interface RpcHeaderJson { version: number; prev: string; merkle: string; time: number; bits: number; nonce: number }
 export interface RpcTxJson {
@@ -196,6 +197,37 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
     inputs: j.inputs.map((i) => ({ prevTxid: i.prev_txid, vout: i.vout, scriptSig: i.script_sig })),
     outputs: j.outputs.map((o) => ({ value: o.value, scriptPubkey: o.script_pubkey })),
   };
+}
+
+/** UTXO-VALUE-1 cure (audit). A CSD fee is implicit (Σin − Σout) and uncapped by consensus, so a
+ *  builder that trusts a hostile RPC's /utxos `value` can compute too-small a change and silently
+ *  BURN the difference as fee. This confirms each selected input's REAL value by fetching its source
+ *  tx and RECOMPUTING its txid with the consensus codec — the txid commits to the output values, so
+ *  a forged body whose recomputed txid still matches the prevout is impossible. Fail-CLOSED: any
+ *  unreachable/forged/missing source aborts. Returns the verified input total (use it to compute
+ *  change from REAL values, not the reported ones). RPC-facing builders (wallet, cairn-sdk) should
+ *  call this before assembling a spend; csd-tx itself is pure and cannot fetch.
+ *  (Mirrors the proven cairn-wallet `node.ts` implementation; the wallet's TXB-1 cure made canonical.) */
+export async function verifyInputValues(
+  client: { tx(id: string): Promise<any> },
+  inputs: { txid: string; vout: number }[],
+): Promise<{ ok: boolean; total: number }> {
+  const norm = (s: string) => String(s).toLowerCase().replace(/^0x/, "");
+  let total = 0;
+  for (const i of inputs) {
+    let info: any; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0 }; }
+    const body = info?.tx ?? info;
+    if (!body || !Array.isArray(body.outputs) || !Array.isArray(body.inputs)) return { ok: false, total: 0 };
+    let tx: Tx; try { tx = rpcTxToTx(body); } catch { return { ok: false, total: 0 }; }
+    if (norm(codecTxid(tx)) !== norm(i.txid)) return { ok: false, total: 0 }; // forged source body
+    const out = tx.outputs[i.vout];
+    if (!out) return { ok: false, total: 0 };
+    const v = Number(out.value);
+    if (!Number.isSafeInteger(v) || v <= 0) return { ok: false, total: 0 };
+    total += v;
+    if (!Number.isSafeInteger(total)) return { ok: false, total: 0 };
+  }
+  return { ok: true, total };
 }
 
 /** Convert a node /block header JSON into the codec's BlockHeader. */

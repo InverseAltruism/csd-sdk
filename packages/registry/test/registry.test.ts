@@ -21,6 +21,33 @@ function rec(b: BuiltRecord, proposer: string, fee: number, height: number, opts
 const shuffle = <T,>(a: T[], seed = 7): T[] => { const r = [...a]; for (let i = r.length - 1; i > 0; i--) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; const j = seed % (i + 1); [r[i], r[j]] = [r[j]!, r[i]!]; } return r; };
 const OPTS: ResolveOpts = { nowEpoch: 10, topK: 25, decayPerEpoch: 0.97 };
 
+// RES-H4: ranking must use the EXACT integer decay fixed-point, NOT Math.pow (which is not
+// correctly-rounded → a Rust/Go/Py port can rank a near-tie differently = a cross-language fork
+// of peer/gateway/IDENTITY selection). This test is the conformance PIN: it reimplements the
+// canonical floored fixed-point in independent BigInt and asserts the resolver's order matches it
+// exactly — over deliberately CLOSE weights. A revert to Math.pow would diverge on a near-tie here.
+test("RES-H4: ranking is the exact integer decay fixed-point (no float-pow fork)", () => {
+  const DSCALE = 1_000_000_000_000n;
+  const powFixed = (age: number): bigint => { const a = age <= 0 ? 0 : Math.min(age, 4000); return (97n ** BigInt(a) * DSCALE) / (100n ** BigInt(a)); };
+  const expectW = (base: number, age: number): bigint => BigInt(base) * powFixed(age);
+  // deliberately-close pairs (same product region): base·0.97^age clusters near each other
+  const specs = [
+    { id: "P0", base: 100_000_000, epoch: 0 },  // age 10
+    { id: "P1", base: 97_000_000, epoch: 1 },   // age 9   (≈ P0 — the float-fragile near-tie)
+    { id: "P2", base: 94_090_000, epoch: 2 },   // age 8   (≈ P0/P1)
+    { id: "P3", base: 200_000_000, epoch: 5 },  // age 5   (clearly heavier)
+    { id: "P4", base: 50_000_000, epoch: 0 },   // age 10  (clearly lighter)
+  ];
+  const recs = specs.map((s) => { const k = keygen(); return { rec: rec(buildPeerRecord({ priv: k.priv, peer_id: s.id, multiaddrs: ["/ip4/1.1.1.1/tcp/1"], address: k.addr }), k.addr, s.base, s.epoch * E), age: 10 - s.epoch, base: s.base, id: s.id }; });
+  // independent canonical order: exact BigInt weight desc, then proposalId asc (the stable anchor)
+  const idById = new Map(recs.map((x) => [x.id, x.rec.proposalId]));
+  const expected = [...recs].sort((a, b) => { const wa = expectW(a.base, a.age), wb = expectW(b.base, b.age); return wa > wb ? -1 : wa < wb ? 1 : (idById.get(a.id)! < idById.get(b.id)! ? -1 : 1); }).map((x) => x.id);
+  for (let s = 1; s <= 8; s++) {
+    const got = resolvePeers(shuffle(recs.map((x) => x.rec), s), OPTS).map((p) => p.peer_id);
+    assert.deepEqual(got, expected, `resolver order must match the exact integer fixed-point (input order ${s})`);
+  }
+});
+
 test("PEERS: verified records rank by fee-weight; unsigned/tampered rejected; determinism holds", () => {
   const a = keygen(), b = keygen(), c = keygen();
   const pA = rec(buildPeerRecord({ priv: a.priv, peer_id: "PeerA", multiaddrs: ["/ip4/1.1.1.1/tcp/4001"], address: a.addr }), a.addr, 25e6, 5);

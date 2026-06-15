@@ -90,11 +90,14 @@ export interface BuildResult extends Partial<Signed> { ok: boolean; error?: stri
 // MIN feerate; max_feerate_ppm is an eviction-sort hint, not a rejection rule). So if a hostile/buggy
 // RPC UNDER-reports a UTXO's value, coin selection computes too-small a change and the difference is
 // silently burned to the miner as fee — the user's own funds, gone, with no on-chain protection.
-// This is the universal client-side backstop: NO consumer of these builders can silently assemble an
-// absurd fee. The cap is deliberately GENEROUS so every honest fee passes (a fee-only Propose is
-// 0.25 CSD; a transfer fee is ~0.01 CSD) and only a clearly-abnormal fee — one that is BOTH above a
-// 1 CSD absolute floor AND more than ~10% of the inputs (the collapsed-change signature) — is
-// refused. A caller that legitimately wants a larger fee passes an explicit `maxFee` override.
+// EXPLICIT-fee backstop only. This caps the `fee` the CALLER passes (a fat-finger / absurd-fee
+// guard); the cap is generous so every honest fee passes (fee-only Propose 0.25 CSD; transfer fee
+// ~0.01 CSD). IMPORTANT (audit UTXO-VALUE-1): it does NOT detect the IMPLICIT under-report burn —
+// these builders are PURE and trust the `Utxo.value` they are given, so a hostile RPC that
+// under-reports an input still makes change computed too small and burns the gap as fee. The real
+// cure is to fetch+verify each input's source tx at the RPC layer BEFORE building: see
+// `verifyInputValues` in @inversealtruism/csd-client (used by the wallet and recommended for all
+// RPC-facing builders). A caller that legitimately wants a larger explicit fee passes `maxFee`.
 export const MAX_FEE_BACKSTOP = 100_000_000;   // 1 CSD absolute floor — every honest fee is well under this
 const MAX_FEE_INPUT_FRACTION = 0.10;           // …and ≤ 10% of inputs; a burned-change fee is ~100% of inputs
 /** The largest fee selectAndAssemble will assemble for this input total without an explicit override. */
@@ -115,8 +118,8 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
   const sel = selectInputs(utxos, need);
   if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
   const change = sel.total - need;
-  // Max-fee backstop: refuse to assemble a tx whose implied fee is clearly abnormal (the silent
-  // fund-burn class). `cap` is generous; an explicit `maxFee` raises (or lowers) it deliberately.
+  // Max-fee backstop: refuse a clearly-abnormal EXPLICIT fee (a fat-finger guard). This does NOT
+  // catch an under-reported input (the implicit burn) — verify input values at the RPC layer for that.
   const cap = maxFee !== undefined ? maxFee : feeCap(sel.total);
   if (fee > cap) {
     return { ok: false, error: `fee ${fee} exceeds the max-fee backstop (${cap}); pass maxFee to override if this is intentional` };
