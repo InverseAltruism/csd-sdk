@@ -83,9 +83,9 @@ function coherentFlow(h0) {
   const off = validOr(() => R.offer(offRec)); if (!off) return ev;
   const offEv = P(off, D, {}); const offerId = offEv.id; const offH = h; ev.push(offEv); h += ri(1, 6);
   // correct paidTo for the fill: price→payto, fee→treasury, rebate→seller (if v1.6 bid-answered)
-  const feeBps = offH >= 40000 ? 150 : 100;
+  const feeBps = offH >= R.V16_HEIGHT ? 150 : 100;
   const want = BigInt(val), fee = R.tradeFee(want, feeBps);
-  const rebate = (offH >= 40000 && answersBid) ? R.makerRebate(want) : 0n;
+  const rebate = (offH >= R.V16_HEIGHT && answersBid) ? R.makerRebate(want) : 0n;
   const acc = new Map(); const ad = (a, v) => { if (v > 0n) acc.set(a, (acc.get(a) ?? 0n) + v); };
   ad(payto, want); ad(TREAS, fee); if (rebate > 0n) ad(D, rebate);
   const underpay = chance(0.3); // sometimes drop the rebate (or short the fee) → resolver must REJECT
@@ -109,8 +109,8 @@ function nameFlow(h0) {
   const offH = h; const offerId = nid();
   ev.push({ kind: "propose", id: offerId, proposer: D, uri: off.uri, payloadHash: off.payloadHash, height: offH, pos: 1, expiresEpoch: Math.floor(offH / 30) + 50, paidTo: {} });
   h += ri(1, 5);
-  const feeBps = offH >= 40000 ? 150 : 100; const want = BigInt(val);
-  const rebate = (offH >= 40000 && answersBid) ? R.makerRebate(want) : 0n;
+  const feeBps = offH >= R.V16_HEIGHT ? 150 : 100; const want = BigInt(val);
+  const rebate = (offH >= R.V16_HEIGHT && answersBid) ? R.makerRebate(want) : 0n;
   const acc = new Map(); const ad = (a, v) => { if (v > 0n) acc.set(a, (acc.get(a) ?? 0n) + v); };
   ad(D, want); ad(TREAS, R.tradeFee(want, feeBps)); if (rebate > 0n) ad(D, rebate);
   const pt = {}; for (const [a, v] of acc) pt[a] = v.toString();

@@ -23,10 +23,11 @@ export const V15_HEIGHT = 32_000;             // (non-retroactive)
 // (flat 0.25 CSD + 0.5%, taker-funded, routed to the offer's maker o.seller) rides resting-liquidity
 // fills — in v1.6 that means BID-ANSWERED whole fills (the RFQ/MM lane). Both are captured per-offer
 // at CREATION height (feeBps stored on the offer), so a pre-v1.6 offer keeps 1% and every historical
-// replay stays byte-identical. (non-retroactive) — see cairn/docs/ecosystem/24. PLACEHOLDER height:
-// the operator MUST set this to a height comfortably AFTER the resolver+wallet+UI deploy (current tip
-// ~33.3k); it ships dormant until then.
-export const V16_HEIGHT = 40_000;
+// replay stays byte-identical. (non-retroactive) — see cairn/docs/ecosystem/24. ACTIVATION set to
+// 33_600 (above the 2026-06-15 deploy tip ~33.35k, max live offer 32665 — so non-retroactive). MUST
+// be IDENTICAL in the UI mirror (cairn helpers.js), the wallet mirror (cairn-wallet cairnx.ts), and
+// the Python port (conformance/cairnx_ref.py) — a divergence forks the fee/rebate.
+export const V16_HEIGHT = 33_600;
 export const EPOCH_LEN = 30;
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
 export const NAME_TERM_EPOCHS = 8_760;        // one term ≈ 1 year
