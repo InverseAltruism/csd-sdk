@@ -82,6 +82,7 @@ V13_HEIGHT = 31_100
 V14_HEIGHT = 31_400
 V15_HEIGHT = 32_000
 V16_HEIGHT = 33_600   # v1.6 fee update + maker rebate — ACTIVATION (must match types.ts/helpers.js/wallet)
+V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/helpers.js/wallet)
 EPOCH_LEN = 30
 NAME_TERM_EPOCHS = 8_760
 NAME_GRACE_EPOCHS = 720
@@ -91,6 +92,10 @@ MAX_RECORD_BYTES = 512
 MAX_AMOUNT = (1 << 96) - 1
 SCORE_FILL = 100
 SCORE_CANCEL = 0
+SCORE_CLAIM = 50            # v1.7 payment-free claim attest (∉ {SCORE_FILL, SCORE_CANCEL})
+CLAIM_WINDOW_BLOCKS = 15
+MAX_ACTIVE_CLAIMS = 3
+CLAIM_COOLDOWN_BLOCKS = 15
 CONF_TOKEN_FILL = 1_000_000
 TREASURY_ADDR = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016"
 FEE_BPS = 100
@@ -331,6 +336,9 @@ def resolve(events, tip_height):
         b = bids.get(o["bid"])
         if b and b["status"] == "open" and b["bidder"] == buyer: b["status"] = "done"
 
+    def live_claim(o, height):  # v1.7: a live (unexpired) exclusivity claim. Lazy lapse.
+        return o.get("claimedBy") is not None and o.get("claimUntilHeight") is not None and height < o["claimUntilHeight"]
+
     for ev in ordered:
         if ev["height"] < ACTIVATION_HEIGHT: continue
         if ev["height"] != pending_block[0]:
@@ -443,7 +451,7 @@ def resolve(events, tip_height):
             elif t == "offer":
                 want_is_token = is_token_want(rec["want"])
                 if (want_is_token or "min" in rec or "bid" in rec) and not v12: continue
-                if ev["height"] >= V13_HEIGHT and not want_is_token and "taker" not in rec: continue
+                if V13_HEIGHT <= ev["height"] < V17_HEIGHT and not want_is_token and "taker" not in rec: continue  # v1.7 re-allows open CSD offers (claim-gated)
                 payto = (rec["want"].get("payto") or who).lower()
                 if payto == TREASURY_ADDR: continue
                 if not is_safe_int(ev["expiresEpoch"]): continue
@@ -572,7 +580,9 @@ def resolve(events, tip_height):
             elif ev["score"] == SCORE_FILL and o.get("min") is not None and not is_name_give(o["give"]):
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if ev["height"] >= V13_HEIGHT and not o.get("taker"): continue
+                if ev["height"] >= V13_HEIGHT and not o.get("taker"):
+                    if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
+                    if not (live_claim(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7: needs a live claim
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 paid_so_far = int(o.get("paid") or "0")
@@ -606,7 +616,9 @@ def resolve(events, tip_height):
             elif ev["score"] == SCORE_FILL:
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if ev["height"] >= V13_HEIGHT and not o.get("taker"): continue
+                if ev["height"] >= V13_HEIGHT and not o.get("taker"):
+                    if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
+                    if not (live_claim(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7: needs a live claim
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
@@ -635,6 +647,17 @@ def resolve(events, tip_height):
                 o["status"] = "filled"
                 o["fill"] = {"buyer": who, "txid": ev["txid"], "height": ev["height"], "paid": str(paid), "fee": str(fee)}
                 mark_bid_done(o, who)
+
+            elif ev["height"] >= V17_HEIGHT and ev["score"] == SCORE_CLAIM:
+                # v1.7 claim-to-fill: reserve an OPEN CSD offer for the first claimer for a short window
+                if o["status"] != "open": continue
+                if o.get("taker"): continue
+                if is_token_want(o["want"]): continue
+                if live_claim(o, ev["height"]): continue
+                if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle
+                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and x.get("claimUntilHeight") is not None and ev["height"] < x["claimUntilHeight"])
+                if liveN >= MAX_ACTIVE_CLAIMS: continue
+                o["claimedBy"] = who; o["claimUntilHeight"] = ev["height"] + CLAIM_WINDOW_BLOCKS
 
     apply_pending()
     sweep_expired(tip_height + 1)

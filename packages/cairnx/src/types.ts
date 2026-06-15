@@ -28,6 +28,13 @@ export const V15_HEIGHT = 32_000;             // (non-retroactive)
 // be IDENTICAL in the UI mirror (cairn helpers.js), the wallet mirror (cairn-wallet cairnx.ts), and
 // the Python port (conformance/cairnx_ref.py) — a divergence forks the fee/rebate.
 export const V16_HEIGHT = 33_600;
+// v1.7 = claim-to-fill. OPEN CSD offers return (the v1.3 taker-bound requirement is lifted at V17),
+// made race-safe by a payment-free FIRST-CLAIM exclusivity: a SCORE_CLAIM attest reserves an open offer
+// for the first claimer (by consensus order) for CLAIM_WINDOW_BLOCKS; only the live claimer may fill, so
+// the same-block fill race moves to a payment-free claim and a losing buyer forfeits nothing. Bounded by
+// a per-address concurrent-claim cap + an anti-recycle cooldown (doc 24 §4). (non-retroactive) PLACEHOLDER
+// height — the operator sets the real activation (must be ≥ V16_HEIGHT and > the tip at deploy).
+export const V17_HEIGHT = 34_000;
 export const EPOCH_LEN = 30;
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
 export const NAME_TERM_EPOCHS = 8_760;        // one term ≈ 1 year
@@ -48,6 +55,12 @@ export const MAX_RECORD_BYTES = 512;          // consensus MAX_URI_BYTES — rec
 export const MAX_AMOUNT = (1n << 96n) - 1n;
 export const SCORE_FILL = 100;
 export const SCORE_CANCEL = 0;
+// v1.7 claim-to-fill (gated at V17_HEIGHT). SCORE_CLAIM ∉ {SCORE_FILL, SCORE_CANCEL} → pre-V17 it hits
+// the resolver's reserved-score no-op path, so a claim is inert below the gate (non-retroactive).
+export const SCORE_CLAIM = 50;             // a payment-free claim attest on an open offer
+export const CLAIM_WINDOW_BLOCKS = 15;     // ~30 min at 120s/block — the claimer's exclusive fill window
+export const MAX_ACTIVE_CLAIMS = 3;        // a single address may hold ≤ this many LIVE claims at once (anti-squat)
+export const CLAIM_COOLDOWN_BLOCKS = 15;   // a just-lapsed claimer cannot re-grab the SAME offer for this long
 // Token-priced fills debit the ATTESTER's token balance, so they must be an explicit opt-in:
 // normal signaling attests use confidence 0–100 — this magic value can't happen by accident.
 export const CONF_TOKEN_FILL = 1_000_000;
@@ -193,6 +206,9 @@ export interface OfferState {
   fills?: FillEntry[];
   /** v1.2: the bid this offer responds to */
   bid?: string;
+  /** v1.7 claim-to-fill: the current exclusive claimer + the height their window ends. Lazy lapse —
+   *  a past claimUntilHeight just means no live claim (the fields persist as the last-claim record). */
+  claimedBy?: string; claimUntilHeight?: number;
   fill?: FillEntry;
 }
 export type BidStatus = "open" | "cancelled" | "expired" | "done";

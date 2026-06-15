@@ -6,9 +6,9 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
-  NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT,
+  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, CLAIM_WINDOW_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
+  MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT,
   epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -99,6 +99,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const b = bids.get(o.bid);
     if (b && b.status === "open" && b.bidder === buyer) b.status = "done";
   };
+  // v1.7: an offer has a LIVE claim iff a claimer is recorded and the current height is inside its
+  // window. Lazy lapse — a past claimUntilHeight simply reads as "no live claim" (no state mutation).
+  const liveClaim = (o: OfferState, height: number): boolean =>
+    o.claimedBy !== undefined && o.claimUntilHeight !== undefined && height < o.claimUntilHeight;
 
   for (const ev of ordered) {
     if (ev.height < ACTIVATION_HEIGHT) continue;
@@ -236,7 +240,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // v1.3: an open (non-taker-bound) CSD-priced offer is structurally unsafe — a lost
         // same-block fill race forfeits the loser's ENTIRE payment (no escrow on the substrate).
         // CSD buys go bid → taker-bound answer → race-free fill. Token⇄token stays open (no-op-safe).
-        if (ev.height >= V13_HEIGHT && !wantIsToken && rec.taker === undefined) {
+        // v1.3 banned open CSD offers (the lost-fill-race forfeits a payment); v1.7 RE-ALLOWS them, made
+        // race-safe by claim-to-fill (the fill is gated on a live claim below) — so the ban applies only
+        // in [V13, V17). Below V17 this is byte-identical to the original gate.
+        if (ev.height >= V13_HEIGHT && ev.height < V17_HEIGHT && !wantIsToken && rec.taker === undefined) {
           note(ev, ev.id, "offer", false, "v1.3: CSD-priced offers must be taker-bound (use bid/RFQ)"); continue;
         }
         const payto = (rec.want.payto ?? who).toLowerCase();
@@ -412,7 +419,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // ── v1.2 partial fill (CSD-priced token offer): payment X buys pro-rata, maker-favoring ──
         if (o.status !== "open") { note(ev, ev.txid, "fill", false, `offer ${o.status}`); continue; }
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
-        if (ev.height >= V13_HEIGHT && !o.taker) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
+        // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
+        // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
+        if (ev.height >= V13_HEIGHT && !o.taker) {
+          if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
+          if (!(liveClaim(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
+        }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
         const paidSoFar = BigInt(o.paid ?? "0");
@@ -449,7 +461,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       } else if (ev.score === SCORE_FILL) {
         if (o.status !== "open") { note(ev, ev.txid, "fill", false, `offer ${o.status}`); continue; }
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
-        if (ev.height >= V13_HEIGHT && !o.taker) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
+        // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
+        // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
+        if (ev.height >= V13_HEIGHT && !o.taker) {
+          if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
+          if (!(liveClaim(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
+        }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
         const fee = o.feeBps ? tradeFee(want, o.feeBps) : 0n;
@@ -497,6 +514,26 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: paid.toString(), fee: fee.toString() };
         markBidDone(o, who);
         note(ev, ev.txid, "fill", true);
+
+      } else if (ev.height >= V17_HEIGHT && ev.score === SCORE_CLAIM) {
+        // ── v1.7 claim-to-fill: reserve an OPEN CSD offer for the FIRST claimer (consensus order) for
+        // CLAIM_WINDOW_BLOCKS. Payment-free → a losing same-block claimer forfeits only the attest fee,
+        // never a payment. Only the live claimer may fill (enforced in the fill paths above). ──
+        if (o.status !== "open") { note(ev, ev.txid, "claim", false, `offer ${o.status}`); continue; }
+        if (o.taker) { note(ev, ev.txid, "claim", false, "taker-bound offer needs no claim"); continue; }
+        if (isTokenWant(o.want)) { note(ev, ev.txid, "claim", false, "claims are for CSD-priced offers (token offers are no-op-safe)"); continue; }
+        if (liveClaim(o, ev.height)) { note(ev, ev.txid, "claim", false, "offer already claimed (window live)"); continue; }
+        // anti-recycle: the JUST-LAPSED claimer cannot immediately re-grab the SAME offer (anyone else can)
+        if (o.claimedBy === who && o.claimUntilHeight !== undefined && ev.height < o.claimUntilHeight + CLAIM_COOLDOWN_BLOCKS) {
+          note(ev, ev.txid, "claim", false, "claim cooldown (you just held this offer)"); continue;
+        }
+        // per-address concurrent-claim cap (anti-squat): count this attester's LIVE claims across offers
+        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && x.claimUntilHeight !== undefined && ev.height < x.claimUntilHeight) liveN++;
+        if (liveN >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); continue; }
+        // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
+        // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
+        o.claimedBy = who; o.claimUntilHeight = ev.height + CLAIM_WINDOW_BLOCKS;
+        note(ev, ev.txid, "claim", true);
       }
       // other scores: reserved → no-op
     }

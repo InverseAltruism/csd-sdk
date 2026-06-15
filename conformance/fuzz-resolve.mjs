@@ -132,10 +132,35 @@ function lapseFlow(h0) {
   return ev;
 }
 
+// v1.7 OPEN offer (no taker) → claim → fill. Exercises the claim branch (grant/compete/cap), the
+// V13↔V17 inversion (open offer allowed ≥V17), and the fill gate (only the live claimer may fill;
+// wrong-claimer + lapsed-claim + no-claim fills must be rejected). h0 ≥ V17_HEIGHT.
+function openFlow(h0) {
+  const ev = []; const D = "0x" + "d0".repeat(20), B = "0x" + "b0".repeat(20), C = "0x" + "c0".repeat(20);
+  const T = "O" + ri(100, 999), val = pick(["100000000", "1", "250000000"]);
+  let h = h0;
+  const dep = validOr(() => R.deploy({ ticker: T, decimals: 0, supply: "1000000", mint: "issuer" })); if (!dep) return [];
+  const P = (b, who, pt) => ({ kind: "propose", id: nid(), proposer: who, uri: b.uri, payloadHash: b.payloadHash, height: h, pos: ri(0, 3), expiresEpoch: 9_000_000_000_000_000, paidTo: pt });
+  ev.push(P(dep, D, { [TREAS]: "100000000" })); h += ri(1, 3);
+  ev.push(P(validOr(() => R.mint({ ticker: T, amount: "1000000" })), D, {})); h += ri(1, 3);
+  const off = validOr(() => R.offer({ give: { ticker: T, amount: "10" }, want: { value: val } })); if (!off) return ev; // OPEN: no taker (allowed ≥V17)
+  const offerId = nid(); ev.push({ kind: "propose", id: offerId, proposer: D, uri: off.uri, payloadHash: off.payloadHash, height: h, pos: 1, expiresEpoch: Math.floor(h / 30) + 99999, paidTo: {} }); h += ri(1, 4);
+  const claimer = pick([B, C]);
+  ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: claimer, score: 50, confidence: 0, height: h, pos: ri(0, 3), paidTo: {} });
+  if (chance(0.35)) ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: pick([B, C]), score: 50, confidence: 0, height: h, pos: ri(0, 3), paidTo: {} }); // competing claim
+  h += ri(1, 4);
+  const filler = pick([claimer, B, C]);                                  // sometimes the wrong addr
+  const fillH = chance(0.3) ? h + 20 : h;                                // sometimes after the claim lapses
+  const feeBps = h0 >= R.V16_HEIGHT ? 150 : 100; const want = BigInt(val);
+  ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: filler, score: 100, confidence: 0, height: fillH, pos: 1, paidTo: { [D]: want.toString(), [TREAS]: R.tradeFee(want, feeBps).toString() } });
+  return ev;
+}
+
 function genSeq() {
-  if (chance(0.22)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
-  if (chance(0.16)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
-  if (chance(0.12)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
+  if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.10)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
+  if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
   const len = ri(1, 16);
   let h = ri(29810, 40050); // spans ACTIVATION-50 .. V16+50 (all gates + boundaries)
@@ -158,7 +183,7 @@ function genSeq() {
     } else {
       // an attest (fill/cancel/claim/garbage) referencing a real-ish or random proposal id
       const pidRef = offerIds.length && chance(0.8) ? pick(offerIds) : nid();
-      const score = pick([0, 100, 100, ri(0, 200)]);
+      const score = pick([0, 100, 100, 50, 50, ri(0, 200)]); // 50 = SCORE_CLAIM (v1.7) — exercise the claim branch
       const confidence = pick([0, 100, 1_000_000, ri(0, 2_000_000)]);
       events.push({ kind: "attest", txid: nid(), proposalId: pidRef, attester: addr(), score, confidence, height: h, pos, paidTo: randPaidTo() });
     }
@@ -183,7 +208,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -194,6 +219,8 @@ for (let i = 0; i < N; i++) {
     if (js[i].includes('"feeBps":150') && js[i].includes('"status":"filled"')) cov.filledV16Rebate++;
     if (js[i].includes("79228162514264337593543950335")) cov.bigAmountInState++;
     if (js[i].includes('"viaFill":true')) cov.viaFill++;
+    if (js[i].includes('"claimedBy":')) cov.v17Claimed++;                                              // v1.7 claim granted
+    if (st.offers && Object.values(st.offers).some((o) => o.claimedBy && o.status === "filled" && !o.taker)) cov.v17OpenFilled++; // open offer claimed + filled
     if (js[i].includes('"expired":true')) cov.expired++;
     if (st.names && Object.keys(st.names).some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) cov.numericNameInState++;
   } catch { /* JS state always parses */ }
