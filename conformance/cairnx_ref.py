@@ -623,7 +623,9 @@ def resolve(events, tip_height):
                 want = int(o["want"]["value"])
                 fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
                 # v1.6 maker rebate on a BID-ANSWERED whole fill (derived from creation height + bid link)
-                rebate = maker_rebate(want) if (o["height"] >= V16_HEIGHT and o.get("bid") is not None) else 0
+                # RESTING-LIQUIDITY lanes only (MED-2 fix): taker-bound bid-answer OR a v1.7 open ask
+                resting = (o.get("taker") is not None and o.get("bid") is not None) or (o["height"] >= V17_HEIGHT and o.get("taker") is None)
+                rebate = maker_rebate(want) if (o["height"] >= V16_HEIGHT and resting) else 0
                 # combined same-tx output gate (handles payto==o.seller by SUMMING; payto!=treasury always)
                 need = {}
                 def _addn(a, v): need[a] = need.get(a, 0) + v

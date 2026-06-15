@@ -474,7 +474,14 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // o.seller a flat 0.25 CSD + 0.5%, reimbursing the maker's posting (propose) cost. DERIVED from
         // the offer's creation height + bid link — NO new stored field, so every pre-v1.6 offer's
         // canonical state is byte-identical. (Partial fills + token⇄token carry no rebate in v1.6.)
-        const rebate = (o.height >= V16_HEIGHT && o.bid !== undefined) ? makerRebate(want) : 0n;
+        // maker rebate — RESTING-LIQUIDITY lanes only: a TAKER-BOUND answer to a bid (the v1.6 RFQ/MM
+        // lane) OR a v1.7 OPEN ask (claim-to-fill, no taker). Closes a red-team finding (MED-2): keying
+        // on `bid` alone let a maker self-attach an unanchored bid to an OPEN offer and self-mint a rebate.
+        // Now an open offer earns it via the open-ask lane regardless of `bid`, and a bid-answer rebate
+        // requires a real consenting taker (self-dealing is net-negative). Replay-identical in [V16,V17):
+        // every bid-answered CSD offer there was taker-bound (the v1.3 ban), so `taker && bid` == `bid`.
+        const restingLiquidity = (o.taker !== undefined && o.bid !== undefined) || (o.height >= V17_HEIGHT && o.taker === undefined);
+        const rebate = (o.height >= V16_HEIGHT && restingLiquidity) ? makerRebate(want) : 0n;
         // combined same-tx output gate: SUM the required amount per recipient, so payto==o.seller (the
         // common case — a maker's payto defaults to itself) is correct: paidTo is an addr→sum map, so
         // the price and the rebate landing on the same address must be checked against their SUM, never

@@ -15,8 +15,9 @@ Post-v1.3 the CSD-priced market **is** an RFQ loop (CONVENTION §13/§15):
    and a losing buyer can never forfeit a payment.
 3. The bidder **fills** it: one atomic transaction pays you and delivers *X*, or nothing happens.
 
-Open (non-taker-bound) CSD offers are rejected by consensus from v1.3 — that race-safety is *why* making
-is RFQ. (v1.7 adds *claim-to-fill* open asks; until then, you answer bids.)
+Open (non-taker-bound) CSD offers are rejected by consensus in `[v1.3, v1.7)` — that race-safety is *why*
+making is RFQ. **v1.7** (`V17_HEIGHT`) re-allows open CSD asks but makes them race-safe a second way —
+see *Claim-to-fill* below.
 
 ## Why make a market (v1.6 maker rebate)
 
@@ -37,6 +38,37 @@ net = Σ rebates earned  −  Σ anchor (propose) fees spent      # 0.25 CSD per
 Each *filled* answer reimburses its own posting cost; the 0.5% margin covers answers that don't fill.
 Fund a key once and a healthy market funds itself — that's the whole point of v1.6. Live maker P&L for
 the reference bot is published at `/cairnx/mm-health` (and shown on the **Makers** tab at `/trade`).
+
+## Claim-to-fill (v1.7) — open CSD asks, race-safe
+
+From **v1.7** (`V17_HEIGHT`) a maker may post an **open** CSD ask (no `taker`) again. Anyone can buy it,
+but a fill is gated on a **claim** — a payment-free `SCORE_CLAIM` attest that reserves the offer for the
+first claimer (by consensus order) for a short window (`CLAIM_WINDOW_BLOCKS` ≈ 30 min). Only the live
+claimer may then fill, so two buyers never race a payment: a losing same-block claim is a no-op costing
+only the 0.05 CSD attest fee. The **maker rebate extends to open-ask fills** — an open ask filled at/after
+v1.7 pays you the same `0.25 CSD + 0.5%`, taker-funded.
+
+⚠ **Buyer safety — claim before you fill.** A fill tx on an open offer you do **not** hold a live claim on
+is **rejected as a fill by consensus, but your payment outputs are still spent** (you paid for nothing).
+Always, in order:
+
+```js
+import { buildClaimTx, buildFillTx, fillPayments } from "cairnx/txbuild";   // reference builders
+
+// 1. CLAIM — payment-free attest; reserves the open offer for you.
+const claim = buildClaimTx({ offerId, utxos, priv });
+// submit, then wait for confirmation and re-read state:
+//   the offer must show  claimedBy == yourAddr  &&  tip < claimUntilHeight
+// 2. FILL — only once your claim is live. Pay price + treasury fee + the maker rebate to o.seller:
+const payments = fillPayments(offer.want.payto, offer.want.value,
+  { feeBps: offer.feeBps, rebate: true, seller: offer.seller });   // seller REQUIRED when rebate:true
+const fill = buildFillTx({ offerId, utxos, priv, payments });
+```
+
+`fillPayments({rebate:true})` throws if you omit `seller` — the rebate must route to `o.seller` or the
+resolver no-ops the unmatched output and the fill is lost. A claim is for **CSD-priced open offers only**;
+taker-bound offers (the RFQ path above) fill directly with no claim. Grief bounds: an address holds at most
+`MAX_ACTIVE_CLAIMS` live claims and cannot re-grab a just-lapsed offer for `CLAIM_COOLDOWN_BLOCKS`.
 
 ## Quickstart
 

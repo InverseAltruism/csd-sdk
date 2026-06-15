@@ -152,7 +152,8 @@ function openFlow(h0) {
   const filler = pick([claimer, B, C]);                                  // sometimes the wrong addr
   const fillH = chance(0.3) ? h + 20 : h;                                // sometimes after the claim lapses
   const feeBps = h0 >= R.V16_HEIGHT ? 150 : 100; const want = BigInt(val);
-  ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: filler, score: 100, confidence: 0, height: fillH, pos: 1, paidTo: { [D]: want.toString(), [TREAS]: R.tradeFee(want, feeBps).toString() } });
+  const reb = h0 >= R.V17_HEIGHT ? R.makerRebate(want) : 0n;  // v1.7 open-ask earns the rebate → filler must pay want+rebate to D
+  ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: filler, score: 100, confidence: 0, height: fillH, pos: 1, paidTo: { [D]: (want + reb).toString(), [TREAS]: R.tradeFee(want, feeBps).toString() } });
   return ev;
 }
 
