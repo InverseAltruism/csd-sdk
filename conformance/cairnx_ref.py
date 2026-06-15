@@ -81,6 +81,7 @@ V12_HEIGHT = 30_300
 V13_HEIGHT = 31_100
 V14_HEIGHT = 31_400
 V15_HEIGHT = 32_000
+V16_HEIGHT = 40_000   # v1.6 fee update + maker rebate (placeholder; operator sets the real activation)
 EPOCH_LEN = 30
 NAME_TERM_EPOCHS = 8_760
 NAME_GRACE_EPOCHS = 720
@@ -93,6 +94,9 @@ SCORE_CANCEL = 0
 CONF_TOKEN_FILL = 1_000_000
 TREASURY_ADDR = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016"
 FEE_BPS = 100
+FEE_BPS_V16 = 150          # v1.6: 1.5% treasury fee on offers created at/after V16_HEIGHT
+REBATE_FLAT = 25_000_000   # v1.6 maker rebate: flat 0.25 CSD
+REBATE_BPS = 50            # …+ 0.5%
 DEPLOY_FEE = 100_000_000
 COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
@@ -121,8 +125,11 @@ def expired_claim_fee(name, epochs_past_grace_end):
     mult = 1 + ((NAME_PREMIUM_START - 1) * left) // NAME_PREMIUM_DECAY_EPOCHS
     return base * mult
 
-def trade_fee(want):  # ceil(1%); integer
-    return (want * FEE_BPS + 9999) // 10000
+def trade_fee(want, bps=FEE_BPS):  # ceil; integer; bps captured per-offer (100 pre-v1.6, 150 from v1.6)
+    return (want * bps + 9999) // 10000
+
+def maker_rebate(value):  # v1.6: flat 0.25 CSD + ceil(0.5%)
+    return REBATE_FLAT + (value * REBATE_BPS + 9999) // 10000
 
 def is_safe_int(n):
     return isinstance(n, int) and not isinstance(n, bool) and abs(n) <= (2**53 - 1)
@@ -332,6 +339,7 @@ def resolve(events, tip_height):
         v11 = ev["height"] >= V11_HEIGHT
         v12 = ev["height"] >= V12_HEIGHT
         v15 = ev["height"] >= V15_HEIGHT
+        v16 = ev["height"] >= V16_HEIGHT
         fee_to_treasury = int((ev.get("paidTo") or {}).get(TREASURY_ADDR, "0")) if ev["kind"] == "propose" else 0
 
         if ev["kind"] == "propose":
@@ -459,7 +467,7 @@ def resolve(events, tip_height):
                      "want": ({"ticker": rec["want"]["ticker"], "amount": rec["want"]["amount"], "payto": payto}
                               if want_is_token else {"value": rec["want"]["value"], "payto": payto}),
                      "status": "open", "expiresEpoch": ev["expiresEpoch"], "height": ev["height"],
-                     "feeBps": FEE_BPS if v11 else 0}
+                     "feeBps": ((FEE_BPS_V16 if v16 else FEE_BPS) if v11 else 0)}
                 if "taker" in rec: o["taker"] = rec["taker"].lower()
                 if "min" in rec: o.update({"min": rec["min"], "paid": "0", "delivered": "0", "fills": []})
                 if "bid" in rec: o["bid"] = rec["bid"]
@@ -538,7 +546,7 @@ def resolve(events, tip_height):
                 if ev["confidence"] != CONF_TOKEN_FILL: continue
                 if o["want"]["ticker"] not in tokens: continue
                 amt = int(o["want"]["amount"])
-                fee = trade_fee(amt) if o["feeBps"] else 0
+                fee = trade_fee(amt, o["feeBps"]) if o["feeBps"] else 0
                 buyer = bal(o["want"]["ticker"], who)
                 if buyer["available"] < amt + fee: continue
                 give_name = names.get(o["give"]["name"]) if is_name_give(o["give"]) else None
@@ -574,7 +582,7 @@ def resolve(events, tip_height):
                 eff_min = remaining if remaining < min_v else min_v
                 if X < eff_min: continue
                 x = X if X < remaining else remaining
-                fee = trade_fee(x) if o["feeBps"] else 0
+                fee = trade_fee(x, o["feeBps"]) if o["feeBps"] else 0  # partial fills carry NO maker rebate in v1.6
                 if int(pt.get(TREASURY_ADDR, "0")) < fee: continue
                 give_total = int(o["give"]["amount"])
                 new_paid = paid_so_far + x
@@ -601,10 +609,14 @@ def resolve(events, tip_height):
                 if ev["height"] >= V13_HEIGHT and not o.get("taker"): continue
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
+                fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
+                # v1.6 maker rebate on a BID-ANSWERED whole fill (derived from creation height + bid link)
+                rebate = maker_rebate(want) if (o["height"] >= V16_HEIGHT and o.get("bid") is not None) else 0
+                # combined same-tx output gate (handles payto==o.seller by SUMMING; payto!=treasury always)
+                need = {o["want"]["payto"]: want, TREASURY_ADDR: fee}
+                if rebate > 0: need[o["seller"]] = need.get(o["seller"], 0) + rebate
+                if any(int(pt.get(a, "0")) < amt for a, amt in need.items()): continue
                 paid = int(pt.get(o["want"]["payto"], "0"))
-                if paid < want: continue
-                fee = trade_fee(want) if o["feeBps"] else 0
-                if int(pt.get(TREASURY_ADDR, "0")) < fee: continue
                 if is_name_give(o["give"]):
                     n = names.get(o["give"]["name"])
                     if not n: continue

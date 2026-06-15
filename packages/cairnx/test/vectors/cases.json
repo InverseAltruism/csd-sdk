@@ -3024,6 +3024,419 @@
         "tipHeight": 29965,
         "tokens": {}
       }
+    },
+    {
+      "name": "v16-bid-answer-rebate-paid",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0xc70b462bb8a3256f7cdc2cf05c4696277f2c87c79a9c70c081024d42e314676d",
+          "height": 40001,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000002",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0x8444516ab1124ad794c35f59c1672e8f39fcaf4846584f1e8b649f458a12210b",
+          "height": 40002,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "proposer": "0x2222222222222222222222222222222222222222",
+          "uri": "{\"give\":{\"value\":\"100000000\"},\"t\":\"bid\",\"v\":1,\"want\":{\"amount\":\"10\",\"ticker\":\"TKN\"}}",
+          "payloadHash": "0xeaca1de024cb3883dff699b549eccd16f5654acdcfd6396c5a633053010eccd1",
+          "height": 40003,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"bid\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"give\":{\"amount\":\"10\",\"ticker\":\"TKN\"},\"t\":\"offer\",\"taker\":\"0x2222222222222222222222222222222222222222\",\"v\":1,\"want\":{\"value\":\"100000000\"}}",
+          "payloadHash": "0xb68393a19d031d17817ba656651f1a5b3a9f3775542c40331b57d5ee63374fe9",
+          "height": 40004,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "attest",
+          "txid": "0x0000000000000000000000000000000000000000000000000000000000000005",
+          "proposalId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "attester": "0x2222222222222222222222222222222222222222",
+          "score": 100,
+          "confidence": 0,
+          "height": 40005,
+          "pos": 1,
+          "paidTo": {
+            "0x1111111111111111111111111111111111111111": "125500000",
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1500000"
+          }
+        }
+      ],
+      "tipHeight": 40005,
+      "expectedState": {
+        "balances": {
+          "TKN": {
+            "0x1111111111111111111111111111111111111111": {
+              "available": "990",
+              "locked": "0"
+            },
+            "0x2222222222222222222222222222222222222222": {
+              "available": "10",
+              "locked": "0"
+            }
+          }
+        },
+        "bids": {
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "bidder": "0x2222222222222222222222222222222222222222",
+            "expiresEpoch": 2000,
+            "give": {
+              "value": "100000000"
+            },
+            "height": 40003,
+            "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "offers": [
+              "0x0000000000000000000000000000000000000000000000000000000000000004"
+            ],
+            "status": "done",
+            "want": {
+              "amount": "10",
+              "ticker": "TKN"
+            }
+          }
+        },
+        "feesPaid": "101500000",
+        "names": {},
+        "offers": {
+          "0x0000000000000000000000000000000000000000000000000000000000000004": {
+            "bid": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expiresEpoch": 2000,
+            "feeBps": 150,
+            "fill": {
+              "buyer": "0x2222222222222222222222222222222222222222",
+              "fee": "1500000",
+              "height": 40005,
+              "paid": "125500000",
+              "txid": "0x0000000000000000000000000000000000000000000000000000000000000005"
+            },
+            "give": {
+              "amount": "10",
+              "ticker": "TKN"
+            },
+            "height": 40004,
+            "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+            "seller": "0x1111111111111111111111111111111111111111",
+            "status": "filled",
+            "taker": "0x2222222222222222222222222222222222222222",
+            "want": {
+              "payto": "0x1111111111111111111111111111111111111111",
+              "value": "100000000"
+            }
+          }
+        },
+        "tipHeight": 40005,
+        "tokens": {
+          "TKN": {
+            "decimals": 0,
+            "deployId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "deployer": "0x1111111111111111111111111111111111111111",
+            "height": 40001,
+            "mint": "issuer",
+            "minted": "1000",
+            "supply": "1000",
+            "ticker": "TKN"
+          }
+        }
+      }
+    },
+    {
+      "name": "v16-rebate-underpaid-rejected",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0xc70b462bb8a3256f7cdc2cf05c4696277f2c87c79a9c70c081024d42e314676d",
+          "height": 40001,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000002",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0x8444516ab1124ad794c35f59c1672e8f39fcaf4846584f1e8b649f458a12210b",
+          "height": 40002,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "proposer": "0x2222222222222222222222222222222222222222",
+          "uri": "{\"give\":{\"value\":\"100000000\"},\"t\":\"bid\",\"v\":1,\"want\":{\"amount\":\"10\",\"ticker\":\"TKN\"}}",
+          "payloadHash": "0xeaca1de024cb3883dff699b549eccd16f5654acdcfd6396c5a633053010eccd1",
+          "height": 40003,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"bid\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"give\":{\"amount\":\"10\",\"ticker\":\"TKN\"},\"t\":\"offer\",\"taker\":\"0x2222222222222222222222222222222222222222\",\"v\":1,\"want\":{\"value\":\"100000000\"}}",
+          "payloadHash": "0xb68393a19d031d17817ba656651f1a5b3a9f3775542c40331b57d5ee63374fe9",
+          "height": 40004,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "attest",
+          "txid": "0x0000000000000000000000000000000000000000000000000000000000000005",
+          "proposalId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "attester": "0x2222222222222222222222222222222222222222",
+          "score": 100,
+          "confidence": 0,
+          "height": 40005,
+          "pos": 1,
+          "paidTo": {
+            "0x1111111111111111111111111111111111111111": "100000000",
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1500000"
+          }
+        }
+      ],
+      "tipHeight": 40005,
+      "expectedState": {
+        "balances": {
+          "TKN": {
+            "0x1111111111111111111111111111111111111111": {
+              "available": "990",
+              "locked": "10"
+            }
+          }
+        },
+        "bids": {
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "bidder": "0x2222222222222222222222222222222222222222",
+            "expiresEpoch": 2000,
+            "give": {
+              "value": "100000000"
+            },
+            "height": 40003,
+            "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "offers": [
+              "0x0000000000000000000000000000000000000000000000000000000000000004"
+            ],
+            "status": "open",
+            "want": {
+              "amount": "10",
+              "ticker": "TKN"
+            }
+          }
+        },
+        "feesPaid": "100000000",
+        "names": {},
+        "offers": {
+          "0x0000000000000000000000000000000000000000000000000000000000000004": {
+            "bid": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expiresEpoch": 2000,
+            "feeBps": 150,
+            "give": {
+              "amount": "10",
+              "ticker": "TKN"
+            },
+            "height": 40004,
+            "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+            "seller": "0x1111111111111111111111111111111111111111",
+            "status": "open",
+            "taker": "0x2222222222222222222222222222222222222222",
+            "want": {
+              "payto": "0x1111111111111111111111111111111111111111",
+              "value": "100000000"
+            }
+          }
+        },
+        "tipHeight": 40005,
+        "tokens": {
+          "TKN": {
+            "decimals": 0,
+            "deployId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "deployer": "0x1111111111111111111111111111111111111111",
+            "height": 40001,
+            "mint": "issuer",
+            "minted": "1000",
+            "supply": "1000",
+            "ticker": "TKN"
+          }
+        }
+      }
+    },
+    {
+      "name": "v16-rebate-distinct-payto",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0xc70b462bb8a3256f7cdc2cf05c4696277f2c87c79a9c70c081024d42e314676d",
+          "height": 40001,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000002",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
+          "payloadHash": "0x8444516ab1124ad794c35f59c1672e8f39fcaf4846584f1e8b649f458a12210b",
+          "height": 40002,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "proposer": "0x2222222222222222222222222222222222222222",
+          "uri": "{\"give\":{\"value\":\"100000000\"},\"t\":\"bid\",\"v\":1,\"want\":{\"amount\":\"10\",\"ticker\":\"TKN\"}}",
+          "payloadHash": "0xeaca1de024cb3883dff699b549eccd16f5654acdcfd6396c5a633053010eccd1",
+          "height": 40003,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "proposer": "0x1111111111111111111111111111111111111111",
+          "uri": "{\"bid\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"give\":{\"amount\":\"10\",\"ticker\":\"TKN\"},\"t\":\"offer\",\"taker\":\"0x2222222222222222222222222222222222222222\",\"v\":1,\"want\":{\"payto\":\"0x3333333333333333333333333333333333333333\",\"value\":\"100000000\"}}",
+          "payloadHash": "0x00922f8e08220dc8e8194cd2f806b55533cb33f02b0eb6b603ed747d76e1a460",
+          "height": 40004,
+          "pos": 1,
+          "expiresEpoch": 2000,
+          "paidTo": {}
+        },
+        {
+          "kind": "attest",
+          "txid": "0x0000000000000000000000000000000000000000000000000000000000000005",
+          "proposalId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "attester": "0x2222222222222222222222222222222222222222",
+          "score": 100,
+          "confidence": 0,
+          "height": 40005,
+          "pos": 1,
+          "paidTo": {
+            "0x3333333333333333333333333333333333333333": "100000000",
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1500000",
+            "0x1111111111111111111111111111111111111111": "25500000"
+          }
+        }
+      ],
+      "tipHeight": 40005,
+      "expectedState": {
+        "balances": {
+          "TKN": {
+            "0x1111111111111111111111111111111111111111": {
+              "available": "990",
+              "locked": "0"
+            },
+            "0x2222222222222222222222222222222222222222": {
+              "available": "10",
+              "locked": "0"
+            }
+          }
+        },
+        "bids": {
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "bidder": "0x2222222222222222222222222222222222222222",
+            "expiresEpoch": 2000,
+            "give": {
+              "value": "100000000"
+            },
+            "height": 40003,
+            "id": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "offers": [
+              "0x0000000000000000000000000000000000000000000000000000000000000004"
+            ],
+            "status": "done",
+            "want": {
+              "amount": "10",
+              "ticker": "TKN"
+            }
+          }
+        },
+        "feesPaid": "101500000",
+        "names": {},
+        "offers": {
+          "0x0000000000000000000000000000000000000000000000000000000000000004": {
+            "bid": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expiresEpoch": 2000,
+            "feeBps": 150,
+            "fill": {
+              "buyer": "0x2222222222222222222222222222222222222222",
+              "fee": "1500000",
+              "height": 40005,
+              "paid": "100000000",
+              "txid": "0x0000000000000000000000000000000000000000000000000000000000000005"
+            },
+            "give": {
+              "amount": "10",
+              "ticker": "TKN"
+            },
+            "height": 40004,
+            "id": "0x0000000000000000000000000000000000000000000000000000000000000004",
+            "seller": "0x1111111111111111111111111111111111111111",
+            "status": "filled",
+            "taker": "0x2222222222222222222222222222222222222222",
+            "want": {
+              "payto": "0x3333333333333333333333333333333333333333",
+              "value": "100000000"
+            }
+          }
+        },
+        "tipHeight": 40005,
+        "tokens": {
+          "TKN": {
+            "decimals": 0,
+            "deployId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "deployer": "0x1111111111111111111111111111111111111111",
+            "height": 40001,
+            "mint": "issuer",
+            "minted": "1000",
+            "supply": "1000",
+            "ticker": "TKN"
+          }
+        }
+      }
     }
   ]
 }

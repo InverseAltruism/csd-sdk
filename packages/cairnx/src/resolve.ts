@@ -6,10 +6,10 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS,
+  ACTIVATION_HEIGHT, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT,
-  epochOf, expiredClaimFee, isNameGive, isTokenWant, nameRegFee,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT,
+  epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
   type Give, type NameState, type OfferState, type ProposeEvent, type TokenState,
@@ -107,6 +107,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v11 = ev.height >= V11_HEIGHT;
     const v12 = ev.height >= V12_HEIGHT;
     const v15 = ev.height >= V15_HEIGHT;
+    const v16 = ev.height >= V16_HEIGHT;
     const feeToTreasury = ev.kind === "propose" ? BigInt((ev.paidTo ?? {})[TREASURY_ADDR] ?? "0") : 0n;
 
     if (ev.kind === "propose") {
@@ -279,7 +280,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           ...(rec.taker ? { taker: rec.taker.toLowerCase() } : {}),
           ...(rec.min !== undefined ? { min: rec.min, paid: "0", delivered: "0", fills: [] } : {}),
           ...(rec.bid !== undefined ? { bid: rec.bid } : {}),
-          status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, feeBps: v11 ? FEE_BPS : 0,
+          status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, feeBps: v11 ? (v16 ? FEE_BPS_V16 : FEE_BPS) : 0,
         };
         offers.set(ev.id, o);
         const linked = rec.bid !== undefined ? bids.get(rec.bid) : undefined;
@@ -380,7 +381,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (ev.confidence !== CONF_TOKEN_FILL) { note(ev, ev.txid, "fill", false, "token fill requires confidence marker"); continue; }
         if (!tokens.has(o.want.ticker)) { note(ev, ev.txid, "fill", false, "want ticker does not exist"); continue; }
         const amt = BigInt(o.want.amount);
-        const fee = o.feeBps ? tradeFee(amt) : 0n;           // in kind, debited convention-side
+        const fee = o.feeBps ? tradeFee(amt, o.feeBps) : 0n; // in kind, debited convention-side (1.5% for v1.6 offers)
         const buyer = bal(o.want.ticker, who);
         if (buyer.available < amt + fee) { note(ev, ev.txid, "fill", false, "insufficient want-token balance"); continue; }
         // validate the give side BEFORE any mutation (check-then-act: a defensive no-op here
@@ -421,7 +422,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         const effMin = remaining < minV ? remaining : minV;   // the tail is always buyable
         if (X < effMin) { note(ev, ev.txid, "fill", false, "payment below offer min"); continue; }
         const x = X < remaining ? X : remaining;              // overpayment is clamped
-        const fee = o.feeBps ? tradeFee(x) : 0n;
+        const fee = o.feeBps ? tradeFee(x, o.feeBps) : 0n;    // 1.5% for v1.6 offers (partial fills carry NO maker rebate in v1.6)
         if (BigInt(pt[TREASURY_ADDR] ?? "0") < fee) { note(ev, ev.txid, "fill", false, "protocol fee unpaid"); continue; }
         const giveTotal = BigInt((o.give as { amount: string }).amount);
         const newPaid = paidSoFar + x;
@@ -451,11 +452,26 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (ev.height >= V13_HEIGHT && !o.taker) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
+        const fee = o.feeBps ? tradeFee(want, o.feeBps) : 0n;
+        // v1.6 maker rebate on a BID-ANSWERED whole fill (the RFQ/MM lane): the taker pays the maker
+        // o.seller a flat 0.25 CSD + 0.5%, reimbursing the maker's posting (propose) cost. DERIVED from
+        // the offer's creation height + bid link — NO new stored field, so every pre-v1.6 offer's
+        // canonical state is byte-identical. (Partial fills + token⇄token carry no rebate in v1.6.)
+        const rebate = (o.height >= V16_HEIGHT && o.bid !== undefined) ? makerRebate(want) : 0n;
+        // combined same-tx output gate: SUM the required amount per recipient, so payto==o.seller (the
+        // common case — a maker's payto defaults to itself) is correct: paidTo is an addr→sum map, so
+        // the price and the rebate landing on the same address must be checked against their SUM, never
+        // satisfied by max(). (payto can never be the treasury — rejected at offer creation — so those
+        // two never collide.) For a pre-v1.6 offer (rebate=0n) this reduces to the old two checks exactly.
+        const need = new Map<string, bigint>([[o.want.payto, want], [TREASURY_ADDR, fee]]);
+        if (rebate > 0n) need.set(o.seller, (need.get(o.seller) ?? 0n) + rebate);
+        let unpaid: string | undefined;
+        for (const [addr, amt] of need) if (BigInt(pt[addr] ?? "0") < amt) {
+          unpaid = addr === TREASURY_ADDR ? "protocol fee unpaid" : (rebate > 0n && addr === o.seller) ? "maker rebate unpaid (v1.6)" : "payment below want.value";
+          break;
+        }
+        if (unpaid) { note(ev, ev.txid, "fill", false, unpaid); continue; }
         const paid = BigInt(pt[o.want.payto] ?? "0");
-        if (paid < want) { note(ev, ev.txid, "fill", false, "payment below want.value"); continue; }
-        const fee = o.feeBps ? tradeFee(want) : 0n;
-        const feeGot = BigInt(pt[TREASURY_ADDR] ?? "0");
-        if (feeGot < fee) { note(ev, ev.txid, "fill", false, "protocol fee unpaid"); continue; }
         // deliver the asset to the buyer
         if (isNameGive(o.give)) {
           const n = names.get(o.give.name);
