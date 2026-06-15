@@ -11,3 +11,4 @@ dist/
 **/*key*.json
 **/*.priv
 .claude/
+conformance/__pycache__/

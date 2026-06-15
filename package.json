@@ -9,7 +9,7 @@
     "test": "pnpm -r --filter \"./packages/*\" test",
     "clean": "pnpm -r exec node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test:e2e": "tsx test/oracle.test.ts && tsx test/edge.test.ts && tsx test/security.test.ts",
-    "test:crosslang": "node conformance/crosscheck.mjs"
+    "test:crosslang": "node conformance/crosscheck.mjs && node conformance/crosscheck-resolve.mjs && node conformance/fuzz-resolve.mjs 1500"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

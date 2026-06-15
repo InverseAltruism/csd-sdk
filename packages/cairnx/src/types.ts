@@ -19,6 +19,14 @@ export const V14_HEIGHT = 31_400;             // (non-retroactive)
 // model — squatting has a carrying cost, lapsed names return to the market at a fair price);
 // plus tmeta (issuer-only token metadata pointer into the csd-swarm content layer).
 export const V15_HEIGHT = 32_000;             // (non-retroactive)
+// v1.6 = fee update + MAKER REBATE. The treasury trade fee rises 1%→1.5%, and a maker rebate
+// (flat 0.25 CSD + 0.5%, taker-funded, routed to the offer's maker o.seller) rides resting-liquidity
+// fills — in v1.6 that means BID-ANSWERED whole fills (the RFQ/MM lane). Both are captured per-offer
+// at CREATION height (feeBps stored on the offer), so a pre-v1.6 offer keeps 1% and every historical
+// replay stays byte-identical. (non-retroactive) — see cairn/docs/ecosystem/24. PLACEHOLDER height:
+// the operator MUST set this to a height comfortably AFTER the resolver+wallet+UI deploy (current tip
+// ~33.3k); it ships dormant until then.
+export const V16_HEIGHT = 40_000;
 export const EPOCH_LEN = 30;
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
 export const NAME_TERM_EPOCHS = 8_760;        // one term ≈ 1 year
@@ -46,7 +54,12 @@ export const CONF_TOKEN_FILL = 1_000_000;
 // ── protocol treasury + fees (convention-enforced via same-tx outputs; see CONVENTION §8) ──
 // p2pkh address; privkey held off-chain by the operator. Fees accrue as ordinary UTXOs.
 export const TREASURY_ADDR = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016";
-export const FEE_BPS = 100;                   // 1% taker fee on trade fills (of want.value)
+export const FEE_BPS = 100;                   // 1% taker fee — UNCHANGED; pre-v1.6 offers keep this (replay-identity)
+export const FEE_BPS_V16 = 150;               // v1.6: 1.5% treasury fee on offers created at/after V16_HEIGHT
+// v1.6 maker rebate (taker-funded, routed to o.seller): a flat 0.25 CSD reimburses the maker's propose
+// (anchor) cost + 0.5% margin. Integer/ceil, pinned across impls. Applies to bid-answered whole fills.
+export const REBATE_FLAT = 25_000_000n;       // 0.25 CSD
+export const REBATE_BPS = 50;                 // 0.5%
 export const DEPLOY_FEE = 100_000_000;        // 1 CSD to deploy a token
 // name registration fee by length (base units) — short names cost more (ENS/BNS anti-squat curve)
 export function nameRegFee(name: string): bigint {
@@ -57,8 +70,12 @@ export function nameRegFee(name: string): bigint {
   if (n <= 9) return 50_000_000n;             // 0.5 CSD
   return 10_000_000n;                          // 0.1 CSD
 }
-// taker fee for a trade of `want` base units, ceil(1%) — always ≥ 0 (want may be 0 for giveaways)
-export const tradeFee = (want: bigint): bigint => (want * BigInt(FEE_BPS) + 9999n) / 10000n;
+// taker fee for a trade of `want` base units at `bps` (ceil) — always ≥ 0 (want may be 0 for giveaways).
+// `bps` is the rate captured on the offer at creation (o.feeBps): 100 pre-v1.6, 150 from v1.6. Default
+// FEE_BPS keeps every existing call site byte-identical.
+export const tradeFee = (want: bigint, bps: number = FEE_BPS): bigint => (want * BigInt(bps) + 9999n) / 10000n;
+// v1.6 maker rebate for a trade of `value` base units: flat + ceil(0.5%). Routed to o.seller, taker-paid.
+export const makerRebate = (value: bigint): bigint => REBATE_FLAT + (value * BigInt(REBATE_BPS) + 9999n) / 10000n;
 
 export const TICKER_RE = /^[A-Z][A-Z0-9]{2,11}$/;
 export const ADDR_RE = /^0x[0-9a-f]{40}$/;
