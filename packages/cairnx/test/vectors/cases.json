@@ -4165,6 +4165,254 @@
           }
         }
       }
+    },
+    {
+      "name": "v18-short-name-premium-fee",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800000",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"commit\":\"0xe9172ed8a29abd81a346e20476e8ec74c1fef0173dc1b3bcbd9fb09ac6686a17\",\"t\":\"ncommit\",\"v\":1}",
+          "payloadHash": "0x721ebb06e32ea9a6e3a4f7b90fa002af7f9e51a626fced5fc82fc1d715594a61",
+          "height": 40005,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800001",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"abcd\",\"salt\":\"00ffee1122334455\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xcb76f8a543e51c988e858ebba46f7f036042813879e9bf22045b04a58e7bfd9f",
+          "height": 40007,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "670000000"
+          }
+        }
+      ],
+      "tipHeight": 40010,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "670000000",
+        "names": {
+          "abcd": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1800001",
+            "effectiveHeight": 40005,
+            "height": 40007,
+            "locked": false,
+            "name": "abcd",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10093
+          }
+        },
+        "offers": {},
+        "tipHeight": 40010,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v18-normal-name-flat-fee",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800002",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"commit\":\"0xbb1d7e6d0e8f78e7882eca8879b3216354041ffa4e7c8d9eb4a0b07d0a8162ab\",\"t\":\"ncommit\",\"v\":1}",
+          "payloadHash": "0x9f8abb7ac2c902a9e59fe2ae43c62812906de4e0f16edb6da58fac5be655c03d",
+          "height": 40005,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800003",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"alice\",\"salt\":\"00ffee1122334455\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xa444df439fb371a52bac3918fdb2079c0b0e8aebdb5511d5941a4be923420c5f",
+          "height": 40007,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "300000000"
+          }
+        }
+      ],
+      "tipHeight": 40010,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "300000000",
+        "names": {
+          "alice": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1800003",
+            "effectiveHeight": 40005,
+            "height": 40007,
+            "locked": false,
+            "name": "alice",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10093
+          }
+        },
+        "offers": {},
+        "tipHeight": 40010,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v18-old-fee-underpaid-rejected",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800004",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"commit\":\"0xbb1d7e6d0e8f78e7882eca8879b3216354041ffa4e7c8d9eb4a0b07d0a8162ab\",\"t\":\"ncommit\",\"v\":1}",
+          "payloadHash": "0x9f8abb7ac2c902a9e59fe2ae43c62812906de4e0f16edb6da58fac5be655c03d",
+          "height": 40005,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800005",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"alice\",\"salt\":\"00ffee1122334455\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xa444df439fb371a52bac3918fdb2079c0b0e8aebdb5511d5941a4be923420c5f",
+          "height": 40007,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "50000000"
+          }
+        }
+      ],
+      "tipHeight": 40010,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "0",
+        "names": {},
+        "offers": {},
+        "tipHeight": 40010,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v18-below-gate-uses-old-curve",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800006",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"commit\":\"0xbb1d7e6d0e8f78e7882eca8879b3216354041ffa4e7c8d9eb4a0b07d0a8162ab\",\"t\":\"ncommit\",\"v\":1}",
+          "payloadHash": "0x9f8abb7ac2c902a9e59fe2ae43c62812906de4e0f16edb6da58fac5be655c03d",
+          "height": 39988,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800007",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"alice\",\"salt\":\"00ffee1122334455\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xa444df439fb371a52bac3918fdb2079c0b0e8aebdb5511d5941a4be923420c5f",
+          "height": 39990,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+          }
+        }
+      ],
+      "tipHeight": 39995,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "100000000",
+        "names": {
+          "alice": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1800007",
+            "effectiveHeight": 39988,
+            "height": 39990,
+            "locked": false,
+            "name": "alice",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10093
+          }
+        },
+        "offers": {},
+        "tipHeight": 39995,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v18-renewal-pays-new-fee",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800008",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"commit\":\"0xbb1d7e6d0e8f78e7882eca8879b3216354041ffa4e7c8d9eb4a0b07d0a8162ab\",\"t\":\"ncommit\",\"v\":1}",
+          "payloadHash": "0x9f8abb7ac2c902a9e59fe2ae43c62812906de4e0f16edb6da58fac5be655c03d",
+          "height": 40005,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {}
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1800009",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"alice\",\"salt\":\"00ffee1122334455\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xa444df439fb371a52bac3918fdb2079c0b0e8aebdb5511d5941a4be923420c5f",
+          "height": 40007,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "300000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f180000a",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"alice\",\"t\":\"nrenew\",\"v\":1}",
+          "payloadHash": "0xf354141593382a062fc2fc197d2a2eb0882088860e31688495ec7102460fcff2",
+          "height": 40009,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "300000000"
+          }
+        }
+      ],
+      "tipHeight": 40012,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "600000000",
+        "names": {
+          "alice": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1800009",
+            "effectiveHeight": 40005,
+            "height": 40007,
+            "locked": false,
+            "name": "alice",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 18853
+          }
+        },
+        "offers": {},
+        "tipHeight": 40012,
+        "tokens": {}
+      }
     }
   ]
 }

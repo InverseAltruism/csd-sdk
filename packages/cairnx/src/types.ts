@@ -44,8 +44,8 @@ export const NAME_PREMIUM_START = 20n;        // expired re-claim premium starts
 export const NAME_PREMIUM_DECAY_EPOCHS = 720; // …decaying linearly to 1× over ≈ 30 days
 /** Fee to claim a name whose lease lapsed (grace over): nameRegFee × a linearly-decaying
  *  premium. Pure in (name, epochsPastGraceEnd) — deterministic for every resolver. */
-export function expiredClaimFee(name: string, epochsPastGraceEnd: number): bigint {
-  const base = nameRegFee(name);
+export function expiredClaimFee(name: string, epochsPastGraceEnd: number, height: number): bigint {
+  const base = nameRegFee(name, height);
   if (epochsPastGraceEnd >= NAME_PREMIUM_DECAY_EPOCHS) return base;
   const left = BigInt(NAME_PREMIUM_DECAY_EPOCHS - epochsPastGraceEnd);
   // start×base shrinking linearly; integer math, never below base
@@ -76,14 +76,23 @@ export const FEE_BPS_V16 = 150;               // v1.6: 1.5% treasury fee on offe
 export const REBATE_FLAT = 25_000_000n;       // 0.25 CSD
 export const REBATE_BPS = 50;                 // 0.5%
 export const DEPLOY_FEE = 100_000_000;        // 1 CSD to deploy a token
-// name registration fee by length (base units) — short names cost more (ENS/BNS anti-squat curve)
-export function nameRegFee(name: string): bigint {
-  const n = name.length;
-  if (n <= 3) return 500_000_000n;            // 5 CSD
-  if (n === 4) return 200_000_000n;           // 2 CSD
-  if (n === 5) return 100_000_000n;           // 1 CSD
-  if (n <= 9) return 50_000_000n;             // 0.5 CSD
-  return 10_000_000n;                          // 0.1 CSD
+// v1.8: simplified 2-tier name fee — ACTIVATION (must match cairnx_ref.py + UI helpers.js + wallet
+// cairnx.ts). BELOW this height the original ENS-style 5-tier curve is preserved BYTE-IDENTICALLY, so
+// all historical replay + pinned vectors stay unchanged; AT/AFTER it a flat 2-tier applies. Height-pure
+// → deterministic. Placeholder height — the operator sets the real activation at deploy (non-retroactive:
+// no name registration below it is ever reinterpreted, so feesPaid / canonical state can't shift on replay).
+export const V18_HEIGHT = 40_000;
+export const NAME_FEE_SHORT_V18 = 670_000_000n;  // 6.7 CSD — names ≤ 4 chars (premium / anti-squat)
+export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
+// name registration / renewal fee by length (base units). `height` selects the fee regime (the V18 gate).
+export function nameRegFee(name: string, height: number): bigint {
+  if (height >= V18_HEIGHT) return name.length <= 4 ? NAME_FEE_SHORT_V18 : NAME_FEE_V18;
+  const n = name.length;                           // pre-V18 ENS-style curve — FROZEN for replay-identity
+  if (n <= 3) return 500_000_000n;                 // 5 CSD
+  if (n === 4) return 200_000_000n;                // 2 CSD
+  if (n === 5) return 100_000_000n;                // 1 CSD
+  if (n <= 9) return 50_000_000n;                  // 0.5 CSD
+  return 10_000_000n;                               // 0.1 CSD
 }
 // taker fee for a trade of `want` base units at `bps` (ceil) — always ≥ 0 (want may be 0 for giveaways).
 // `bps` is the rate captured on the offer at creation (o.feeBps): 100 pre-v1.6, 150 from v1.6. Default

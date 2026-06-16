@@ -83,6 +83,9 @@ V14_HEIGHT = 31_400
 V15_HEIGHT = 32_000
 V16_HEIGHT = 33_600   # v1.6 fee update + maker rebate — ACTIVATION (must match types.ts/helpers.js/wallet)
 V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/helpers.js/wallet)
+V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
+NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
 EPOCH_LEN = 30
 NAME_TERM_EPOCHS = 8_760
 NAME_GRACE_EPOCHS = 720
@@ -115,7 +118,10 @@ SALT_RE = re.compile(r"^[0-9a-fA-F]{16,128}$")
 
 def epoch_of(height): return height // EPOCH_LEN
 
-def name_reg_fee(name):
+def name_reg_fee(name, height):
+    # v1.8 2-tier at/after V18; FROZEN ENS-style 5-tier below it (replay-identity). u16len == JS .length.
+    if height >= V18_HEIGHT:
+        return NAME_FEE_SHORT_V18 if u16len(name) <= 4 else NAME_FEE_V18
     n = u16len(name)
     if n <= 3: return 500_000_000
     if n == 4: return 200_000_000
@@ -123,8 +129,8 @@ def name_reg_fee(name):
     if n <= 9: return 50_000_000
     return 10_000_000
 
-def expired_claim_fee(name, epochs_past_grace_end):
-    base = name_reg_fee(name)
+def expired_claim_fee(name, epochs_past_grace_end, height):
+    base = name_reg_fee(name, height)
     if epochs_past_grace_end >= NAME_PREMIUM_DECAY_EPOCHS: return base
     left = NAME_PREMIUM_DECAY_EPOCHS - epochs_past_grace_end
     mult = 1 + ((NAME_PREMIUM_START - 1) * left) // NAME_PREMIUM_DECAY_EPOCHS
@@ -410,7 +416,7 @@ def resolve(events, tip_height):
                 cur = names.get(rec["name"])
                 ep_claim = epoch_of(ev["height"])
                 if cur and v15 and lapsed(cur, ep_claim):
-                    fee = expired_claim_fee(rec["name"], ep_claim - (paid_through(cur) + NAME_GRACE_EPOCHS))
+                    fee = expired_claim_fee(rec["name"], ep_claim - (paid_through(cur) + NAME_GRACE_EPOCHS), ev["height"])
                     if fee_to_treasury < fee: continue
                     for o in offers.values():
                         if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
@@ -420,7 +426,7 @@ def resolve(events, tip_height):
                                           "paidThroughEpoch": ep_claim + NAME_TERM_EPOCHS}
                     fees_paid += fee
                     continue
-                if fee_to_treasury < name_reg_fee(rec["name"]): continue
+                if fee_to_treasury < name_reg_fee(rec["name"], ev["height"]): continue
                 cand = {"owner": who, "effHeight": eff_height, "pos": ev["pos"], "id": ev["id"],
                         "height": ev["height"], "locked": False}
                 if v15: cand["paidThroughEpoch"] = ep_claim + NAME_TERM_EPOCHS
@@ -433,7 +439,7 @@ def resolve(events, tip_height):
                         if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
                             release_give(o); o["status"] = "cancelled"
                 names[rec["name"]] = cand
-                fees_paid += name_reg_fee(rec["name"])
+                fees_paid += name_reg_fee(rec["name"], ev["height"])
 
             elif t == "nxfer":
                 n = names.get(rec["name"])
@@ -514,9 +520,9 @@ def resolve(events, tip_height):
                 n = names.get(rec["name"]); ep = epoch_of(ev["height"])
                 if not n or lapsed(n, ep): continue
                 if in_grace(n, ep) and who != n["owner"]: continue
-                if fee_to_treasury < name_reg_fee(rec["name"]): continue
+                if fee_to_treasury < name_reg_fee(rec["name"], ev["height"]): continue
                 n["paidThroughEpoch"] = paid_through(n) + NAME_TERM_EPOCHS
-                fees_paid += name_reg_fee(rec["name"])
+                fees_paid += name_reg_fee(rec["name"], ev["height"])
 
             elif t == "tmeta":
                 if not v15: continue

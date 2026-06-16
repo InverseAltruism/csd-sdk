@@ -188,7 +188,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // back-dated claim within COMMIT_MAX_BLOCKS and take the just-reclaimed name from the
         // premium payer for only the base reg fee — stealing it AND bypassing the premium entirely.
         if (cur && v15 && lapsed(cur, epClaim)) {
-          const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(cur) + NAME_GRACE_EPOCHS));
+          const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
           for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
@@ -196,7 +196,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
           continue;
         }
-        if (feeToTreasury < nameRegFee(rec.name)) { note(ev, ev.id, "name", false, "name registration fee unpaid"); continue; }
+        if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "name", false, "name registration fee unpaid"); continue; }
         const cand: NameRec = { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false,
           ...(v15 ? { paidThroughEpoch: epClaim + NAME_TERM_EPOCHS } : {}) };
         // lowest (effectiveHeight, pos, id) wins; a back-dated reveal can DISPLACE a squatter.
@@ -213,7 +213,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
         }
         names.set(rec.name, cand);
-        feesPaid += nameRegFee(rec.name);
+        feesPaid += nameRegFee(rec.name, ev.height);
         note(ev, ev.id, "name", true, cur ? "displaced prior holder" : undefined);
 
       } else if (rec.t === "nxfer") {
@@ -336,9 +336,9 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // anyone may renew a LIVE lease (third-party gifting, ENS-style); in GRACE the owner
         // alone may — otherwise a squatter could extend a lapsing name they intend to take
         if (inGrace(n, ep) && who !== n.owner) { note(ev, ev.id, "nrenew", false, "grace period: only the owner may renew"); continue; }
-        if (feeToTreasury < nameRegFee(rec.name)) { note(ev, ev.id, "nrenew", false, "renewal fee unpaid"); continue; }
+        if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "nrenew", false, "renewal fee unpaid"); continue; }
         n.paidThroughEpoch = paidThrough(n) + NAME_TERM_EPOCHS;
-        feesPaid += nameRegFee(rec.name);
+        feesPaid += nameRegFee(rec.name, ev.height);
         note(ev, ev.id, "nrenew", true, `paid through epoch ${n.paidThroughEpoch}`);
 
       } else if (rec.t === "tmeta") {
