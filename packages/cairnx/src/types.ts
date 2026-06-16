@@ -32,8 +32,9 @@ export const V16_HEIGHT = 33_600;
 // made race-safe by a payment-free FIRST-CLAIM exclusivity: a SCORE_CLAIM attest reserves an open offer
 // for the first claimer (by consensus order) for CLAIM_WINDOW_BLOCKS; only the live claimer may fill, so
 // the same-block fill race moves to a payment-free claim and a losing buyer forfeits nothing. Bounded by
-// a per-address concurrent-claim cap + an anti-recycle cooldown (doc 24 §4). (non-retroactive) PLACEHOLDER
-// height — the operator sets the real activation (must be ≥ V16_HEIGHT and > the tip at deploy).
+// a per-address concurrent-claim cap + an anti-recycle cooldown (doc 24 §4). (non-retroactive) Activation
+// ≥ V16_HEIGHT; non-retroactive so it is safe even if the tip crosses it before the UI rollout completes
+// (no claim attest / open CSD offer exists below it in the wild → nothing to reinterpret).
 export const V17_HEIGHT = 34_000;
 export const EPOCH_LEN = 30;
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
