@@ -662,6 +662,9 @@ def resolve(events, tip_height):
                 if o.get("taker"): continue
                 if is_token_want(o["want"]): continue
                 if live_claim(o, ev["height"]): continue
+                # anti-recycle (KNOWN BOUND, identical to resolve.ts so NOT a fork): keys on being the LAST
+                # claimer, so a 2nd-address intervening claim resets it (A→B→A recycle). Bounded by
+                # MAX_ACTIVE_CLAIMS + payment-free claims → single-offer griefing, never value loss.
                 if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle
                 liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and x.get("claimUntilHeight") is not None and ev["height"] < x["claimUntilHeight"])
                 if liveN >= MAX_ACTIVE_CLAIMS: continue

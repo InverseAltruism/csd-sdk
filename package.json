@@ -1,6 +1,6 @@
 {
   "name": "csd-sdk",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "Compute Substrate (CSD) SDK + light client — L0 of the no-fork ecosystem roadmap. One canonical, golden-vector-tested toolkit for building on CSD.",
   "type": "module",

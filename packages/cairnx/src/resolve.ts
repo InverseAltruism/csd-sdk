@@ -530,7 +530,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.taker) { note(ev, ev.txid, "claim", false, "taker-bound offer needs no claim"); continue; }
         if (isTokenWant(o.want)) { note(ev, ev.txid, "claim", false, "claims are for CSD-priced offers (token offers are no-op-safe)"); continue; }
         if (liveClaim(o, ev.height)) { note(ev, ev.txid, "claim", false, "offer already claimed (window live)"); continue; }
-        // anti-recycle: the JUST-LAPSED claimer cannot immediately re-grab the SAME offer (anyone else can)
+        // anti-recycle: the JUST-LAPSED claimer cannot immediately re-grab the SAME offer (anyone else can).
+        // KNOWN BOUND (intentional — identical in cairnx_ref.py, so NOT a cross-impl fork): the cooldown keys
+        // on being the LAST claimer (o.claimedBy === who), so an intervening claim by a 2nd address resets it
+        // and a colluding A→B→A pair can recycle one offer. Bounded by MAX_ACTIVE_CLAIMS + the claim being
+        // payment-free → a griefing/liveness nuisance on a SINGLE offer, never value loss. Revisit (key the
+        // cooldown on the offer, not the last claimer) if the open lane re-opens with a monopoly concern.
         if (o.claimedBy === who && o.claimUntilHeight !== undefined && ev.height < o.claimUntilHeight + CLAIM_COOLDOWN_BLOCKS) {
           note(ev, ev.txid, "claim", false, "claim cooldown (you just held this offer)"); continue;
         }
