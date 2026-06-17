@@ -96,6 +96,18 @@ importers:
         specifier: workspace:*
         version: link:../crypto
 
+  packages/siwc:
+    dependencies:
+      '@inversealtruism/csd-codec':
+        specifier: workspace:*
+        version: link:../codec
+      '@inversealtruism/csd-crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
+
   packages/tx:
     dependencies:
       '@inversealtruism/csd-codec':
