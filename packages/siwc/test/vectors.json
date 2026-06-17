@@ -1,0 +1,18 @@
+[
+  {
+    "message": "casino.example wants you to sign in with your Compute Substrate account:\n0xabababababababababababababababababababab\n\n\nURI: https://casino.example/login\nVersion: 1\nChain ID: csd:00000052c2821f71b19c3d79dfabfb12\nNonce: abc123def456\nIssued At: 2026-06-17T12:00:00Z\nExpiration Time: 2026-06-17T12:10:00Z",
+    "digest": "0xfaee709f31e32cc4c41eb22805dab29b0e7a00339f0a7e5912f8fb7f75f4580b"
+  },
+  {
+    "message": "casino.example wants you to sign in with your Compute Substrate account:\n0xabababababababababababababababababababab\n\nSign in to CSD Casino.\n\nURI: https://casino.example/login\nVersion: 1\nChain ID: csd:00000052c2821f71b19c3d79dfabfb12\nNonce: abc123def456\nIssued At: 2026-06-17T12:00:00Z\nExpiration Time: 2026-06-17T12:10:00Z",
+    "digest": "0x1dfa101e711457832ac2fe576cdfc42fa89585efc84e7e0ebc6b41347d81dbd9"
+  },
+  {
+    "message": "app.example:8443 wants you to sign in with your Compute Substrate account:\n0xabababababababababababababababababababab\n\nWelcome 🦄 — sign in\n\nURI: https://app.example:8443/\nVersion: 1\nChain ID: csd:00000052c2821f71b19c3d79dfabfb12\nNonce: Zx9Qw8Rt7Yu6\nIssued At: 2026-06-17T00:00:00Z\nExpiration Time: 2026-06-17T00:05:00Z\nNot Before: 2026-06-17T00:00:00Z\nRequest ID: req-42\nResources:\n- https://app.example/a\n- https://app.example/b",
+    "digest": "0x0abd394ddb9b343442857f10e6daa852898359f73a82fe4f6074369bdc27e108"
+  },
+  {
+    "message": "x.example wants you to sign in with your Compute Substrate account:\n0xabababababababababababababababababababab\n\n𝕊ign ￿ edge\n\nURI: https://x.example/\nVersion: 1\nChain ID: csd:00000052c2821f71b19c3d79dfabfb12\nNonce: nonce1234\nIssued At: 2026-06-17T01:02:03Z\nExpiration Time: 2026-06-17T01:12:03Z",
+    "digest": "0xe82bec9afcc4507bc486202e396b6e90e3b388270d4bd1fe5cc536f4425e445f"
+  }
+]

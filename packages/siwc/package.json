@@ -1,0 +1,39 @@
+{
+  "name": "@inversealtruism/csd-siwc",
+  "version": "0.1.10",
+  "description": "Sign in with CSD (SIWC) — audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/siwc.test.ts"
+  },
+  "dependencies": {
+    "@inversealtruism/csd-codec": "workspace:*",
+    "@inversealtruism/csd-crypto": "workspace:*",
+    "@noble/hashes": "1.8.0"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git"
+  }
+}
