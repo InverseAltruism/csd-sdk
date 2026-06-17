@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-client",
-  "version": "0.1.8",
+  "version": "0.1.11",
   "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway) — tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
   "type": "module",
   "main": "./dist/index.cjs",

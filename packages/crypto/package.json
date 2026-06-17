@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-crypto",
-  "version": "0.1.8",
+  "version": "0.1.11",
   "description": "Compute Substrate crypto primitives — secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
   "type": "module",
   "main": "./dist/index.cjs",
