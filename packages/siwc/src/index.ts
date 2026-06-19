@@ -171,6 +171,11 @@ export function verifySiwc(input: { message: string; sig64: string; pub33: strin
   const now = expected.now ?? Date.now();
   const skew = expected.skewMs ?? 0;
   const iat = Date.parse(f.issuedAt); if (Number.isNaN(iat)) return { ok: false, reason: "bad-issued-at" };
+  // Bound issuedAt against the clock (audit SIWC-IAT): reject a message issued in the future (beyond skew
+  // tolerance) or more than an hour ago. The age bound also caps EFFECTIVE validity to ~1h from issuance,
+  // independent of a far-future expirationTime, since a stale issuedAt is rejected here regardless of expiry.
+  if (iat > now + skew + 5 * 60_000) return { ok: false, reason: "issued-in-future" };
+  if (now - iat > 60 * 60_000 + skew) return { ok: false, reason: "issued-too-long-ago" };
   if (f.expirationTime === undefined) return { ok: false, reason: "missing-expiration" }; // require expiry
   const exp = Date.parse(f.expirationTime); if (Number.isNaN(exp)) return { ok: false, reason: "bad-expiration" };
   if (now >= exp + skew) return { ok: false, reason: "expired" };
