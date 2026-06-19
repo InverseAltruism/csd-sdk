@@ -136,7 +136,12 @@ export class CsdClient {
   blockByHeight(h: number): Promise<RpcBlock> { return this.getOk(`/block/height/${h}`); }
   blockByHash(hash: string): Promise<RpcBlock> { return this.getOk(`/block/${hash}`); }
   tx(id: string): Promise<RpcTxInfo> { return this.get(`/tx/${id}`); }
-  utxos(addr: string): Promise<RpcUtxos> { return this.get(`/utxos/${addr}`); }
+  // Default available=true: excludes immature/locked coinbase UTXOs so callers don't build txs spending
+  // un-spendable outputs (the node would silently reject them) — audit TXB-1-SDK. Pass {available:false}
+  // for the full set (e.g. balance display that wants to show locked coinbases).
+  utxos(addr: string, opts: { available?: boolean } = {}): Promise<RpcUtxos> {
+    return this.get(`/utxos/${addr}${opts.available === false ? "" : "?available=true"}`);
+  }
   proposal(id: string): Promise<RpcProposal> { return this.get(`/proposal/${id}`); }
   proposals(domain: string, limit = 40): Promise<RpcProposal[]> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
   topDomain(domain: string, epoch?: number): Promise<unknown> { return this.get(epoch == null ? `/top/${encodeURIComponent(domain)}` : `/top/${encodeURIComponent(domain)}/${epoch}`); }
