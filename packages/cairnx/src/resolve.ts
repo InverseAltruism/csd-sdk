@@ -8,7 +8,7 @@ import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, CLAIM_WINDOW_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT,
   epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -17,7 +17,7 @@ import {
 
 interface Bal { available: bigint; locked: bigint }
 interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }
-interface NameRec { owner: string; effHeight: number; pos: number; id: string; height: number; addr?: string; locked: boolean; viaFill?: boolean; paidThroughEpoch?: number }
+interface NameRec { owner: string; effHeight: number; pos: number; id: string; height: number; addr?: string; locked: boolean; viaFill?: boolean; paidThroughEpoch?: number; profile?: Record<string, string> }
 
 // Ordinal (code-unit) string comparison — the ONLY comparator allowed anywhere in the resolver.
 // localeCompare is ICU-collation-dependent and therefore non-reproducible across runtimes; a
@@ -112,6 +112,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v12 = ev.height >= V12_HEIGHT;
     const v15 = ev.height >= V15_HEIGHT;
     const v16 = ev.height >= V16_HEIGHT;
+    const v19 = ev.height >= V19_HEIGHT;
     const feeToTreasury = ev.kind === "propose" ? BigInt((ev.paidTo ?? {})[TREASURY_ADDR] ?? "0") : 0n;
 
     if (ev.kind === "propose") {
@@ -221,7 +222,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (!n || n.owner !== who) { note(ev, ev.id, "nxfer", false, "not the name owner"); continue; }
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nxfer", false, "lease lapsed — claim it instead"); continue; }
         if (n.locked) { note(ev, ev.id, "nxfer", false, "name is locked by an open offer"); continue; }
-        n.owner = rec.to.toLowerCase(); n.addr = undefined;
+        n.owner = rec.to.toLowerCase(); n.addr = undefined; n.profile = undefined; // ownership change clears the profile (doc 36)
         note(ev, ev.id, "nxfer", true);
 
       } else if (rec.t === "nset") {
@@ -230,6 +231,17 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nset", false, "lease lapsed — claim it instead"); continue; }
         n.addr = rec.addr.toLowerCase();
         note(ev, ev.id, "nset", true);
+
+      } else if (rec.t === "nprofile") {
+        // v1.9 ENS-class identity (doc 36). INERT metadata — no value/fee/paidTo, never a send target
+        // (the verified address stays in `nset`). Owner-gated, last-write-wins; an empty `p` clears it.
+        // Cleared on every ownership change (nxfer/fill/reclaim) exactly like `addr`.
+        if (!v19) { note(ev, ev.id, "nprofile", false, "before v1.9 activation"); continue; }
+        const n = names.get(rec.name);
+        if (!n || n.owner !== who) { note(ev, ev.id, "nprofile", false, "not the name owner"); continue; }
+        if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nprofile", false, "lease lapsed — claim it instead"); continue; }
+        n.profile = Object.keys(rec.p).length ? { ...rec.p } : undefined;
+        note(ev, ev.id, "nprofile", true);
 
       } else if (rec.t === "offer") {
         const wantIsToken = isTokenWant(rec.want);
@@ -402,7 +414,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         bal(o.want.ticker, o.want.payto).available += amt;
         if (fee > 0n) bal(o.want.ticker, TREASURY_ADDR).available += fee;
         if (isNameGive(o.give)) {
-          giveName!.owner = who; giveName!.locked = false; giveName!.addr = undefined;
+          giveName!.owner = who; giveName!.locked = false; giveName!.addr = undefined; giveName!.profile = undefined; // sale clears the profile (doc 36)
           // v1.3: a paid sale establishes a fresh, displacement-immune ownership basis (H3)
           if (ev.height >= V13_HEIGHT) { giveName!.effHeight = ev.height; giveName!.pos = ev.pos; giveName!.id = ev.txid; giveName!.height = ev.height; giveName!.viaFill = true; }
         } else {
@@ -506,7 +518,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (isNameGive(o.give)) {
           const n = names.get(o.give.name);
           if (!n) { note(ev, ev.txid, "fill", false, "name vanished (consensus violation)"); continue; }
-          n.owner = who; n.locked = false; n.addr = undefined;
+          n.owner = who; n.locked = false; n.addr = undefined; n.profile = undefined; // sale clears the profile (doc 36)
           // v1.3: a paid sale establishes a fresh, displacement-immune ownership basis (H3)
           if (ev.height >= V13_HEIGHT) { n.effHeight = ev.height; n.pos = ev.pos; n.id = ev.txid; n.height = ev.height; n.viaFill = true; }
         } else {
@@ -568,9 +580,13 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   }
   const namesOut: Record<string, NameState> = {};
   const tipV15 = tipHeight >= V15_HEIGHT;
+  const tipV19 = tipHeight >= V19_HEIGHT;
   const tipEpoch = epochOf(tipHeight);
   for (const [nm, n] of [...names.entries()].sort(([a], [b]) => ord(a, b))) {
     namesOut[nm] = { name: nm, owner: n.owner, claimId: n.id, height: n.height, effectiveHeight: n.effHeight, locked: n.locked, ...(n.addr ? { addr: n.addr } : {}), ...(n.viaFill ? { viaFill: true as const } : {}),
+      // v1.9 profile materialized at v1.9+ tips ONLY (the apply is also gated) → every pre-v1.9 canonical
+      // hash stays byte-identical; absent when empty/unset.
+      ...(tipV19 && n.profile ? { profile: n.profile } : {}),
       // lease fields exist only at v1.5+ tips so every pre-v1.5 canonical hash stays pinned
       ...(tipV15 ? { paidThroughEpoch: paidThrough(n), ...(lapsed(n, tipEpoch) ? { expired: true as const } : {}) } : {}) };
   }

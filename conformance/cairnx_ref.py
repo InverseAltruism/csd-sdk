@@ -86,6 +86,9 @@ V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/h
 V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
+V19_HEIGHT = 50_000               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
+PROFILE_MAX_VALUE_BYTES = 256
 EPOCH_LEN = 30
 NAME_TERM_EPOCHS = 8_760
 NAME_GRACE_EPOCHS = 720
@@ -113,6 +116,7 @@ TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")
 ADDR_RE = re.compile(r"^0x[0-9a-f]{40}$")
 AMOUNT_RE = re.compile(r"^(0|[1-9][0-9]*)$")
 NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+PKEY = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$")  # nprofile `p` keys = NAME_RE + "." ; ASCII → sort-invariant. Use .fullmatch for JS .test parity (no $-before-\n)
 HASH_RE = re.compile(r"^0x[0-9a-f]{64}$")
 SALT_RE = re.compile(r"^[0-9a-fA-F]{16,128}$")
 
@@ -167,6 +171,7 @@ TRANSFER_KEYS = {"v", "t", "ticker", "to", "amount", "memo", "ts"}
 OFFER_KEYS = {"v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"}
 BID_KEYS = {"v", "t", "want", "give", "memo", "ts"}
 NAME_KEYS = {"v", "t", "name", "salt"}
+NPROFILE_KEYS = {"v", "t", "name", "p"}
 
 def _only_keys(r, allowed): return set(r.keys()) <= allowed
 
@@ -277,6 +282,18 @@ def parse_record(uri, payload_hash_hex):
         if not is_name(r.get("name")): return None
         if len(r.keys()) != 3: return None
         return r
+    if t == "nprofile":
+        # v1.9 ENS-class identity (doc 36). INERT shape+determinism validation only; semantics-agnostic.
+        if not _only_keys(r, NPROFILE_KEYS): return None
+        if not is_name(r.get("name")): return None
+        p = r.get("p")
+        if not isinstance(p, dict): return None
+        if len(p) > PROFILE_MAX_KEYS: return None                       # empty p valid (= clear)
+        for k, val in p.items():
+            if PKEY.fullmatch(k) is None: return None                  # ASCII charset; fullmatch = JS .test parity
+            if not isinstance(val, str): return None                   # string→string only
+            if len(val.encode("utf-8")) > PROFILE_MAX_VALUE_BYTES: return None
+        return r
     if t == "tmeta":
         if not is_ticker(r.get("ticker")): return None
         if not isinstance(r.get("hash"), str) or not HASH_RE.match(r["hash"]): return None
@@ -354,6 +371,7 @@ def resolve(events, tip_height):
         v12 = ev["height"] >= V12_HEIGHT
         v15 = ev["height"] >= V15_HEIGHT
         v16 = ev["height"] >= V16_HEIGHT
+        v19 = ev["height"] >= V19_HEIGHT
         fee_to_treasury = int((ev.get("paidTo") or {}).get(TREASURY_ADDR, "0")) if ev["kind"] == "propose" else 0
 
         if ev["kind"] == "propose":
@@ -446,13 +464,21 @@ def resolve(events, tip_height):
                 if not n or n["owner"] != who: continue
                 if v15 and lapsed(n, epoch_of(ev["height"])): continue
                 if n["locked"]: continue
-                n["owner"] = rec["to"].lower(); n["addr"] = None
+                n["owner"] = rec["to"].lower(); n["addr"] = None; n["profile"] = None  # ownership change clears the profile (doc 36)
 
             elif t == "nset":
                 n = names.get(rec["name"])
                 if not n or n["owner"] != who: continue
                 if v15 and lapsed(n, epoch_of(ev["height"])): continue
                 n["addr"] = rec["addr"].lower()
+
+            elif t == "nprofile":
+                # v1.9 ENS-class identity (doc 36). INERT — owner-gated, last-write-wins; empty p clears.
+                if not v19: continue
+                n = names.get(rec["name"])
+                if not n or n["owner"] != who: continue
+                if v15 and lapsed(n, epoch_of(ev["height"])): continue
+                n["profile"] = dict(rec["p"]) if rec["p"] else None
 
             elif t == "offer":
                 want_is_token = is_token_want(rec["want"])
@@ -571,7 +597,7 @@ def resolve(events, tip_height):
                 bal(o["want"]["ticker"], o["want"]["payto"])["available"] += amt
                 if fee > 0: bal(o["want"]["ticker"], TREASURY_ADDR)["available"] += fee
                 if is_name_give(o["give"]):
-                    give_name["owner"] = who; give_name["locked"] = False; give_name["addr"] = None
+                    give_name["owner"] = who; give_name["locked"] = False; give_name["addr"] = None; give_name["profile"] = None  # sale clears the profile (doc 36)
                     if ev["height"] >= V13_HEIGHT:
                         give_name["effHeight"] = ev["height"]; give_name["pos"] = ev["pos"]
                         give_name["id"] = ev["txid"]; give_name["height"] = ev["height"]; give_name["viaFill"] = True
@@ -642,7 +668,7 @@ def resolve(events, tip_height):
                 if is_name_give(o["give"]):
                     n = names.get(o["give"]["name"])
                     if not n: continue
-                    n["owner"] = who; n["locked"] = False; n["addr"] = None
+                    n["owner"] = who; n["locked"] = False; n["addr"] = None; n["profile"] = None  # sale clears the profile (doc 36)
                     if ev["height"] >= V13_HEIGHT:
                         n["effHeight"] = ev["height"]; n["pos"] = ev["pos"]; n["id"] = ev["txid"]; n["height"] = ev["height"]; n["viaFill"] = True
                 else:
@@ -687,6 +713,7 @@ def resolve(events, tip_height):
         if inner: balances_out[tk] = inner
     names_out = {}
     tip_v15 = tip_height >= V15_HEIGHT
+    tip_v19 = tip_height >= V19_HEIGHT
     tip_epoch = epoch_of(tip_height)
     for nm in sorted(names.keys(), key=u16key):
         n = names[nm]
@@ -694,6 +721,7 @@ def resolve(events, tip_height):
               "effectiveHeight": n["effHeight"], "locked": n["locked"]}
         if n.get("addr"): ns["addr"] = n["addr"]
         if n.get("viaFill"): ns["viaFill"] = True
+        if tip_v19 and n.get("profile"): ns["profile"] = n["profile"]  # v1.9 at v1.9+ tips only → pre-v1.9 hash byte-identical
         if tip_v15:
             ns["paidThroughEpoch"] = paid_through(n)
             if lapsed(n, tip_epoch): ns["expired"] = True
@@ -767,6 +795,10 @@ def main():
         out["weights"] = [str(decay_weight_fixed(w["base"], w["age"])) for w in job["weights"]]
     if "resolve" in job:
         out["resolve"] = [canonical_state(resolve(j["events"], j["tipHeight"])) for j in job["resolve"]]
+    if "parseFull" in job:
+        # FULL parse_record cross-check (canonical uri + hash + the per-record schema) — stronger than
+        # the `records` job, which uses the simplified onlyKeys gate. Used by the nprofile vectors.
+        out["parseFull"] = [parse_record(canonical_json(r), payload_hash(r)) is not None for r in job["parseFull"]]
     json.dump(out, sys.stdout)
 
 if __name__ == "__main__":

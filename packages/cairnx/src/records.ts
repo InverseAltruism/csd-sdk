@@ -1,9 +1,9 @@
 // CairnX record validation + builders (pure; no I/O).
 import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 import {
-  ADDR_RE, AMOUNT_RE, HASH_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, RESERVED_NAMES, TICKER_RE,
+  ADDR_RE, AMOUNT_RE, HASH_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
-  type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
+  type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
   type OfferRecord, type TransferRecord,
 } from "./types.js";
 
@@ -82,6 +82,7 @@ const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo", "ts"]
 const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
 const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
 const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
+const NPROFILE_KEYS = new Set(["v", "t", "name", "p"]);
 
 /**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
@@ -225,6 +226,25 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       if (Object.keys(r).length !== 3) return null;
       return r as unknown as NameRenewRecord;
     }
+    case "nprofile": {
+      // v1.9 ENS-class identity (doc 36). INERT: validated for SHAPE + DETERMINISM only. The resolver
+      // stays semantics-agnostic (NO reserved keys — the app layer keeps send targets out of `p`; doc 36 §6).
+      if (!onlyKeys(r, NPROFILE_KEYS)) return null;
+      if (!isName(r.name)) return null;
+      const p = r.p as Record<string, unknown> | undefined;
+      if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+      const keys = Object.keys(p);
+      if (keys.length > PROFILE_MAX_KEYS) return null;                  // empty p is valid (= clear the profile)
+      for (const k of keys) {
+        // ASCII charset (PKEY) → the key sort can't fork across UTF-16/codepoint impls. string→string
+        // values only; each ≤ PROFILE_MAX_VALUE_BYTES. (well-formed UTF-16 already enforced above.)
+        if (!PKEY.test(k)) return null;
+        const val = p[k];
+        if (typeof val !== "string") return null;
+        if (new TextEncoder().encode(val).length > PROFILE_MAX_VALUE_BYTES) return null;
+      }
+      return r as unknown as NameProfileRecord;
+    }
     case "tmeta": {
       if (!isTicker(r.ticker)) return null;
       // a csd-swarm content hash: 0x + 64 lowercase hex (Content Convention v1)
@@ -271,3 +291,8 @@ export const nameRenew = (r: Omit<NameRenewRecord, "v" | "t">): BuiltRecord =>
   buildRecord({ v: 1, t: "nrenew", ...r });
 export const tokenMeta = (r: Omit<TokenMetaRecord, "v" | "t">): BuiltRecord =>
   buildRecord({ v: 1, t: "tmeta", ...r });
+// v1.9 ENS-class identity. NOTE: the address-key policy (no addr/address/coin in `p`) is an APP-LAYER
+// concern enforced in the wallet builder + UI (doc 36 §6) — this low-level builder stays permissive,
+// matching the semantics-agnostic resolver.
+export const nameProfile = (r: Omit<NameProfileRecord, "v" | "t">): BuiltRecord =>
+  buildRecord({ v: 1, t: "nprofile", ...r });

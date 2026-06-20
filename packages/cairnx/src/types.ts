@@ -84,6 +84,20 @@ export const DEPLOY_FEE = 100_000_000;        // 1 CSD to deploy a token
 export const V18_HEIGHT = 40_000;
 export const NAME_FEE_SHORT_V18 = 670_000_000n;  // 6.7 CSD — names ≤ 4 chars (premium / anti-squat)
 export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
+// v1.9 = ENS-class identity records (doc 36): a single inert `nprofile` record carries a charset-locked
+// string→string map of identity keys (avatar/display/socials/url). Pure metadata — no value, no fee, no
+// paidTo, NEVER a send target (the verified address stays in `nset`). Owner-gated, last-write-wins,
+// cleared on every ownership change like `addr`. Applied + materialized at v1.9+ tips ONLY, so every
+// pre-v1.9 canonical hash stays byte-identical. Placeholder height — operator sets the real activation
+// (non-retroactive). MUST match cairnx_ref.py + the wallet/UI mirrors.
+export const V19_HEIGHT = 50_000;
+// nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
+// key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
+// resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys
+// need no protocol bump. Values are strings only.
+export const PKEY = /^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$/;
+export const PROFILE_MAX_KEYS = 16;            // ≤ this many keys (DoS/clarity bound; the 512B record is the true cap)
+export const PROFILE_MAX_VALUE_BYTES = 256;    // ≤ this many UTF-8 bytes per value
 // name registration / renewal fee by length (base units). `height` selects the fee regime (the V18 gate).
 export function nameRegFee(name: string, height: number): bigint {
   if (height >= V18_HEIGHT) return name.length <= 4 ? NAME_FEE_SHORT_V18 : NAME_FEE_V18;
@@ -152,10 +166,14 @@ export interface NameSetRecord { v: 1; t: "nset"; name: string; addr: string }
 // ── v1.5 ──
 export interface NameRenewRecord { v: 1; t: "nrenew"; name: string }          // anyone may pay; +1 term
 export interface TokenMetaRecord { v: 1; t: "tmeta"; ticker: string; hash: string } // issuer-only swarm pointer
+// ── v1.9 ──
+// ENS-class identity. `p` = string→string map of ENSIP-5 keys (avatar/display/socials/url). INERT
+// cosmetic metadata — never a send target (the verified address is `nset`). Empty `p` clears the profile.
+export interface NameProfileRecord { v: 1; t: "nprofile"; name: string; p: Record<string, string> }
 export type CairnXRecord =
   | DeployRecord | MintRecord | TransferRecord | OfferRecord | BidRecord | OfferCancelAllRecord
   | NameCommitRecord | NameRecord | NameXferRecord | NameSetRecord
-  | NameRenewRecord | TokenMetaRecord;
+  | NameRenewRecord | TokenMetaRecord | NameProfileRecord;
 
 // ── chain events fed to the resolver (consensus data, normalized) ──
 export interface ProposeEvent {
@@ -200,6 +218,10 @@ export interface NameState {
   paidThroughEpoch?: number;
   /** v1.5: true once the lease + grace lapsed (record kept for history; name is claimable) */
   expired?: true;
+  /** v1.9: ENS-class identity — a charset-locked string→string map (doc 36). INERT cosmetic metadata
+   *  (NOT a send target; the verified address is `addr`). Materialized at v1.9+ tips only, cleared on
+   *  every ownership change, absent when empty. */
+  profile?: Record<string, string>;
 }
 export type OfferStatus = "open" | "filled" | "cancelled" | "expired";
 export interface FillEntry { buyer: string; txid: string; height: number; paid: string; fee: string; got?: string }
