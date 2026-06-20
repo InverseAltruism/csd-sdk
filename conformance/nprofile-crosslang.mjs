@@ -6,7 +6,8 @@
 import { spawnSync } from "node:child_process";
 import {
   parseRecord, resolve, canonicalState, nameClaim, nameProfile, nameXfer,
-  V11_HEIGHT, V19_HEIGHT, TREASURY_ADDR, nameRegFee,
+  V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V19_HEIGHT,
+  EPOCH_LEN, TREASURY_ADDR, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, nameRegFee,
 } from "../packages/cairnx/dist/index.js";
 import { canonicalJson, payloadHash } from "../packages/codec/dist/index.js";
 
@@ -78,9 +79,15 @@ const scenarios = {
 const jsStates = {};
 for (const [k, s] of Object.entries(scenarios)) jsStates[k] = canonicalState(resolve(s.ev, s.tip));
 
+// ── boundary scenarios: place an nprofile EXACTLY at the v1.9 gate and one block below, so each
+// impl applies ITS OWN V19_HEIGHT — a gate-height drift between impls diverges the canonical state. ──
+scenarios.S8_at_gate = { ev: [reg(V19_HEIGHT - 5, ALICE, "alice"), prof(V19_HEIGHT, ALICE, "alice", { a: "1" })], tip: V19_HEIGHT };
+scenarios.S9_below_gate = { ev: [reg(V19_HEIGHT - 5, ALICE, "alice"), prof(V19_HEIGHT - 1, ALICE, "alice", { a: "1" })], tip: V19_HEIGHT - 1 };
+for (const k of ["S8_at_gate", "S9_below_gate"]) jsStates[k] = canonicalState(resolve(scenarios[k].ev, scenarios[k].tip));
+
 // ── Python independent outputs ──
 const order = Object.keys(scenarios);
-const job = { parseFull: recordCorpus.map(([, r]) => r), resolve: order.map((k) => ({ events: scenarios[k].ev, tipHeight: scenarios[k].tip })) };
+const job = { parseFull: recordCorpus.map(([, r]) => r), resolve: order.map((k) => ({ events: scenarios[k].ev, tipHeight: scenarios[k].tip })), consts: 1 };
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname], { input: JSON.stringify(job), encoding: "utf8" });
 if (py.status !== 0) { console.error("python ref failed:", py.stderr); process.exit(1); }
 const pj = JSON.parse(py.stdout);
@@ -90,8 +97,17 @@ console.log("-- record parse parity (full parse_record both sides) --");
 recordCorpus.forEach(([label, , expect], i) =>
   ok(`parse "${label}": JS==Py==${expect}`, jsParse[i] === pj.parseFull[i] && jsParse[i] === expect));
 
-console.log("-- resolve: canonical state byte-identical --");
+console.log("-- consensus constant PARITY (H1: a gate-height drift is invisible to JS-derived heights) --");
+const JS_CONSTS = {
+  V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V19_HEIGHT,
+  EPOCH_LEN, TREASURY_ADDR, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES,
+};
+for (const [k, v] of Object.entries(JS_CONSTS)) ok(`const ${k}: JS(${v}) == Python(${pj.consts[k]})`, v === pj.consts[k]);
+
+console.log("-- resolve: canonical state byte-identical (incl. gate-boundary S8/S9) --");
 order.forEach((k, i) => ok(`${k} canonicalState JS≡Python`, jsStates[k] === pj.resolve[i]));
+ok("S8 nprofile EXACTLY at V19_HEIGHT is applied", resolve(scenarios.S8_at_gate.ev, scenarios.S8_at_gate.tip).names["alice"].profile?.a === "1");
+ok("S9 nprofile one block BELOW V19_HEIGHT is dormant", resolve(scenarios.S9_below_gate.ev, scenarios.S9_below_gate.tip).names["alice"].profile === undefined);
 
 console.log("-- resolver semantics (the doc-36 §5 ledger, JS side) --");
 const st = (k) => resolve(scenarios[k].ev, scenarios[k].tip).names["alice"];

@@ -30,6 +30,22 @@ const recordCorpus = [
 const weightCorpus = [
   { base: 100000000, age: 10 }, { base: 97000000, age: 9 }, { base: 250000000, age: 0 }, { base: 1, age: 4001 },
 ];
+// C1/C2 end-to-end: raw records with a trailing-\n (or other control char) in a regex-gated field, run
+// through the FULL parse gate on both sides (JS parseRecord ⇄ Python parse_record). Both MUST reject the
+// dirty ones and accept the clean one — the exact fork the .match→.fullmatch fix closes. [label, record, expectAccept]
+const SALT16 = "00112233445566778899aabbccddeeff";
+const TO20 = "0x" + "11".repeat(20);
+const c1Corpus = [
+  ["clean name", { v: 1, t: "name", name: "alice", salt: SALT16 }, true],
+  ["name trailing \\n", { v: 1, t: "name", name: "alice\n", salt: SALT16 }, false],
+  ["name embedded \\n", { v: 1, t: "name", name: "al\nice", salt: SALT16 }, false],
+  ["name trailing \\r", { v: 1, t: "name", name: "alice\r", salt: SALT16 }, false],
+  ["salt trailing \\n", { v: 1, t: "name", name: "alice", salt: SALT16 + "\n" }, false],
+  ["clean transfer", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100" }, true],
+  ["ticker trailing \\n", { v: 1, t: "transfer", ticker: "GOLD\n", to: TO20, amount: "100" }, false],
+  ["amount trailing \\n", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100\n" }, false],
+  ["to-addr trailing \\n", { v: 1, t: "transfer", ticker: "GOLD", to: TO20 + "\n", amount: "100" }, false],
+];
 
 // ── JS reference outputs ──
 const jsCanon = canonCorpus.map((v) => { try { return { ok: true, v: canonicalJson(v) }; } catch (e) { return { ok: false, err: String(e.message || e) }; } });
@@ -42,8 +58,10 @@ const jsWeights = weightCorpus.map(({ base, age }) => {
   return (BigInt(base) * ((97n ** BigInt(a) * DECAY_SCALE) / (100n ** BigInt(a)))).toString();
 });
 
+const jsC1 = c1Corpus.map(([, r]) => parseRecord(canonicalJson(r), payloadHash(r)) !== null);
+
 // ── Python independent outputs ──
-const job = { canon: canonCorpus, payloadHash: phCorpus, records: recordCorpus.map(([, r]) => r), weights: weightCorpus };
+const job = { canon: canonCorpus, payloadHash: phCorpus, records: recordCorpus.map(([, r]) => r), weights: weightCorpus, parseFull: c1Corpus.map(([, r]) => r) };
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname], { input: JSON.stringify(job), encoding: "utf8" });
 if (py.status !== 0) { console.error("python ref failed:", py.stderr); process.exit(1); }
 const pj = JSON.parse(py.stdout);
@@ -62,6 +80,10 @@ recordCorpus.forEach(([label, , expect], i) => {
 });
 // RES-H4 decay weight integer identity
 jsWeights.forEach((w, i) => ok(`decayWeightFixed #${i} identical (base ${weightCorpus[i].base}, age ${weightCorpus[i].age})`, w === pj.weights[i]));
+// C1/C2 end-to-end: full parse gate agrees AND matches the expected accept/reject (trailing-control-char fork)
+c1Corpus.forEach(([label, , expect], i) => {
+  ok(`parse gate "${label}": JS==Python==${expect}`, jsC1[i] === pj.parseFull[i] && jsC1[i] === expect);
+});
 
 console.log(`\nMETA-1 cross-impl: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

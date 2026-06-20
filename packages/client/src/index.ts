@@ -63,16 +63,19 @@ export class CsdClient {
     if (!this.f) throw new Error("no fetch available — pass opts.fetch");
   }
 
-  private async req<T>(path: string, init?: RequestInit): Promise<T> {
+  private async req<T>(path: string, init?: RequestInit, opts?: { noRetry?: boolean }): Promise<T> {
+    // L13: a NON-idempotent broadcast (submit) must NOT be auto-resent on a 5xx/timeout — a re-send
+    // can double-broadcast. Only idempotent GETs (and the pure template POSTs) use the retry budget.
+    const maxRetries = opts?.noRetry ? 0 : this.retries;
     let lastErr: unknown;
     for (let attempt = 0; ; attempt++) {
       try {
         const r = await this.f(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
-        if (r.status >= 500 && attempt < this.retries) { lastErr = new Error(`HTTP ${r.status}`); }
+        if (r.status >= 500 && attempt < maxRetries) { lastErr = new Error(`HTTP ${r.status}`); }
         else if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`);
         else return (await this.readCapped(r, path)) as T;
       } catch (e) {
-        if (attempt >= this.retries) throw e;
+        if (attempt >= maxRetries) throw e;
         lastErr = e;
       }
       // full-jitter backoff: 250ms·2^attempt, capped at 5s
@@ -95,7 +98,10 @@ export class CsdClient {
     const body = (r as { body?: ReadableStream<Uint8Array> | null }).body;
     if (!body || typeof body.getReader !== "function") {
       const t = await r.text();
-      if (t.length > max) throw new Error(`GET ${path} → response too large (${t.length} > ${max} bytes)`);
+      // Cap on BYTES, not UTF-16 code units (audit L5): a body of multibyte chars is up to ~3-4× its
+      // String.length in bytes, so a `t.length` check let a 16 MiB cap pass a ~48 MiB body.
+      const byteLen = new TextEncoder().encode(t).length;
+      if (byteLen > max) throw new Error(`GET ${path} → response too large (${byteLen} > ${max} bytes)`);
       return JSON.parse(t);
     }
     const reader = body.getReader();
@@ -117,15 +123,15 @@ export class CsdClient {
   }
 
   private get<T>(path: string): Promise<T> { return this.req<T>(path); }
-  private post<T>(path: string, body: unknown): Promise<T> {
-    return this.req<T>(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  private post<T>(path: string, body: unknown, opts?: { noRetry?: boolean }): Promise<T> {
+    return this.req<T>(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, opts);
   }
 
   // The node returns application errors as `{ok:false, err}` with HTTP **200**, so a bare `get()`
   // can't see them. For endpoints whose `{ok:false}` result is useless to the caller (a missing
   // block), surface it as a thrown error — otherwise a beyond-tip/not-found block flows downstream
   // as a malformed object and crashes opaquely (e.g. the light client reading `header.prev`).
-  private async getOk<T extends { ok: boolean; err?: string | null }>(path: string): Promise<T> {
+  private async getOk<T extends { ok?: boolean; err?: string | null }>(path: string): Promise<T> {
     const j = await this.get<T>(path);
     if (j && j.ok === false) throw new Error(`GET ${path} → node error: ${j.err ?? "ok:false"}`);
     return j;
@@ -142,7 +148,10 @@ export class CsdClient {
   utxos(addr: string, opts: { available?: boolean } = {}): Promise<RpcUtxos> {
     return this.get(`/utxos/${addr}${opts.available === false ? "" : "?available=true"}`);
   }
-  proposal(id: string): Promise<RpcProposal> { return this.get(`/proposal/${id}`); }
+  // getOk: a not-found proposal returns {ok:false}@200; without this the caller reads .domain/.uri off a
+  // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get — its
+  // {ok:false} is a documented VALID "not yet in a block" state that waitForTx/verifyInputValues handle.)
+  proposal(id: string): Promise<RpcProposal> { return this.getOk(`/proposal/${id}`); }
   proposals(domain: string, limit = 40): Promise<RpcProposal[]> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
   topDomain(domain: string, epoch?: number): Promise<unknown> { return this.get(epoch == null ? `/top/${encodeURIComponent(domain)}` : `/top/${encodeURIComponent(domain)}/${epoch}`); }
   domains(): Promise<string[]> { return this.get("/domains"); }
@@ -179,7 +188,7 @@ export class CsdClient {
    * then** (it's the computed id of the rejected tx). Callers MUST check `.ok`; reading `.txid`
    * alone mistakes a rejected tx for a broadcast one. Use `submitOrThrow` if you want a hard failure.
    */
-  submit(nodeJsonTx: unknown): Promise<RpcSubmit> { return this.post("/tx/submit", { tx: nodeJsonTx }); }
+  submit(nodeJsonTx: unknown): Promise<RpcSubmit> { return this.post("/tx/submit", { tx: nodeJsonTx }, { noRetry: true }); }
   /** As `submit`, but throws on node rejection (`ok:false`) instead of returning a misleading txid. */
   async submitOrThrow(nodeJsonTx: unknown): Promise<RpcSubmit> {
     const r = await this.submit(nodeJsonTx);
@@ -223,8 +232,11 @@ export async function verifyInputValues(
     let info: any; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0 }; }
     const body = info?.tx ?? info;
     if (!body || !Array.isArray(body.outputs) || !Array.isArray(body.inputs)) return { ok: false, total: 0 };
-    let tx: Tx; try { tx = rpcTxToTx(body); } catch { return { ok: false, total: 0 }; }
-    if (norm(codecTxid(tx)) !== norm(i.txid)) return { ok: false, total: 0 }; // forged source body
+    // codecTxid() must be INSIDE the try: a hostile source body (e.g. a wrong-length scriptPubkey) makes
+    // it throw, and an uncaught throw here would crash the caller instead of failing closed (audit M2).
+    let tx: Tx, idHex: string;
+    try { tx = rpcTxToTx(body); idHex = codecTxid(tx); } catch { return { ok: false, total: 0 }; }
+    if (norm(idHex) !== norm(i.txid)) return { ok: false, total: 0 }; // forged source body
     const out = tx.outputs[i.vout];
     if (!out) return { ok: false, total: 0 };
     const v = Number(out.value);

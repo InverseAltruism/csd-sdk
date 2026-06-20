@@ -71,15 +71,18 @@ export const GOLDEN_TX: TxVector = {
 
 /**
  * Compact `bits` → expected 32-byte big-endian target.
- * NOTE: golden_vectors.rs's frozen EXPECT_POW_LIMIT_TARGET (`0x0000ffff…`) is the target for
- * bits `0x1f00ffff` (the value the golden header also uses) — it predates POW_LIMIT_BITS being
- * changed to `0x1e00ffff` in params/mod.rs, so that one frozen const is stale. The bits→target
- * ALGORITHM is verified correct against 6 real mainnet blocks (powOk 6/6); we pin the correct
- * pairing here.
+ * This is the REAL consensus pow limit (`POW_LIMIT_BITS = 0x1e00ffff` in params/mod.rs and the Rust
+ * node). An earlier version of this fixture pinned `0x1f00ffff` (target `0x0000ffff…`) — a difficulty
+ * the node REJECTS as beyond the pow limit (`bits_within_pow_limit(0x1f00ffff) == false`, verified
+ * against the live `csd` oracle), which masked the NEW-1 PoW-limit-gate finding. Corrected to the
+ * actual limit; `GOLDEN_HEADER` keeps `0x1f00ffff` deliberately because it is a frozen cross-impl
+ * *serialization* anchor (header hashing is independent of pow validity).
  */
 export const GOLDEN_POW = {
-  bits: 0x1f00ffff,
-  expectedTargetBE: "0x0000ffff00000000000000000000000000000000000000000000000000000000",
+  bits: 0x1e00ffff,
+  expectedTargetBE: "0x000000ffff000000000000000000000000000000000000000000000000000000",
+  // an easier-than-limit value the node rejects (drives the NEW-1 regression in codec.test.ts)
+  beyondLimitBits: 0x1f00ffff,
 };
 
 /** Genesis anchor (params/mod.rs). */

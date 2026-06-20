@@ -1,7 +1,7 @@
 {
   "name": "@inversealtruism/csd-siwc",
-  "version": "0.1.12",
-  "description": "Sign in with CSD (SIWC) — audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
+  "version": "0.1.13",
+  "description": "Sign in with CSD (SIWC) \u2014 audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

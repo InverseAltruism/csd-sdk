@@ -36,13 +36,21 @@ for (const v of HEADER_VECTORS) {
 
 console.log("\n— PoW target (compact bits) —");
 eq("bitsToTarget(POW_LIMIT_BITS) == expected BE target", hxOf(bitsToTarget(GOLDEN_POW.bits)), GOLDEN_POW.expectedTargetBE);
-// a hash equal to the target passes; target+? — sanity: all-FF hash must fail vs the pow-limit target
+// a hash equal to the target passes; sanity: all-FF hash must fail vs the pow-limit target
 eq("powOk: all-0x00 hash passes pow-limit", powOk(new Uint8Array(32), GOLDEN_POW.bits), true);
 eq("powOk: all-0xff hash fails pow-limit", powOk(new Uint8Array(32).fill(0xff), GOLDEN_POW.bits), false);
-// the golden header's own hash satisfies its own bits? (bits 0x1f00ffff is very easy; hash starts 0x43..)
-// 0x43.. > 0x0000ff.. target for 0x1f00ffff? compute target then compare.
-eq("powOk matches manual compare for the golden header", powOk(hb(GOLDEN_HEADER.expectedHeaderHash), GOLDEN_HEADER.header.bits),
-  (() => { const t = bitsToTarget(GOLDEN_HEADER.header.bits); const h = hb(GOLDEN_HEADER.expectedHeaderHash); for (let i = 0; i < 32; i++) { if (h[i]! < t[i]!) return true; if (h[i]! > t[i]!) return false; } return true; })());
+// NEW-1 regression: bits EASIER than the pow limit must be rejected even for a trivially-small hash —
+// the node gates on bits_within_pow_limit (chain/pow.rs); without it the SDK light client would deem
+// an out-of-consensus low-difficulty header "valid". workForBits must likewise yield NO work.
+eq("powOk: REJECTS easier-than-limit bits (NEW-1)", powOk(new Uint8Array(32), GOLDEN_POW.beyondLimitBits), false);
+eq("workForBits: 0 for easier-than-limit bits (NEW-1)", workForBits(GOLDEN_POW.beyondLimitBits).toString(), "0");
+// the golden header uses the frozen 0x1f00ffff (beyond-limit) serialization bits; powOk must still mirror
+// the node: easier-than-limit ⇒ false, regardless of the hash.
+eq("powOk matches the node for the golden header", powOk(hb(GOLDEN_HEADER.expectedHeaderHash), GOLDEN_HEADER.header.bits),
+  (() => { const t = bitsToTarget(GOLDEN_HEADER.header.bits); const lim = bitsToTarget(GOLDEN_POW.bits);
+    const gt = (x: Uint8Array, y: Uint8Array) => { for (let i = 0; i < 32; i++) { if (x[i]! > y[i]!) return true; if (x[i]! < y[i]!) return false; } return false; };
+    if (t.every((b) => b === 0) || gt(t, lim)) return false; // invalid or easier than pow limit
+    const h = hb(GOLDEN_HEADER.expectedHeaderHash); for (let i = 0; i < 32; i++) { if (h[i]! < t[i]!) return true; if (h[i]! > t[i]!) return false; } return true; })());
 
 console.log("\n— merkle —");
 // single tx → root == txid

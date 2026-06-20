@@ -36,17 +36,24 @@ export const randomNonce = (): string => bytesToHex(randomBytes(32));
 
 /** Sign a 32-byte digest (e.g. a sighash). RFC6979 + LOW-S; returns compact 64-byte sig + pub33. */
 export function signDigest(digestHex: string, priv: string): { sig64: string; pub33: string } {
-  const sig = secp256k1.sign(hb(digestHex), hb(priv), { lowS: true });
+  const d = hb(digestHex);
+  // The Rust node's Message::from_digest_slice requires EXACTLY 32 bytes; noble would silently
+  // pad/truncate, a latent cross-impl divergence. Enforce it here (audit L14).
+  if (d.length !== 32) throw new Error(`signDigest: digest must be exactly 32 bytes, got ${d.length}`);
+  const sig = secp256k1.sign(d, hb(priv), { lowS: true });
   return { sig64: hx(sig.toCompactRawBytes()), pub33: pubFromPriv(priv) };
 }
 
 /** Verify a compact-64 LOW-S signature over a digest. Rejects high-S (malleability). */
 export function verifyDigest(sig64: string, pub33: string, digestHex: string): boolean {
-  const s = hb(sig64), p = hb(pub33);
-  if (s.length !== 64 || p.length !== 33) return false;
+  // Whole body fail-closed: hb() throws on malformed hex, so an attacker-supplied bad sig/pubkey/digest
+  // must return false, not throw (it is reachable unauthenticated via verifySiwc + the registry
+  // resolver — audit M1). Also enforce the exact 32-byte digest length (L14).
   try {
+    const s = hb(sig64), p = hb(pub33), d = hb(digestHex);
+    if (s.length !== 64 || p.length !== 33 || d.length !== 32) return false;
     if (secp256k1.Signature.fromCompact(s).hasHighS()) return false;
-    return secp256k1.verify(s, hb(digestHex), p, { lowS: true });
+    return secp256k1.verify(s, d, p, { lowS: true });
   } catch { return false; }
 }
 

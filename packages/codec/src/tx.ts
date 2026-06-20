@@ -69,12 +69,16 @@ export function sighash(tx: Tx): string {
 class Reader {
   private o = 0;
   constructor(private readonly b: Uint8Array, private readonly dv = new DataView(b.buffer, b.byteOffset, b.byteLength)) {}
-  u32(): number { const v = this.dv.getUint32(this.o, true); this.o += 4; return v; }
-  u64(): bigint { const v = this.dv.getBigUint64(this.o, true); this.o += 8; return v; }
+  // Bounds-check before the DataView read so a truncated body throws the codec's documented error
+  // (not a native RangeError) — uniform failure mode for untrusted-bytes callers (audit L16).
+  u32(): number { if (this.o + 4 > this.b.length) throw new Error("unexpected end of bytes"); const v = this.dv.getUint32(this.o, true); this.o += 4; return v; }
+  u64(): bigint { if (this.o + 8 > this.b.length) throw new Error("unexpected end of bytes"); const v = this.dv.getBigUint64(this.o, true); this.o += 8; return v; }
   take(n: number): Uint8Array { const v = this.b.subarray(this.o, this.o + n); if (v.length !== n) throw new Error("unexpected end of bytes"); this.o += n; return v; }
   vec(): Uint8Array { return this.take(Number(this.u64())); }
   fixedHex(n: number): string { return hx(this.take(n)); }
-  str(): string { return new TextDecoder().decode(this.vec()); }
+  // fatal:true REJECTS invalid UTF-8 in domain/uri exactly as the Rust node's bincode read_string and
+  // the Python reference do — restoring the byte round-trip and refusing bytes consensus rejects (NEW-2/L10).
+  str(): string { return new TextDecoder("utf-8", { fatal: true }).decode(this.vec()); }
   get offset(): number { return this.o; }
   get length(): number { return this.b.length; }
 }

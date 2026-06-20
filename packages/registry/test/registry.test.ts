@@ -140,3 +140,50 @@ test("EXPIRY: an expired record is excluded", () => {
   assert.equal(resolvePeers([p], { nowEpoch: 4 }).length, 0, "nowEpoch past expiresEpoch → excluded");
   assert.equal(resolvePeers([p], { nowEpoch: 2 }).length, 1, "still valid before expiry");
 });
+
+// M3: reverseIdentity (address → primary name) must rank by the EXACT integer weight the forward path
+// uses (decayWeightFixed), NOT the lossy float `decayedWeight`, and break ties by the stable proposalId.
+// The observable contract: a deterministic primary name regardless of record FEED ORDER for an address
+// that owns ≥2 equal-weight handles (a float key + feed-order dependence would fork the answer).
+test("M3: reverseIdentity is order-independent + integer-ranked (deterministic primary name)", () => {
+  const owner = keygen();
+  const sH = "11".repeat(8), sJ = "22".repeat(8);
+  const cH = rec(buildIdentityCommit({ handle: "ha", salt: sH, address: owner.addr }), owner.addr, 25e6, 1 * E);
+  const rH = rec(buildIdentityReveal({ priv: owner.priv, handle: "ha", salt: sH, address: owner.addr }), owner.addr, 25e6, 2 * E);
+  const cJ = rec(buildIdentityCommit({ handle: "hb", salt: sJ, address: owner.addr }), owner.addr, 25e6, 1 * E);
+  const rJ = rec(buildIdentityReveal({ priv: owner.priv, handle: "hb", salt: sJ, address: owner.addr }), owner.addr, 25e6, 2 * E);
+  const all = [cH, rH, cJ, rJ];
+  const base = reverseIdentity(all, owner.addr, { nowEpoch: 6 });
+  assert.ok(base && (base.handle === "ha" || base.handle === "hb"), "resolves to an owned handle");
+  for (let s = 1; s <= 8; s++) {
+    const got = reverseIdentity(shuffle(all, s), owner.addr, { nowEpoch: 6 });
+    assert.equal(got?.handle, base!.handle, `same primary name regardless of feed order (seed ${s})`);
+    assert.equal(got?.proposalId, base!.proposalId, "and the same stable winner record");
+  }
+});
+
+// L12: a non-integer / NaN fee from a hostile indexer row must NOT crash the resolver (BigID throw).
+test("L12: a non-integer/NaN fee does not crash the resolver (defensive integer coercion)", () => {
+  const k = keygen();
+  const pFloat = rec(buildPeerRecord({ priv: k.priv, peer_id: "PX", multiaddrs: ["/ip4/1.1.1.1/tcp/1"], address: k.addr }), k.addr, 1.5 as unknown as number, 3 * E);
+  assert.doesNotThrow(() => resolvePeers([pFloat], OPTS), "non-integer proposal fee must not throw");
+  const pAtt = rec(buildPeerRecord({ priv: k.priv, peer_id: "PY", multiaddrs: ["/ip4/2.2.2.2/tcp/1"], address: k.addr }), k.addr, 25e6, 3 * E, { atts: [{ attester: k.addr, fee: NaN as unknown as number, score: 100, confidence: 0, height: 3 * E }] });
+  assert.doesNotThrow(() => resolvePeers([pAtt], OPTS), "NaN attestation fee must not throw");
+});
+
+// M3 (cont): reverseIdentity must pick the HEAVIER handle by EXACT integer weight, order-independently —
+// operating on the winner RECORD resolveIdentity chose (not a re-find by proposalId), so a duplicate-pid
+// feed can't make it feed-order-dependent.
+test("M3: reverseIdentity picks the heavier handle (integer weight), order-independent", () => {
+  const owner = keygen();
+  const sA = "aa".repeat(8), sB = "bb".repeat(8);
+  const cA = rec(buildIdentityCommit({ handle: "hx", salt: sA, address: owner.addr }), owner.addr, 200e6, 1 * E);
+  const rA = rec(buildIdentityReveal({ priv: owner.priv, handle: "hx", salt: sA, address: owner.addr }), owner.addr, 200e6, 2 * E);
+  const cB = rec(buildIdentityCommit({ handle: "hy", salt: sB, address: owner.addr }), owner.addr, 100e6, 1 * E);
+  const rB = rec(buildIdentityReveal({ priv: owner.priv, handle: "hy", salt: sB, address: owner.addr }), owner.addr, 100e6, 2 * E);
+  const all = [cA, rA, cB, rB];
+  for (let s = 0; s <= 8; s++) {
+    const got = reverseIdentity(s === 0 ? all : shuffle(all, s), owner.addr, { nowEpoch: 6 });
+    assert.equal(got?.handle, "hx", `heavier handle (hx, fee 200) is primary regardless of feed order (seed ${s})`);
+  }
+});

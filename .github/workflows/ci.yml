@@ -31,8 +31,8 @@ jobs:
     # and SIWC each have a Python reference (conformance/*_ref.py); they MUST stay
     # byte-identical to the JS canonical impl or the chain forks across implementations.
     # This is the REAL lockstep guard — it runs as its OWN job so it is enforced
-    # independently of the version-lockstep check in `test` (which is intentionally red
-    # while the csd-* versions are mid-realign ahead of a publish).
+    # independently of the version-lockstep check (check-lockstep.mjs) in `test`, which
+    # passes and gates releases (it is NOT intentionally red).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +46,8 @@ jobs:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter "./packages/*" build
-      # crosscheck (records/codec) + crosscheck-resolve + crosscheck-siwc + 1500-iter fuzz,
-      # each asserting JS == Python (== pinned vectors). See conformance/README.md.
+      # crosscheck (records/codec + C1 trailing-control-char parse gate) + crosscheck-regex
+      # (direct regex-vs-regex differential over raw control chars) + crosscheck-resolve +
+      # crosscheck-siwc + nprofile-crosslang (v1.9 parse/resolve/dormancy + constant PARITY) +
+      # 1500-iter fuzz (now emits nprofile), each asserting JS == Python. See conformance/README.md.
       - run: pnpm test:crosslang

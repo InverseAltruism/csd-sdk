@@ -151,16 +151,16 @@ def is_safe_int(n):
 
 # ── record validation gate (mirror records.ts parseRecord) ──────────────────────────────────────────
 def parse_amount(s, allow_zero=False):
-    if not isinstance(s, str) or not AMOUNT_RE.match(s): return None
+    if not isinstance(s, str) or not AMOUNT_RE.fullmatch(s): return None
     v = int(s)
     if v > MAX_AMOUNT: return None
     if v == 0 and not allow_zero: return None
     return v
 
-def is_addr(a): return isinstance(a, str) and ADDR_RE.match(a) is not None
-def is_ticker(t): return isinstance(t, str) and TICKER_RE.match(t) is not None
-def is_hash(h): return isinstance(h, str) and HASH_RE.match(h) is not None
-def is_name(n): return isinstance(n, str) and NAME_RE.match(n) is not None and n not in RESERVED_NAMES
+def is_addr(a): return isinstance(a, str) and ADDR_RE.fullmatch(a) is not None
+def is_ticker(t): return isinstance(t, str) and TICKER_RE.fullmatch(t) is not None
+def is_hash(h): return isinstance(h, str) and HASH_RE.fullmatch(h) is not None
+def is_name(n): return isinstance(n, str) and NAME_RE.fullmatch(n) is not None and n not in RESERVED_NAMES
 
 def name_commit(name, salt, owner):
     return payload_hash({"t": "cairnx:name:commit:v1", "name": name, "salt": salt, "owner": owner.lower()})
@@ -268,7 +268,7 @@ def parse_record(uri, payload_hash_hex):
     if t == "name":
         if not _only_keys(r, NAME_KEYS): return None
         if not is_name(r.get("name")): return None
-        if "salt" in r and (not isinstance(r["salt"], str) or not SALT_RE.match(r["salt"])): return None
+        if "salt" in r and (not isinstance(r["salt"], str) or not SALT_RE.fullmatch(r["salt"])): return None
         return r
     if t == "nxfer":
         if not is_name(r.get("name")) or not is_addr(r.get("to")): return None
@@ -296,7 +296,7 @@ def parse_record(uri, payload_hash_hex):
         return r
     if t == "tmeta":
         if not is_ticker(r.get("ticker")): return None
-        if not isinstance(r.get("hash"), str) or not HASH_RE.match(r["hash"]): return None
+        if not isinstance(r.get("hash"), str) or not HASH_RE.fullmatch(r["hash"]): return None
         if len(r.keys()) != 4: return None
         return r
     return None
@@ -737,7 +737,7 @@ def _is_array_index(k):
     """ECMAScript array-index key: the canonical decimal string of an integer in [0, 2^32-2].
     Such keys enumerate FIRST, in ascending numeric order, in every JS object (and thus in
     JSON.stringify output) — BEFORE string keys, regardless of insertion/sort order."""
-    if not _ARRAY_INDEX_RE.match(k): return False
+    if not _ARRAY_INDEX_RE.fullmatch(k): return False
     return int(k) < 4294967295  # 2^32 - 1
 
 def _js_obj_key_order(keys):
@@ -799,6 +799,24 @@ def main():
         # FULL parse_record cross-check (canonical uri + hash + the per-record schema) — stronger than
         # the `records` job, which uses the simplified onlyKeys gate. Used by the nprofile vectors.
         out["parseFull"] = [parse_record(canonical_json(r), payload_hash(r)) is not None for r in job["parseFull"]]
+    if "consts" in job:
+        # H1/M5: expose the gate heights + key consensus constants so the JS side can assert PARITY
+        # (a V19_HEIGHT or other gate drift between impls is otherwise invisible to scenarios that
+        # derive their heights from the JS constant). Emitted as strings to dodge any int transport quirk.
+        out["consts"] = {
+            "V11_HEIGHT": V11_HEIGHT, "V12_HEIGHT": V12_HEIGHT, "V13_HEIGHT": V13_HEIGHT,
+            "V14_HEIGHT": V14_HEIGHT, "V15_HEIGHT": V15_HEIGHT, "V16_HEIGHT": V16_HEIGHT,
+            "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT,
+            "EPOCH_LEN": EPOCH_LEN, "TREASURY_ADDR": TREASURY_ADDR,
+            "PROFILE_MAX_KEYS": PROFILE_MAX_KEYS, "PROFILE_MAX_VALUE_BYTES": PROFILE_MAX_VALUE_BYTES,
+        }
+    if "regex" in job:
+        # C2: DIRECT regex-vs-regex differential over raw strings (the corpus the builder-based fuzzer
+        # can never reach). fullmatch mirrors JS .test on ^...$ regexes — it rejects the trailing-\n the
+        # old .match accepted (C1). A future drift on any field surfaces here, not silently on-chain.
+        _FIELD_RE = {"amount": AMOUNT_RE, "addr": ADDR_RE, "ticker": TICKER_RE,
+                     "hash": HASH_RE, "name": NAME_RE, "salt": SALT_RE, "pkey": PKEY}
+        out["regex"] = [_FIELD_RE[it["field"]].fullmatch(it["s"]) is not None for it in job["regex"]]
     json.dump(out, sys.stdout)
 
 if __name__ == "__main__":

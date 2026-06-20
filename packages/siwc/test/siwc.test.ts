@@ -89,6 +89,29 @@ function main() {
   check("build rejects a too-short nonce", throws(() => buildSiwcMessage(mkFields({ nonce: "short" }, kp.addr))));
   check("generateNonce is >=16 alnum + rfc3339 is second-precision UTC",
     /^[a-f0-9]{32}$/.test(generateNonce()) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(rfc3339(T0)));
+  // L17: build rejects Unicode line separators (not just \n/\r) — they could render as a break in a UI.
+  check("L17: build rejects a U+2028 line separator in statement", throws(() => buildSiwcMessage(mkFields({ statement: "a\u2028b" }, kp.addr))));
+  check("L17: build rejects a U+0085 (NEL) in domain", throws(() => buildSiwcMessage(mkFields({ domain: "a\u0085b" }, kp.addr))));
+
+  console.log("=== time-bound hardening (L2 zoneless / L3 hidden-skew) ===");
+  // L2: a zoneless (TZ-ambiguous) issuedAt verifies differently per server TZ → must be REJECTED.
+  const zoneless = signSiwc(mkFields({ issuedAt: "2026-06-17T12:00:00", statement: "x" }, kp.addr), kp.priv);
+  check("L2: a zoneless issuedAt is REJECTED (no implicit local-time)",
+    (verifySiwc({ message: zoneless.message, sig64: zoneless.sig64, pub33: zoneless.pub33 }, { ...exp, now: T0 + 60_000 }) as any).reason === "bad-issued-at");
+  // L3: a message pre-dated 4 minutes is rejected (beyond the DOCUMENTED 120s default future-skew — the
+  // old code silently allowed up to 5min + skewMs); only a larger caller-set skewMs admits it.
+  const future = signSiwc(mkFields({ issuedAt: rfc3339(T0 + 4 * 60_000), expirationTime: rfc3339(T0 + 30 * 60_000), statement: "x" }, kp.addr), kp.priv);
+  check("L3: a 4-min future-dated issuedAt is rejected (beyond the 120s default)",
+    (verifySiwc({ message: future.message, sig64: future.sig64, pub33: future.pub33 }, { ...exp, now: T0 }) as any).reason === "issued-in-future");
+  check("L3: an explicit skewMs admits the same future-dated message",
+    verifySiwc({ message: future.message, sig64: future.sig64, pub33: future.pub33 }, { ...exp, now: T0, skewMs: 5 * 60_000 }).ok === true);
+  // E: a freshly-signed message (issuedAt≈now) MUST verify even when the RP's clock LAGS the wallet's —
+  // the default future-skew tolerates normal NTP divergence (a strict skewMs=0 alone would self-DoS).
+  const fresh = signSiwc(mkFields({ issuedAt: rfc3339(T0), statement: "x" }, kp.addr), kp.priv);
+  check("E: a fresh sign-in verifies when the RP clock lags the wallet (default future-skew)",
+    verifySiwc({ message: fresh.message, sig64: fresh.sig64, pub33: fresh.pub33 }, { ...exp, now: T0 - 60_000 }).ok === true);
+  check("E: futureSkewMs:0 makes it strict again (forbids future-dating)",
+    (verifySiwc({ message: fresh.message, sig64: fresh.sig64, pub33: fresh.pub33 }, { ...exp, now: T0 - 60_000, futureSkewMs: 0 }) as any).reason === "issued-in-future");
 
   console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

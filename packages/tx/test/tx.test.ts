@@ -1,5 +1,5 @@
 // @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
-import { selectInputs, buildSend, buildPropose, buildAttest, signTx, txToNodeJson } from "../src/index.js";
+import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, signTx, txToNodeJson } from "../src/index.js";
 import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 
@@ -94,6 +94,35 @@ console.log("\n— max-fee backstop (UTXO-VALUE-1: no silent fund-burn via absur
   // an attest's weight IS the user's deliberate stake — never blocked by the default backstop.
   ok("attest weight (its fee) is honored even above the abs cap", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 1, confidence: 1, fee: 300_000_000, utxos: [utxo(5e9)], priv: PRIV }).ok === true);
   ok("REFUSES a negative maxFee (range-guarded)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1e9)], priv: PRIV, maxFee: -1 }).ok === false);
+}
+
+console.log("\n— L4: hostile-RPC confirmations (NaN/Infinity bypass) —");
+const bad = (c: unknown) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value: 1000, confirmations: c as number });
+ok("L4: NaN confirmations is REJECTED (NaN<1 is false)", selectInputs([bad(NaN)], 100) === null);
+ok("L4: Infinity confirmations is REJECTED", selectInputs([bad(Infinity)], 100) === null);
+ok("L4: string 'abc' confirmations (→NaN) is REJECTED", selectInputs([bad("abc")], 100) === null);
+ok("L4: a real 6-conf coin is still accepted", selectInputs([bad(6)], 100)?.total === 1000);
+
+console.log("\n— H2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure) —");
+{
+  const RCPT2 = "0x" + "cc".repeat(20);
+  const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });
+  // under-reported input: reported 1_000_000_100, REAL 5_000_000_000. Pure buildSend would compute change
+  // from the reported value and burn the difference; buildSendVerified uses the VERIFIED total.
+  const vr = await buildSendVerified({ outputs: [{ to: RCPT2, value: 100 }], fee: 10_000_000, utxos: [u(1_000_000_100)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
+  ok("computes change from the VERIFIED total (no burn)", vr.ok === true && vr.inTotal === 5_000_000_000 && vr.change === 5_000_000_000 - 100 - 10_000_000);
+  // fail-closed when verification fails
+  const vf = await buildSendVerified({ outputs: [{ to: RCPT2, value: 100 }], fee: 10_000_000, utxos: [u(1_000_000_000)], priv: PRIV, verify: async () => ({ ok: false, total: 0 }) });
+  ok("FAILS CLOSED when input verification fails (signs nothing)", vf.ok === false && vf.txid === undefined);
+  // fail-closed when verify throws
+  const vt = await buildSendVerified({ outputs: [{ to: RCPT2, value: 100 }], fee: 10_000_000, utxos: [u(1_000_000_000)], priv: PRIV, verify: async () => { throw new Error("rpc down"); } });
+  ok("fails closed when verify throws", vt.ok === false);
+  // over-reported input: reported 5e9 passes selection, but verified is only 50 → abort (no malformed tx)
+  const vo = await buildSendVerified({ outputs: [{ to: RCPT2, value: 1_000_000_000 }], fee: 10_000_000, utxos: [u(5_000_000_000)], priv: PRIV, verify: async () => ({ ok: true, total: 50 }) });
+  ok("aborts when the VERIFIED total is short (over-reported input)", vo.ok === false && /insufficient/.test(String(vo.error)));
+  // honest case: verify confirms the reported value → same result as buildSend
+  const vh = await buildSendVerified({ outputs: [{ to: RCPT2, value: 100 }], fee: 10_000_000, utxos: [u(5_000_000_000)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
+  ok("honest verify → ok, change from the (true) total", vh.ok === true && vh.change === 5_000_000_000 - 100 - 10_000_000);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

@@ -52,12 +52,21 @@ export interface SiwcFields {
 }
 
 const NONCE_RE = /^[A-Za-z0-9]{8,}$/;
-const hasLF = (s: string) => s.includes("\n") || s.includes("\r");
+// Block ALL line terminators, not only \n/\r: the Unicode separators U+2028/U+2029/U+0085 (+ \v/\f) can
+// render as a line break in a UI, letting a signed field DISPLAY differently than it verifies (audit L17).
+// The build→parse canonical round-trip already guards message STRUCTURE; this guards field VALUES.
+const hasLF = (s: string) => /[\n\r\u2028\u2029\u0085\u000b\u000c]/.test(s);
 
 function assertField(name: string, v: string): void {
   if (typeof v !== "string" || v.length === 0) throw new Error(`siwc: ${name} required`);
   if (hasLF(v)) throw new Error(`siwc: ${name} must not contain a newline`);
 }
+
+// Parse an RFC3339 timestamp that MUST carry an explicit timezone (Z or ±hh:mm). `Date.parse` of a
+// no-timezone string is interpreted as LOCAL time, so the same SIWC message would verify differently per
+// server timezone (audit L2). A missing/zoneless/invalid timestamp → NaN → rejected by the caller.
+const RFC3339_TZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const parseTime = (s: string): number => (RFC3339_TZ.test(s) ? Date.parse(s) : NaN);
 
 /** Build the canonical SIWC message (the exact bytes that get signed). Deterministic; validates inputs. */
 export function buildSiwcMessage(f: SiwcFields): string {
@@ -154,8 +163,14 @@ export interface VerifyExpected {
   nonce: string;       // the nonce the RP issued for THIS attempt (RP must also consume it on success).
   chainId: string;     // expected CAIP-2 id (e.g. CSD_CHAIN_MAINNET).
   now?: number;        // ms epoch (default Date.now()).
-  skewMs?: number;     // allowed clock skew on time bounds (default 0).
+  skewMs?: number;     // allowed clock skew on the expiration/not-before/age bounds (default 0).
+  /** Tolerance on the FUTURE-dating bound only (issuedAt ≤ now + this). Defaults to max(skewMs, 120s):
+   *  independent NTP clocks routinely differ by a few seconds, so a freshly-signed message (issuedAt≈now)
+   *  must not be rejected just because the RP's clock lags the wallet's. Set 0 to forbid any future-dating.
+   *  (This is the DOCUMENTED replacement for the old hidden +5min that was silently added atop skewMs — L3.) */
+  futureSkewMs?: number;
 }
+const DEFAULT_FUTURE_SKEW_MS = 120_000;
 export type VerifyResult = { ok: true; account: string; fields: SiwcFields } | { ok: false; reason: string };
 
 /** Verify a SIWC sign-in, server-side, fail-closed. Ordered checks; identity is derived ONLY from
@@ -170,17 +185,18 @@ export function verifySiwc(input: { message: string; sig64: string; pub33: strin
   if (!isValidAddr(f.account)) return { ok: false, reason: "bad-account" };
   const now = expected.now ?? Date.now();
   const skew = expected.skewMs ?? 0;
-  const iat = Date.parse(f.issuedAt); if (Number.isNaN(iat)) return { ok: false, reason: "bad-issued-at" };
-  // Bound issuedAt against the clock (audit SIWC-IAT): reject a message issued in the future (beyond skew
-  // tolerance) or more than an hour ago. The age bound also caps EFFECTIVE validity to ~1h from issuance,
-  // independent of a far-future expirationTime, since a stale issuedAt is rejected here regardless of expiry.
-  if (iat > now + skew + 5 * 60_000) return { ok: false, reason: "issued-in-future" };
+  const futureSkew = expected.futureSkewMs ?? Math.max(skew, DEFAULT_FUTURE_SKEW_MS);
+  const iat = parseTime(f.issuedAt); if (Number.isNaN(iat)) return { ok: false, reason: "bad-issued-at" };
+  // Bound issuedAt against the clock (audit SIWC-IAT): reject a message issued in the future (beyond the
+  // DOCUMENTED futureSkew — default 120s, replacing the old HIDDEN +5min added atop skewMs, audit L3) or
+  // more than an hour ago. The age bound caps EFFECTIVE validity to ~1h from issuance regardless of expiry.
+  if (iat > now + futureSkew) return { ok: false, reason: "issued-in-future" };
   if (now - iat > 60 * 60_000 + skew) return { ok: false, reason: "issued-too-long-ago" };
   if (f.expirationTime === undefined) return { ok: false, reason: "missing-expiration" }; // require expiry
-  const exp = Date.parse(f.expirationTime); if (Number.isNaN(exp)) return { ok: false, reason: "bad-expiration" };
+  const exp = parseTime(f.expirationTime); if (Number.isNaN(exp)) return { ok: false, reason: "bad-expiration" };
   if (now >= exp + skew) return { ok: false, reason: "expired" };
   if (f.notBefore !== undefined) {
-    const nbf = Date.parse(f.notBefore); if (Number.isNaN(nbf)) return { ok: false, reason: "bad-not-before" };
+    const nbf = parseTime(f.notBefore); if (Number.isNaN(nbf)) return { ok: false, reason: "bad-not-before" };
     if (now + skew < nbf) return { ok: false, reason: "not-yet-valid" };
   }
   if (!verifyDigest(input.sig64, input.pub33, siwcDigest(input.message))) return { ok: false, reason: "bad-signature" };

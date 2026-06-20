@@ -1,6 +1,7 @@
 // CairnX shared types. The convention is CONVENTION.md; these mirror it 1:1.
 // v1   = tokens (deploy/mint/transfer) + offers/fills (atomic DvP).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
+import { EPOCH_LEN } from "@inversealtruism/csd-codec";
 
 export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
@@ -36,7 +37,7 @@ export const V16_HEIGHT = 33_600;
 // ≥ V16_HEIGHT; non-retroactive so it is safe even if the tip crosses it before the UI rollout completes
 // (no claim attest / open CSD offer exists below it in the wild → nothing to reinterpret).
 export const V17_HEIGHT = 34_000;
-export const EPOCH_LEN = 30;
+export { EPOCH_LEN };   // SINGLE-SOURCED from @inversealtruism/csd-codec (no re-declaration → no drift; audit M5)
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
 export const NAME_TERM_EPOCHS = 8_760;        // one term ≈ 1 year
 export const NAME_GRACE_EPOCHS = 720;         // ≈ 30 days: only the OWNER may renew in grace
@@ -123,6 +124,7 @@ export const AMOUNT_RE = /^(0|[1-9][0-9]*)$/;
 // (premium-priced, see nameRegFee). Deterministic for every indexer.
 export const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 export const HASH_RE = /^0x[0-9a-f]{64}$/;
+export const SALT_RE = /^[0-9a-fA-F]{16,128}$/;   // commit salt — single-sourced (mirrored in cairnx_ref.py SALT_RE + crosscheck-regex)
 // Reserved = generic authority/impersonation names that NOBODY may register (anti-phishing).
 // The project's own brand (cairn/cairnx) is NOT reserved — it's registered + held by the operator.
 export const RESERVED_NAMES = new Set(["csd", "treasury", "admin", "official", "root", "www", "support"]);

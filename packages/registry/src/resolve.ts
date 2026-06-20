@@ -31,7 +31,11 @@ function decayPowFixed(age: number): bigint {
 }
 const lastActiveEpoch = (r: ChainRecord): number =>
   Math.max(epochOf(r.height), ...r.attestations.map((a) => epochOf(a.height)), 0);
-const baseWeight = (r: ChainRecord): number => r.fee + r.attestations.reduce((s, a) => s + (a.fee || 0), 0);
+// Coerce a fee to a non-negative SAFE INTEGER. Records come from an untrusted indexer; a non-integer
+// `fee` made `BigInt(baseWeight(r))` THROW and crash the resolver over a hostile row (audit L12). An
+// honest fee is always an integer-sat, so this is a no-op for real data and deterministic for junk (→0).
+const feeInt = (n: unknown): number => { const v = Number(n); return Number.isSafeInteger(v) && v >= 0 ? v : 0; };
+const baseWeight = (r: ChainRecord): number => feeInt(r.fee) + r.attestations.reduce((s, a) => s + feeInt(a.fee), 0);
 /** EXACT integer ranking weight = base × 0.97^age (× DECAY_SCALE). The cross-impl-stable order key. */
 function decayWeightFixed(r: ChainRecord, nowEpoch: number): bigint {
   return BigInt(baseWeight(r)) * decayPowFixed(Math.max(0, nowEpoch - lastActiveEpoch(r)));
@@ -42,7 +46,7 @@ function cmpWeightDesc(a: ChainRecord, b: ChainRecord, nowEpoch: number): number
   return wa > wb ? -1 : wa < wb ? 1 : 0;
 }
 /** Human-facing decayed weight (DISPLAY ONLY — never an ordering key). Deterministic: no `pow`. */
-function decayedWeight(r: ChainRecord, nowEpoch: number, _decay?: number): number {
+function decayedWeight(r: ChainRecord, nowEpoch: number): number {
   return Number(baseWeight(r)) * (Number(decayPowFixed(Math.max(0, nowEpoch - lastActiveEpoch(r)))) / Number(DECAY_SCALE));
 }
 
@@ -51,7 +55,7 @@ const notExpired = (r: ChainRecord, nowEpoch: number): boolean => r.expiresEpoch
 const byAnchor = (a: ChainRecord, b: ChainRecord) => a.height - b.height || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0);
 
 // keep, per group key, the highest-weight record (ties → earliest anchor)
-function dedupeBest(recs: ChainRecord[], key: (r: ChainRecord) => string, nowEpoch: number, _decay: number): ChainRecord[] {
+function dedupeBest(recs: ChainRecord[], key: (r: ChainRecord) => string, nowEpoch: number): ChainRecord[] {
   const best = new Map<string, ChainRecord>();
   for (const r of [...recs].sort(byAnchor)) {
     const k = key(r);
@@ -64,11 +68,11 @@ function dedupeBest(recs: ChainRecord[], key: (r: ChainRecord) => string, nowEpo
 
 // ── csd:peers — durable, sybil-priced bootstrap list (peers aren't unique names) ──
 export function resolvePeers(records: ChainRecord[], opts: ResolveOpts): RankedPeer[] {
-  const { nowEpoch, topK = 25, decayPerEpoch = 0.97 } = opts;
+  const { nowEpoch, topK = 25 } = opts;   // decayPerEpoch is a FIXED consensus convention (0.97), not a knob — see L11/types.ts
   const cand = records.filter(
     (r) => (r.domain === DOMAINS.peers || r.domain === DOMAINS.peersLegacy) && notExpired(r, nowEpoch) && verifyPeer(r),
   );
-  return dedupeBest(cand, (r) => (r.content as PeerContent).peer_id, nowEpoch, decayPerEpoch)
+  return dedupeBest(cand, (r) => (r.content as PeerContent).peer_id, nowEpoch)
     .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
     .slice(0, topK)
     .map((r) => {
@@ -79,11 +83,11 @@ export function resolvePeers(records: ChainRecord[], opts: ResolveOpts): RankedP
 
 // ── csd:gateways — uptime-attested content gateways; stale ones drop out ──
 export function resolveGateways(records: ChainRecord[], opts: ResolveOpts): RankedGateway[] {
-  const { nowEpoch, topK = 25, decayPerEpoch = 0.97, freshWithin = 24 } = opts;
+  const { nowEpoch, topK = 25, freshWithin = 24 } = opts;   // decayPerEpoch fixed at 0.97 (consensus convention) — L11
   const cand = records.filter(
     (r) => r.domain === DOMAINS.gateways && notExpired(r, nowEpoch) && verifyGateway(r) && nowEpoch - lastActiveEpoch(r) <= freshWithin,
   );
-  return dedupeBest(cand, (r) => (r.content as GatewayContent).url, nowEpoch, decayPerEpoch)
+  return dedupeBest(cand, (r) => (r.content as GatewayContent).url, nowEpoch)
     .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
     .slice(0, topK)
     .map((r) => {
@@ -106,8 +110,8 @@ function hasPriorCommit(reveal: ChainRecord, records: ChainRecord[]): boolean {
   });
 }
 
-/** name → address. First-anchored VERIFIED claim wins; weight only breaks same-epoch ties. */
-export function resolveIdentity(records: ChainRecord[], handle: string, opts: ResolveOpts): ResolvedIdentity | null {
+/** The winning VERIFIED reveal RECORD for a handle (first-anchored; weight breaks same-epoch ties). */
+function winningClaim(records: ChainRecord[], handle: string, opts: ResolveOpts): ChainRecord | null {
   const { nowEpoch, externalVerified } = opts;
   const claims = records.filter((r) => {
     const c = r.content as IdentityRevealContent | null;
@@ -116,13 +120,21 @@ export function resolveIdentity(records: ChainRecord[], handle: string, opts: Re
       (externalVerified ? externalVerified(r) : true);
   });
   if (claims.length === 0) return null;
-  const winner = claims.sort((a, b) =>
+  return claims.sort((a, b) =>
     epochOf(a.height) - epochOf(b.height) ||   // earliest epoch wins
     cmpWeightDesc(a, b, nowEpoch) ||           // then EXACT integer weight (same-epoch tie; RES-H4)
-    byAnchor(a, b),                            // then stable anchor (unique proposalId)
+    byAnchor(a, b),                            // then stable anchor (height, then unique proposalId)
   )[0]!;
+}
+const toIdentity = (winner: ChainRecord, nowEpoch: number): ResolvedIdentity => {
   const c = winner.content as IdentityRevealContent;
-  return { handle, address: c.address, proposalId: winner.proposalId, height: winner.height, weight: decayedWeight(winner, nowEpoch), verified: true };
+  return { handle: c.handle, address: c.address, proposalId: winner.proposalId, height: winner.height, weight: decayedWeight(winner, nowEpoch), verified: true };
+};
+
+/** name → address. First-anchored VERIFIED claim wins; weight only breaks same-epoch ties. */
+export function resolveIdentity(records: ChainRecord[], handle: string, opts: ResolveOpts): ResolvedIdentity | null {
+  const winner = winningClaim(records, handle, opts);
+  return winner ? toIdentity(winner, opts.nowEpoch) : null;
 }
 
 /** address → primary name (ENSIP-3 reverse): the highest-weight handle this address legitimately owns. */
@@ -133,17 +145,18 @@ export function reverseIdentity(records: ChainRecord[], address: string, opts: R
     const c = r.content as IdentityRevealContent | null;
     if (r.domain === DOMAINS.identity && c?.t === "identity-reveal" && c.address.toLowerCase() === addr) handles.add(c.handle);
   }
-  let best: ResolvedIdentity | null = null;
+  // Rank by the EXACT integer weight the forward path uses (decayWeightFixed of the SAME winner record
+  // resolveIdentity chose) — NOT the lossy float `decayedWeight`, whose IEEE-754 near-tie could pick a
+  // different primary name in a Rust/Py/Go port (audit M3). Operating on the winner RECORD (not a
+  // re-`find` by proposalId) also keeps the result feed-order-independent even if a hostile indexer
+  // fabricates a duplicate proposalId. Ties → proposalId asc (a unique on-chain txid).
+  let best: ChainRecord | null = null;
+  let bestW = -1n;
   for (const h of handles) {
-    const res = resolveIdentity(records, h, opts);
-    // Highest weight wins; ties broken by the SAME stable anchor key the forward path uses
-    // (proposalId asc — a unique txid). Without this tiebreak the winner depended on `handles`
-    // iteration (= record feed) order, so two honest indexers/clients fed the same chain in a
-    // different order could return DIFFERENT primary names for an address that owns ≥2 equal-weight
-    // handles — a determinism fork of the L3 recompute-to-verify guarantee (audit M4).
-    if (res && res.address.toLowerCase() === addr &&
-        (!best || res.weight > best.weight ||
-         (res.weight === best.weight && res.proposalId < best.proposalId))) best = res;
+    const winner = winningClaim(records, h, opts);
+    if (!winner || (winner.content as IdentityRevealContent).address.toLowerCase() !== addr) continue;
+    const w = decayWeightFixed(winner, opts.nowEpoch);
+    if (!best || w > bestW || (w === bestW && winner.proposalId < best.proposalId)) { best = winner; bestW = w; }
   }
-  return best;
+  return best ? toIdentity(best, opts.nowEpoch) : null;
 }

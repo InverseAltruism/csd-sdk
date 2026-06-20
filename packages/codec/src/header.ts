@@ -1,7 +1,7 @@
 // Block header codec + PoW. Header is a fixed 84-byte little-endian struct; hash = sha256d.
 // (chain/index.rs serialize_header + header_hash; chain/pow.rs bits→target + check.)
 import { hb, hx, hbFixed, u32, u64, sha256d } from "./bytes.js";
-import { MAX_U128 } from "./params.js";
+import { MAX_U128, POW_LIMIT_BITS } from "./params.js";
 
 export interface BlockHeader {
   version: number;
@@ -92,11 +92,21 @@ export function targetToBits(target: Uint8Array): number {
   return ((exp << 24) | mant) >>> 0;
 }
 
-/** PoW validity: header hash ≤ target(bits), both compared as 32-byte big-endian. */
+/**
+ * The largest (easiest) target consensus allows — the value of POW_LIMIT_BITS as an integer.
+ * The Rust node gates EVERY PoW/work check on "not easier than the pow limit" (chain/pow.rs
+ * bits_within_pow_limit, reached from pow_ok_strict and work_from_bits). Without this gate the JS
+ * verifier would deem valid a header whose `bits` encode a difficulty easier than the limit — one
+ * the node rejects at chain/index.rs ("bits beyond pow limit") — a consensus-conformance divergence
+ * (audit NEW-1). The `target > POW_LIMIT_TARGET` check below mirrors the node at 0 differential divergence.
+ */
+const POW_LIMIT_TARGET = targetToBigInt(bitsToTarget(POW_LIMIT_BITS));
+
+/** PoW validity: header hash ≤ target(bits), AND bits within the pow limit (both BE), per the node. */
 export function powOk(headerHashBE: Uint8Array, bits: number): boolean {
-  const target = bitsToTarget(bits);
-  if (target.every((b) => b === 0)) return false; // invalid bits → never valid
-  return targetToBigInt(headerHashBE) <= targetToBigInt(target);
+  const target = targetToBigInt(bitsToTarget(bits));
+  if (target === 0n || target > POW_LIMIT_TARGET) return false; // invalid, or easier than pow limit → never valid
+  return targetToBigInt(headerHashBE) <= target;
 }
 
 /**
@@ -107,7 +117,9 @@ export function powOk(headerHashBE: Uint8Array, bits: number): boolean {
  */
 export function workForBits(bits: number): bigint {
   const target = targetToBigInt(bitsToTarget(bits));
-  if (target === 0n) return 0n;
+  // Beyond the pow limit (or invalid) → the node's work_from_bits bails; treat as no work so an
+  // easier-than-limit header cannot accrue chainwork in the JS light client (audit NEW-1).
+  if (target === 0n || target > POW_LIMIT_TARGET) return 0n;
   const w = (1n << 256n) / (target + 1n);
   return w > MAX_U128 ? MAX_U128 : w;
 }

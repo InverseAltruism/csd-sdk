@@ -28,10 +28,14 @@ const BIGEXP = [10, 1500, 9007199254740991, 9007199254740992, 1e21];
 const validOr = (fn) => { try { return fn(); } catch { return null; } };
 const amt = () => pick(AMOUNTS);
 const tick = () => chance(0.85) ? pick(TICKERS) : ("T" + ri(0, 99));
+// v1.9 nprofile `p` maps: valid pkeys (lowercase/dotted/integer-index ≤32ch) + sometimes empty (= clear),
+// values incl. astral/emoji and boundary 256-byte — exercises the V19 gate/apply/LWW/clear/materialize branches.
+const PKEYS = ["display", "avatar", "bio", "url", "com.twitter", "a.b.c", "x", "k0", "k1", "2", "10", "z".repeat(32)];
+const pmap = () => { const n = ri(0, 6); const m = {}; for (let i = 0; i < n; i++) m[pick(PKEYS)] = chance(0.15) ? "\u{1F600}" : (chance(0.1) ? "x".repeat(256) : "v" + ri(0, 9999)); return m; };
 
 // build a (mostly) valid record via the shipping helpers; returns {uri, payloadHash} or null
 function buildRec() {
-  const t = pick(["deploy", "mint", "transfer", "offer", "bid", "ocancel", "ncommit", "name", "nxfer", "nset", "nrenew", "tmeta"]);
+  const t = pick(["deploy", "mint", "transfer", "offer", "bid", "ocancel", "ncommit", "name", "nxfer", "nset", "nrenew", "nprofile", "tmeta"]);
   return validOr(() => {
     switch (t) {
       case "deploy": { const mint = pick(["issuer", "open"]); const r = { ticker: tick(), decimals: ri(0, 8), supply: amt(), mint }; const nm = pick(TOKNAMES); if (nm !== undefined) r.name = nm; if (mint === "open") r.mintLimit = amt(); return R.deploy(r); }
@@ -54,6 +58,7 @@ function buildRec() {
       case "nxfer": return R.nameXfer({ name: pick(NAMES), to: addr() });
       case "nset": return R.nameSet({ name: pick(NAMES), addr: addr() });
       case "nrenew": return R.nameRenew({ name: pick(NAMES) });
+      case "nprofile": return R.nameProfile({ name: pick(NAMES), p: pmap() });
       case "tmeta": return R.tokenMeta({ ticker: tick(), hash: "0x" + "ab".repeat(32) });
     }
   });
@@ -157,9 +162,26 @@ function openFlow(h0) {
   return ev;
 }
 
+// v1.9 nprofile materialization (H1): register a name by its owner ABOVE the V19 gate, set a profile
+// (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear — exercising the
+// apply / last-write-wins / clear-on-transfer / tip-materialization branches the random fuzzer rarely hits.
+function nprofileFlow(h0) {
+  const ev = []; const O = "0x" + "ce".repeat(20), B = "0x" + "bd".repeat(20);
+  const NM = "np" + ri(100, 9999);
+  let h = Math.max(h0, R.V11_HEIGHT + 10);
+  ev.push({ kind: "propose", id: nid(), proposer: O, uri: R.nameClaim({ name: NM }).uri, payloadHash: R.nameClaim({ name: NM }).payloadHash, height: h, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: { [TREAS]: NM.length <= 5 ? "100000000" : "50000000" } });
+  h = Math.max(h + ri(1, 300), R.V19_HEIGHT + ri(1, 400)); // above the v1.9 gate so the profile materializes
+  const p1 = validOr(() => R.nameProfile({ name: NM, p: pmap() }));
+  if (p1) ev.push({ kind: "propose", id: nid(), proposer: chance(0.85) ? O : B, uri: p1.uri, payloadHash: p1.payloadHash, height: h, pos: 0, expiresEpoch: 9_000_000_000_000_000, paidTo: {} });
+  if (chance(0.4)) { h += ri(1, 50); const p2 = validOr(() => R.nameProfile({ name: NM, p: pmap() })); if (p2) ev.push({ kind: "propose", id: nid(), proposer: O, uri: p2.uri, payloadHash: p2.payloadHash, height: h, pos: 0, expiresEpoch: 9_000_000_000_000_000, paidTo: {} }); }
+  else if (chance(0.4)) { h += ri(1, 50); const xf = R.nameXfer({ name: NM, to: B }); ev.push({ kind: "propose", id: nid(), proposer: O, uri: xf.uri, payloadHash: xf.payloadHash, height: h, pos: 0, expiresEpoch: 9_000_000_000_000_000, paidTo: {} }); }
+  return ev;
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.14)) { const e = nprofileFlow(ri(R.V19_HEIGHT - 200, R.V19_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.10)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
@@ -209,7 +231,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -224,6 +246,7 @@ for (let i = 0; i < N; i++) {
     if (st.offers && Object.values(st.offers).some((o) => o.claimedBy && o.status === "filled" && !o.taker)) cov.v17OpenFilled++; // open offer claimed + filled
     if (js[i].includes('"expired":true')) cov.expired++;
     if (st.names && Object.keys(st.names).some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) cov.numericNameInState++;
+    if (st.names && Object.values(st.names).some((n) => n && n.profile !== undefined)) cov.nprofileSet++; // v1.9 nprofile materialized (H1)
   } catch { /* JS state always parses */ }
   if (js[i] !== pj[i]) {
     diverged++;

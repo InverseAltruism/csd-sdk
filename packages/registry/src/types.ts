@@ -81,7 +81,9 @@ export interface AttRecord { attester: string; fee: number; score: number; confi
 export interface ResolveOpts {
   nowEpoch: number;       // current epoch = floor(tipHeight / EPOCH_LEN)
   topK?: number;          // cap results (default 25)
-  decayPerEpoch?: number; // recency decay base in (0,1]; default 0.97
+  /** @deprecated IGNORED. The recency-decay base is a FIXED consensus convention (0.97/epoch); making it
+   *  caller-tunable would fork the ranking across clients. Kept only for back-compat of existing call sites. */
+  decayPerEpoch?: number;
   freshWithin?: number;   // require activity within N epochs (gateways); default 24 (~1 day)
   externalVerified?: (r: ChainRecord) => boolean; // identity: external proof currently re-resolves
 }

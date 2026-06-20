@@ -16,7 +16,11 @@ export interface Selection { inputs: { txid: string; vout: number; value: number
 export function selectInputs(utxos: Utxo[], need: number): Selection | null {
   const seen = new Set<string>();
   const confirmed = utxos.filter((x) => {
-    if (Number(x.confirmations ?? 0) < 1) return false;
+    // maturity gate: an immature/0-conf coin is unspendable. Use Number.isFinite so a hostile RPC
+    // returning confirmations:"abc"→NaN or "1e9999"→Infinity (NaN<1 and Infinity<1 are both false)
+    // can't slip an unconfirmed coin past the filter (audit L4).
+    const c = Number(x.confirmations ?? 0);
+    if (!Number.isFinite(c) || c < 1) return false;
     const v = Number(x.value);
     if (!Number.isFinite(v) || v <= 0 || !Number.isSafeInteger(v)) return false;
     const key = `${String(x.txid).toLowerCase()}:${Number(x.vout)}`;
@@ -103,7 +107,8 @@ const MAX_FEE_INPUT_FRACTION = 0.10;           // …and ≤ 10% of inputs; a bu
 /** The largest fee selectAndAssemble will assemble for this input total without an explicit override. */
 function feeCap(inTotal: number): number { return Math.max(MAX_FEE_BACKSTOP, Math.floor(inTotal * MAX_FEE_INPUT_FRACTION)); }
 
-function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: App, priv: string, maxFee?: number): BuildResult {
+/** Validate outputs + fee and return the output sum (or an error result). Shared by every builder. */
+function validateOuts(outs: TxOutput[], fee: number, maxFee?: number): { sumOut: number } | BuildResult {
   if (!Number.isSafeInteger(fee) || fee < 0) return { ok: false, error: "fee out of range" };
   if (maxFee !== undefined && (!Number.isSafeInteger(maxFee) || maxFee < 0)) return { ok: false, error: "maxFee out of range" };
   let sumOut = 0;
@@ -113,14 +118,22 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
     if (!(v >= 0) || !Number.isSafeInteger(v)) return { ok: false, error: "each amount must be a non-negative safe integer" };
     sumOut += v; if (!Number.isSafeInteger(sumOut)) return { ok: false, error: "total outputs exceed safe-integer range" };
   }
-  const addr = addrFromPriv(priv);
+  return { sumOut };
+}
+
+/**
+ * Assemble + sign from a selection given the AUTHORITATIVE input total. `total` is `sel.total` for the
+ * pure builders (which trust the reported UTXO values) or the RPC-VERIFIED total for buildSendVerified.
+ * Computing change from a verified total is what closes the UTXO-VALUE-1 implicit-fee-burn (H2): an
+ * under-reported input no longer makes change too small.
+ */
+function assemble(sel: Selection, total: number, outs: TxOutput[], sumOut: number, fee: number, app: App, priv: string, addr: string, maxFee?: number): BuildResult {
   const need = sumOut + fee;
-  const sel = selectInputs(utxos, need);
-  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
-  const change = sel.total - need;
-  // Max-fee backstop: refuse a clearly-abnormal EXPLICIT fee (a fat-finger guard). This does NOT
-  // catch an under-reported input (the implicit burn) — verify input values at the RPC layer for that.
-  const cap = maxFee !== undefined ? maxFee : feeCap(sel.total);
+  if (!Number.isSafeInteger(total)) return { ok: false, error: `input total ${total} is not a safe integer (refusing to build)` };
+  if (total < need) return { ok: false, error: `insufficient input value (${total}) for outputs + fee (${need})` };
+  const change = total - need;
+  // Max-fee backstop: refuse a clearly-abnormal EXPLICIT fee (a fat-finger guard).
+  const cap = maxFee !== undefined ? maxFee : feeCap(total);
   if (fee > cap) {
     return { ok: false, error: `fee ${fee} exceeds the max-fee backstop (${cap}); pass maxFee to override if this is intentional` };
   }
@@ -130,14 +143,48 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
   const signed = signTx(tx, priv);
   // Node mempool rule (net/mempool.rs): feerate_ppm = fee*1e6/bytes must be ≥ MIN_FEERATE_PPM (=1),
   // i.e. fee*1e6 ≥ (signed) tx_bytes. Without this, buildSend({fee:0}) returns ok:true for a tx the
-  // node rejects with "feerate too low" — a silent build-success/broadcast-failure (the same
-  // looks-like-success class as the lagging-mempool fund-burn incident). Propose/Attest clear this
-  // trivially via their own floors; this guards the None path.
+  // node rejects with "feerate too low" — a silent build-success/broadcast-failure.
   const bytes = serialize(signed.tx).length;
   if (fee * 1_000_000 < bytes) {
     return { ok: false, error: `fee ${fee} below the node feerate floor (need ≥ ${Math.ceil(bytes / 1_000_000)} for a ${bytes}-byte tx)` };
   }
-  return { ok: true, ...signed, change, inTotal: sel.total, fee };
+  return { ok: true, ...signed, change, inTotal: total, fee };
+}
+
+function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: App, priv: string, maxFee?: number): BuildResult {
+  const v = validateOuts(outs, fee, maxFee);
+  if ("ok" in v) return v;
+  const need = v.sumOut + fee;
+  const sel = selectInputs(utxos, need);
+  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
+  return assemble(sel, sel.total, outs, v.sumOut, fee, app, priv, addrFromPriv(priv), maxFee);
+}
+
+/** Callback that verifies the REAL value of each selected input against the chain (fail-closed). */
+export type InputVerifier = (inputs: { txid: string; vout: number }[]) => Promise<{ ok: boolean; total: number }>;
+
+/**
+ * H2 — the UTXO-VALUE-1-protected send. Selects by reported UTXO values, then VERIFIES the real value
+ * of the selected inputs against the chain via `verify` (e.g. `verifyInputValues` from
+ * @inversealtruism/csd-client, which recomputes each source tx's txid so a lying RPC cannot under-report),
+ * and computes change from the VERIFIED total. A hostile/buggy RPC that under-reports an input can no
+ * longer make change too small and silently burn the difference as an implicit fee. Fail-CLOSED: if any
+ * source can't be verified, or the verified total is short, it returns an error and signs nothing.
+ * RPC-facing callers (wallet, cairn-sdk) should prefer this over the pure `buildSend`.
+ */
+export async function buildSendVerified(p: { outputs: { to: string; value: number }[]; fee: number; utxos: Utxo[]; priv: string; verify: InputVerifier; maxFee?: number }): Promise<BuildResult> {
+  if (!p.outputs?.length) return { ok: false, error: "at least one output required" };
+  for (const o of p.outputs) if (!(Number(o.value) > 0)) return { ok: false, error: "each send amount must be positive" };
+  const outs: TxOutput[] = p.outputs.map((o) => ({ value: Number(o.value), scriptPubkey: String(o.to) }));
+  const v = validateOuts(outs, p.fee, p.maxFee);
+  if ("ok" in v) return v;
+  const need = v.sumOut + p.fee;
+  const sel = selectInputs(p.utxos, need);          // selection by REPORTED values
+  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
+  let verified: { ok: boolean; total: number };
+  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
+  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
+  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "None" }, p.priv, addrFromPriv(p.priv), p.maxFee);
 }
 
 /**

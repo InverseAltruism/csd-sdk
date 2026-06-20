@@ -18,6 +18,7 @@
 import {
   type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
   verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
+  MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
 import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
 import { expectedBitsFromWindow } from "./lwma.js";
@@ -123,12 +124,41 @@ export class LightClient {
     } else {
       if (!parent) throw new Error(`no parent context for height ${height}`);
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
+      // Timestamp consensus rules (H3) — mirror chain/index.rs (min-spacing, MTP, future-drift) so a
+      // crafted-timestamp fork cannot steer the LWMA difficulty down. Enforced BEFORE bits/PoW, as the node does.
+      this.checkTimeRules(height, header, window, parent);
       const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
     if (!powOk(headerHashBytes(header), header.bits)) throw new Error(`invalid PoW at ${height}`);
     this.pinCheckpoint(height, hash);
     return { height, hash, header, chainwork: satAddWork(parent?.chainwork ?? 0n, header.bits) };
+  }
+
+  /**
+   * Timestamp consensus rules (H3), a faithful port of chain/index.rs + chain/time.rs:
+   *   • min spacing:  time ≥ parent.time + MIN_BLOCK_SPACING_SECS
+   *   • MTP:          time > median of the last MTP_WINDOW header times ending at parent (inclusive)
+   *   • future drift: time ≤ now() + MAX_FUTURE_DRIFT_SECS   (wall-clock, as the node does)
+   * `window` is the chronological run preceding `height`; its last element IS the parent, so its
+   * tail of MTP_WINDOW headers is exactly the node's MTP walk. Without these, an attacker could grind
+   * timestamps to drive the LWMA toward POW_LIMIT.
+   *
+   * Edge (safe-direction): right after a checkpoint seed shorter than MTP_WINDOW, the available window
+   * can be shorter than the node's full MTP walk (which would reach below baseHeight). A truncated
+   * median over ascending times is ≥ the node's, so the `time > mtp` gate is only ever STRICTER here —
+   * it can reject a header the node accepts, never accept one the node rejects. The standard API
+   * (`syncFromCheckpoint`, context = LWMA_WINDOW = 45 ≥ MTP_WINDOW) always supplies a full window.
+   */
+  private checkTimeRules(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader): void {
+    const time = Number(header.time);
+    const minAllowed = Number(parent.header.time) + MIN_BLOCK_SPACING_SECS;
+    if (time < minAllowed) throw new Error(`time too early at ${height}: ${time} < parent+${MIN_BLOCK_SPACING_SECS} (${minAllowed})`);
+    const recent = window.slice(Math.max(0, window.length - MTP_WINDOW)).map((h) => Number(h.time)).sort((a, b) => a - b);
+    const mtp = recent.length ? recent[Math.floor(recent.length / 2)]! : 0;
+    if (time <= mtp) throw new Error(`time <= MTP at ${height}: ${time} <= ${mtp}`);
+    const maxAllowed = Math.floor(Date.now() / 1000) + MAX_FUTURE_DRIFT_SECS;
+    if (time > maxAllowed) throw new Error(`time too far in future at ${height}: ${time} > now+${MAX_FUTURE_DRIFT_SECS}`);
   }
 
   /**
@@ -270,11 +300,21 @@ export class LightClient {
       if (e.height !== s.baseHeight + i) throw new Error(`snapshot not contiguous at ${e.height}`);
       const hash = headerHash(e.header);
       if (hash.toLowerCase() !== e.hash.toLowerCase()) throw new Error(`snapshot hash mismatch at ${e.height}`);
+      // A genesis-rooted snapshot MUST start at the real genesis (H4): otherwise a poisoned file could
+      // present a fabricated low-difficulty "genesis" and a forged forward chain.
+      if (i === 0 && s.baseHeight === 0) {
+        if (hash.toLowerCase() !== GENESIS_HASH.toLowerCase()) throw new Error(`snapshot foreign genesis: ${hash}`);
+        if (e.header.bits !== INITIAL_BITS) throw new Error("snapshot genesis bits != INITIAL_BITS");
+      }
       if (prevHash && e.header.prev.toLowerCase() !== prevHash) throw new Error(`snapshot prev link broken at ${e.height}`);
       if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${e.height}`);
-      // NON-trusted (forward-synced) headers must satisfy the LWMA the live path enforced — else a
-      // poisoned snapshot could restore a low-difficulty chain whose PoW alone trivially passes.
-      if (!e.trusted && e.height > 0) {
+      // LWMA must be re-derived for every header whose FULL preceding window is present in the snapshot,
+      // REGARDLESS of the attacker-controllable `trusted` flag (H4). Trust-skip is honoured ONLY for the
+      // genuine seed prefix (the first LWMA_WINDOW headers, whose window extends below baseHeight and so
+      // cannot be re-derived) — exactly the run seedTrusted legitimately trusts. So a poisoned snapshot
+      // can no longer mark a low-difficulty FORWARD header trusted:true to bypass the difficulty check.
+      const fullWindowAvailable = e.height - s.baseHeight >= LWMA_WINDOW;
+      if (e.height > 0 && (!e.trusted || fullWindowAvailable)) {
         const exp = expectedBitsFromWindow(lc.windowBefore(e.height), e.height);
         if (e.header.bits !== exp) throw new Error(`snapshot bad bits at ${e.height}: ${e.header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
       }

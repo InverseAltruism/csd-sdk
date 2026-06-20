@@ -107,6 +107,14 @@ if (inclBlock) {
   try { LightClient.fromSnapshot(poisonedSnap); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
   ok("a min-difficulty poisoned snapshot header is REJECTED by LWMA on restore (not verified-inclusion)", threw && /bits/.test(msg));
 
+  // H4: the same poison header, now flagged trusted:true to try to SKIP the LWMA re-derivation, must
+  // STILL be rejected — a forward header (full window present) is LWMA-checked regardless of `trusted`.
+  const pTrusted = { ...lastSnap, header: poison, hash: headerHash(poison), trusted: true };
+  const poisonedTrustedSnap = { ...snap, headers: [...snap.headers.slice(0, -1), pTrusted] };
+  let threwH4 = false, msgH4 = "";
+  try { LightClient.fromSnapshot(poisonedTrustedSnap); } catch (e: any) { threwH4 = true; msgH4 = e?.message ?? String(e); }
+  ok("H4: a low-difficulty FORWARD header marked trusted:true CANNOT bypass LWMA (still rejected)", threwH4 && /bits/.test(msgH4));
+
   // and the honest snapshot still restores cleanly (no false-positive rejection)
   let restored = false;
   try { const r = LightClient.fromSnapshot(snap); restored = r.tip!.height === FX.tip && r.tip!.hash === lastSnap.hash; } catch { restored = false; }
@@ -127,6 +135,25 @@ if (inclBlock) {
   let okPin = false;
   try { const r = LightClient.fromSnapshot(snap, { checkpoints: { [FX.tip]: snap.headers[snap.headers.length - 1]!.hash } }); okPin = r.tip!.height === FX.tip; } catch { okPin = false; }
   ok("fromSnapshot accepts a CORRECT pinned checkpoint", okPin);
+}
+
+// 8) H3: a forward header that violates the timestamp rules (min-spacing / MTP) is REJECTED on time,
+//    BEFORE the bits/PoW checks (mirrors chain/index.rs ordering). We set time = parent.time, which
+//    violates BOTH time ≥ parent+MIN_BLOCK_SPACING_SECS AND time > MTP — so the time gate fires first
+//    and we don't need to grind a fresh PoW for the tampered header.
+{
+  const lcT = new LightClient({ headerProvider: provider });
+  lcT.seedTrusted(seed, cpHash);
+  await lcT.sync(FX.tip - 1);
+  const victim = byH.get(FX.tip)!;
+  const parentH = (lcT as any).at(FX.tip - 1) as { header: BlockHeader };
+  const badTime = { ...victim.header, time: parentH.header.time } as BlockHeader;
+  let threwT = false, msgT = "";
+  try { lcT.ingest(FX.tip, badTime, headerHash(badTime)); } catch (e: any) { threwT = true; msgT = e?.message ?? String(e); }
+  ok("H3: a header with time ≤ parent.time is REJECTED on the timestamp rule (before PoW)", threwT && /time/.test(msgT));
+  // sanity: the REAL header at the tip (valid timestamp) still ingests cleanly (no false rejection)
+  const okReal = (() => { try { lcT.ingest(FX.tip, victim.header, victim.hash); return true; } catch { return false; } })();
+  ok("H3: the real header at the tip (valid timestamp) still ingests", okReal);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

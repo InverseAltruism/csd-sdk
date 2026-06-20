@@ -37,6 +37,40 @@ in the package).
 
 ## History
 
+### 0.1.13 — security remediation (2026-06-20)
+> Bytes differ from npm `0.1.12` by the entire Phase-1 remediation below — hence the version bump (M4:
+> never the same version with different bytes). Published lockstep; `cairn-sdk` exact-pins this version.
+- **Consensus-surface conformance hardening (no change to live acceptance, one reference correction):**
+  - **C1 (reference correction):** the Python reference `cairnx_ref.py` validated the 6 schema regexes with
+    `re.match(…$)`, which accepts a trailing `\n` the JS `.test(/…$/)` rejects — a latent cross-language fork.
+    Changed all to `re.fullmatch`. The authoritative JS resolver already rejected these, so **no live state
+    changes**; this converges the reference to the live resolver. New `conformance/crosscheck-regex.mjs`
+    (regex-vs-regex differential) + a parse-gate corpus pin it.
+  - **NEW-1 (PoW-limit gate):** `powOk`/`workForBits` now reject `bits` whose target is easier than
+    `POW_LIMIT_BITS` (mirrors the node's `bits_within_pow_limit`). Reject-more; honest headers unaffected.
+  - **NEW-2 / L10 (codec):** `deserialize` now rejects invalid UTF-8 in `domain`/`uri` (`TextDecoder fatal:true`),
+    matching the node's bincode + restoring the byte round-trip. Reject-more; on-chain data is always valid UTF-8.
+  - **L16:** truncated reads throw the documented "unexpected end of bytes" (not a native `RangeError`).
+  - **H3 (light):** `verifyOne` enforces MTP / min-spacing / future-drift (the node's timestamp rules).
+  - **H4 (light):** `fromSnapshot` re-derives LWMA for any header with a full window regardless of the
+    attacker-controllable `trusted` flag; a genesis-rooted snapshot must start at the real genesis.
+  - Non-consensus fund-safety/robustness: `verifyInputValues` wired via `buildSendVerified` (H2);
+    `verifyDigest` fail-closed (M1); 32-byte digest enforced (L14); NaN/∞ confirmations rejected (L4);
+    `EPOCH_LEN` single-sourced from `codec` (M5); SIWC zoneless-timestamp + future-skew hardening (L2/L3/L17).
+- **Forward codec executed-verified** against the live `csd` node (serialize/txid/sighash/sign/header/merkle/
+  bits↔target byte-identical JS == Python == Rust). The vendored bundles (`cairn/public/vendor/csd-light.js`,
+  `cairn-wallet/src/vendor/cairnx-spv.js`) were rebuilt from this dist (H6).
+
+### 0.1.6 – 0.1.11 (V16–V19 — height-gated CairnX convention bumps)
+- **V16 (`V16_HEIGHT=33600`):** trade fee 1%→1.5% + maker rebate on the resting-liquidity lane (height-gated;
+  pre-V16 replay byte-identical).
+- **V17 (`V17_HEIGHT=34000`):** open-ask claim-to-fill (payment-free first-claim exclusivity; height-gated).
+- **V18 (`V18_HEIGHT=40000`):** simplified 2-tier `.csd` name registration fee (≤4ch / ≥5ch; height-gated, dormant).
+- **V19 / nprofile (`V19_HEIGHT=36700`, ACTIVE on-chain):** ENS-class inline identity (`nprofile`) — owner-gated
+  profile map, last-write-wins, cleared on transfer; tip-gated materialization (pre-V19 replay byte-identical).
+  JS⇄Python byte-identical over 50k+ differential cases; now wired into `test:crosslang` + CI
+  (`nprofile-crosslang.mjs` with cross-impl constant PARITY + the fuzzer emits nprofile).
+
 ### 0.1.5 (unpublished lockstep — on `master`)
 - **No consensus-surface changes.** `buildPropose`/`buildAttest` gained optional DvP value
   outputs (new *capability*, existing byte encodings unchanged — an attest with value outputs

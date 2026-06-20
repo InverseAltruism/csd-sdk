@@ -1,7 +1,7 @@
 // CairnX record validation + builders (pure; no I/O).
 import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 import {
-  ADDR_RE, AMOUNT_RE, HASH_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
+  ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
   type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
   type OfferRecord, type TransferRecord,
@@ -207,7 +207,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       // The other value records (deploy/mint/transfer/offer/bid) were already gated; this was the one gap.
       if (!onlyKeys(r, NAME_KEYS)) return null;
       if (!isName(r.name)) return null;
-      if (r.salt !== undefined && (typeof r.salt !== "string" || !/^[0-9a-fA-F]{16,128}$/.test(r.salt))) return null;
+      if (r.salt !== undefined && (typeof r.salt !== "string" || !SALT_RE.test(r.salt))) return null;
       return r as unknown as NameRecord;
     }
     case "nxfer": {
@@ -248,7 +248,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
     case "tmeta": {
       if (!isTicker(r.ticker)) return null;
       // a csd-swarm content hash: 0x + 64 lowercase hex (Content Convention v1)
-      if (typeof r.hash !== "string" || !/^0x[0-9a-f]{64}$/.test(r.hash)) return null;
+      if (typeof r.hash !== "string" || !HASH_RE.test(r.hash)) return null;
       if (Object.keys(r).length !== 4) return null;
       return r as unknown as TokenMetaRecord;
     }
