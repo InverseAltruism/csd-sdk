@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-light",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Compute Substrate light client \u2014 headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
   "type": "module",
   "main": "./dist/index.cjs",

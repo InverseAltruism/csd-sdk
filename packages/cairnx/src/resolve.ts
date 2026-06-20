@@ -1,6 +1,9 @@
 // CairnX pure deterministic resolver (CONVENTION.md). (events, tipHeight) → CairnXState.
 // No I/O, no clocks, no randomness, no float math on values: two resolvers fed the same chain
-// prefix MUST produce byte-identical canonical state — that determinism IS the trust model.
+// prefix MUST produce byte-identical canonical state — that determinism IS the trust model. This is
+// GUARDED (not merely asserted) by the JS⇄Python differential in conformance/: the raw regex-vs-regex
+// check, the full parse gate, the nprofile cross-lang + constant-PARITY check, and the resolve fuzz —
+// each byte-identical or the build fails.
 //
 // v1.1 adds: names (commit-reveal back-dated registrar + transfer + set + name offers) and
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.

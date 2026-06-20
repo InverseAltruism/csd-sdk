@@ -54,19 +54,19 @@ export function buildIdentityReveal(args: { priv: string; handle: string; salt: 
 
 // ── high-level discovery: read resolver results from an L2 indexer ──
 export interface IndexerSource { baseUrl: string; fetch?: typeof fetch }
-async function getJson(src: IndexerSource, path: string): Promise<any> {
+async function getJson<T>(src: IndexerSource, path: string): Promise<T> {
   const f = src.fetch ?? fetch;
   const r = await f(src.baseUrl.replace(/\/$/, "") + path);
   if (!r.ok) throw new Error(`${path} -> ${r.status}`);
-  return r.json();
+  return r.json() as Promise<T>;
 }
-export async function discoverPeers(src: IndexerSource): Promise<RankedPeer[]> { return getJson(src, "/registry/peers"); }
-export async function discoverGateways(src: IndexerSource): Promise<RankedGateway[]> { return getJson(src, "/registry/gateways"); }
+export async function discoverPeers(src: IndexerSource): Promise<RankedPeer[]> { return getJson<RankedPeer[]>(src, "/registry/peers"); }
+export async function discoverGateways(src: IndexerSource): Promise<RankedGateway[]> { return getJson<RankedGateway[]>(src, "/registry/gateways"); }
 export async function resolveName(src: IndexerSource, handle: string): Promise<ResolvedIdentity | null> {
-  try { return await getJson(src, `/identity/${encodeURIComponent(handle)}`); } catch { return null; }
+  try { return await getJson<ResolvedIdentity | null>(src, `/identity/${encodeURIComponent(handle)}`); } catch { return null; }
 }
 export async function reverseName(src: IndexerSource, address: string): Promise<ResolvedIdentity | null> {
-  try { return await getJson(src, `/address/${address}/identity`); } catch { return null; }
+  try { return await getJson<ResolvedIdentity | null>(src, `/address/${address}/identity`); } catch { return null; }
 }
 
 // ── trust-minimized: compute the same answers client-side from raw records ──

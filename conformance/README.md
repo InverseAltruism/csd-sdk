@@ -26,10 +26,13 @@ this directory, only the JS implementation existed, so the contract was asserted
 
 Run: `npm run test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
 
-**Status:** META-1 is now FULLY co-signed — BOTH halves. The determinism-critical primitives AND the
-complete `resolve()` ledger produce byte-identical `canonicalState` across two independent languages,
-on the 23 language-neutral vectors AND the real on-chain event stream (sha256 == the pinned
-`replay-hashes` at every activation height).
+**Status:** META-1 is co-signed across the determinism-critical primitives AND the complete `resolve()`
+ledger — byte-identical `canonicalState` across two independent languages on the pinned vectors AND the
+real on-chain event stream (sha256 == the pinned `replay-hashes` at every activation height). Coverage now
+includes **v1.9/nprofile** (`nprofile-crosslang.mjs` — parse + resolve + dormancy + cross-impl constant
+PARITY) and the **raw regex-vs-regex differential** (`crosscheck-regex.mjs`, 2301 control-char cases over
+7 fields) + the full parse gate (the trailing-control-char fork class, audit C1). A drift on any of these
+fails CI.
 
 **Fork the port caught (2026-06-15):** `canonicalState` = JS `JSON.stringify(sortKeys(...))`, and
 ECMAScript object enumeration emits **integer-index keys (`"0".."4294967294"`) ascending-numeric

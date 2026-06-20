@@ -138,7 +138,7 @@ export class CsdClient {
   }
 
   tip(): Promise<RpcTip> { return this.get("/tip"); }
-  health(): Promise<any> { return this.get("/health"); }
+  health(): Promise<RpcHealth> { return this.get("/health"); }
   blockByHeight(h: number): Promise<RpcBlock> { return this.getOk(`/block/height/${h}`); }
   blockByHash(hash: string): Promise<RpcBlock> { return this.getOk(`/block/${hash}`); }
   tx(id: string): Promise<RpcTxInfo> { return this.get(`/tx/${id}`); }
@@ -195,8 +195,8 @@ export class CsdClient {
     if (!r.ok) throw new Error(`tx rejected by node: ${r.err ?? "unknown error"}`);
     return r;
   }
-  templatePropose(body: unknown): Promise<any> { return this.post("/tx/template/propose", body); }
-  templateAttest(body: unknown): Promise<any> { return this.post("/tx/template/attest", body); }
+  templatePropose(body: unknown): Promise<unknown> { return this.post("/tx/template/propose", body); }
+  templateAttest(body: unknown): Promise<unknown> { return this.post("/tx/template/attest", body); }
 }
 
 /** Convert a node /tx or /block tx JSON back into the codec's Tx struct (for re-verification). */
@@ -223,14 +223,15 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
  *  call this before assembling a spend; csd-tx itself is pure and cannot fetch.
  *  (Mirrors the proven cairn-wallet `node.ts` implementation; the wallet's TXB-1 cure made canonical.) */
 export async function verifyInputValues(
-  client: { tx(id: string): Promise<any> },
+  client: { tx(id: string): Promise<RpcTxInfo> },
   inputs: { txid: string; vout: number }[],
 ): Promise<{ ok: boolean; total: number }> {
   const norm = (s: string) => String(s).toLowerCase().replace(/^0x/, "");
   let total = 0;
   for (const i of inputs) {
-    let info: any; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0 }; }
-    const body = info?.tx ?? info;
+    let info: RpcTxInfo; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0 }; }
+    // accept both the {ok, tx:{…}} envelope and a bare tx body (two node response shapes)
+    const body = (info?.tx ?? info) as RpcTxJson | undefined;
     if (!body || !Array.isArray(body.outputs) || !Array.isArray(body.inputs)) return { ok: false, total: 0 };
     // codecTxid() must be INSIDE the try: a hostile source body (e.g. a wrong-length scriptPubkey) makes
     // it throw, and an uncaught throw here would crash the caller instead of failing closed (audit M2).

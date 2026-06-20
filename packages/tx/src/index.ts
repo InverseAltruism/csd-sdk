@@ -68,7 +68,13 @@ function appToJson(app: App): unknown {
   if (app.type === "Propose") return { Propose: { domain: app.domain, payload_hash: bytesArr(app.payloadHash), uri: app.uri, expires_epoch: u64Json(app.expiresEpoch, "expires_epoch") } };
   return { Attest: { proposal_id: bytesArr(app.proposalId), score: app.score, confidence: app.confidence } };
 }
-export function txToNodeJson(tx: Tx): any {
+/** The node's serde-JSON submit shape (hashes as byte arrays). These bytes must match the SIGNED tx. */
+export interface NodeTxJson {
+  version: number; locktime: number; app: unknown;
+  inputs: { prevout: { txid: number[]; vout: number }; script_sig: number[] }[];
+  outputs: { value: number; script_pubkey: number[] }[];
+}
+export function txToNodeJson(tx: Tx): NodeTxJson {
   return {
     version: tx.version, locktime: tx.locktime, app: appToJson(tx.app),
     inputs: tx.inputs.map((i) => ({ prevout: { txid: bytesArr(i.prevTxid), vout: i.vout }, script_sig: bytesArr(i.scriptSig) })),
@@ -76,7 +82,7 @@ export function txToNodeJson(tx: Tx): any {
   };
 }
 
-export interface Signed { tx: Tx; txid: string; sighash: string; nodeJson: any }
+export interface Signed { tx: Tx; txid: string; sighash: string; nodeJson: NodeTxJson }
 
 /** Sign an already-constructed tx. One sighash signs all inputs (CSD blanks every input). */
 export function signTx(tx: Tx, priv: string): Signed {

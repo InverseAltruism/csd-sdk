@@ -201,10 +201,11 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       return r as unknown as NameCommitRecord;
     }
     case "name": {
-      // onlyKeys closes the last cross-language determinism fork (audit M1 / cairn-redteam FORK-1):
+      // onlyKeys closes the DECOY-KEY cross-language determinism fork (audit M1 / cairn-redteam FORK-1):
       // `name` is a value-bearing record (claims ownership + pays the reg fee), so a decoy astral-codepoint
       // key would canonicalize differently under UTF-16 vs codepoint/byte sort and fork two honest resolvers.
-      // The other value records (deploy/mint/transfer/offer/bid) were already gated; this was the one gap.
+      // (The separate trailing-control-char fork class — audit C1 — is closed by the anchored ^…$ regexes +
+      // the Python `.fullmatch` parity, guarded by conformance/crosscheck-regex.mjs; not by onlyKeys.)
       if (!onlyKeys(r, NAME_KEYS)) return null;
       if (!isName(r.name)) return null;
       if (r.salt !== undefined && (typeof r.salt !== "string" || !SALT_RE.test(r.salt))) return null;

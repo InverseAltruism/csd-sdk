@@ -37,6 +37,14 @@ in the package).
 
 ## History
 
+### 0.1.14 — quality/AI-slop pass (2026-06-20)
+- **No consensus-surface or runtime-behavior change** (the forward-codec + resolver differential vs the live
+  node stays at 0; all suites byte-identical). Maintainability only: corrected over-claiming consensus comments
+  to name what is *guarded* vs *asserted* (resolve.ts header, records.ts onlyKeys, conformance/README META-1);
+  type hygiene (`verifyInputValues` typed input, `health(): RpcHealth`, generic `getJson<T>`, `txToNodeJson():
+  NodeTxJson`, `Signed.nodeJson` typed); added the `siwc` README. (Deferred: `TREASURY_ADDR` single-sourcing —
+  guarded by the new consts-parity check — and the 600-line `resolve.ts` structural split.)
+
 ### 0.1.13 — security remediation (2026-06-20)
 > Bytes differ from npm `0.1.12` by the entire Phase-1 remediation below — hence the version bump (M4:
 > never the same version with different bytes). Published lockstep; `cairn-sdk` exact-pins this version.
