@@ -90,7 +90,7 @@ export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
 // cleared on every ownership change like `addr`. Applied + materialized at v1.9+ tips ONLY, so every
 // pre-v1.9 canonical hash stays byte-identical. Placeholder height — operator sets the real activation
 // (non-retroactive). MUST match cairnx_ref.py + the wallet/UI mirrors.
-export const V19_HEIGHT = 50_000;
+export const V19_HEIGHT = 36_700;
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
 // resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys
