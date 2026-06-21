@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,8 +20,8 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-lockstep.mjs   # lockstep release invariant (CONSENSUS_CHANGES.md)
       - run: pnpm -r --filter "./packages/*" build
+      - run: node scripts/check-lockstep.mjs   # lockstep release invariant (CONSENSUS_CHANGES.md); needs built dist/ (M4)
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
       # skip cleanly when there is no CSD node (CI has none); the deterministic core
       # (codec/crypto/tx/vectors) + edge + the pure security checks run and gate every push.
