@@ -60,7 +60,14 @@ export const SCORE_CANCEL = 0;
 // v1.7 claim-to-fill (gated at V17_HEIGHT). SCORE_CLAIM ∉ {SCORE_FILL, SCORE_CANCEL} → pre-V17 it hits
 // the resolver's reserved-score no-op path, so a claim is inert below the gate (non-retroactive).
 export const SCORE_CLAIM = 50;             // a payment-free claim attest on an open offer
-export const CLAIM_WINDOW_BLOCKS = 15;     // ~30 min at 120s/block — the claimer's exclusive fill window
+export const CLAIM_WINDOW_BLOCKS = 15;     // <V20 — the original ~30-min exclusive fill window
+// v2.0 (V20): the open-lane claim window + a bounded fill GRACE. The 15-block window was too small (a fill
+// mining at the boundary burned the buyer's payment); V20 widens it to 40 (~80 min) and adds a 5-block grace
+// during which the claimer's fill is still honored AND no other address may claim — so an in-window fill that
+// mines slightly late still DELIVERS, with no displacement race. The hold = window + grace = 45 blocks. Gated
+// at V20_HEIGHT (non-retroactive); MUST match cairnx_ref.py + helpers.js + the vendored wallet bundle.
+export const CLAIM_WINDOW_BLOCKS_V20 = 40;
+export const CLAIM_FILL_GRACE_BLOCKS = 5;
 export const MAX_ACTIVE_CLAIMS = 3;        // a single address may hold ≤ this many LIVE claims at once (anti-squat)
 export const CLAIM_COOLDOWN_BLOCKS = 15;   // a just-lapsed claimer cannot re-grab the SAME offer for this long
 // Token-priced fills debit the ATTESTER's token balance, so they must be an explicit opt-in:
@@ -92,6 +99,18 @@ export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
 // pre-v1.9 canonical hash stays byte-identical. Placeholder height — operator sets the real activation
 // (non-retroactive). MUST match cairnx_ref.py + the wallet/UI mirrors.
 export const V19_HEIGHT = 36_700;
+// v2.0 (V20): open-lane claim→fill LATE-FILL FUND-LOSS FIX. Below V20 an open offer's fill is honored ONLY
+// while the claim window is live (`height < claimUntilHeight`), so a fill that mines AT/AFTER the boundary —
+// having already paid the seller irreversibly — is rejected and the buyer loses the payment (the claim→fill
+// is two txs; the payment is UTXO-final but the asset transfer is resolver-decided). v2.0 widens the window
+// (15→40) and adds a BOUNDED fill grace: the recorded claimer's fill is honored — AND any other address's new
+// claim is blocked — through `claimUntilHeight + CLAIM_FILL_GRACE_BLOCKS` (the hold = window 40 + grace 5 = 45
+// blocks). The SAME interval governs both, so a slightly-late in-window fill still delivers with NO displacement
+// race; it is NOT until-displaced — past the hold the offer reopens and a late fill is rejected (bounded).
+// Non-retroactive: below V20 the strict-window behavior is byte-identical (every pre-V20 canonical hash is
+// unchanged). Placeholder height — operator sets the real activation AFTER all mirrors (cairnx-core,
+// cairnx_ref.py, UI helpers/state/swapguard, vendored wallet bundle) are redeployed. MUST match every mirror.
+export const V20_HEIGHT = 38_400;
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
 // resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys

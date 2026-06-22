@@ -9,9 +9,9 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, CLAIM_WINDOW_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
+  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, CLAIM_WINDOW_BLOCKS, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT,
   epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -102,10 +102,23 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const b = bids.get(o.bid);
     if (b && b.status === "open" && b.bidder === buyer) b.status = "done";
   };
-  // v1.7: an offer has a LIVE claim iff a claimer is recorded and the current height is inside its
-  // window. Lazy lapse — a past claimUntilHeight simply reads as "no live claim" (no state mutation).
-  const liveClaim = (o: OfferState, height: number): boolean =>
-    o.claimedBy !== undefined && o.claimUntilHeight !== undefined && height < o.claimUntilHeight;
+  // v1.7/v2.0: a claim grants the claimer an EXCLUSIVE HOLD of an open offer = a window (the exclusivity
+  // period) + a fill GRACE (v2.0/V20 only). Within the hold the claimer's fill is honored AND no other
+  // address may claim — both governed by the SAME interval — so a fill submitted in-window that mines
+  // slightly late still DELIVERS instead of burning the already-paid seller value (the late-fill fund loss),
+  // and there is NO displacement race (the holder is exclusive for the whole window+grace; below the grace a
+  // new claim is rejected). Below V20: window 15, grace 0 → byte-identical history (non-retroactive). The
+  // grace is derived from the claim's ERA so its inverse is UNAMBIGUOUS: a claim granted at ≥V20 has
+  // claimUntilHeight = grantHeight + CLAIM_WINDOW_BLOCKS_V20 ≥ V20+40; a pre-V20 claim has ≤ V20+14; the
+  // [V20+15, V20+40) range is unreachable, so `claimUntilHeight − 40 ≥ V20` ⟺ "this was a V20 claim".
+  const claimGrace = (o: OfferState): number =>
+    (o.claimUntilHeight !== undefined && o.claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20 >= V20_HEIGHT) ? CLAIM_FILL_GRACE_BLOCKS : 0;
+  // is the offer still EXCLUSIVELY HELD (window + grace) at `height`? Lazy lapse — a past hold reads as
+  // "not held" (no mutation). Used for BOTH the fill gate (with who===claimedBy) and the new-claim block.
+  const claimHeld = (o: OfferState, height: number): boolean =>
+    o.claimedBy !== undefined && o.claimUntilHeight !== undefined && height < o.claimUntilHeight + claimGrace(o);
+  // the exclusivity window a claim placed at `height` is granted (V20+ is larger). claimUntilHeight = grant + this.
+  const claimWindowAt = (height: number): number => height >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
 
   for (const ev of ordered) {
     if (ev.height < ACTIVATION_HEIGHT) continue;
@@ -438,7 +451,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
         if (ev.height >= V13_HEIGHT && !o.taker) {
           if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
-          if (!(liveClaim(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
+          if (!(claimHeld(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
         }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
@@ -480,7 +493,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
         if (ev.height >= V13_HEIGHT && !o.taker) {
           if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
-          if (!(liveClaim(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
+          if (!(claimHeld(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
         }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
@@ -544,22 +557,24 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.status !== "open") { note(ev, ev.txid, "claim", false, `offer ${o.status}`); continue; }
         if (o.taker) { note(ev, ev.txid, "claim", false, "taker-bound offer needs no claim"); continue; }
         if (isTokenWant(o.want)) { note(ev, ev.txid, "claim", false, "claims are for CSD-priced offers (token offers are no-op-safe)"); continue; }
-        if (liveClaim(o, ev.height)) { note(ev, ev.txid, "claim", false, "offer already claimed (window live)"); continue; }
+        if (claimHeld(o, ev.height)) { note(ev, ev.txid, "claim", false, "offer already claimed (hold live)"); continue; }
         // anti-recycle: the JUST-LAPSED claimer cannot immediately re-grab the SAME offer (anyone else can).
         // KNOWN BOUND (intentional — identical in cairnx_ref.py, so NOT a cross-impl fork): the cooldown keys
         // on being the LAST claimer (o.claimedBy === who), so an intervening claim by a 2nd address resets it
         // and a colluding A→B→A pair can recycle one offer. Bounded by MAX_ACTIVE_CLAIMS + the claim being
         // payment-free → a griefing/liveness nuisance on a SINGLE offer, never value loss. Revisit (key the
         // cooldown on the offer, not the last claimer) if the open lane re-opens with a monopoly concern.
-        if (o.claimedBy === who && o.claimUntilHeight !== undefined && ev.height < o.claimUntilHeight + CLAIM_COOLDOWN_BLOCKS) {
+        // cooldown runs from the END of the hold (window + grace), so the grace can't be used to dodge it.
+        if (o.claimedBy === who && o.claimUntilHeight !== undefined && ev.height < o.claimUntilHeight + claimGrace(o) + CLAIM_COOLDOWN_BLOCKS) {
           note(ev, ev.txid, "claim", false, "claim cooldown (you just held this offer)"); continue;
         }
-        // per-address concurrent-claim cap (anti-squat): count this attester's LIVE claims across offers
-        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && x.claimUntilHeight !== undefined && ev.height < x.claimUntilHeight) liveN++;
+        // per-address concurrent-claim cap (anti-squat): count offers this attester still HOLDS (window+grace),
+        // so the V20 grace can't expand an address's effective concurrent reach past the cap.
+        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height)) liveN++;
         if (liveN >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); continue; }
         // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
         // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
-        o.claimedBy = who; o.claimUntilHeight = ev.height + CLAIM_WINDOW_BLOCKS;
+        o.claimedBy = who; o.claimUntilHeight = ev.height + claimWindowAt(ev.height);
         note(ev, ev.txid, "claim", true);
       }
       // other scores: reserved → no-op

@@ -87,6 +87,7 @@ V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee — ACTIVATION placehold
 NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
 V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
 PROFILE_MAX_VALUE_BYTES = 256
 EPOCH_LEN = 30
@@ -100,6 +101,8 @@ SCORE_FILL = 100
 SCORE_CANCEL = 0
 SCORE_CLAIM = 50            # v1.7 payment-free claim attest (∉ {SCORE_FILL, SCORE_CANCEL})
 CLAIM_WINDOW_BLOCKS = 15
+CLAIM_WINDOW_BLOCKS_V20 = 40   # v2.0 (V20): wider exclusive window (~80 min); MUST match types.ts/helpers.js/wallet
+CLAIM_FILL_GRACE_BLOCKS = 5    # v2.0 (V20): bounded fill grace — fill honored + new-claim blocked through claimUntilHeight+grace
 MAX_ACTIVE_CLAIMS = 3
 CLAIM_COOLDOWN_BLOCKS = 15
 CONF_TOKEN_FILL = 1_000_000
@@ -359,8 +362,17 @@ def resolve(events, tip_height):
         b = bids.get(o["bid"])
         if b and b["status"] == "open" and b["bidder"] == buyer: b["status"] = "done"
 
-    def live_claim(o, height):  # v1.7: a live (unexpired) exclusivity claim. Lazy lapse.
-        return o.get("claimedBy") is not None and o.get("claimUntilHeight") is not None and height < o["claimUntilHeight"]
+    # v1.7/v2.0: a claim grants an EXCLUSIVE HOLD = window (+ V20 fill grace). Within the hold the claimer's
+    # fill is honored AND no other address may claim (same interval) → a slightly-late in-window fill still
+    # delivers, with no displacement race. Below V20: window 15, grace 0 (byte-identical). The grace is
+    # derived from the claim's ERA (a V20 claim has claimUntilHeight >= V20+40; [V20+15,V20+40) is unreachable).
+    def claim_grace(o):
+        cu = o.get("claimUntilHeight")
+        return CLAIM_FILL_GRACE_BLOCKS if (cu is not None and cu - CLAIM_WINDOW_BLOCKS_V20 >= V20_HEIGHT) else 0
+    def claim_held(o, height):  # still exclusively held (window + grace) at `height`?
+        return o.get("claimedBy") is not None and o.get("claimUntilHeight") is not None and height < o["claimUntilHeight"] + claim_grace(o)
+    def claim_window_at(height):  # exclusivity window a claim placed at `height` gets
+        return CLAIM_WINDOW_BLOCKS_V20 if height >= V20_HEIGHT else CLAIM_WINDOW_BLOCKS
 
     for ev in ordered:
         if ev["height"] < ACTIVATION_HEIGHT: continue
@@ -614,7 +626,7 @@ def resolve(events, tip_height):
                 if o.get("taker") and who != o["taker"]: continue
                 if ev["height"] >= V13_HEIGHT and not o.get("taker"):
                     if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
-                    if not (live_claim(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7: needs a live claim
+                    if not (claim_held(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7/v2.0: held by you (window + V20 grace)
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 paid_so_far = int(o.get("paid") or "0")
@@ -650,7 +662,7 @@ def resolve(events, tip_height):
                 if o.get("taker") and who != o["taker"]: continue
                 if ev["height"] >= V13_HEIGHT and not o.get("taker"):
                     if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
-                    if not (live_claim(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7: needs a live claim
+                    if not (claim_held(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7/v2.0: held by you (window + V20 grace)
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
@@ -687,14 +699,14 @@ def resolve(events, tip_height):
                 if o["status"] != "open": continue
                 if o.get("taker"): continue
                 if is_token_want(o["want"]): continue
-                if live_claim(o, ev["height"]): continue
+                if claim_held(o, ev["height"]): continue
                 # anti-recycle (KNOWN BOUND, identical to resolve.ts so NOT a fork): keys on being the LAST
                 # claimer, so a 2nd-address intervening claim resets it (A→B→A recycle). Bounded by
                 # MAX_ACTIVE_CLAIMS + payment-free claims → single-offer griefing, never value loss.
-                if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle
-                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and x.get("claimUntilHeight") is not None and ev["height"] < x["claimUntilHeight"])
+                if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + claim_grace(o) + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle (from hold end)
+                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]))
                 if liveN >= MAX_ACTIVE_CLAIMS: continue
-                o["claimedBy"] = who; o["claimUntilHeight"] = ev["height"] + CLAIM_WINDOW_BLOCKS
+                o["claimedBy"] = who; o["claimUntilHeight"] = ev["height"] + claim_window_at(ev["height"])
 
     apply_pending()
     sweep_expired(tip_height + 1)
@@ -806,7 +818,8 @@ def main():
         out["consts"] = {
             "V11_HEIGHT": V11_HEIGHT, "V12_HEIGHT": V12_HEIGHT, "V13_HEIGHT": V13_HEIGHT,
             "V14_HEIGHT": V14_HEIGHT, "V15_HEIGHT": V15_HEIGHT, "V16_HEIGHT": V16_HEIGHT,
-            "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT,
+            "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT, "V20_HEIGHT": V20_HEIGHT,
+            "CLAIM_WINDOW_BLOCKS": CLAIM_WINDOW_BLOCKS, "CLAIM_WINDOW_BLOCKS_V20": CLAIM_WINDOW_BLOCKS_V20, "CLAIM_FILL_GRACE_BLOCKS": CLAIM_FILL_GRACE_BLOCKS,
             "EPOCH_LEN": EPOCH_LEN, "TREASURY_ADDR": TREASURY_ADDR,
             "PROFILE_MAX_KEYS": PROFILE_MAX_KEYS, "PROFILE_MAX_VALUE_BYTES": PROFILE_MAX_VALUE_BYTES,
         }
