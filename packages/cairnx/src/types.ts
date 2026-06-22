@@ -111,6 +111,17 @@ export const V19_HEIGHT = 36_700;
 // unchanged). Placeholder height — operator sets the real activation AFTER all mirrors (cairnx-core,
 // cairnx_ref.py, UI helpers/state/swapguard, vendored wallet bundle) are redeployed. MUST match every mirror.
 export const V20_HEIGHT = 38_400;
+// v2.1 (V21): MAX offer/bid duration cap. An open offer/bid may rest at most MAX_OFFER_EPOCHS epochs (7 days)
+// from its anchor — both rejected at creation if longer AND lazily swept once the effective (capped) expiry
+// passes. WHY: the in-browser SPV light client must hold headers back to the oldest OPEN offer (the swapguard
+// checkpoint sits below resting inventory); an unbounded-lifetime offer forces an ever-deeper checkpoint →
+// slow cold sync. Capping listing lifetime keeps resting inventory shallow. The sweep cap is gated by the
+// CURRENT sweep height (deterministic), so existing over-cap offers expire exactly at V21 across all replayers.
+// Non-retroactive below V21 (every pre-V21 canonical hash unchanged). MUST match cairnx_ref.py + UI mirrors.
+// Placeholder height — operator sets the real activation AFTER all mirrors are redeployed (deploy BEFORE the
+// tip crosses it, else a stale resolver and a fresh one diverge at the gate).
+export const V21_HEIGHT = 42_000;
+export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h)
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
 // resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys

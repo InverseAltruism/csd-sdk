@@ -88,6 +88,8 @@ NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
 V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+V21_HEIGHT = 42_000             # v2.1 max offer/bid duration cap — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h)
 PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
 PROFILE_MAX_VALUE_BYTES = 256
 EPOCH_LEN = 30
@@ -343,13 +345,15 @@ def resolve(events, tip_height):
             b = bal(o["give"]["ticker"], o["seller"])
             b["locked"] -= amt; b["available"] += amt
 
+    def eff_expiry(e, height):  # v2.1: cap effective offer/bid lifetime at anchor + MAX_OFFER_EPOCHS (gated by sweep height)
+        return min(e["expiresEpoch"], epoch_of(e["height"]) + MAX_OFFER_EPOCHS) if height >= V21_HEIGHT else e["expiresEpoch"]
     def sweep_expired(height):
         ep = epoch_of(height)
         for o in offers.values():
-            if o["status"] == "open" and ep > o["expiresEpoch"]:
+            if o["status"] == "open" and ep > eff_expiry(o, height):
                 release_give(o); o["status"] = "expired"
         for b in bids.values():
-            if b["status"] == "open" and ep > b["expiresEpoch"]:
+            if b["status"] == "open" and ep > eff_expiry(b, height):
                 b["status"] = "expired"
 
     V15_EPOCH = epoch_of(V15_HEIGHT)
@@ -500,6 +504,7 @@ def resolve(events, tip_height):
                 if payto == TREASURY_ADDR: continue
                 if not is_safe_int(ev["expiresEpoch"]): continue
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
+                if ev["height"] >= V21_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue
                 give = rec["give"]
                 if is_name_give(give):
                     if not v11: continue
@@ -532,6 +537,7 @@ def resolve(events, tip_height):
                 if not v12: continue
                 if not is_safe_int(ev["expiresEpoch"]): continue
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
+                if ev["height"] >= V21_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue
                 bids[ev["id"]] = {"id": ev["id"], "bidder": who, "want": rec["want"], "give": rec["give"],
                                   "status": "open", "expiresEpoch": ev["expiresEpoch"], "height": ev["height"], "offers": []}
 
