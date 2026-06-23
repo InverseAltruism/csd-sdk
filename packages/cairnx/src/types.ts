@@ -120,7 +120,7 @@ export const V20_HEIGHT = 38_400;
 // Non-retroactive below V21 (every pre-V21 canonical hash unchanged). MUST match cairnx_ref.py + UI mirrors.
 // Placeholder height — operator sets the real activation AFTER all mirrors are redeployed (deploy BEFORE the
 // tip crosses it, else a stale resolver and a fresh one diverge at the gate).
-export const V21_HEIGHT = 42_000;
+export const V21_HEIGHT = 40_100;
 export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h)
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
