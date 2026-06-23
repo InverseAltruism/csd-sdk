@@ -1,6 +1,16 @@
 # CairnX Convention v1
 
-**Status:** DRAFT v1.0 (2026-06-10) · **Domain:** `cairnx:v1` · **Activation height:** 29 860
+**Status:** v2.1 (normative; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+
+**Version ladder** (each gate non-retroactive — below it, behavior + canonical hashes are byte-identical to history):
+v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
+v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24).
+Sections §19–§24 are the normative semantics for v1.6–v2.1; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+
+> **Canonical copy.** This spec ships in the published `@inversealtruism/cairnx-core` package; the source of
+> truth is `csd-sdk/packages/cairnx/CONVENTION.md`. Any in-repo mirror (e.g. the `cairnx` app repo) MUST be
+> kept **byte-identical** to it on every change — a third-party implementer fetches the *published* copy, so
+> it is the one that must never lag the code. Keep the two in lockstep when editing.
 
 CairnX is a meta-asset and exchange convention on Compute Substrate (CSD). It defines fungible
 tokens and atomic delivery-versus-payment trades using **only** the chain's existing `Propose`
@@ -143,15 +153,18 @@ is atomic at consensus level**: the buyer cannot pay without (the chain recordin
 receiving, and the seller's tokens were already convention-locked. The fill costs only the
 attest fee floor (0.05 CSD) plus the payment.
 
-The **first valid fill in apply order wins**. `confidence` is ignored (set 100).
+The **first valid fill in apply order wins**. For a **CSD-priced** fill `confidence` is ignored
+(set 100); a **token-priced** fill (§11) additionally requires the `confidence = 1 000 000` opt-in
+marker or it is a no-op.
 
 ### 4.6 `cancel` — close an offer (an Attest)
 
 `Attest` on the offer with **`score = 0`**, valid only when `attester == seller`. Releases the
 lock, closes the offer. (Cancel and fill race in apply order like everything else.)
 
-Other `score` values on CairnX offers are reserved (no-ops); `score = 1` is reserved for a
-future claim/exclusivity extension (v1.1).
+Other `score` values on CairnX offers are reserved (no-ops). The **claim-to-fill** exclusivity
+extension shipped at v1.7 (height 34 000) and uses **`score = 50`** (`SCORE_CLAIM`) — *not* `score = 1`
+(an earlier draft placeholder that was never implemented). See §20.
 
 ## 5. Resolver state (normative output)
 
@@ -177,6 +190,99 @@ event log and used locale collation; it is retired.)
 Determinism requirement: the conformance suite enforces byte-identity, including
 shuffle-invariance of inputs that consensus ordering re-sorts.
 
+### 5.1 The byte-level canonical-JSON contract (normative — pin before a 2nd implementation exists)
+
+"Canonical JSON" above is only as portable as these rules. They document exactly what the reference
+canonicalizer (`@inversealtruism/csd-codec` `canonicalJson`, which bottoms out in ECMA-262
+`JSON.stringify`) produces. An independent resolver that diverges on any of them will fork the
+record-acceptance gate and/or the canonical-state hash on valid mainnet data. These are unmigratable
+once a replay hash is pinned over data that exercises them, so they are stated here verbatim.
+
+- **A1 — String escaping.** Escape **only** `"` → `\"`, `\` → `\\`, and the C0 controls U+0000–U+001F
+  (using the short escapes `\b \f \n \r \t`, otherwise lowercase `\u00XX`). Emit **every other**
+  codepoint as **raw UTF-8** — in particular do **NOT** escape `/` (solidus) and do **NOT** `\u`-escape
+  any non-ASCII codepoint (U+0080 and above). A token `name` of `"Café"` serializes the `é` as the raw
+  2-byte UTF-8 `0xC3 0xA9`, never `é`; an emoji serializes as its raw 4-byte UTF-8, never an
+  escaped surrogate pair. (Note: `memo` fields on transfer/offer/bid carry the same free-Unicode
+  surface inside the record `uri`, so they obey A1 too even though they are not in canonical state.)
+  **A1 is unsatisfiable for a lone/unpaired UTF-16 surrogate** (it has no valid UTF-8 form): V8 escapes
+  it to ASCII `\uXXXX` while a raw-UTF-8 resolver rejects/mangles it, so such a string is rejected
+  outright by **A7** before it can reach A1 — see A7.
+- **A2 — Key ordering is UTF-16 code-unit order, NOT Unicode codepoint / UTF-8 byte order.** Sort object
+  keys by comparing their UTF-16 code units. These two orders are identical for all-BMP strings but
+  **diverge for non-BMP characters (U+10000+)**: a leading surrogate `0xD800–0xDBFF` sorts *below* BMP
+  chars `0xE000–0xFFFF` under UTF-16, but *above* all BMP chars under codepoint order. **Rust
+  `str::cmp` / Go `<` on `string` compare by UTF-8 bytes = codepoint order and are therefore WRONG** for
+  a non-BMP key — implementers MUST compare UTF-16 code units (JS `localeCompare` is also wrong; use the
+  default `<`/`>` on the JS string, i.e. code-unit order, which is what the resolver's `ord()` does).
+- **A3 — Field types (bare number/boolean vs decimal string vs identity string).** Canonical state mixes
+  raw JSON integers and booleans with decimal-string amounts and raw identity strings. Emit as **bare
+  integers**: `decimals, height, effectiveHeight, expiresEpoch, feeBps, tipHeight, paidThroughEpoch`, and
+  (v1.7) `claimUntilHeight` (all JS-safe, < 2^53). Emit as **bare booleans**: `locked, viaFill, expired`.
+  Emit as **decimal strings**: `supply, minted, mintLimit, feesPaid`, every `balances.*.available`/`.locked`,
+  `want.value`, `want.amount`, `min`, `paid`, `delivered`, and each fill's `paid`/`.fee` (plus `.got` ONLY on
+  a partial `fills[]` entry — see the fill shapes below). Emit as **raw 0x-hex identity strings**: the offer
+  `id` (32-byte txid), the name `claimId` (32-byte anchor txid, present on **every** name), and (v1.7) the
+  offer `claimedBy` (20-byte addr). Emit as a nested **object**: the name `profile` (v1.9 nprofile — a flat
+  string→string map). **Two distinct fill shapes (the `got`-presence rule):** a whole-offer fill is the
+  singular object `fill` = `{buyer, txid, height, paid, fee}` and **OMITS `got`**; a partial-fillable (`min`)
+  offer instead carries an **array** `fills`, each entry `{buyer, txid, height, paid, fee, got}` **WITH
+  `got`** (`got` = the give-asset units delivered by that partial). An implementer who adds `got` to the
+  singular `fill` (or drops it from a `fills[]` entry) forks `sha256(canonicalState)`. Never serialize an
+  amount as a number or an `f64`; never stringify an integer field.
+  > **⚠ v1.7/v1.9 are part of this byte contract on every live tip past their gate** (`V17_HEIGHT=34000`
+  > claims, `V19_HEIGHT=36700` profiles). A second-language resolver built to an earlier copy of this list
+  > — omitting `claimedBy`/`claimUntilHeight`/`claimId`/`profile`/`fills` — **forks `sha256(canonicalState)`
+  > the moment any offer is claimed or any name carries a profile.** (Pinned on live data by
+  > `replay-hashes.json` at **every activation height through V20** — incl. 34 000 claims, 36 700 profiles,
+  > 38 400 grace; V18/V21 auto-pin once the chain tip crosses them. The static `cases.json` bar additionally
+  > pins the V20/V21/nprofile/name-op/lapse byte-contract with no live node required.)
+- **A4 — Optional fields are OMITTED, never `null`.** A key whose value is absent is dropped entirely
+  (`addr, viaFill, min, bid, taker, paidThroughEpoch, expired`, token `name`/`mintLimit`/`tmeta`, and the
+  v1.7/v1.9 optionals `claimedBy`/`claimUntilHeight` (omitted unless the offer is claimed), `fill`
+  (omitted until first filled), `fills` (only on a `min` offer), `profile` (only when an nprofile is set)).
+  Never emit `"addr":null`.
+- **A5 — The acceptance gate is a byte-exact round-trip (stronger than the hash check).** A record anchor
+  is accepted iff **both** `canonicalJson(JSON.parse(uri)) === uri` (byte-for-byte) **and**
+  `sha256(uri) === payload_hash`. The round-trip is what rejects duplicate keys, leading-zero amounts,
+  `+` signs, and insignificant whitespace; a record failing either check is a no-op and never enters
+  replay. The round-trip does **not** catch a lone surrogate (it survives `JSON.parse`→`canonicalJson`
+  identically as ASCII `\uXXXX`) — that class is rejected by **A7**, which every resolver MUST apply.
+- **A6 — Integer grammar + the exact expressions.** Amounts match `^(0|[1-9][0-9]*)$` with
+  `MAX_AMOUNT = 2^96 − 1`. The taker fee is `tradeFee(want) = (want·FEE_BPS + 9999) / 10000` (integer
+  division = ceil of 1%). `epochOf(height) = floor(height / 30)`. Constants: `COMMIT_MAX_BLOCKS = 240`,
+  `NAME_TERM_EPOCHS = 8760`, `NAME_GRACE_EPOCHS = 720`. Tickers match `^[A-Z][A-Z0-9]{2,11}$`
+  (effective length **3–12**). **String length limits count UTF-16 CODE UNITS (JS `.length`)**, NOT
+  codepoints or UTF-8 bytes: the free-text token `name` ≤ **32** units and `memo` ≤ **64** units. An
+  astral codepoint (U+10000+) is **2** units, so a 16-emoji name is exactly 32 units (accepted) and a
+  17-emoji name is 34 (a no-op). A resolver counting `chars`/codepoints (Rust `str::chars().count()`)
+  or bytes would FORK at this boundary — implementers MUST count UTF-16 units (Rust
+  `s.encode_utf16().count()`). Pinned by the `determinism-name-length-utf16-boundary` vector.
+- **A7 — String well-formedness (UTF-16).** A record whose decoded JSON contains **any non-well-formed
+  UTF-16 string** — a lone/unpaired surrogate (`0xD800–0xDBFF` not followed by `0xDC00–0xDFFF`, or a
+  bare `0xDC00–0xDFFF`) in **any** key or value at any depth — is an **INVALID no-op for every
+  conformant resolver**, rejected before schema validation. Rationale: such a string has no defined
+  raw-UTF-8 canonical form (A1), so accepting it would credit on a V8 resolver and reject on a
+  raw-UTF-8 one — a cross-language fork on identical chain bytes. Reference: `parseRecord`'s
+  `isWellFormedDeep` gate (records.ts), which runs immediately after the A5 round-trip. Implementers
+  MUST reproduce it (e.g. JS `String.prototype.isWellFormed`, Rust `str` is already well-formed so a
+  `serde_json` parse that surfaces the escape and re-encodes will reject — assert it explicitly).
+
+The conformance suite **now includes** the A1–A4/A7 vectors (`determinism-nonascii-name-value-pinned`
+covers a non-ASCII token name, an emoji/non-BMP name, and CJK; `determinism-lone-surrogate-rejected`
+covers the A7 no-op; control-character and present-vs-absent optionals are exercised by
+`determinism-a.test.ts`). A second-language resolver is conformant only if it reproduces every vector's
+canonical state **and** the pinned `replay-hashes.json` on live data byte-for-byte.
+
+**Activated since this section was first written (all gated, all in the byte contract above):** v1.6
+(`V16_HEIGHT=33600`) raised the taker fee to `FEE_BPS_V16=150` and added the flat+`REBATE_BPS` maker
+rebate on resting liquidity; v1.7 (`V17_HEIGHT=34000`) added claim-to-fill (`SCORE_CLAIM`, the offer
+`claimedBy`/`claimUntilHeight` fields, `MAX_ACTIVE_CLAIMS`/`CLAIM_WINDOW_BLOCKS`/`CLAIM_COOLDOWN_BLOCKS`);
+v1.8 (`V18_HEIGHT=40000`, dormant) retiers the name registration fee; v1.9 (`V19_HEIGHT=36700`) added the
+`nprofile` record + the name `profile` map (`PROFILE_MAX_KEYS`/`PROFILE_MAX_VALUE_BYTES`, the `PKEY`
+charset). *(Still genuinely future / not implemented: pooled `pools`/`shares` value and a `MAX_RESERVE`
+cap — ecosystem doc 16 §4; these are NOT in canonical state today.)*
+
 ## 6. Honest limits & safety
 
 - **Convention-enforced, not consensus-enforced.** The chain knows nothing about tokens; it
@@ -191,7 +297,10 @@ shuffle-invariance of inputs that consensus ordering re-sorts.
   deterministically. **v1.3 closes this structurally:** from height 31 100, CSD-priced offers
   must be taker-bound (§15) — a warning cannot hold users back from a full-payment loss, and a
   no-escrow chain has nothing to refund from, so the unsafe shape is removed rather than warned
-  about. (Claim windows, floated for v1.1, are impossible for the same reason.)
+  about. (A claim window was first dismissed here as impossible because a *payment-bearing*
+  reservation has nothing to refund — but v1.7's claim is **payment-free** (an `Attest`, not a
+  payment), so a losing claimer forfeits only the 0.05 CSD attest fee. On that basis v1.7 safely
+  **re-opens** untaken CSD offers via claim-to-fill — §20 — and v2.0/§23 bounds its late-fill edge.)
 - **No unconfirmed chaining (no CPFP).** The mempool only accepts txs whose inputs exist in the
   confirmed UTXO set — you cannot spend change that hasn't been mined. Sequential CairnX actions
   from one key require one confirmation between them; client software must serialize and surface
@@ -208,9 +317,12 @@ shuffle-invariance of inputs that consensus ordering re-sorts.
 
 | action | tx type | domain/ref | app fields | outputs |
 |---|---|---|---|---|
-| deploy/mint/transfer/offer | Propose | `cairnx:v1` | `uri` = record JSON, `payload_hash` = sha256(uri), `expires_epoch` per §4 | change only |
-| fill | Attest | offer proposal id | `score=100, confidence=100` | payment to `want.payto` + change |
-| cancel | Attest | offer proposal id | `score=0, confidence=100` | change only |
+| deploy/mint/transfer/offer/bid/name-ops | Propose | `cairnx:v1` | `uri` = record JSON, `payload_hash` = sha256(uri), `expires_epoch` per §4 | fee/payment outputs per §10/§19 + change |
+| fill (CSD-priced) | Attest | offer proposal id | `score=100` (confidence ignored) | payment to `want.payto` + treasury fee + maker rebate (§19) + change |
+| fill (token-priced) | Attest | offer proposal id | `score=100, confidence=1 000 000` | change only (debit + in-kind fee are convention-side, §11) |
+| claim (v1.7, untaken CSD offer) | Attest | offer proposal id | `score=50` | change only — payment-free reservation (§20) |
+| cancel | Attest | offer proposal id | `score=0` | change only |
+| ocancel | Propose | `cairnx:v1` | `uri` = `{t:"ocancel",…}` | change only |
 
 Fee floors: Propose ≥ 25 000 000, Attest ≥ 5 000 000 base units. 1 CSD = 100 000 000 base units.
 
@@ -528,3 +640,164 @@ From height **32 000** every name is a **lease**:
 `{logo, description, links}` document — self-certifying content, so the record stays tiny
 (the 512-byte `uri` cap is untouched) and the metadata inherits the swarm's verify-on-read
 property. State: `tokens[t].tmeta`. Records before v1.5 are no-ops.
+
+---
+
+# CairnX Convention v1.6 (fee update + maker rebate)
+
+**Activation height: 33 600** (`V16_HEIGHT`; non-retroactive — pre-v1.6 offers keep the 1% fee and earn no rebate).
+
+## 19. Taker fee 1% → 1.5%, and a maker rebate on resting liquidity
+
+- **Fee bump.** The taker fee becomes `FEE_BPS_V16 = 150` (1.5%, `ceil`) instead of `FEE_BPS = 100` (1%).
+  The rate is **captured per-offer at creation height** into `offers[id].feeBps` (a bare-int canonical field,
+  §5.1-A3): an offer anchored ≥ 33 600 carries `feeBps = 150`, an earlier one keeps `100`. Every fill of that
+  offer (whole, partial, token-priced) uses the offer's own `feeBps` — so pre-v1.6 offers are byte-identical
+  forever. A third-party resolver MUST select the fee by **offer-creation height**, not by fill height.
+- **Maker rebate (whole CSD-priced fills only).** On a whole fill of a **resting-liquidity** CSD-priced offer,
+  the taker additionally pays the **maker** (`offers[id].seller`) a rebate, as an extra output **in the same
+  fill tx**, reimbursing the maker's posting (Propose) cost:
+  `makerRebate(want) = REBATE_FLAT + ceil(REBATE_BPS × want / 10000)` with `REBATE_FLAT = 25 000 000`
+  (0.25 CSD) and `REBATE_BPS = 50` (0.5%).
+- **`restingLiquidity` predicate (normative):** an offer qualifies iff
+  `(offer.taker !== undefined && offer.bid !== undefined)` — a taker-bound answer to a bid (the RFQ/MM lane) —
+  **OR** `(offer.height ≥ V17_HEIGHT && offer.taker === undefined)` — a v1.7 open ask (claim-to-fill).
+  Partial fills and token⇄token fills earn **no** rebate. (Keying on `bid` alone was a closed self-mint hole:
+  a maker could self-attach an unanchored bid to an open offer; the open-ask lane now earns it via `taker
+  === undefined && height ≥ V17` regardless of `bid`, and a bid-answer rebate requires a real consenting taker.)
+- **Same-tx output gate (the SUM rule).** The fill's required outputs are accumulated **per recipient**:
+  `want.payto += want.value`, `TREASURY += tradeFee(want, feeBps)`, and (if rebate applies) `seller += rebate`.
+  When `want.payto == seller` (the common default) the two amounts **SUM** — a resolver MUST check each
+  recipient against the summed requirement, never satisfy by `max()`. (`payto` can never be the treasury, so
+  those buckets never collide.) For a pre-v1.6 offer the rebate is 0 and this reduces to the two original checks.
+
+---
+
+# CairnX Convention v1.7 (claim-to-fill — race-safe open CSD offers)
+
+**Activation height: 34 000** (`V17_HEIGHT`; non-retroactive — in `[V13, V17)` open CSD fills stay banned, §15).
+
+## 20. Claim-to-fill — an untaken CSD offer is reserved before it is paid
+
+v1.3 (§15) removed open CSD offers because the loser of a payment-bearing fill race loses a real payment.
+v1.7 re-opens them safely by moving the race to a **payment-free reservation**: a losing claimer forfeits only
+the 0.05 CSD attest fee, never a payment.
+
+- **Claim** = an `Attest` on the offer with **`score = SCORE_CLAIM = 50`** (∉ {fill 100, cancel 0}, so it is an
+  inert no-op below V17 — non-retroactive). It grants the attester an **exclusive hold** of the offer for
+  `CLAIM_WINDOW_BLOCKS = 15` blocks: on grant the resolver records `offers[id].claimedBy = attester` and
+  `offers[id].claimUntilHeight = grantHeight + 15` (both canonical fields, §5.1-A3, present only while claimed).
+- **Fill gate.** A `SCORE_FILL` fill on an **untaken** (`taker === undefined`) CSD-priced offer at height ≥ V17
+  is valid **only if** the offer is currently held **and the filler is the holder**: `claimHeld(o, h) &&
+  attester === o.claimedBy`, where `claimHeld(o, h) = (o.claimedBy !== undefined) && (h < o.claimUntilHeight)`
+  (v2.0 widens this — §23). A fill by anyone else, or with no live claim, is a no-op (offer stays open).
+- **No new claim while held.** A `claim` on an offer that is already held (`claimHeld`) is a no-op.
+- **`MAX_ACTIVE_CLAIMS = 3` per address.** A claim is rejected if the attester already holds 3 offers
+  (`liveN = count of offers x where x.claimedBy === attester && claimHeld(x, h)`). Anti-squat.
+- **`CLAIM_COOLDOWN_BLOCKS = 15`.** The address whose hold just lapsed (`o.claimedBy === attester`) may not
+  immediately re-grab the **same** offer until `h ≥ o.claimUntilHeight + CLAIM_COOLDOWN_BLOCKS` (in v2.0, the
+  cooldown runs from the end of the hold = window + grace). Known bound (identical in the Python reference, so
+  not a fork): the cooldown keys on the last claimer, so a colluding A→B→A pair can recycle one offer — a
+  payment-free liveness nuisance on a single offer, never value loss.
+- **Reorg note (client, not consensus):** claim→fill is two txs, so the payment has a reorg exposure a single-tx
+  fill lacks. Buyer software MUST wait a value-scaled confirmation depth (gambler's-ruin sized) on the claim
+  before broadcasting the fill — this is a client policy, not a resolver rule, and does not affect canonical state.
+- Taker-bound offers need no claim (they were never in the race). Token⇄token offers are no-op-safe and ignore claims.
+
+---
+
+# CairnX Convention v1.8 (two-tier name registration fee)
+
+**Activation height: 40 000** (`V18_HEIGHT`; non-retroactive — below it the §10 ENS curve applies unchanged).
+
+## 21. Flat two-tier name fee
+
+At/above V18, `nameRegFee(name, height)` (the fee for `name` claim/reveal, `nrenew`, and the base of the §17
+lapsed-premium) becomes a flat **two-tier** schedule, replacing the §10 length curve:
+
+- name length **≤ 4** chars → `NAME_FEE_SHORT_V18 = 670 000 000` (6.7 CSD);
+- name length **≥ 5** chars → `NAME_FEE_V18 = 300 000 000` (3 CSD).
+
+Below 40 000 the original 5-tier curve (§10: ≤3→5, 4→2, 5→1, 6–9→0.5, 10+→0.1 CSD) still applies — the fee is
+selected by **anchor height**, so all historical replay is byte-identical. (Client builders should price a fee
+output built within a few blocks *below* V18 at the V18 rate, since overpay is always accepted but underpay is a
+no-op that forfeits the treasury output.)
+
+---
+
+# CairnX Convention v1.9 (nprofile — ENS-class identity)
+
+**Activation height: 36 700** (`V19_HEIGHT`; non-retroactive — `nprofile` below it is a forward-compat no-op).
+
+## 22. `nprofile` — owner-set identity metadata on a name
+
+```json
+{"v":1,"t":"nprofile","name":"alice","p":{"url":"https://alice.example","eth.address":"0x…"}}
+```
+
+- **Inert metadata.** `p` is a flat string→string map. It carries **no fee, no value, and is never a send
+  target** — the address a name resolves to for payment stays in `nset` (`names[x].addr`). A resolver keeps
+  no reserved keys; the app layer keeps send targets out of `p`.
+- **Owner-gated, last-write-wins.** Valid iff the proposer is the current name owner and the lease is not
+  lapsed (§17). The new `p` **replaces** the prior profile; an **empty `p` (`{}`) clears it**.
+- **Cleared on every ownership change** — `nxfer`, a name `fill`, and a lapsed-premium re-claim all clear
+  `profile` exactly as they clear `addr`.
+- **Shape limits (deterministic):** keys match `PKEY = ^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$` (ASCII only,
+  so the canonical key sort is invariant across UTF-16/codepoint/byte impls — future-proof vs a third-language
+  resolver); at most `PROFILE_MAX_KEYS = 16` keys; each value is a string of ≤ `PROFILE_MAX_VALUE_BYTES = 256`
+  **UTF-8 bytes**. Any violation → the record is a no-op.
+- **State:** `names[x].profile` is a nested object, materialized **only at v1.9+ tips** and **only when set** —
+  so every pre-v1.9 canonical hash is byte-unchanged, and a name with no profile omits the key (§5.1-A4).
+
+---
+
+# CairnX Convention v2.0 (claim grace — the bounded late-fill fix)
+
+**Activation height: 38 400** (`V20_HEIGHT`; non-retroactive — below it the strict 15-block window of §20 stands).
+
+## 23. Bounded claim grace — a slightly-late in-window fill still delivers
+
+v1.7's claim-to-fill had a fund-loss edge: a fill submitted inside the window but **mining at the window
+boundary** (`height == claimUntilHeight`) was rejected by the resolver while its CSD payment was already
+UTXO-final → the buyer paid and received nothing (the live `69.csd` incident). v2.0 fixes it without a race:
+
+- At/above V20 the claim window widens to `CLAIM_WINDOW_BLOCKS_V20 = 40`, and a **bounded fill grace** of
+  `CLAIM_FILL_GRACE_BLOCKS = 5` is added. The **hold = window + grace = 45 blocks** is exclusive on **both**
+  sides — within it the claimer's fill is honored **AND** no other address may claim. So a slightly-late
+  in-window fill still delivers, and there is **no displacement race** (the holder is exclusive for the whole
+  hold; below the grace a new claim is rejected). Past the hold the offer **reopens** — the hold is **bounded,
+  not "until displaced."** `claimHeld(o, h)` becomes `h < o.claimUntilHeight + grace(o)`.
+- **Era inference (no new stored field).** The grace is derived from the claim's era so its inverse is
+  unambiguous: a claim granted at ≥ V20 has `claimUntilHeight = grantHeight + 40 ≥ V20 + 40`; a pre-V20 claim
+  has `claimUntilHeight ≤ V20 + 14`; the range `[V20+15, V20+40)` is **unreachable**. Therefore
+  `grace(o) = (o.claimUntilHeight − 40 ≥ V20_HEIGHT) ? 5 : 0`. Below V20 the window is 15 and the grace is 0 —
+  byte-identical history.
+- The `MAX_ACTIVE_CLAIMS` count and the `CLAIM_COOLDOWN_BLOCKS` both use the **hold** (window + grace), so the
+  grace can neither expand an address's concurrent reach past the cap nor be used to dodge the cooldown.
+- **Offer-expiry interaction (client guard, not consensus).** `sweepExpired` runs before the fill, so a fill
+  mining between the offer's expiry and the hold-end would still burn the payment. Client software MUST refuse
+  to claim/fill unless the offer's lease/expiry outlives the **hold-end** (`claimUntilHeight + grace`), not
+  merely the tip. This is a client policy bounding what to sign; the resolver state is unchanged by it.
+
+---
+
+# CairnX Convention v2.1 (offer/bid duration cap)
+
+**Activation height: 40 100** (`V21_HEIGHT`; non-retroactive — below it the effective expiry is the raw `expires_epoch`).
+
+## 24. Maximum offer/bid lifetime — `MAX_OFFER_EPOCHS = 168` (≈ 7 days)
+
+To keep resting inventory shallow (so an in-browser SPV light client's checkpoint stays near the tip rather
+than being dragged back to the oldest open offer), an offer or bid may rest at most `MAX_OFFER_EPOCHS = 168`
+epochs from its anchor:
+
+- **Creation gate (≥ V21):** an `offer` or `bid` whose `expires_epoch − epochOf(anchorHeight) > 168` is a
+  **no-op at creation** (`v2.1: offer/bid duration exceeds the max`).
+- **Lazy sweep cap (≥ V21):** the **effective** expiry used by `sweepExpired` is
+  `effExpiry = min(expires_epoch, epochOf(anchorHeight) + 168)` whenever the **sweep height** is ≥ V21. So an
+  over-cap offer/bid created **before** V21 (which was validly accepted at creation) auto-expires the moment a
+  sweep first runs at a height ≥ V21 past its capped expiry. The cap is gated by the **current sweep height**
+  (deterministic across replayers), so existing over-cap inventory expires at exactly the same height for
+  everyone. Below V21, `effExpiry = expires_epoch` — byte-identical history.
+- **Client expiry-height closed form** (mirrors the resolver's height-gated sweep, for buy-safety guards):
+  `offerExpiryHeight = min( (expires_epoch+1)·30 , max( V21_HEIGHT , (epochOf(anchor)+168+1)·30 ) )`.
