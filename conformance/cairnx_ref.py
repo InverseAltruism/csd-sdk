@@ -378,6 +378,23 @@ def resolve(events, tip_height):
     def claim_window_at(height):  # exclusivity window a claim placed at `height` gets
         return CLAIM_WINDOW_BLOCKS_V20 if height >= V20_HEIGHT else CLAIM_WINDOW_BLOCKS
 
+    # ── shared SCORE_FILL helpers (mirrors resolve.ts — dedup of the three fill paths) ──
+    def open_fill_blocked(o, height, who):
+        # v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the live-claim holder; [V13,V17) banned.
+        if not (height >= V13_HEIGHT and not o.get("taker")): return False
+        if height < V17_HEIGHT: return True
+        return not (claim_held(o, height) and who == o.get("claimedBy"))
+    def deliver_name_to_buyer(n, who, ev):
+        # name sale: transfer to buyer, clear addr+profile, and (v1.3+) re-stamp a displacement-immune viaFill basis
+        n["owner"] = who; n["locked"] = False; n["addr"] = None; n["profile"] = None
+        if ev["height"] >= V13_HEIGHT:
+            n["effHeight"] = ev["height"]; n["pos"] = ev["pos"]; n["id"] = ev["txid"]; n["height"] = ev["height"]; n["viaFill"] = True
+    def release_give_lock(o, who, amt):  # release a token offer's FULL locked give to the buyer; consume the lock
+        t = o["give"]["ticker"]
+        bal(t, o["seller"])["locked"] -= amt
+        bal(t, who)["available"] += amt
+        offer_lock.pop(o["id"], None)
+
     for ev in ordered:
         if ev["height"] < ACTIVATION_HEIGHT: continue
         if ev["height"] != pending_block[0]:
@@ -615,14 +632,9 @@ def resolve(events, tip_height):
                 bal(o["want"]["ticker"], o["want"]["payto"])["available"] += amt
                 if fee > 0: bal(o["want"]["ticker"], TREASURY_ADDR)["available"] += fee
                 if is_name_give(o["give"]):
-                    give_name["owner"] = who; give_name["locked"] = False; give_name["addr"] = None; give_name["profile"] = None  # sale clears the profile (doc 36)
-                    if ev["height"] >= V13_HEIGHT:
-                        give_name["effHeight"] = ev["height"]; give_name["pos"] = ev["pos"]
-                        give_name["id"] = ev["txid"]; give_name["height"] = ev["height"]; give_name["viaFill"] = True
+                    deliver_name_to_buyer(give_name, who, ev)
                 else:
-                    bal(o["give"]["ticker"], o["seller"])["locked"] -= give_lock
-                    bal(o["give"]["ticker"], who)["available"] += give_lock
-                    offer_lock.pop(o["id"], None)
+                    release_give_lock(o, who, give_lock)
                 o["status"] = "filled"
                 o["fill"] = {"buyer": who, "txid": ev["txid"], "height": ev["height"], "paid": str(amt), "fee": str(fee)}
                 mark_bid_done(o, who)
@@ -630,9 +642,7 @@ def resolve(events, tip_height):
             elif ev["score"] == SCORE_FILL and o.get("min") is not None and not is_name_give(o["give"]):
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if ev["height"] >= V13_HEIGHT and not o.get("taker"):
-                    if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
-                    if not (claim_held(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7/v2.0: held by you (window + V20 grace)
+                if open_fill_blocked(o, ev["height"], who): continue
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 paid_so_far = int(o.get("paid") or "0")
@@ -666,9 +676,7 @@ def resolve(events, tip_height):
             elif ev["score"] == SCORE_FILL:
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if ev["height"] >= V13_HEIGHT and not o.get("taker"):
-                    if ev["height"] < V17_HEIGHT: continue                                  # [V13,V17): open CSD fills banned
-                    if not (claim_held(o, ev["height"]) and who == o.get("claimedBy")): continue  # v1.7/v2.0: held by you (window + V20 grace)
+                if open_fill_blocked(o, ev["height"], who): continue
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
@@ -686,15 +694,11 @@ def resolve(events, tip_height):
                 if is_name_give(o["give"]):
                     n = names.get(o["give"]["name"])
                     if not n: continue
-                    n["owner"] = who; n["locked"] = False; n["addr"] = None; n["profile"] = None  # sale clears the profile (doc 36)
-                    if ev["height"] >= V13_HEIGHT:
-                        n["effHeight"] = ev["height"]; n["pos"] = ev["pos"]; n["id"] = ev["txid"]; n["height"] = ev["height"]; n["viaFill"] = True
+                    deliver_name_to_buyer(n, who, ev)
                 else:
                     amt = offer_lock.get(o["id"])
                     if amt is None: continue
-                    bal(o["give"]["ticker"], o["seller"])["locked"] -= amt
-                    bal(o["give"]["ticker"], who)["available"] += amt
-                    offer_lock.pop(o["id"], None)
+                    release_give_lock(o, who, amt)
                 fees_paid += fee
                 o["status"] = "filled"
                 o["fill"] = {"buyer": who, "txid": ev["txid"], "height": ev["height"], "paid": str(paid), "fee": str(fee)}

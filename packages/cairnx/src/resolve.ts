@@ -125,6 +125,30 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // the exclusivity window a claim placed at `height` is granted (V20+ is larger). claimUntilHeight = grant + this.
   const claimWindowAt = (height: number): number => height >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
 
+  // ── shared SCORE_FILL helpers (dedup of the three fill paths — behaviour-preserving) ──
+  // v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the holder of a live claim;
+  // in [V13,V17) open CSD fills stay banned. Returns the rejection reason, or undefined if allowed.
+  const openFillReject = (o: OfferState, height: number, who: string): string | undefined => {
+    if (!(height >= V13_HEIGHT && !o.taker)) return undefined;
+    if (height < V17_HEIGHT) return "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)";
+    if (!(claimHeld(o, height) && who === o.claimedBy)) return "v1.7: open offer — claim it first (no live claim by you)";
+    return undefined;
+  };
+  // a name sale (CSD or token fill) transfers ownership to the buyer, clears addr+profile, and — v1.3+ —
+  // re-stamps the anchor to the fill itself with displacement-immune viaFill (red-team H3).
+  const deliverNameToBuyer = (n: NameRec, who: string, ev: { height: number; pos: number; txid: string }) => {
+    n.owner = who; n.locked = false; n.addr = undefined; n.profile = undefined; // sale clears the profile (doc 36)
+    if (ev.height >= V13_HEIGHT) { n.effHeight = ev.height; n.pos = ev.pos; n.id = ev.txid; n.height = ev.height; n.viaFill = true; }
+  };
+  // release a token offer's locked give-amount in FULL to the buyer, consuming the lock so it can never
+  // release twice. (The partial-fill path releases a sub-amount and keeps the lock — it does NOT use this.)
+  const releaseGiveLock = (o: OfferState, who: string, amt: bigint) => {
+    const t = (o.give as { ticker: string }).ticker;
+    bal(t, o.seller).locked -= amt;
+    bal(t, who).available += amt;
+    offerLock.delete(o.id);
+  };
+
   for (const ev of ordered) {
     if (ev.height < ACTIVATION_HEIGHT) continue;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
@@ -436,15 +460,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         buyer.available -= amt + fee;
         bal(o.want.ticker, o.want.payto).available += amt;
         if (fee > 0n) bal(o.want.ticker, TREASURY_ADDR).available += fee;
-        if (isNameGive(o.give)) {
-          giveName!.owner = who; giveName!.locked = false; giveName!.addr = undefined; giveName!.profile = undefined; // sale clears the profile (doc 36)
-          // v1.3: a paid sale establishes a fresh, displacement-immune ownership basis (H3)
-          if (ev.height >= V13_HEIGHT) { giveName!.effHeight = ev.height; giveName!.pos = ev.pos; giveName!.id = ev.txid; giveName!.height = ev.height; giveName!.viaFill = true; }
-        } else {
-          bal((o.give as { ticker: string }).ticker, o.seller).locked -= giveLock!;
-          bal((o.give as { ticker: string }).ticker, who).available += giveLock!;
-          offerLock.delete(o.id);
-        }
+        if (isNameGive(o.give)) deliverNameToBuyer(giveName!, who, ev);
+        else releaseGiveLock(o, who, giveLock!);
         o.status = "filled";
         o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: amt.toString(), fee: fee.toString() };
         markBidDone(o, who);
@@ -456,10 +473,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
         // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
-        if (ev.height >= V13_HEIGHT && !o.taker) {
-          if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
-          if (!(claimHeld(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
-        }
+        const blk = openFillReject(o, ev.height, who);
+        if (blk) { note(ev, ev.txid, "fill", false, blk); continue; }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
         const paidSoFar = BigInt(o.paid ?? "0");
@@ -498,10 +513,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
         // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
-        if (ev.height >= V13_HEIGHT && !o.taker) {
-          if (ev.height < V17_HEIGHT) { note(ev, ev.txid, "fill", false, "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)"); continue; }
-          if (!(claimHeld(o, ev.height) && who === o.claimedBy)) { note(ev, ev.txid, "fill", false, "v1.7: open offer — claim it first (no live claim by you)"); continue; }
-        }
+        const blk = openFillReject(o, ev.height, who);
+        if (blk) { note(ev, ev.txid, "fill", false, blk); continue; }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
         const fee = o.feeBps ? tradeFee(want, o.feeBps) : 0n;
@@ -541,15 +554,11 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (isNameGive(o.give)) {
           const n = names.get(o.give.name);
           if (!n) { note(ev, ev.txid, "fill", false, "name vanished (consensus violation)"); continue; }
-          n.owner = who; n.locked = false; n.addr = undefined; n.profile = undefined; // sale clears the profile (doc 36)
-          // v1.3: a paid sale establishes a fresh, displacement-immune ownership basis (H3)
-          if (ev.height >= V13_HEIGHT) { n.effHeight = ev.height; n.pos = ev.pos; n.id = ev.txid; n.height = ev.height; n.viaFill = true; }
+          deliverNameToBuyer(n, who, ev);
         } else {
           const amt = offerLock.get(o.id);
           if (amt === undefined) { note(ev, ev.txid, "fill", false, "offer lock missing"); continue; }
-          bal(o.give.ticker, o.seller).locked -= amt;
-          bal(o.give.ticker, who).available += amt;
-          offerLock.delete(o.id); // consume the lock so it can never be released twice
+          releaseGiveLock(o, who, amt);
         }
         feesPaid += fee;
         o.status = "filled";
