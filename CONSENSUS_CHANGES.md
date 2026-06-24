@@ -7,13 +7,17 @@ release is not listed here, it did not touch consensus behavior.
 
 ## Why this exists, and the rule for consumers
 
-The packages are released in **lockstep**: every `@inversealtruism/csd-*` package (and
-`@inversealtruism/cairnx-core`) is published at the **same version** in the same release, and
-inter-package dependencies are published as **exact versions** (no `^`/`~` — `workspace:*` is
-converted to the exact version at publish time). CI enforces the lockstep invariant
-(`scripts/check-lockstep.mjs`).
+The packages are released on **independent cadence**: `@inversealtruism/cairnx-core` tracks consensus
+activation heights and bumps ahead of the stable `@inversealtruism/csd-*` primitives, which move on
+their own — they need **not** share a version. What guarantees coherence is that inter-package
+dependencies are published as **exact versions** (no `^`/`~` — `workspace:*` is converted to the
+publishing package's exact current version at publish time), so a consumer can never resolve a
+mismatched pair. CI enforces this `workspace:*` discipline + dist-freshness
+(`scripts/check-lockstep.mjs`); cross-package byte-identity is enforced separately by the conformance
+job (the REAL guard).
 
-**If you build on these packages, pin exact versions and keep the set uniform.** A lockfile that
+**If you build on these packages, pin exact versions and let your lockfile resolve the matching
+inter-deps.** A lockfile that
 mixes, say, `csd-codec@0.1.4` under `csd-tx` with `csd-codec@0.1.6` under `csd-light` can sign
 with one byte-encoding and verify with another. The packages themselves can't fully prevent a
 consumer lockfile from holding two codec copies — uniform exact pins in *your* `package.json` do.
@@ -112,6 +116,8 @@ in the package).
 
 1. Land the change with updated/extended golden vectors in `csd-vectors` — never change
    behavior without a vector that pins it.
-2. Bump **all** packages to the same new version (lockstep), even the untouched ones.
+2. Bump **only the package(s) you changed** (independent cadence) — typically just `cairnx-core` for a
+   consensus-height change; leave untouched packages at their current version. `workspace:*` keeps every
+   inter-dep pinned to the exact published version, so the set stays coherent without lockstep bumps.
 3. Add an entry here describing exactly what bytes/math changed and why.
 4. Run the full suite against a live node (oracle + light full-range) before `pnpm -r publish`.

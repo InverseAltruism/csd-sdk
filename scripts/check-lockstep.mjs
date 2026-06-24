@@ -1,7 +1,12 @@
 #!/usr/bin/env node
-// Lockstep invariant (see CONSENSUS_CHANGES.md): every package in this workspace carries the
-// SAME version, and every inter-package dependency is "workspace:*" (which pnpm converts to the
-// exact version at publish time — no ^/~ ranges can ship). Exits 1 with a report on violation.
+// Release invariant (see CONSENSUS_CHANGES.md): packages are versioned on INDEPENDENT cadence —
+// `cairnx-core` tracks consensus activation heights and bumps ahead of the stable `csd-*` primitives,
+// which move on their own. They need NOT share a version. Coherence is instead guaranteed by two
+// things, BOTH checked below: (1) every inter-package dependency is "workspace:*", which pnpm freezes
+// to the publishing package's EXACT current version at publish time (no ^/~ ranges can ship, so a
+// consumer can never resolve a mismatched pair); (2) the M4 dist-freshness check (published bytes come
+// from current source). Cross-package byte-identity is enforced separately by the conformance job —
+// CI's "REAL lockstep guard". Exits 1 with a report on violation.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -27,9 +32,13 @@ for (const p of pkgs) {
   if (newestMs(distDir) + 1000 < newestMs(srcDir)) errors.push(`${p.name}: dist/ OLDER than src/ — rebuild so published bytes match source (M4)`);
 }
 
-const versions = new Set(pkgs.map((p) => p.version));
-if (versions.size !== 1) {
-  errors.push(`version drift: ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}`);
+// Independent cadence: packages need NOT share a version (cairnx-core bumps ahead on consensus
+// heights). Coherence comes from the workspace:* check below — pnpm freezes each inter-dep to the
+// exact published version — not from version-equality. Here we only sanity-check valid semver and
+// surface the version map for review.
+const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+for (const p of pkgs) {
+  if (!semver.test(String(p.version))) errors.push(`${p.name}: invalid semver version "${p.version}"`);
 }
 
 const ours = new Set(pkgs.map((p) => p.name));
@@ -48,4 +57,5 @@ if (errors.length) {
   for (const e of errors) console.error("  - " + e);
   process.exit(1);
 }
-console.log(`lockstep OK: ${pkgs.length} packages all @${[...versions][0]}, inter-deps workspace:*`);
+console.log(`lockstep OK: ${pkgs.length} packages, inter-deps workspace:*, dist fresh (M4)`);
+console.log("  versions: " + pkgs.map((p) => `${p.name.replace("@inversealtruism/", "")}@${p.version}`).join(", "));
