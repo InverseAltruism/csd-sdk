@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/vectors.test.ts && tsx test/name-decoy.test.ts"
+    "test": "tsx test/vectors.test.ts && tsx test/name-decoy.test.ts && tsx test/client-helpers.test.ts"
   },
   "dependencies": {
     "@inversealtruism/csd-codec": "workspace:*"

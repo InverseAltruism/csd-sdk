@@ -9,10 +9,10 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, CLAIM_WINDOW_BLOCKS, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
+  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
   SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, MAX_OFFER_EPOCHS,
-  epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
+  claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
   type Give, type NameState, type OfferState, type ProposeEvent, type TokenState,
@@ -116,14 +116,15 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // grace is derived from the claim's ERA so its inverse is UNAMBIGUOUS: a claim granted at ≥V20 has
   // claimUntilHeight = grantHeight + CLAIM_WINDOW_BLOCKS_V20 ≥ V20+40; a pre-V20 claim has ≤ V20+14; the
   // [V20+15, V20+40) range is unreachable, so `claimUntilHeight − 40 ≥ V20` ⟺ "this was a V20 claim".
+  // the fill GRACE for a stored claim (claimGraceOf, imported from types — derived from the claim's era,
+  // V20+ ⇒ CLAIM_FILL_GRACE_BLOCKS, else 0; undefined claimUntilHeight ⇒ 0). claimWindowAt is likewise the
+  // imported selector, so the resolver and the exported client helpers share one definition (cannot drift).
   const claimGrace = (o: OfferState): number =>
-    (o.claimUntilHeight !== undefined && o.claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20 >= V20_HEIGHT) ? CLAIM_FILL_GRACE_BLOCKS : 0;
+    o.claimUntilHeight !== undefined ? claimGraceOf(o.claimUntilHeight) : 0;
   // is the offer still EXCLUSIVELY HELD (window + grace) at `height`? Lazy lapse — a past hold reads as
   // "not held" (no mutation). Used for BOTH the fill gate (with who===claimedBy) and the new-claim block.
   const claimHeld = (o: OfferState, height: number): boolean =>
     o.claimedBy !== undefined && o.claimUntilHeight !== undefined && height < o.claimUntilHeight + claimGrace(o);
-  // the exclusivity window a claim placed at `height` is granted (V20+ is larger). claimUntilHeight = grant + this.
-  const claimWindowAt = (height: number): number => height >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
 
   // ── shared SCORE_FILL helpers (dedup of the three fill paths — behaviour-preserving) ──
   // v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the holder of a live claim;

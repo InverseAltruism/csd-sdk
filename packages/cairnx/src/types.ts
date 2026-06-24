@@ -162,6 +162,36 @@ export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be reveale
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
+// ── pure client-side selectors ──────────────────────────────────────────────────────────────────
+// Exported so the browser UI / wallet / swapguard IMPORT these instead of re-deriving them (a
+// re-derivation is a fork hazard — it forks who-may-fill / when-an-offer-expires). resolve() uses the
+// same definitions internally, so the canonical resolver and these helpers cannot drift.
+
+// The exclusivity window a claim placed at `height` is granted (V20+ is wider). claimUntilHeight = grant + this.
+export const claimWindowAt = (height: number): number =>
+  height >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
+// Inverse for a STORED claimUntilHeight: a V20 claim has claimUntilHeight ≥ V20+40, and the
+// [V20+15, V20+40) range is unreachable, so this recovers the window baked into an existing claim
+// unambiguously. (Mirrors the resolver's era inverse — see resolve.ts claimGrace.)
+export const claimWindowOf = (claimUntilHeight: number): number =>
+  (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
+// The fill GRACE baked into a stored claim (V20+ only = CLAIM_FILL_GRACE_BLOCKS, else 0), recovered from
+// its era by the same unambiguous inverse. resolve()'s claimGrace(offer) is this applied to claimUntilHeight.
+export const claimGraceOf = (claimUntilHeight: number): number =>
+  (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_FILL_GRACE_BLOCKS : 0;
+// The first height at which the resolver treats an offer/bid (anchored at `anchorHeight`, raw expiry epoch
+// `expiresEpoch`) as EXPIRED — the height projection of effExpiry + sweepExpired (resolve.ts). v2.1 (≥V21)
+// caps the effective expiry at anchorEpoch + MAX_OFFER_EPOCHS. Proven equivalent to the resolver's
+// height-gated sweep across all four cases; client-helpers.test.ts locks that equivalence over a grid.
+//   raw    = (expiresEpoch + 1) * EPOCH_LEN                       — first height with epochOf(h) > expiresEpoch
+//   capped = (epochOf(anchor) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN — first height past the v2.1 cap
+//   result = min(raw, max(V21_HEIGHT, capped))
+export const offerExpiryHeightOf = (expiresEpoch: number, anchorHeight: number): number => {
+  const raw = (Number(expiresEpoch ?? 0) + 1) * EPOCH_LEN;
+  const capped = (epochOf(anchorHeight) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN;
+  return Math.min(raw, Math.max(V21_HEIGHT, capped));
+};
+
 // ── records (the canonical-JSON objects anchored in Propose.uri) ──
 export interface DeployRecord {
   v: 1; t: "deploy"; ticker: string; name?: string; decimals: number;

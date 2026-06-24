@@ -76,13 +76,16 @@ function isWellFormedDeep(v: unknown): boolean {
  */
 const onlyKeys = (r: Record<string, unknown>, allowed: ReadonlySet<string>): boolean =>
   Object.keys(r).every((k) => allowed.has(k));
-const DEPLOY_KEYS = new Set(["v", "t", "ticker", "name", "decimals", "supply", "mint", "mintLimit"]);
-const MINT_KEYS = new Set(["v", "t", "ticker", "amount"]);
-const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo", "ts"]);
-const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
-const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
-const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
-const NPROFILE_KEYS = new Set(["v", "t", "name", "p"]);
+// Exported so consumers (the wallet's record-decode / clear-sign path) import the SAME decoy-key
+// allowlists instead of re-typing them — a re-typed allowlist that drops a key would re-open the M1
+// cross-language canonicalization fork on the consumer side.
+export const DEPLOY_KEYS = new Set(["v", "t", "ticker", "name", "decimals", "supply", "mint", "mintLimit"]);
+export const MINT_KEYS = new Set(["v", "t", "ticker", "amount"]);
+export const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo", "ts"]);
+export const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
+export const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
+export const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
+export const NPROFILE_KEYS = new Set(["v", "t", "name", "p"]);
 
 /**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
