@@ -91,6 +91,8 @@ V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claim
 V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
 MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
 V22_HEIGHT = 41_300             # v2.2 REMOVE the offer/bid duration cap from consensus (UI-only policy); keyed on the offer's ANCHOR height so [V21,V22) + pre-V21 stay byte-identical. Set 2026-06-26 at tip ~41145 (+155 safe lockstep margin); dormant under the UI cap so later activation is harmless. MUST match types.ts/helpers.js/wallet.
+V23_HEIGHT = 43_500            # v2.3 nset-clear ("unset"): at EVENT height >= V23 an nset to the ZERO address clears n.addr (falls back to owner; drops out of primary). Gated on event height so all history is byte-identical; zero address is a valid addr so NO validation change. PLACEHOLDER — operator sets at deploy AFTER the wallet bundle is live (else old wallets fork). MUST match types.ts/helpers.js/wallet.
+ZERO_ADDR = "0x" + "00" * 20   # the nset-clear sentinel (0x + 40 hex zeros)
 PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
 PROFILE_MAX_VALUE_BYTES = 256
 EPOCH_LEN = 30
@@ -413,6 +415,7 @@ def resolve(events, tip_height):
         v15 = ev["height"] >= V15_HEIGHT
         v16 = ev["height"] >= V16_HEIGHT
         v19 = ev["height"] >= V19_HEIGHT
+        v23 = ev["height"] >= V23_HEIGHT
         fee_to_treasury = int((ev.get("paidTo") or {}).get(TREASURY_ADDR, "0")) if ev["kind"] == "propose" else 0
 
         if ev["kind"] == "propose":
@@ -511,7 +514,8 @@ def resolve(events, tip_height):
                 n = names.get(rec["name"])
                 if not n or n["owner"] != who: continue
                 if v15 and lapsed(n, epoch_of(ev["height"])): continue
-                n["addr"] = rec["addr"].lower()
+                if v23 and rec["addr"].lower() == ZERO_ADDR: n["addr"] = None   # v2.3 unset: clear -> falls back to owner
+                else: n["addr"] = rec["addr"].lower()
 
             elif t == "nprofile":
                 # v1.9 ENS-class identity (doc 36). INERT — owner-gated, last-write-wins; empty p clears.

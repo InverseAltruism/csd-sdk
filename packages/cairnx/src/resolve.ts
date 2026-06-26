@@ -11,7 +11,7 @@ import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, MAX_OFFER_EPOCHS,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -164,6 +164,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v15 = ev.height >= V15_HEIGHT;
     const v16 = ev.height >= V16_HEIGHT;
     const v19 = ev.height >= V19_HEIGHT;
+    const v23 = ev.height >= V23_HEIGHT;
     const feeToTreasury = ev.kind === "propose" ? BigInt((ev.paidTo ?? {})[TREASURY_ADDR] ?? "0") : 0n;
 
     if (ev.kind === "propose") {
@@ -280,7 +281,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         const n = names.get(rec.name);
         if (!n || n.owner !== who) { note(ev, ev.id, "nset", false, "not the name owner"); continue; }
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nset", false, "lease lapsed — claim it instead"); continue; }
-        n.addr = rec.addr.toLowerCase();
+        if (v23 && rec.addr.toLowerCase() === ZERO_ADDR) n.addr = undefined;   // v2.3 unset: clear the record → name falls back to its owner
+        else n.addr = rec.addr.toLowerCase();
         note(ev, ev.id, "nset", true);
 
       } else if (rec.t === "nprofile") {

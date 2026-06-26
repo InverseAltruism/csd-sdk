@@ -144,6 +144,21 @@ export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blo
 // SERVER-SIDE mirrors (Granus cairnx + cairnx-mm, clarvis, website, cli) BEFORE the tip crosses this height.
 // MUST match cairnx_ref.py + the UI/vendored mirrors.
 export const V22_HEIGHT = 41_300;   // set 2026-06-26 at tip ~41145 (+155, safe lockstep margin ≈ 90 min at the current rate; later activation is harmless — V22 is dormant under the UI cap). Below the gate 0.1.20 ≡ 0.1.19, so a mixed-version fleet does NOT fork during the deploy; the only requirement is ALL replayers on 0.1.20 BEFORE the tip reaches this height.
+// v2.3 nset-clear ("unset"): at EVENT height >= V23_HEIGHT an `nset` whose addr is the ZERO address CLEARS
+// the resolver record (n.addr = undefined => the name falls back to its owner, and drops out of the primary
+// candidate set) instead of pointing at 0x000..0. Gated on event height so ALL history is byte-identical and
+// the zero address is already a valid addr, so there is NO record-validation change (no parser-fork class).
+// Below the gate the new core is byte-identical to the old, so a mixed-version fleet does NOT fork pre-V23.
+// ⚠ DEPLOY (harder gate than V22): set this height only AFTER every vendored mirror (wallet cairnx-spv + cairn
+// public/vendor/cairnx-core) carries the v23 branch AND the wallet update is ADOPTED (not merely published) on
+// the Web Store. UNLIKE V22 (fail-soft: a stale resolver just REJECTS what a fresh one accepts), a stale wallet
+// here does NOT reject: it replays a cleared name to 0x000..0, so a third-party send BURNS to the zero address,
+// and the clarvis union does NOT rescue it (the send goes to the wallet's OWN replay winner, a disagreement is
+// only flagged). So "all mirrors re-vendored + wallet ADOPTED" is a HARD fund-safety precondition, not just
+// liveness/anti-fork. (The wallet also now hard-blocks any send resolving to 0x0, mitigating but not erasing
+// this.) Tune the height to the wallet-ADOPTION date, not just publication. MUST match cairnx_ref.py + helpers.js + mirrors.
+export const V23_HEIGHT = 43_500;   // PLACEHOLDER — operator sets at deploy (tip ~41,351 on 2026-06-27)
+export const ZERO_ADDR = "0x" + "00".repeat(20);   // the nset-clear sentinel (0x + 40 hex zeros)
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
 // resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys

@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
+let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
 
 const N = Number(process.argv[2] || 3000);
 let SEED = Number(process.argv[3] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
@@ -56,7 +57,7 @@ function buildRec() {
       case "ncommit": return R.nameCommitRecord({ commit: "0x" + Array.from({ length: 64 }, () => "0123456789abcdef"[ri(0, 15)]).join("") });
       case "name": return R.nameClaim(chance(0.5) ? { name: pick(NAMES) } : { name: pick(NAMES), salt: Array.from({ length: ri(16, 64) }, () => "0123456789abcdef"[ri(0, 15)]).join("") });
       case "nxfer": return R.nameXfer({ name: pick(NAMES), to: addr() });
-      case "nset": return R.nameSet({ name: pick(NAMES), addr: addr() });
+      case "nset": return R.nameSet({ name: pick(NAMES), addr: chance(0.12) ? R.ZERO_ADDR : addr() }); // V23: sometimes the clear sentinel (mostly non-owner -> rejected; owned clears come from v23ClearFlow)
       case "nrenew": return R.nameRenew({ name: pick(NAMES) });
       case "nprofile": return R.nameProfile({ name: pick(NAMES), p: pmap() });
       case "tmeta": return R.tokenMeta({ ticker: tick(), hash: "0x" + "ab".repeat(32) });
@@ -122,6 +123,22 @@ function nameFlow(h0) {
   ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: B, score: 100, confidence: 0, height: h, pos: 1, paidTo: pt });
   return ev;
 }
+// V23 nset-clear coverage: register a name (owner D), point it at self, then CLEAR it (nset->ZERO) at a
+// post-V23 height; sometimes a 2nd self-pointing name so the primary recompute is exercised. Drives the new
+// owner-gated clear branch with the proposer actually owning the name (the generic-path nsets are non-owner).
+function v23ClearFlow(h0) {
+  const ev = []; const D = "0x" + "da".repeat(20), B = "0x" + "bf".repeat(20);
+  let h = Math.max(R.V23_HEIGHT - 30, h0);
+  // pay the REAL registration fee (nameRegFee scales by length/height); a flat under-fee would be rejected
+  // "fee unpaid" at >=V18, leaving the name unowned so the clear would no-op (the bug the audit caught).
+  const reg = (n, hh) => ev.push({ kind: "propose", id: nid(), proposer: D, uri: R.nameClaim({ name: n }).uri, payloadHash: R.nameClaim({ name: n }).payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: { [TREAS]: R.nameRegFee(n, hh).toString() } });
+  const set = (n, a, hh) => ev.push({ kind: "propose", id: nid(), proposer: D, uri: R.nameSet({ name: n, addr: a }).uri, payloadHash: R.nameSet({ name: n, addr: a }).payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: {} });
+  const NM = "z" + ri(100, 9999); reg(NM, h); h += 2; set(NM, D, h); h += 2;
+  if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, h); h += 1; set(NM2, D, h); h += 1; }  // 2nd self-pointing name -> primary recompute on clear
+  gV23Clears++; set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is now owned+paid so it APPLIES)
+  if (chance(0.4)) { h += 2; set(NM, B, h); }   // sometimes re-point after clear (clear-then-reset)
+  return ev;
+}
 // A LEASE that LAPSES: claim a name, then a far-future tip pushes it past term+grace → expired:true,
 // and sometimes a premium re-claim by another party (decaying-premium fee).
 function lapseFlow(h0) {
@@ -181,12 +198,13 @@ function nprofileFlow(h0) {
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.12)) { const e = v23ClearFlow(ri(R.V23_HEIGHT - 100, R.V23_HEIGHT + 2000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nprofileFlow(ri(R.V19_HEIGHT - 200, R.V19_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.10)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
   const len = ri(1, 16);
-  let h = ri(29810, 40050); // spans ACTIVATION-50 .. V16+50 (all gates + boundaries)
+  let h = ri(29810, R.V23_HEIGHT + 1000); // spans ACTIVATION-50 .. V23+1000 (all gates + boundaries, incl. the V23 nset-clear)
   const offerIds = [];
   for (let i = 0; i < len; i++) {
     if (chance(0.25)) h += ri(0, 3); // sometimes same block (tests pos ordering / same-block fill+cancel)
@@ -260,5 +278,21 @@ for (let i = 0; i < N; i++) {
   }
 }
 console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw`);
-console.log(`coverage hit: ${JSON.stringify(cov)}`);
+console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`);
+// HONEST-COUNTER guard: prove v23ClearFlow actually REACHES the clear branch (a paid+owned name cleared at
+// >=V23 -> addr undefined), so the gV23Clears counter cannot silently lie again (audit caught a flat under-fee
+// that left the name unowned, no-op'ing every clear). Deterministic, independent of the random seed.
+{
+  const D = "0x" + "da".repeat(20), H = R.V23_HEIGHT + 50, NM = "selfchk";
+  const mk = (rec, hh, paid) => ({ kind: "propose", id: nid(), proposer: D, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} });
+  const seq = [
+    mk(R.nameClaim({ name: NM }), H, { [TREAS]: R.nameRegFee(NM, H).toString() }),   // PAID registration -> owned
+    mk(R.nameSet({ name: NM, addr: D }), H + 1),                                       // point at self
+    mk(R.nameSet({ name: NM, addr: R.ZERO_ADDR }), H + 2),                             // CLEAR at >=V23
+  ];
+  const n = resolve(seq, H + 5).names[NM];
+  if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED — owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
+  if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0 — the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
+  console.log(`✓ v23 clear self-check: a paid+owned name was genuinely cleared (addr->undefined); fuzz exercised the branch ${gV23Clears}x`);
+}
 process.exit(diverged ? 1 : 0);
