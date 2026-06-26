@@ -19,6 +19,7 @@ import {
   epochOf,
   V20_HEIGHT,
   V21_HEIGHT,
+  V22_HEIGHT,
   MAX_OFFER_EPOCHS,
   TREASURY_ADDR,
   SCORE_CLAIM,
@@ -68,6 +69,22 @@ expiryCase("B <V21 anchor, cap fires @V21", 35_000, epochOf(35_000) + 1000);
 expiryCase("C >=V21 raw <= cap", V21_HEIGHT + 100, epochOf(V21_HEIGHT + 100) + 100);
 expiryCase("D >=V21 at the cap", V21_HEIGHT + 100, epochOf(V21_HEIGHT + 100) + MAX_OFFER_EPOCHS);
 expiryCase("E raw lands ~V21", V21_HEIGHT - 600, epochOf(V21_HEIGHT) - 1);
+// v2.2 (V22): the cap is REMOVED for offers anchored >= V22 — offerExpiryHeightOf returns RAW (uncapped),
+// and the resolver rests the offer to that raw expiry even when the duration far exceeds the old 168-epoch cap.
+expiryCase("F >=V22 long duration uncapped (rests to raw)", V22_HEIGHT + 100, epochOf(V22_HEIGHT + 100) + 1000);
+expiryCase("G >=V22 modest duration (still raw)", V22_HEIGHT + 100, epochOf(V22_HEIGHT + 100) + 50);
+
+// ── v2.2 creation gate: over-cap REJECTED in [V21,V22) (history preserved), ACCEPTED when anchored >= V22 ──
+function createCase(name: string, offH: number, expEpoch: number, expectOpen: boolean) {
+  const { ev, offerId } = offerAt(offH, expEpoch);
+  const st = statusAt(ev, offH + 1, offerId);
+  assert.equal(st === "open", expectOpen, `${name}: expected ${expectOpen ? "OPEN (accepted)" : "rejected (undefined)"}, got ${st}`);
+  console.log(`  ✓ ${name}: status@${offH + 1}=${st ?? "rejected"}`);
+  pass++;
+}
+// duration MAX_OFFER_EPOCHS+50 epochs is OVER the old cap:
+createCase("over-cap in [V21,V22) is REJECTED (V21 behavior preserved)", V21_HEIGHT + 100, epochOf(V21_HEIGHT + 100) + MAX_OFFER_EPOCHS + 50, false);
+createCase("over-cap anchored >=V22 is ACCEPTED (cap removed)", V22_HEIGHT + 100, epochOf(V22_HEIGHT + 100) + MAX_OFFER_EPOCHS + 50, true);
 
 // ── claimWindowAt / claimGraceOf / claimWindowOf vs a REAL claim grant ──────────────────────────────
 function claimCase(name: string, claimH: number) {

@@ -11,7 +11,7 @@ import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, MAX_OFFER_EPOCHS,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -76,12 +76,17 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     else { const amt = offerLock.get(o.id) ?? 0n; const b = bal(o.give.ticker, o.seller); b.locked -= amt; b.available += amt; }
   };
 
-  // lazily settle offers/bids whose window has ended before `height`. v2.1 (≥ V21): the EFFECTIVE expiry is
-  // capped at anchorEpoch + MAX_OFFER_EPOCHS, so a long-resting offer/bid expires at the cap (and existing
-  // over-cap inventory expires exactly when the sweep height first crosses V21). Gated by the sweep height →
-  // deterministic across replayers; below V21 byte-identical to the old behavior.
+  // lazily settle offers/bids whose window has ended before `height`. v2.1 ([V21,V22)): the EFFECTIVE expiry
+  // is capped at anchorEpoch + MAX_OFFER_EPOCHS, so a long-resting offer/bid expires at the cap (and existing
+  // over-cap inventory expires exactly when the sweep height first crosses V21). v2.2 (offer ANCHORED >= V22):
+  // the cap is REMOVED — the raw expiresEpoch binds (listing duration is a UI-only policy). Keyed on the
+  // offer's ANCHOR height (e.height), NOT the sweep height, so [V21,V22) and every pre-V21 hash stay
+  // byte-identical (an offer anchored < V22 keeps its V21-era effExpiry forever; only offers anchored >= V22
+  // are un-capped). Deterministic across replayers; pre-V21 byte-identical to the original behavior.
   const effExpiry = (e: { expiresEpoch: number; height: number }, height: number): number =>
-    height >= V21_HEIGHT ? Math.min(e.expiresEpoch, epochOf(e.height) + MAX_OFFER_EPOCHS) : e.expiresEpoch;
+    e.height >= V22_HEIGHT ? e.expiresEpoch
+      : height >= V21_HEIGHT ? Math.min(e.expiresEpoch, epochOf(e.height) + MAX_OFFER_EPOCHS)
+        : e.expiresEpoch;
   const sweepExpired = (height: number) => {
     const ep = epochOf(height);
     for (const o of offers.values()) {
@@ -312,7 +317,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // anywhere near 2^53 (max ~1e5), so rejecting the unrepresentable range is replay-identical.
         if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "offer", false, "expiresEpoch out of safe-integer range"); continue; }
         if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "offer", false, "already expired at anchor"); continue; }
-        if (ev.height >= V21_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "offer", false, "v2.1: offer duration exceeds the max"); continue; }
+        // v2.1 duration cap — gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
+        if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "offer", false, "v2.1: offer duration exceeds the max"); continue; }
         const give: Give = rec.give;
         if (isNameGive(give)) {
           if (!v11) { note(ev, ev.id, "offer", false, "name offers need v1.1"); continue; }
@@ -357,7 +363,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (!v12) { note(ev, ev.id, "bid", false, "bids need v1.2"); continue; }
         if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "bid", false, "expiresEpoch out of safe-integer range"); continue; }
         if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "bid", false, "already expired at anchor"); continue; }
-        if (ev.height >= V21_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "bid", false, "v2.1: bid duration exceeds the max"); continue; }
+        // v2.1 duration cap — gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
+        if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "bid", false, "v2.1: bid duration exceeds the max"); continue; }
         bids.set(ev.id, {
           id: ev.id, bidder: who, want: rec.want, give: rec.give,
           status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, offers: [],

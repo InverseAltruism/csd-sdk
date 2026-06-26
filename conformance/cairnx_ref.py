@@ -89,7 +89,8 @@ NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
 V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
-MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h)
+MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
+V22_HEIGHT = 41_300             # v2.2 REMOVE the offer/bid duration cap from consensus (UI-only policy); keyed on the offer's ANCHOR height so [V21,V22) + pre-V21 stay byte-identical. Set 2026-06-26 at tip ~41145 (+155 safe lockstep margin); dormant under the UI cap so later activation is harmless. MUST match types.ts/helpers.js/wallet.
 PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
 PROFILE_MAX_VALUE_BYTES = 256
 EPOCH_LEN = 30
@@ -181,7 +182,13 @@ NPROFILE_KEYS = {"v", "t", "name", "p"}
 def _only_keys(r, allowed): return set(r.keys()) <= allowed
 
 def parse_record(uri, payload_hash_hex):
-    if len(uri.encode("utf-8")) > MAX_RECORD_BYTES: return None
+    # PARITY (audit): a raw lone-surrogate uri must fail CLOSED — JS records.ts uses TextEncoder (surrogate-
+    # tolerant, never throws), so the reference must REJECT (return None), not raise UnicodeEncodeError, or it
+    # crashes the differential on exactly the fork-prone input it exists to police.
+    try:
+        if len(uri.encode("utf-8")) > MAX_RECORD_BYTES: return None
+    except UnicodeEncodeError:
+        return None
     try: obj = json.loads(uri)
     except Exception: return None
     if not isinstance(obj, dict): return None  # rejects null/list/scalar
@@ -345,7 +352,8 @@ def resolve(events, tip_height):
             b = bal(o["give"]["ticker"], o["seller"])
             b["locked"] -= amt; b["available"] += amt
 
-    def eff_expiry(e, height):  # v2.1: cap effective offer/bid lifetime at anchor + MAX_OFFER_EPOCHS (gated by sweep height)
+    def eff_expiry(e, height):  # v2.1 ([V21,V22)): cap at anchor + MAX_OFFER_EPOCHS; v2.2 (offer ANCHORED >= V22): uncapped (raw binds). Keyed on the offer's ANCHOR height so [V21,V22) stays byte-identical.
+        if e["height"] >= V22_HEIGHT: return e["expiresEpoch"]
         return min(e["expiresEpoch"], epoch_of(e["height"]) + MAX_OFFER_EPOCHS) if height >= V21_HEIGHT else e["expiresEpoch"]
     def sweep_expired(height):
         ep = epoch_of(height)
@@ -519,9 +527,9 @@ def resolve(events, tip_height):
                 if V13_HEIGHT <= ev["height"] < V17_HEIGHT and not want_is_token and "taker" not in rec: continue  # v1.7 re-allows open CSD offers (claim-gated)
                 payto = (rec["want"].get("payto") or who).lower()
                 if payto == TREASURY_ADDR: continue
-                if not is_safe_int(ev["expiresEpoch"]): continue
+                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
-                if ev["height"] >= V21_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue
+                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap — [V21,V22) era only; v2.2 (anchor >= V22) removes it
                 give = rec["give"]
                 if is_name_give(give):
                     if not v11: continue
@@ -552,9 +560,9 @@ def resolve(events, tip_height):
 
             elif t == "bid":
                 if not v12: continue
-                if not is_safe_int(ev["expiresEpoch"]): continue
+                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
-                if ev["height"] >= V21_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue
+                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap — [V21,V22) era only; v2.2 (anchor >= V22) removes it
                 bids[ev["id"]] = {"id": ev["id"], "bidder": who, "want": rec["want"], "give": rec["give"],
                                   "status": "open", "expiresEpoch": ev["expiresEpoch"], "height": ev["height"], "offers": []}
 
@@ -597,13 +605,13 @@ def resolve(events, tip_height):
             who = ev["attester"].lower()
             if not o:
                 b = bids.get(ev["proposalId"])
-                if b and ev["score"] == SCORE_CANCEL:
+                if b and ev.get("score") == SCORE_CANCEL:
                     if who != b["bidder"]: continue
                     if b["status"] != "open": continue
                     b["status"] = "cancelled"
                 continue
 
-            if ev["score"] == SCORE_CANCEL:
+            if ev.get("score") == SCORE_CANCEL:
                 if who != o["seller"]: continue
                 if o["status"] != "open": continue
                 if ev["height"] >= V14_HEIGHT:
@@ -615,10 +623,10 @@ def resolve(events, tip_height):
                 else:
                     release_give(o); o["status"] = "cancelled"
 
-            elif ev["score"] == SCORE_FILL and is_token_want(o["want"]):
+            elif ev.get("score") == SCORE_FILL and is_token_want(o["want"]):
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if ev["confidence"] != CONF_TOKEN_FILL: continue
+                if ev.get("confidence") != CONF_TOKEN_FILL: continue  # PARITY: missing confidence -> skip (match JS ev.confidence undefined), never KeyError
                 if o["want"]["ticker"] not in tokens: continue
                 amt = int(o["want"]["amount"])
                 fee = trade_fee(amt, o["feeBps"]) if o["feeBps"] else 0
@@ -639,7 +647,7 @@ def resolve(events, tip_height):
                 o["fill"] = {"buyer": who, "txid": ev["txid"], "height": ev["height"], "paid": str(amt), "fee": str(fee)}
                 mark_bid_done(o, who)
 
-            elif ev["score"] == SCORE_FILL and o.get("min") is not None and not is_name_give(o["give"]):
+            elif ev.get("score") == SCORE_FILL and o.get("min") is not None and not is_name_give(o["give"]):
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
                 if open_fill_blocked(o, ev["height"], who): continue
@@ -673,7 +681,7 @@ def resolve(events, tip_height):
                     o["status"] = "filled"; o["fill"] = entry; offer_lock.pop(o["id"], None)
                     mark_bid_done(o, who)
 
-            elif ev["score"] == SCORE_FILL:
+            elif ev.get("score") == SCORE_FILL:
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
                 if open_fill_blocked(o, ev["height"], who): continue
@@ -704,7 +712,7 @@ def resolve(events, tip_height):
                 o["fill"] = {"buyer": who, "txid": ev["txid"], "height": ev["height"], "paid": str(paid), "fee": str(fee)}
                 mark_bid_done(o, who)
 
-            elif ev["height"] >= V17_HEIGHT and ev["score"] == SCORE_CLAIM:
+            elif ev["height"] >= V17_HEIGHT and ev.get("score") == SCORE_CLAIM:
                 # v1.7 claim-to-fill: reserve an OPEN CSD offer for the first claimer for a short window
                 if o["status"] != "open": continue
                 if o.get("taker"): continue

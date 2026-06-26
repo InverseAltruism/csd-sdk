@@ -121,7 +121,29 @@ export const V20_HEIGHT = 38_400;
 // Placeholder height — operator sets the real activation AFTER all mirrors are redeployed (deploy BEFORE the
 // tip crosses it, else a stale resolver and a fresh one diverge at the gate).
 export const V21_HEIGHT = 40_100;
-export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h)
+export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
+// v2.2 (V22): REMOVE the offer/bid duration cap from consensus. Listing duration becomes a pure UI/product
+// policy (enforced in the trade UI, not the chain) — see cairn docs/Plans/47. For an offer/bid anchored at
+// height >= V22_HEIGHT the cap no longer applies (neither the creation reject NOR the lazy-sweep cap), so it
+// may rest until its raw expiresEpoch — bounded only by the Number.isSafeInteger fork-guard in resolve.ts.
+// RELAXATION (the HARD fork direction): keyed on the OFFER's ANCHOR height (ev.height), NOT the sweep height,
+// so every pre-V21 hash AND all of [V21,V22) stay BYTE-IDENTICAL (offers anchored < V22 keep the exact V21
+// behavior; only offers anchored >= V22 are un-capped). Every replayer (Granus cairnx, clarvis, the
+// indexer-fed resolver, the wallet SPV bundle, cli) MUST upgrade BEFORE the tip crosses V22 — relaxation
+// INVERTS the failure mode (a stale replayer REJECTS what a fresh one ACCEPTS, and the accepted long offer
+// becomes load-bearing state the stale host lacks). The cold-sync backstop the cap used to provide moves to
+// the light client (a bounded checkpoint window; offers older than it are simply not in-browser-fillable).
+// PREREQUISITE: the indexer must store expires_epoch type-honestly (no clamp) so the isSafeInteger guard fires
+// identically on Granus and SPV (GRX-WIRE-CLAMP-1, fixed in csd-indexer). FAST-ACTIVATION (operator, 2026-06-26):
+// set near the tip. SAFE to activate before full wallet adoption because the relaxation is DORMANT under the UI's
+// 1-week cap — no UI-created offer ever exceeds the old 168-epoch cap, so fresh and stale replayers compute
+// IDENTICAL state until someone DELIBERATELY posts an over-cap offer via raw API. The residual fork surface is a
+// deliberately-crafted over-cap offer (anchored >=V22) that gets FILLED → forks not-yet-updated wallets fail-soft
+// (no theft); such an offer also stops being in-browser-fillable once it ages past the SPV checkpoint window
+// (~16 days, NOT immediately) — "their issue". Operator MUST still deploy the
+// SERVER-SIDE mirrors (Granus cairnx + cairnx-mm, clarvis, website, cli) BEFORE the tip crosses this height.
+// MUST match cairnx_ref.py + the UI/vendored mirrors.
+export const V22_HEIGHT = 41_300;   // set 2026-06-26 at tip ~41145 (+155, safe lockstep margin ≈ 90 min at the current rate; later activation is harmless — V22 is dormant under the UI cap). Below the gate 0.1.20 ≡ 0.1.19, so a mixed-version fleet does NOT fork during the deploy; the only requirement is ALL replayers on 0.1.20 BEFORE the tip reaches this height.
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language
 // resolver). Structurally NAME_RE + the `.` separator. Charset-VALIDATED, not allow-listed → new keys
@@ -181,13 +203,15 @@ export const claimGraceOf = (claimUntilHeight: number): number =>
   (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_FILL_GRACE_BLOCKS : 0;
 // The first height at which the resolver treats an offer/bid (anchored at `anchorHeight`, raw expiry epoch
 // `expiresEpoch`) as EXPIRED — the height projection of effExpiry + sweepExpired (resolve.ts). v2.1 (≥V21)
-// caps the effective expiry at anchorEpoch + MAX_OFFER_EPOCHS. Proven equivalent to the resolver's
-// height-gated sweep across all four cases; client-helpers.test.ts locks that equivalence over a grid.
+// caps the effective expiry at anchorEpoch + MAX_OFFER_EPOCHS; v2.2 (anchor >= V22) REMOVES the cap (raw
+// binds). Proven equivalent to the resolver's height-gated sweep; client-helpers.test.ts locks that
+// equivalence over a grid spanning V21 and V22.
 //   raw    = (expiresEpoch + 1) * EPOCH_LEN                       — first height with epochOf(h) > expiresEpoch
 //   capped = (epochOf(anchor) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN — first height past the v2.1 cap
-//   result = min(raw, max(V21_HEIGHT, capped))
+//   result = anchor >= V22 ? raw : min(raw, max(V21_HEIGHT, capped))
 export const offerExpiryHeightOf = (expiresEpoch: number, anchorHeight: number): number => {
   const raw = (Number(expiresEpoch ?? 0) + 1) * EPOCH_LEN;
+  if (anchorHeight >= V22_HEIGHT) return raw;   // v2.2: cap removed for offers anchored >= V22 (UI-only policy)
   const capped = (epochOf(anchorHeight) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN;
   return Math.min(raw, Math.max(V21_HEIGHT, capped));
 };
