@@ -15,7 +15,7 @@ npm i @inversealtruism/csd-codec @inversealtruism/csd-crypto @inversealtruism/cs
 
 > **Pin exact versions and keep the set uniform.** The packages release in lockstep, and every
 > change to the byte-level consensus surface is recorded in
-> [`CONSENSUS_CHANGES.md`](./CONSENSUS_CHANGES.md) — read it before upgrading, and never let a
+> [`CONSENSUS_CHANGES.md`](./CONSENSUS_CHANGES.md), read it before upgrading, and never let a
 > lockfile resolve two different `csd-codec` versions under different packages.
 
 ## What you can do with it
