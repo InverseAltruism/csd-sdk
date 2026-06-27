@@ -157,7 +157,7 @@ export const V22_HEIGHT = 41_300;   // set 2026-06-26 at tip ~41145 (+155, safe 
 // only flagged). So "all mirrors re-vendored + wallet ADOPTED" is a HARD fund-safety precondition, not just
 // liveness/anti-fork. (The wallet also now hard-blocks any send resolving to 0x0, mitigating but not erasing
 // this.) Tune the height to the wallet-ADOPTION date, not just publication. MUST match cairnx_ref.py + helpers.js + mirrors.
-export const V23_HEIGHT = 43_500;   // PLACEHOLDER — operator sets at deploy (tip ~41,351 on 2026-06-27)
+export const V23_HEIGHT = 52_000;   // set 2026-06-27 at tip ~41,836 (+~10,160 blocks ≈ 14 days @ ~718/day) — runway for wallet 0.2.36 CWS+website adoption before the unset feature activates chain-wide
 export const ZERO_ADDR = "0x" + "00".repeat(20);   // the nset-clear sentinel (0x + 40 hex zeros)
 // nprofile `p` keys: ENSIP-5-style (global + reverse-DNS service). Lowercase ASCII only, so the canonical
 // key sort is INVARIANT under UTF-16 / UTF-8-byte / codepoint order (future-proof vs a 3rd-language

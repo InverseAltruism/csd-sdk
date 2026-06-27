@@ -91,7 +91,7 @@ V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claim
 V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
 MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
 V22_HEIGHT = 41_300             # v2.2 REMOVE the offer/bid duration cap from consensus (UI-only policy); keyed on the offer's ANCHOR height so [V21,V22) + pre-V21 stay byte-identical. Set 2026-06-26 at tip ~41145 (+155 safe lockstep margin); dormant under the UI cap so later activation is harmless. MUST match types.ts/helpers.js/wallet.
-V23_HEIGHT = 43_500            # v2.3 nset-clear ("unset"): at EVENT height >= V23 an nset to the ZERO address clears n.addr (falls back to owner; drops out of primary). Gated on event height so all history is byte-identical; zero address is a valid addr so NO validation change. PLACEHOLDER — operator sets at deploy AFTER the wallet bundle is live (else old wallets fork). MUST match types.ts/helpers.js/wallet.
+V23_HEIGHT = 52_000            # v2.3 nset-clear ("unset"): at EVENT height >= V23 an nset to the ZERO address clears n.addr (falls back to owner; drops out of primary). Gated on event height so all history is byte-identical; zero address is a valid addr so NO validation change. Set 2026-06-27 at tip ~41,836 (+~10,160 ≈ 14d) for wallet 0.2.36 adoption runway. MUST match types.ts/helpers.js/wallet.
 ZERO_ADDR = "0x" + "00" * 20   # the nset-clear sentinel (0x + 40 hex zeros)
 PROFILE_MAX_KEYS = 16             # nprofile `p`: ≤ keys ; ≤ value bytes (the 512B record is the true cap)
 PROFILE_MAX_VALUE_BYTES = 256
@@ -156,6 +156,14 @@ def maker_rebate(value):  # v1.6: flat 0.25 CSD + ceil(0.5%)
 
 def is_safe_int(n):
     return isinstance(n, int) and not isinstance(n, bool) and abs(n) <= (2**53 - 1)
+
+# Read an externally-supplied paidTo/pt amount, fail-closed to 0 on any non-canonical value. MIRROR of
+# resolve.ts ptAmt: BigInt(x)/int(x) accepted DISJOINT non-decimal forms (BigInt("0x10")=16 vs int("0x10")
+# throws) — a latent JS<->Python fork the fuzz never reached. Gate through the SAME AMOUNT_RE record amounts
+# use; byte-identical for every canonical scanner value, converges instead of value-vs-throw otherwise.
+def _pt(v):
+    return int(v) if isinstance(v, str) and AMOUNT_RE.fullmatch(v) else 0
+
 
 # ── record validation gate (mirror records.ts parseRecord) ──────────────────────────────────────────
 def parse_amount(s, allow_zero=False):
@@ -416,7 +424,7 @@ def resolve(events, tip_height):
         v16 = ev["height"] >= V16_HEIGHT
         v19 = ev["height"] >= V19_HEIGHT
         v23 = ev["height"] >= V23_HEIGHT
-        fee_to_treasury = int((ev.get("paidTo") or {}).get(TREASURY_ADDR, "0")) if ev["kind"] == "propose" else 0
+        fee_to_treasury = _pt((ev.get("paidTo") or {}).get(TREASURY_ADDR)) if ev["kind"] == "propose" else 0
 
         if ev["kind"] == "propose":
             rec = parse_record(ev["uri"], ev["payloadHash"])
@@ -659,13 +667,13 @@ def resolve(events, tip_height):
                 want = int(o["want"]["value"])
                 paid_so_far = int(o.get("paid") or "0")
                 remaining = want - paid_so_far
-                X = int(pt.get(o["want"]["payto"], "0"))
+                X = _pt(pt.get(o["want"]["payto"]))
                 min_v = int(o["min"])
                 eff_min = remaining if remaining < min_v else min_v
                 if X < eff_min: continue
                 x = X if X < remaining else remaining
                 fee = trade_fee(x, o["feeBps"]) if o["feeBps"] else 0  # partial fills carry NO maker rebate in v1.6
-                if int(pt.get(TREASURY_ADDR, "0")) < fee: continue
+                if _pt(pt.get(TREASURY_ADDR)) < fee: continue
                 give_total = int(o["give"]["amount"])
                 new_paid = paid_so_far + x
                 delivered_so_far = int(o.get("delivered") or "0")
@@ -701,8 +709,8 @@ def resolve(events, tip_height):
                 def _addn(a, v): need[a] = need.get(a, 0) + v
                 _addn(o["want"]["payto"], want); _addn(TREASURY_ADDR, fee)
                 if rebate > 0: _addn(o["seller"], rebate)  # ACCUMULATE — coinciding recipients SUM, never overwrite
-                if any(int(pt.get(a, "0")) < amt for a, amt in need.items()): continue
-                paid = int(pt.get(o["want"]["payto"], "0"))
+                if any(_pt(pt.get(a)) < amt for a, amt in need.items()): continue
+                paid = _pt(pt.get(o["want"]["payto"]))
                 if is_name_give(o["give"]):
                     n = names.get(o["give"]["name"])
                     if not n: continue

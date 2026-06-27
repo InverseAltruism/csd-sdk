@@ -135,7 +135,8 @@ function v23ClearFlow(h0) {
   const set = (n, a, hh) => ev.push({ kind: "propose", id: nid(), proposer: D, uri: R.nameSet({ name: n, addr: a }).uri, payloadHash: R.nameSet({ name: n, addr: a }).payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: {} });
   const NM = "z" + ri(100, 9999); reg(NM, h); h += 2; set(NM, D, h); h += 2;
   if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, h); h += 1; set(NM2, D, h); h += 1; }  // 2nd self-pointing name -> primary recompute on clear
-  gV23Clears++; set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is now owned+paid so it APPLIES)
+  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the reg arithmetic can land this event a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior) — not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
+  set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is owned+paid so it APPLIES)
   if (chance(0.4)) { h += 2; set(NM, B, h); }   // sometimes re-point after clear (clear-then-reset)
   return ev;
 }
@@ -235,8 +236,13 @@ function genSeq() {
 function randPaidTo() {
   const m = {};
   const k = ri(0, 3);
-  for (let i = 0; i < k; i++) m[addr()] = pick(["1", "1000000", "100000000", "125500000", "1500000", "500000000", "79228162514264337593543950335"]);
-  if (chance(0.5)) m[TREAS] = pick(["1500000", "1000000", "100000000", "0", "25500000"]);
+  const vals = ["1", "1000000", "100000000", "125500000", "1500000", "500000000", "79228162514264337593543950335"];
+  // adversarial NON-canonical forms: raw BigInt()/int() historically DIVERGED on these (one yields a value,
+  // the other throws). The AMOUNT_RE gate (ptAmt / _pt) must make BOTH treat them as 0, so the differential
+  // MUST stay byte-identical — this is the regression guard for QA finding #1 (paidTo input-contract).
+  const adversarial = ["0x10", "0b101", "1_000", "", " 5 ", "+5", "007", "0xff", "1.0", "-3", "1e3", "0xdeadbeef"];
+  for (let i = 0; i < k; i++) m[addr()] = chance(0.25) ? pick(adversarial) : pick(vals);
+  if (chance(0.5)) m[TREAS] = chance(0.25) ? pick(adversarial) : pick(["1500000", "1000000", "100000000", "0", "25500000"]);
   return m;
 }
 

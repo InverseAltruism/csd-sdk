@@ -9,7 +9,7 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
+  ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
   SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
@@ -17,6 +17,14 @@ import {
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
   type Give, type NameState, type OfferState, type ProposeEvent, type TokenState,
 } from "./types.js";
+
+// Read an externally-supplied paidTo/pt amount, fail-closed to 0 on any non-canonical value (QA LOW: the
+// raw BigInt(x)/int(x) reads accepted DISJOINT non-decimal forms across JS↔Python — BigInt("0x10")=16 vs
+// int("0x10") throws — a latent cross-language fork the differential fuzz never reached. Gate through the
+// SAME AMOUNT_RE that record amounts already use, in BOTH impls: byte-identical for every canonical value
+// the scanner ever emits, and CONVERGES instead of value-vs-throw on any non-canonical input. Mirror in
+// conformance/cairnx_ref.py:_pt.)
+function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOUNT_RE.test(v) ? BigInt(v) : 0n; }
 
 interface Bal { available: bigint; locked: bigint }
 interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }
@@ -165,7 +173,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v16 = ev.height >= V16_HEIGHT;
     const v19 = ev.height >= V19_HEIGHT;
     const v23 = ev.height >= V23_HEIGHT;
-    const feeToTreasury = ev.kind === "propose" ? BigInt((ev.paidTo ?? {})[TREASURY_ADDR] ?? "0") : 0n;
+    const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
       const rec = parseRecord(ev.uri, ev.payloadHash);
@@ -489,13 +497,13 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         const want = BigInt((o.want as { value: string }).value);
         const paidSoFar = BigInt(o.paid ?? "0");
         const remaining = want - paidSoFar;
-        const X = BigInt(pt[o.want.payto] ?? "0");
+        const X = ptAmt(pt[o.want.payto]);
         const minV = BigInt(o.min);
         const effMin = remaining < minV ? remaining : minV;   // the tail is always buyable
         if (X < effMin) { note(ev, ev.txid, "fill", false, "payment below offer min"); continue; }
         const x = X < remaining ? X : remaining;              // overpayment is clamped
         const fee = o.feeBps ? tradeFee(x, o.feeBps) : 0n;    // 1.5% for v1.6 offers (partial fills carry NO maker rebate in v1.6)
-        if (BigInt(pt[TREASURY_ADDR] ?? "0") < fee) { note(ev, ev.txid, "fill", false, "protocol fee unpaid"); continue; }
+        if (ptAmt(pt[TREASURY_ADDR]) < fee) { note(ev, ev.txid, "fill", false, "protocol fee unpaid"); continue; }
         const giveTotal = BigInt((o.give as { amount: string }).amount);
         const newPaid = paidSoFar + x;
         const deliveredSoFar = BigInt(o.delivered ?? "0");
@@ -554,12 +562,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // common case; or a hypothetical payto==treasury) the required amounts SUM — a literal would
         // silently overwrite and drop one, letting a fill underpay. Defense-in-depth on the value gate.
         let unpaid: string | undefined;
-        for (const [addr, amt] of need) if (BigInt(pt[addr] ?? "0") < amt) {
+        for (const [addr, amt] of need) if (ptAmt(pt[addr]) < amt) {
           unpaid = addr === TREASURY_ADDR ? "protocol fee unpaid" : (rebate > 0n && addr === o.seller) ? "maker rebate unpaid (v1.6)" : "payment below want.value";
           break;
         }
         if (unpaid) { note(ev, ev.txid, "fill", false, unpaid); continue; }
-        const paid = BigInt(pt[o.want.payto] ?? "0");
+        const paid = ptAmt(pt[o.want.payto]);
         // deliver the asset to the buyer
         if (isNameGive(o.give)) {
           const n = names.get(o.give.name);
