@@ -6122,7 +6122,7 @@
       "expectedState": {
         "balances": {},
         "bids": {},
-        "feesPaid": "13400000000",
+        "feesPaid": "19670000000",
         "names": {
           "erin": {
             "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900051",
@@ -6141,11 +6141,231 @@
       }
     },
     {
-      "name": "reject-issuer-only-mint",
+      "name": "v24-name-fee-tiers",
       "events": [
         {
           "kind": "propose",
           "id": "0x00000000000000000000000000000000000000000000000000000000f1900052",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"abc\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0x285428e423409d24edd31557300182b7b8c8511322fd75cd74fbb4c19791efb7",
+          "height": 49205,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1500000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900053",
+          "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "uri": "{\"name\":\"abcd\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0x206a13afa36185762dfba478da396cd3242b5d8a8304087b197e603c652b0241",
+          "height": 49205,
+          "pos": 2,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1000000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900054",
+          "proposer": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "uri": "{\"name\":\"abcde\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xf5736c14a35671ebe20cfc4450ae6869bbc26b426f817415895570cdcd5d07ec",
+          "height": 49205,
+          "pos": 3,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "500000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900055",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"abcdefghi\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0x057db67af719f80d3cc1ccd717b08d77c6ca15a4dc220a34f7727bc8b6302c82",
+          "height": 49205,
+          "pos": 4,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "500000000"
+          }
+        },
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900056",
+          "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "uri": "{\"name\":\"abcdefghij\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0x4507ec798d850b9ce3efc9747c3c07c78110f7d32df15f4709595ac3e69dfb92",
+          "height": 49205,
+          "pos": 5,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "300000000"
+          }
+        }
+      ],
+      "tipHeight": 49210,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "3800000000",
+        "names": {
+          "abc": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900052",
+            "effectiveHeight": 49205,
+            "height": 49205,
+            "locked": false,
+            "name": "abc",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10400
+          },
+          "abcd": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900053",
+            "effectiveHeight": 49205,
+            "height": 49205,
+            "locked": false,
+            "name": "abcd",
+            "owner": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "paidThroughEpoch": 10400
+          },
+          "abcde": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900054",
+            "effectiveHeight": 49205,
+            "height": 49205,
+            "locked": false,
+            "name": "abcde",
+            "owner": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "paidThroughEpoch": 10400
+          },
+          "abcdefghi": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900055",
+            "effectiveHeight": 49205,
+            "height": 49205,
+            "locked": false,
+            "name": "abcdefghi",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10400
+          },
+          "abcdefghij": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900056",
+            "effectiveHeight": 49205,
+            "height": 49205,
+            "locked": false,
+            "name": "abcdefghij",
+            "owner": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "paidThroughEpoch": 10400
+          }
+        },
+        "offers": {},
+        "tipHeight": 49210,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v24-underpay-rejected",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900057",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"xyz\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xac6fcac8df686c9424b1cb3262515cd779fae05941d7095fcd7989524286a65c",
+          "height": 49205,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "670000000"
+          }
+        }
+      ],
+      "tipHeight": 49210,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "0",
+        "names": {},
+        "offers": {},
+        "tipHeight": 49210,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v24-at-gate-old-fee-rejected",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900058",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"xyz\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xac6fcac8df686c9424b1cb3262515cd779fae05941d7095fcd7989524286a65c",
+          "height": 49200,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "670000000"
+          }
+        }
+      ],
+      "tipHeight": 49210,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "0",
+        "names": {},
+        "offers": {},
+        "tipHeight": 49210,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "v24-below-gate-old-fee-ok",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900059",
+          "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "uri": "{\"name\":\"xyz\",\"t\":\"name\",\"v\":1}",
+          "payloadHash": "0xac6fcac8df686c9424b1cb3262515cd779fae05941d7095fcd7989524286a65c",
+          "height": 49199,
+          "pos": 1,
+          "expiresEpoch": 5000,
+          "paidTo": {
+            "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "670000000"
+          }
+        }
+      ],
+      "tipHeight": 49210,
+      "expectedState": {
+        "balances": {},
+        "bids": {},
+        "feesPaid": "670000000",
+        "names": {
+          "xyz": {
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900059",
+            "effectiveHeight": 49199,
+            "height": 49199,
+            "locked": false,
+            "name": "xyz",
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10399
+          }
+        },
+        "offers": {},
+        "tipHeight": 49210,
+        "tokens": {}
+      }
+    },
+    {
+      "name": "reject-issuer-only-mint",
+      "events": [
+        {
+          "kind": "propose",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005a",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000000\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x42457eb00862bedf9f2c5d6e194adefa3b64a2d7a6c0dcd8aa93d97226aea508",
@@ -6158,7 +6378,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900053",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005b",
           "proposer": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
           "uri": "{\"amount\":\"5\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x39ee639b586f54cc0c722f3aec4f2afdc61e6e0104c32b8c18b9e8f2659c25da",
@@ -6179,7 +6399,7 @@
         "tokens": {
           "TKN": {
             "decimals": 0,
-            "deployId": "0x00000000000000000000000000000000000000000000000000000000f1900052",
+            "deployId": "0x00000000000000000000000000000000000000000000000000000000f190005a",
             "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "height": 40045,
             "mint": "issuer",
@@ -6195,7 +6415,7 @@
       "events": [
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900054",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005c",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"10\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x00c83b55c85b5e1786d8db6fb04cae9dae6928315ad82aed65339cea194afa6d",
@@ -6208,7 +6428,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900055",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005d",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"amount\":\"10\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x71e13d0dc762c774e5878457c3a8f412fdbd0404caa351a13f1ef04151e8a741",
@@ -6219,7 +6439,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900056",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005e",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"amount\":\"5\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x39ee639b586f54cc0c722f3aec4f2afdc61e6e0104c32b8c18b9e8f2659c25da",
@@ -6247,7 +6467,7 @@
         "tokens": {
           "TKN": {
             "decimals": 0,
-            "deployId": "0x00000000000000000000000000000000000000000000000000000000f1900054",
+            "deployId": "0x00000000000000000000000000000000000000000000000000000000f190005c",
             "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "height": 40045,
             "mint": "issuer",
@@ -6263,7 +6483,7 @@
       "events": [
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900057",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f190005f",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"name\":\"frank\",\"t\":\"name\",\"v\":1}",
           "payloadHash": "0xa8475f9e00796e7c7752c01e9b3f8a5c35e50e22aeab82135be4a49f2dd1127e",
@@ -6276,7 +6496,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900058",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900060",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"give\":{\"name\":\"frank\"},\"t\":\"offer\",\"taker\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"v\":1,\"want\":{\"value\":\"100000000\"}}",
           "payloadHash": "0x0a5463d268b0fab9efe02114cb6f2ef87f0f894a3bab21f8d9b76705875a7769",
@@ -6293,7 +6513,7 @@
         "feesPaid": "300000000",
         "names": {
           "frank": {
-            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900057",
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f190005f",
             "effectiveHeight": 40050,
             "height": 40050,
             "locked": false,
@@ -6312,7 +6532,7 @@
       "events": [
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f1900059",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900061",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000000\",\"t\":\"deploy\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x42457eb00862bedf9f2c5d6e194adefa3b64a2d7a6c0dcd8aa93d97226aea508",
@@ -6325,7 +6545,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f190005a",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900062",
           "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
           "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000000\",\"t\":\"deploy\",\"ticker\":\"PAY\",\"v\":1}",
           "payloadHash": "0x2067092a665dac07d0abf8d063f1d1584a930cce465407859df737e7661a61fb",
@@ -6338,7 +6558,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f190005b",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900063",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"amount\":\"100\",\"t\":\"mint\",\"ticker\":\"TKN\",\"v\":1}",
           "payloadHash": "0x2ea0850f2c494401ee2239643c6bc886458c1b5ccc996d4cfa8e2ba801d27377",
@@ -6349,7 +6569,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f190005c",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900064",
           "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
           "uri": "{\"amount\":\"100\",\"t\":\"mint\",\"ticker\":\"PAY\",\"v\":1}",
           "payloadHash": "0xacb9eb0794a1bc8caced07630706a2e38672194c3beef198b4d9c6417f1dcc56",
@@ -6360,7 +6580,7 @@
         },
         {
           "kind": "propose",
-          "id": "0x00000000000000000000000000000000000000000000000000000000f190005d",
+          "id": "0x00000000000000000000000000000000000000000000000000000000f1900065",
           "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "uri": "{\"give\":{\"amount\":\"10\",\"ticker\":\"TKN\"},\"t\":\"offer\",\"taker\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"v\":1,\"want\":{\"amount\":\"5\",\"ticker\":\"PAY\"}}",
           "payloadHash": "0x7c69f6bb8350c89d3a5807d4d0364075b9bbd8e5149e53209ee425a036fd2b2b",
@@ -6371,8 +6591,8 @@
         },
         {
           "kind": "attest",
-          "txid": "0x00000000000000000000000000000000000000000000000000000000f190005e",
-          "proposalId": "0x00000000000000000000000000000000000000000000000000000000f190005d",
+          "txid": "0x00000000000000000000000000000000000000000000000000000000f1900066",
+          "proposalId": "0x00000000000000000000000000000000000000000000000000000000f1900065",
           "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
           "score": 100,
           "confidence": 0,
@@ -6401,7 +6621,7 @@
         "feesPaid": "200000000",
         "names": {},
         "offers": {
-          "0x00000000000000000000000000000000000000000000000000000000f190005d": {
+          "0x00000000000000000000000000000000000000000000000000000000f1900065": {
             "expiresEpoch": 5000,
             "feeBps": 150,
             "give": {
@@ -6409,7 +6629,7 @@
               "ticker": "TKN"
             },
             "height": 40050,
-            "id": "0x00000000000000000000000000000000000000000000000000000000f190005d",
+            "id": "0x00000000000000000000000000000000000000000000000000000000f1900065",
             "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "status": "open",
             "taker": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
@@ -6424,7 +6644,7 @@
         "tokens": {
           "PAY": {
             "decimals": 0,
-            "deployId": "0x00000000000000000000000000000000000000000000000000000000f190005a",
+            "deployId": "0x00000000000000000000000000000000000000000000000000000000f1900062",
             "deployer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
             "height": 40045,
             "mint": "issuer",
@@ -6434,7 +6654,7 @@
           },
           "TKN": {
             "decimals": 0,
-            "deployId": "0x00000000000000000000000000000000000000000000000000000000f1900059",
+            "deployId": "0x00000000000000000000000000000000000000000000000000000000f1900061",
             "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "height": 40045,
             "mint": "issuer",

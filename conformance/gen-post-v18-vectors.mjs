@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 import {
   nameCommit, resolve, canonicalState, makerRebate, tradeFee, epochOf,
-  V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, MAX_OFFER_EPOCHS,
+  V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V24_HEIGHT, MAX_OFFER_EPOCHS,
   NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS, MAX_ACTIVE_CLAIMS,
 } from "../packages/cairnx/dist/index.js";
 
@@ -18,7 +18,7 @@ const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), C = "0x" + "c3".re
 const SALT = "00ffee1122334455";
 let idn = 0xf1900000;
 const nid = () => "0x" + (idn++).toString(16).padStart(64, "0");
-const BIGFEE = { [TREASURY]: "100000000000" };  // 1000 CSD — generous overpay (covers even the ~134 CSD max lapsed-reclaim premium); resolver charges the REQUIRED fee into feesPaid (overpay never inflates canonical state)
+const BIGFEE = { [TREASURY]: "100000000000" };  // 1000 CSD — generous overpay (covers even the ~300 CSD max V24 lapsed-reclaim premium: 15 CSD base × 20); resolver charges the REQUIRED fee into feesPaid (overpay never inflates canonical state)
 
 // a Propose event carrying a CairnX record
 const P = (record, { height, pos = 1, proposer = A, expiresEpoch = 5000, paidTo = {} }) => ({
@@ -131,6 +131,32 @@ const offerAt = (offH, exp, give = { ticker: "TKN", amount: "10" }) => {
     P({ v: 1, t: "name", name: "erin" }, { height: reclaimH, proposer: C, paidTo: BIGFEE }),  // C reclaims lapsed name (DIRECT claim, no salt) at the decaying premium
   ], reclaimH + 10); }
 
+// ─────────────────────────── v2.4 (V24) length-graded name-fee tiers ───────────────────────────
+{ const VH = V24_HEIGHT, pay = (units) => ({ [TREASURY]: String(units) });
+  // each tier registered paying EXACTLY its required fee → all accepted; feesPaid = 15+10+5+5+3 = 38 CSD.
+  // abcdefghi (9 chars) witnesses the UPPER edge of the 5-9 MID band; abcdefghij (10) the LONG band (so a
+  // `<=9` -> `<9` mirror drift would fail HERE rather than ship silently).
+  add("v24-name-fee-tiers", [
+    P({ v: 1, t: "name", name: "abc" },        { height: VH + 5, pos: 1, proposer: A, paidTo: pay(1500000000) }), // 3 chars → 15 CSD
+    P({ v: 1, t: "name", name: "abcd" },       { height: VH + 5, pos: 2, proposer: B, paidTo: pay(1000000000) }), // 4 chars → 10 CSD
+    P({ v: 1, t: "name", name: "abcde" },      { height: VH + 5, pos: 3, proposer: C, paidTo: pay(500000000) }),  // 5 chars → 5 CSD
+    P({ v: 1, t: "name", name: "abcdefghi" },  { height: VH + 5, pos: 4, proposer: A, paidTo: pay(500000000) }),  // 9 chars → 5 CSD (MID upper edge)
+    P({ v: 1, t: "name", name: "abcdefghij" }, { height: VH + 5, pos: 5, proposer: B, paidTo: pay(300000000) }),  // 10 chars → 3 CSD (LONG)
+  ], VH + 10);
+  // underpay the new short tier (pay the OLD 6.7 CSD V18 fee for a 3-char name) AT V24 → REJECTED (no-op, name not registered)
+  add("v24-underpay-rejected", [
+    P({ v: 1, t: "name", name: "xyz" }, { height: VH + 5, proposer: A, paidTo: pay(670000000) }),
+  ], VH + 10);
+  // EXACTLY at the gate height: the V24 tier fires (gate is `>=`), so 6.7 CSD underpays a 3-char → REJECTED. This is
+  // the ONLY height that distinguishes `>= V24` from `> V24`; it pins all four mirrors to `>=` (a `>` drift forks here).
+  add("v24-at-gate-old-fee-rejected", [
+    P({ v: 1, t: "name", name: "xyz" }, { height: VH, proposer: A, paidTo: pay(670000000) }),
+  ], VH + 10);
+  // the SAME 3-char name + 6.7 CSD ONE BLOCK BELOW the gate is accepted under the V18 tier (≤4 = 6.7) → exact boundary
+  add("v24-below-gate-old-fee-ok", [
+    P({ v: 1, t: "name", name: "xyz" }, { height: VH - 1, proposer: A, paidTo: pay(670000000) }),
+  ], VH + 10); }
+
 // ─────────────────────────── key rejection paths ───────────────────────────
 add("reject-issuer-only-mint", [DEPLOY("TKN"), P({ v: 1, t: "mint", ticker: "TKN", amount: "5" }, { height: NB, proposer: C })], NB + 10);           // non-deployer mint of an issuer token → no-op
 add("reject-supply-exhausted", [DEPLOY("TKN", A, "issuer", "10"),
@@ -159,7 +185,7 @@ for (const c of built) {
 
 const path = new URL("../packages/cairnx/test/vectors/cases.json", import.meta.url);
 const doc = JSON.parse(readFileSync(path, "utf8"));
-const PREFIXES = ["v19-", "v20-", "v21-", "nameop-", "tmeta-", "reject-"];
+const PREFIXES = ["v19-", "v20-", "v21-", "v24-", "nameop-", "tmeta-", "reject-"];
 const before = doc.cases.length;
 doc.cases = doc.cases.filter((c) => !PREFIXES.some((p) => c.name.startsWith(p))).concat(built);
 writeFileSync(path, JSON.stringify(doc, null, 2) + "\n");

@@ -92,6 +92,24 @@ export const DEPLOY_FEE = 100_000_000;        // 1 CSD to deploy a token
 export const V18_HEIGHT = 40_000;
 export const NAME_FEE_SHORT_V18 = 670_000_000n;  // 6.7 CSD — names ≤ 4 chars (premium / anti-squat)
 export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
+// v2.4: a steeper, length-graded short-name premium (anti-squat) — a 4-tier curve replacing the V18 2-tier.
+// ACTIVATION gated at V24_HEIGHT (MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles + cli).
+// BELOW this height the V18 2-tier is preserved BYTE-IDENTICALLY (every pre-V24 canonical hash + pinned vector
+// stays unchanged). ⚠ HARD ADOPTION GATE (V23-class — a fee INCREASE is NOT fail-soft for stale VERIFIERS): at a
+// tip >= V24 an attacker can register a 3-9 char name paying the OLD (lower) fee. A fresh resolver REJECTS it
+// (oldFee < newFee); a STALE wallet/clarvis ACCEPTS it (oldFee still satisfies the old `feeToTreasury >= oldFee`),
+// then the attacker nsets it — so every un-updated wallet resolves that name to the attacker and a third party
+// paying it is MISDIRECTED. (The "overpay satisfies the old check" property only covers HONEST overpayers; the
+// attacker pays EXACTLY the old fee, which ONLY a stale verifier accepts.) So EVERY replayer (Granus resolver,
+// website bundle, cli, clarvis, Python oracle) AND the wallet (CWS — adoption-gated, not just published) MUST be
+// on the V24 bundle BEFORE the tip crosses V24; set the height with runway for wallet adoption, like V23. (Honest
+// registration is unaffected — the website builds the fee, the wallet only clear-signs it.) Height-pure / det.
+// Set the real activation at deploy AFTER all mirrors ship: tip + enough blocks for the chosen runway.
+export const V24_HEIGHT = 49_200;   // set ~7d out (tip ~44,150 + ~5050 ≈ 7 days) for wallet CWS adoption before the fee-increase gate
+export const NAME_FEE_LEN3_V24 = 1_500_000_000n;  // 15 CSD — names ≤ 3 chars
+export const NAME_FEE_LEN4_V24 = 1_000_000_000n;  // 10 CSD — names == 4 chars
+export const NAME_FEE_MID_V24 = 500_000_000n;     // 5 CSD  — names 5–9 chars
+export const NAME_FEE_LONG_V24 = 300_000_000n;    // 3 CSD  — names ≥ 10 chars
 // v1.9 = ENS-class identity records (doc 36): a single inert `nprofile` record carries a charset-locked
 // string→string map of identity keys (avatar/display/socials/url). Pure metadata — no value, no fee, no
 // paidTo, NEVER a send target (the verified address stays in `nset`). Owner-gated, last-write-wins,
@@ -168,6 +186,13 @@ export const PROFILE_MAX_KEYS = 16;            // ≤ this many keys (DoS/clarit
 export const PROFILE_MAX_VALUE_BYTES = 256;    // ≤ this many UTF-8 bytes per value
 // name registration / renewal fee by length (base units). `height` selects the fee regime (the V18 gate).
 export function nameRegFee(name: string, height: number): bigint {
+  if (height >= V24_HEIGHT) {                       // v2.4 length-graded short-name premium (anti-squat)
+    const ln = name.length;
+    if (ln <= 3) return NAME_FEE_LEN3_V24;          // 15 CSD
+    if (ln === 4) return NAME_FEE_LEN4_V24;         // 10 CSD
+    if (ln <= 9) return NAME_FEE_MID_V24;           // 5 CSD (5–9 chars)
+    return NAME_FEE_LONG_V24;                       // 3 CSD (≥10 chars)
+  }
   if (height >= V18_HEIGHT) return name.length <= 4 ? NAME_FEE_SHORT_V18 : NAME_FEE_V18;
   const n = name.length;                           // pre-V18 ENS-style curve — FROZEN for replay-identity
   if (n <= 3) return 500_000_000n;                 // 5 CSD

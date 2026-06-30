@@ -86,6 +86,11 @@ V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/h
 V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
+V24_HEIGHT = 49_200               # v2.4 length-graded short-name premium — HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
+NAME_FEE_LEN3_V24 = 1_500_000_000 # 15 CSD — names ≤ 3 chars
+NAME_FEE_LEN4_V24 = 1_000_000_000 # 10 CSD — names == 4 chars
+NAME_FEE_MID_V24 = 500_000_000    # 5 CSD  — names 5–9 chars
+NAME_FEE_LONG_V24 = 300_000_000   # 3 CSD  — names ≥ 10 chars
 V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
 V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
@@ -131,7 +136,14 @@ SALT_RE = re.compile(r"^[0-9a-fA-F]{16,128}$")
 def epoch_of(height): return height // EPOCH_LEN
 
 def name_reg_fee(name, height):
-    # v1.8 2-tier at/after V18; FROZEN ENS-style 5-tier below it (replay-identity). u16len == JS .length.
+    # v2.4 length-graded short-name premium at/after V24; v1.8 2-tier in [V18,V24); FROZEN ENS 5-tier below V18
+    # (replay-identity). u16len == JS .length.
+    if height >= V24_HEIGHT:
+        n = u16len(name)
+        if n <= 3: return NAME_FEE_LEN3_V24
+        if n == 4: return NAME_FEE_LEN4_V24
+        if n <= 9: return NAME_FEE_MID_V24
+        return NAME_FEE_LONG_V24
     if height >= V18_HEIGHT:
         return NAME_FEE_SHORT_V18 if u16len(name) <= 4 else NAME_FEE_V18
     n = u16len(name)
