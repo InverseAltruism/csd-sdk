@@ -111,6 +111,37 @@ blind-commit displacement pre and post V25, the double-fill). Consult these as a
 3. If it is a new fee-bearing record type, confirm `money-safety.mjs` flags its rejection paths (the
    treasury-output test should cover it automatically).
 
+## Standing practice (directive)
+
+Treat these as the audit you run, and grow them. This is the intended long-term use, not a one-off.
+
+- Run `pnpm run audit:all` before merging ANY change to the resolver (`packages/cairnx/src/*`) or a
+  new consensus gate. It is deliberately NOT a CI gate (to avoid false-blocking), so it is on YOU to
+  run it. A clean run is only meaningful if the coverage line shows the states you changed were
+  actually reached: if you add a feature the fuel does not exercise, EXTEND the fuel first, then
+  confirm the coverage counter for it rises. (Lesson from building this: name-give offers and
+  token-to-token swaps were initially rejected/absent, so INV6 and the token-priced path read as
+  "0 violations" while being untested. Widening the fuel is part of the job.)
+- When you add a record type or feature, do three things: (1) add a fuel flow in `invariants.mjs`
+  that reaches its states and confirm the coverage line rises, (2) add an invariant for any new
+  "the ledger must stay consistent" property it introduces, (3) add a fixture to `race-harness.mjs`
+  or `money-safety.mjs` for any money-loss edge it creates.
+- When a bug is found by hand (the two-wallet method), reproduce it as a fixture BEFORE fixing it, so
+  it can never silently regress.
+- `0 violations` with a thin coverage line is a WEAK signal. Widen the fuel, or pipe a broader corpus
+  via `--stdin` (the real on-chain event stream, or the fuzz corpus), before trusting it.
+
+## Invariants worth adding as the system grows
+Not yet implemented; each is a pure check over the resolved state, and each protects every future
+change once added:
+- offer status validity (status is always a known value) and status/fill coherence (a filled offer
+  has a fill record; an open one does not).
+- CSD-priced fill value exactness (the seller received exactly want, treasury exactly fee, rebate only
+  when earned): the positive side of the money-safety payment-without-delivery check.
+- recapture reservation consistency (a `recaptures` entry corresponds to a currently-lapsed name).
+- lease sanity (`paidThroughEpoch >= registration epoch`; a renew advances it by exactly one term).
+- bid consistency (status is known; a bid-to-offer link resolves).
+
 ## The red-team fan-out, run soundly
 The fan-out is a discovery engine, not a verdict machine. Its value is finding niche things across a
 large repo base; the discipline is that findings must be real, not plausible-sounding noise (past

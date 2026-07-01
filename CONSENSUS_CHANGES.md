@@ -39,6 +39,21 @@ match). `client` is transport (consensus-relevant only in what it passes through
 `cairnx-core` carries its own determinism contract (state-replay hashes + conformance vectors
 in the package).
 
+## Auditing a resolver / consensus change (directive)
+
+Before releasing any change to `cairnx-core` resolver behavior (`packages/cairnx/src/*`) or adding a
+consensus gate, run the money-safety audit tooling in addition to `test:crosslang`:
+
+```
+pnpm run audit:all     # ledger-soundness invariants + money-safety + adversarial races
+```
+
+`test:crosslang` proves JS and Python agree byte-for-byte, but two implementations can AGREE and both
+be unsound (a burn, a mint-from-nothing, a leaked lock). `audit:all` checks the ledger stays sound and
+that no honest-user money is burned. It is intentionally not a CI gate, so run it by hand. When a
+change adds a feature the audit fuel does not exercise, extend the fuel first (see
+`conformance/AUDIT.md`, "Standing practice"). A clean run with a thin coverage line is a weak signal.
+
 ## History
 
 ### 0.1.14 — quality/AI-slop pass (2026-06-20)

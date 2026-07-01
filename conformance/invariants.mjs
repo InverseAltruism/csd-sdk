@@ -20,7 +20,7 @@
 // Report-only. Wraps the compiled resolver; changes nothing. Exit 1 ONLY on --selftest if an invariant fails
 // to fire (the checker is broken) — a real-corpus violation is a finding printed for triage, not a build break.
 
-import { resolve, TREASURY_ADDR, V15_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, DEPLOY_FEE, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16 } from "../packages/cairnx/dist/index.js";
+import { resolve, TREASURY_ADDR, V15_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16 } from "../packages/cairnx/dist/index.js";
 import { pathToFileURL } from "node:url";
 
 const T = TREASURY_ADDR;
@@ -149,12 +149,12 @@ const hexSalt = (n = 32) => Array.from({ length: n }, () => "0123456789abcdef"[r
 const AC = ["0x" + "a1".repeat(20), "0x" + "b2".repeat(20), "0x" + "c3".repeat(20)];
 const vo = (fn) => { try { return fn(); } catch { return null; } };
 const P = (ev, who, rec, h, paid = {}) => { if (rec) ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: ri(0, 3), expiresEpoch: 9e15, paidTo: paid }); return ev[ev.length - 1]; };
-const AT = (ev, who, pid, h, paid = {}, score = 100) => { ev.push({ kind: "attest", txid: nid(), proposalId: pid, attester: who, score, confidence: 0, height: h, pos: ri(0, 3), paidTo: paid }); return ev[ev.length - 1]; };
+const AT = (ev, who, pid, h, paid = {}, score = 100, conf = 0) => { ev.push({ kind: "attest", txid: nid(), proposalId: pid, attester: who, score, confidence: conf, height: h, pos: ri(0, 3), paidTo: paid }); return ev[ev.length - 1]; };
 
 function genScenario() {
   const ev = [];
   const [A, B, C] = [pick(AC), pick(AC), pick(AC)];
-  const flow = pick(["token", "token", "name", "name", "sealed", "lapse", "noise"]);
+  const flow = pick(["token", "token", "name", "name", "swap", "sealed", "lapse", "noise"]);
   let tip;
   if (flow === "token") {
     const tk = "T" + ri(10, 999); let h = ri(30000, V26_HEIGHT + 2000);
@@ -170,13 +170,30 @@ function genScenario() {
     }
     tip = h + ri(0, 40);
   } else if (flow === "name") {
-    const nm = "n" + ri(100, 9999); let h = ri(30000, V25_HEIGHT - 400);
-    P(ev, A, vo(() => nameClaim({ name: nm })), h, { [T]: nameRegFee(nm, h).toString() }); h += ri(1, 6);
+    const nm = "n" + ri(100, 9999); let h = ri(30000, V25_HEIGHT - 700);
+    P(ev, A, vo(() => nameClaim({ name: nm })), h, { [T]: nameRegFee(nm, h).toString() });
     const act = pick(["set", "xfer", "renew", "list", "list", "none"]);
-    if (act === "set") P(ev, A, vo(() => nameSet({ name: nm, addr: A })), h);
-    else if (act === "xfer") P(ev, A, vo(() => nameXfer({ name: nm, to: B })), h);
-    else if (act === "renew") P(ev, A, vo(() => nameRenew({ name: nm })), h, { [T]: nameRegFee(nm, h).toString() });
-    else if (act === "list") P(ev, A, vo(() => offer({ give: { name: nm }, want: { value: "100000000" } })), h, {}); // OPEN → name locked (INV6)
+    if (act === "set") P(ev, A, vo(() => nameSet({ name: nm, addr: A })), h + ri(1, 6));
+    else if (act === "xfer") P(ev, A, vo(() => nameXfer({ name: nm, to: B })), h + ri(1, 6));
+    else if (act === "renew") P(ev, A, vo(() => nameRenew({ name: nm })), h + ri(1, 6), { [T]: nameRegFee(nm, h).toString() });
+    else if (act === "list") {
+      // a name may only be listed once it out-ages the commit window (v1.3), and the offer must expire
+      // INSIDE the lease (v1.5). Get both right or the offer is rejected and the name never locks (INV6).
+      const oh = h + COMMIT_MAX_BLOCKS + ri(2, 30); const o = P(ev, A, vo(() => offer({ give: { name: nm }, want: { value: "100000000" } })), oh, {});
+      if (o) o.expiresEpoch = Math.floor(oh / 30) + ri(2, 100);   // within the ~8760-epoch lease
+      h = oh;
+    }
+    tip = h + ri(0, 40);
+  } else if (flow === "swap") {
+    // token -> token DvP swap (v1.2): A gives tkA, wants tkB; B holds tkB and fills with the in-kind fee.
+    // Exercises INV2/INV4 on the token-priced path (a fee paid IN tokens to the treasury holder).
+    const tkA = "T" + ri(10, 999), tkB = "U" + ri(10, 999); let h = ri(30300, V26_HEIGHT + 2000);
+    P(ev, A, vo(() => deploy({ ticker: tkA, decimals: 0, supply: "1000000", mint: "issuer" })), h, { [T]: DEPLOY_FEE.toString() }); h++;
+    P(ev, A, vo(() => mint({ ticker: tkA, amount: "1000" })), h); h++;
+    P(ev, B, vo(() => deploy({ ticker: tkB, decimals: 0, supply: "1000000", mint: "issuer" })), h, { [T]: DEPLOY_FEE.toString() }); h++;
+    P(ev, B, vo(() => mint({ ticker: tkB, amount: "1000" })), h); h += ri(1, 3);
+    const off = P(ev, A, vo(() => offer({ give: { ticker: tkA, amount: "10" }, want: { ticker: tkB, amount: "20" }, taker: B })), h, {}); h += ri(1, 4);
+    if (chance(0.6) && off) AT(ev, B, off.id, h, {}, 100, CONF_TOKEN_FILL);   // 'open' otherwise → tkA stays locked (INV4)
     tip = h + ri(0, 40);
   } else if (flow === "sealed") {
     const nm = "s" + ri(100, 9999); const salt = hexSalt(32); let h = Math.max(V25_HEIGHT + 5, ri(V25_HEIGHT, V26_HEIGHT + 2000));
@@ -238,14 +255,18 @@ function selftest() {
 
 function runCorpus(N, seed) {
   SEED = seed >>> 0;
-  const cov = { tokens: 0, openLock: 0, filled: 0, pendingName: 0, lapsedName: 0, nameLocked: 0 };
+  const cov = { tokens: 0, openLock: 0, filled: 0, swapOpen: 0, swapFilled: 0, pendingName: 0, lapsedName: 0, nameLocked: 0 };
   const hits = new Map(); let scenariosWithViol = 0;
   const scen = [];
   for (let i = 0; i < N; i++) scen.push(genScenario());
   for (const s of scen) {
     const { violations, st } = checkInvariants(s.events, s.tipHeight);
     if (Object.keys(st.tokens || {}).length) cov.tokens++;
-    for (const o of Object.values(st.offers || {})) { if (o.status === "open" && o.give?.ticker) cov.openLock++; if (o.status === "filled") cov.filled++; }
+    for (const o of Object.values(st.offers || {})) {
+      if (o.status === "open" && o.give?.ticker) cov.openLock++;
+      if (o.status === "filled") cov.filled++;
+      if (o.want?.ticker !== undefined) { if (o.status === "open") cov.swapOpen++; if (o.status === "filled") cov.swapFilled++; } // token->token
+    }
     for (const n of Object.values(st.names || {})) { if (n.pending) cov.pendingName++; if (n.expired) cov.lapsedName++; if (n.locked) cov.nameLocked++; }
     if (violations.length) { scenariosWithViol++; for (const vln of violations) { const key = vln.split(":")[0]; hits.set(key, (hits.get(key) || 0) + 1); if ((hits.get("__samples_" + key) || []).length === undefined) hits.set("__samples_" + key, []); const sm = hits.get("__samples_" + key); if (sm.length < 3) sm.push({ vln, seed: SEED }); } }
   }
