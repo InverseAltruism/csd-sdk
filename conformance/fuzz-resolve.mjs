@@ -36,7 +36,7 @@ const pmap = () => { const n = ri(0, 6); const m = {}; for (let i = 0; i < n; i+
 
 // build a (mostly) valid record via the shipping helpers; returns {uri, payloadHash} or null
 function buildRec() {
-  const t = pick(["deploy", "mint", "transfer", "offer", "bid", "ocancel", "ncommit", "name", "nxfer", "nset", "nrenew", "nprofile", "tmeta"]);
+  const t = pick(["deploy", "mint", "transfer", "offer", "bid", "ocancel", "ncommit", "name", "nfinalize", "nxfer", "nset", "nrenew", "nprofile", "tmeta"]);
   return validOr(() => {
     switch (t) {
       case "deploy": { const mint = pick(["issuer", "open"]); const r = { ticker: tick(), decimals: ri(0, 8), supply: amt(), mint }; const nm = pick(TOKNAMES); if (nm !== undefined) r.name = nm; if (mint === "open") r.mintLimit = amt(); return R.deploy(r); }
@@ -56,6 +56,7 @@ function buildRec() {
       case "ocancel": return R.offerCancelAll(chance(0.4) ? {} : chance(0.5) ? { ticker: tick() } : { name: pick(NAMES) });
       case "ncommit": return R.nameCommitRecord({ commit: "0x" + Array.from({ length: 64 }, () => "0123456789abcdef"[ri(0, 15)]).join("") });
       case "name": return R.nameClaim(chance(0.5) ? { name: pick(NAMES) } : { name: pick(NAMES), salt: Array.from({ length: ri(16, 64) }, () => "0123456789abcdef"[ri(0, 15)]).join("") });
+      case "nfinalize": return R.nameFinalize({ name: pick(NAMES), salt: Array.from({ length: ri(16, 64) }, () => "0123456789abcdef"[ri(0, 15)]).join("") });
       case "nxfer": return R.nameXfer({ name: pick(NAMES), to: addr() });
       case "nset": return R.nameSet({ name: pick(NAMES), addr: chance(0.12) ? R.ZERO_ADDR : addr() }); // V23: sometimes the clear sentinel (mostly non-owner -> rejected; owned clears come from v23ClearFlow)
       case "nrenew": return R.nameRenew({ name: pick(NAMES) });
@@ -200,6 +201,40 @@ function nprofileFlow(h0) {
   return ev;
 }
 
+// v2.5/v2.6 SEALED-RESERVATION registration under the differential: commit -> PAYMENT-FREE reveal (a `pending`
+// reservation) -> winner-only `nfinalize` (pays the reg fee, valid only AFTER the freeze). buildRec never emits
+// nfinalize coherently, so without a dedicated flow the fork-guard has ZERO coverage of the new finalize state
+// transition. Random height/pos/fee/salt/order + a contested (earliest-commit-wins) race exercise the ACCEPT and
+// every REJECT branch (early / expired / underpaid / displaced / salt-mismatch); resolve() decides accept/reject,
+// the differential asserts JS==Python. Heights are forced >= V25 so it is always the sealed path.
+function regFlow(h0) {
+  const A = "0x" + "a7".repeat(20), B = "0x" + "b7".repeat(20);
+  const NM = "rg" + ri(100, 9999);
+  const mkSalt = (p) => p + Array.from({ length: ri(14, 28) }, () => "0123456789abcdef"[ri(0, 15)]).join("");
+  const sA = mkSalt("a7"), sB = mkSalt("b7");
+  const ev = [];
+  const push = (who, rec, h, paid) => { if (rec) ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: ri(0, 3), expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} }); };
+  const cAh = Math.max(h0, R.V25_HEIGHT + 5);
+  push(A, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sA, A) })), cAh, {});
+  const contested = chance(0.5);
+  const cBh = contested ? (chance(0.5) ? cAh - ri(1, 3) : cAh + ri(0, 2)) : null;   // B earlier => B wins the race
+  if (contested) push(B, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sB, B) })), cBh, {});
+  push(A, validOr(() => R.nameClaim({ name: NM, salt: sA })), cAh + ri(1, chance(0.85) ? R.REG_COMMIT_MAX_BLOCKS : R.REG_COMMIT_MAX_BLOCKS + 4), {}); // mostly in-window, sometimes past it -> reject
+  if (contested) push(B, validOr(() => R.nameClaim({ name: NM, salt: sB })), cBh + ri(1, R.REG_COMMIT_MAX_BLOCKS), {});
+  const fin = (who, s, ch) => {                                     // winner-only; random timing/fee hits accept + reject
+    const mode = ri(0, 4);                                         // 0-2 in-window, 3 too-early, 4 expired
+    const hf = mode === 3 ? ch + ri(0, R.REG_COMMIT_MAX_BLOCKS)
+             : mode === 4 ? ch + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS + ri(1, 4)
+             : ch + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS);
+    const need = R.nameRegFee(NM, hf);
+    const fee = chance(0.2) && need > 0n ? need - 1n : need;       // sometimes underpay -> reject
+    push(who, validOr(() => R.nameFinalize({ name: NM, salt: s })), hf, { [TREAS]: fee.toString() });
+  };
+  if (chance(0.9)) fin(A, sA, cAh);
+  if (contested && chance(0.6)) fin(B, sB, cBh);
+  return ev;
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -207,6 +242,7 @@ function genSeq() {
   if (chance(0.14)) { const e = nprofileFlow(ri(R.V19_HEIGHT - 200, R.V19_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.10)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.13)) { const e = regFlow(ri(R.V25_HEIGHT - 20, R.V25_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
   const len = ri(1, 16);
   let h = ri(29810, R.V23_HEIGHT + 1000); // spans ACTIVATION-50 .. V23+1000 (all gates + boundaries, incl. the V23 nset-clear)
@@ -259,7 +295,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -275,6 +311,7 @@ for (let i = 0; i < N; i++) {
     if (js[i].includes('"expired":true')) cov.expired++;
     if (st.names && Object.keys(st.names).some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) cov.numericNameInState++;
     if (st.names && Object.values(st.names).some((n) => n && n.profile !== undefined)) cov.nprofileSet++; // v1.9 nprofile materialized (H1)
+    if (st.names && Object.values(st.names).some((n) => n && n.pending === true)) cov.pendingReg++;        // v2.5 sealed reservation materialized (>=V25)
   } catch { /* JS state always parses */ }
   if (js[i] !== pj[i]) {
     diverged++;
@@ -306,5 +343,23 @@ console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`
   if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED — owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
   if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0 — the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
   console.log(`✓ v23 clear self-check: a paid+owned name was genuinely cleared (addr->undefined); fuzz exercised the branch ${gV23Clears}x`);
+}
+// V25 self-check: prove a commit -> PAYMENT-FREE reveal -> nfinalize genuinely FINALIZES to a NORMAL owned name
+// (accept path reachable, fee paid exactly once, NOT viaFill), so regFlow coverage cannot silently be all-rejects.
+{
+  const A = "0x" + "a7".repeat(20), NM = "regchk", salt = "a7a7a7a7a7a7a7a7a7a7";
+  const V = R.V25_HEIGHT, hf = V + R.REG_COMMIT_MAX_BLOCKS + 2;
+  const mk = (rec, h, paid) => ({ kind: "propose", id: nid(), proposer: A, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} });
+  const seq = [
+    mk(R.nameCommitRecord({ commit: R.nameCommit(NM, salt, A) }), V, {}),
+    mk(R.nameClaim({ name: NM, salt }), V + 1, {}),                                       // payment-free reveal (pending)
+    mk(R.nameFinalize({ name: NM, salt }), hf, { [TREAS]: R.nameRegFee(NM, hf).toString() }),
+  ];
+  const st = resolve(seq, hf + 3), n = st.names[NM];
+  if (!n || n.owner !== A.toLowerCase() || n.pending || n.viaFill || Number(st.feesPaid) !== Number(R.nameRegFee(NM, hf))) {
+    console.error(`✗ v25 finalize self-check FAILED — reserve→finalize did not yield a clean owned name (owner=${n && n.owner}, pending=${n && n.pending}, viaFill=${n && n.viaFill}, feesPaid=${st.feesPaid})`); process.exit(1);
+  }
+  if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0 — the fuzz never materialized a V25 reservation"); process.exit(1); }
+  console.log(`✓ v25 finalize self-check: commit→payment-free reveal→nfinalize yields a normal owned name (fee once, not viaFill); fuzz materialized ${cov.pendingReg} pending reservation(s)`);
 }
 process.exit(diverged ? 1 : 0);
