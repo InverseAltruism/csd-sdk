@@ -26,8 +26,8 @@
 
 import {
   resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT,
-  NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN, REG_COMMIT_MAX_BLOCKS,
-  nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameFinalize,
+  NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN,
+  nameRegFee, nameClaim, nameCommit, nameCommitRecord,
   deploy, mint, offer, tradeFee, FEE_BPS_V16,
 } from "../packages/cairnx/dist/index.js";
 
@@ -49,8 +49,10 @@ export function findBurns(events, tipHeight) {
     if (l.ok) continue;                                  // applied → nothing burned
     const ev = byId.get(l.id);
     if (!ev) continue;
+    const actor = ev.proposer || ev.attester || "?";
+    if (actor === T) continue;                           // treasury paying itself is a wash, not a burn
     const t = ptTreas(ev.paidTo);                        // the treasury/premium output on this rejected record
-    if (t > 0n) burns.push({ height: l.height, kind: l.kind, reason: l.note || "(rejected)", actor: (ev.proposer || ev.attester || "?"), burned: t });
+    if (t > 0n) burns.push({ height: l.height, kind: l.kind, reason: l.note || "(rejected)", actor, burned: t });
   }
   return burns;
 }

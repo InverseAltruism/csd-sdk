@@ -21,6 +21,7 @@
 // Imports the compiled dist; modifies nothing.
 
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import {
   resolve, canonicalState, TREASURY_ADDR, DEPLOY_FEE, V16_HEIGHT, V25_HEIGHT, V26_HEIGHT, COMMIT_MAX_BLOCKS,
   nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer,
@@ -76,7 +77,7 @@ export function findPaymentWithoutDelivery(events, tipHeight) {
     const ev = byId.get(l.id);
     if (!ev) continue;
     for (const [addr, v] of Object.entries(ev.paidTo || {})) {
-      if (addr === T || !(typeof v === "string" && AMOUNT_RE.test(v)) || BigInt(v) === 0n) continue;
+      if (addr === T || addr === ev.attester || !(typeof v === "string" && AMOUNT_RE.test(v)) || BigInt(v) === 0n) continue; // skip treasury (P1) and self/change
       out.push({ height: l.height, payer: ev.attester, paidTo: addr, amount: BigInt(v), reason: l.note || "(rejected fill)" });
     }
   }
@@ -276,4 +277,5 @@ function run() {
   process.exit(div ? 1 : 0);
 }
 
-run();
+// only run the harness when invoked directly, so the exported detectors can be imported without side effects
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) run();

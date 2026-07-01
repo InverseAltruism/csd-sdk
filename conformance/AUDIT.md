@@ -18,8 +18,14 @@ Run from `csd-sdk/`:
 ```
 pnpm run audit:money-safety     # ranked table of anchored-then-rejected treasury/premium burns
 pnpm run audit:race             # adversarial multi-actor race scenarios + property report + JS/PY diff
-pnpm run audit:all              # money-safety --selftest, then the race harness
+pnpm run audit:selftest         # assert the detectors themselves fire/stay-silent correctly (20 cases)
+pnpm run audit:all              # selftest, then money-safety --selftest, then the race harness
 ```
+
+`audit-selftest.mjs` tests the tools, not the resolver: it asserts `findBurns`,
+`findDisplacementBurns`, and `findPaymentWithoutDelivery` fire on known positives, stay silent on
+negatives, reject the false-positive vectors (self-pay, non-fill payments), and survive edge inputs
+(empty, orphan attest). Run it after touching any detector.
 
 ### money-safety.mjs
 Wraps `resolve()` from the compiled `packages/cairnx/dist/index.js`. The resolver already returns
