@@ -16,16 +16,50 @@ we read and triage. Fixing any finding is a separate, per-item decision.
 Run from `csd-sdk/`:
 
 ```
+pnpm run audit:invariants       # GENERAL ledger-soundness check over a broad random corpus (start here)
 pnpm run audit:money-safety     # ranked table of anchored-then-rejected treasury/premium burns
 pnpm run audit:race             # adversarial multi-actor race scenarios + property report + JS/PY diff
-pnpm run audit:selftest         # assert the detectors themselves fire/stay-silent correctly (20 cases)
-pnpm run audit:all              # selftest, then money-safety --selftest, then the race harness
+pnpm run audit:selftest         # assert the detectors + invariants themselves fire/stay-silent correctly
+pnpm run audit:all              # selftests, then invariants, money-safety, and the race harness
 ```
+
+Two kinds of tool, and the difference is the point:
+- `invariants.mjs` is GENERAL and future-proof. It checks properties that hold for EVERY resolver
+  output regardless of feature, so a future change that breaks ledger soundness is caught without
+  anyone anticipating the specific bug. Reach for this first, and after any resolver change.
+- `money-safety.mjs` and `race-harness.mjs` are TARGETED at the fee-burn-after-anchor class we
+  already know about. They are a regression net for known incidents, not a general oracle.
 
 `audit-selftest.mjs` tests the tools, not the resolver: it asserts `findBurns`,
 `findDisplacementBurns`, and `findPaymentWithoutDelivery` fire on known positives, stay silent on
 negatives, reject the false-positive vectors (self-pay, non-fill payments), and survive edge inputs
 (empty, orphan attest). Run it after touching any detector.
+
+### invariants.mjs (the general oracle)
+Ledger-soundness properties that must hold for EVERY resolved state, checked over a broad random
+corpus (deploy/mint/transfer/offer/fill/cancel, register/set/xfer/renew/list, sealed commit-reveal-
+finalize, lapse, and noise, across all gate heights). The invariants:
+
+- INV1 no balance is ever negative.
+- INV2 token conservation: sum of every holder's (available + locked) equals `minted` (no mint from
+  nothing, no destruction by transfer/lock/fill).
+- INV3 a mint never exceeds the declared supply cap.
+- INV4 locks exactly back open offers: `locked` per (token, seller) equals that seller's open
+  token-give offers (no leaked lock, no phantom lock, no under-lock).
+- INV5 names are well-formed: valid owner, `effectiveHeight <= height`, a pending reservation is
+  still finalizable and holds no addr (no bricked or stale name).
+- INV6 name-lock symmetry: a name is locked iff an open offer gives it (no theft window, no stuck lock).
+- INV7 fee accounting: the resolver's `feesPaid` never exceeds the treasury outputs its applied
+  events actually anchored.
+
+A CLEAN run means the resolver stayed sound across everything the fuel reached (the run prints a
+coverage line so `0 violations` is meaningful, not vacuous). `--selftest` feeds hand-broken states to
+each invariant and asserts it fires, and asserts silence on a sound state. `--stdin` checks the
+invariants over your own sequences: pipe the real on-chain event stream, or the fuzz corpus, for
+coverage far beyond the built-in fuel. Exports each invariant plus `checkInvariants(events, tip)`.
+
+This is the tool to grow: add an invariant whenever a new class of "the ledger must stay consistent"
+property appears, and it protects every future change for free.
 
 ### money-safety.mjs
 Wraps `resolve()` from the compiled `packages/cairnx/dist/index.js`. The resolver already returns
