@@ -222,6 +222,33 @@ export const SALT_RE = /^[0-9a-fA-F]{16,128}$/;   // commit salt — single-sour
 export const RESERVED_NAMES = new Set(["csd", "treasury", "admin", "official", "root", "www", "support"]);
 export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be revealed within ~8h
 
+// v2.5 = "sealed reservation" registration (root fix for the reveal fee-burn). At height >= V25 a `name`
+// reveal is PAYMENT-FREE and creates a `pending` reservation (still snipe-resistant via the blind ncommit
+// seal + back-dating); the reg fee moves to a new winner-only `nfinalize`, valid ONLY after the
+// displacement contest is frozen. So a losing reveal costs only its ~0.25 anchor, never the reg fee.
+// Registration ONLY (lapsed recapture is a later V26). Non-retroactive + emit-gated: every pre-V25 canonical
+// hash is byte-identical, so a mixed-version fleet does NOT fork below the gate. HARD ADOPTION GATE (like V24):
+// a stale wallet crossing V25 attaches a fee the fresh resolver IGNORES on the payment-free reveal (burn), so
+// EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT. Set the real
+// activation at rollout (tip + a short lockstep margin, ~150 blocks like V22); 10_000_000 = a far-future
+// placeholder that keeps V25 dormant for all dev replay/fuzz. MUST match cairnx_ref.py + helpers.js + wallet.
+export const V25_HEIGHT = 10_000_000;
+export const REG_COMMIT_MAX_BLOCKS = 8;       // register commit->reveal window AND the displacement freeze
+                                              // (one value, both roles: the freeze must equal the window so
+                                              //  no back-dated displacer can arrive after nfinalize). ~16 min.
+export const REG_FINALIZE_GRACE_BLOCKS = 20;  // the winner's window to land nfinalize before the reservation
+                                              // auto-expires (finalizeBy = effHeight + REG_COMMIT_MAX_BLOCKS + this).
+                                              // Sized for comfortable headroom: the wallet signs at ~effHeight+10
+                                              // (freeze + FINALIZE_TIP_MARGIN), leaving ~18 blocks (~36 min) for
+                                              // the fee-bearing finalize to CONFIRM before finalizeBy, so a late
+                                              // inclusion does not burn the reg fee. Does not slow legit
+                                              // registration (finalize can land right after the freeze); only
+                                              // extends the deadline. Dormant below V25 (byte-identical).
+export const MAX_PENDING_REG = 3;             // per-address concurrent un-finalized reservations (anti-Sybil;
+                                              // mirrors MAX_ACTIVE_CLAIMS). Excludes a same-name re-reveal.
+export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V17 claimBlocksLeft >= 2 rule);
+                                              // resolve() does not use it (client selector, single-sourced here).
+
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
 // ── pure client-side selectors ──────────────────────────────────────────────────────────────────
@@ -287,6 +314,9 @@ export interface OfferCancelAllRecord { v: 1; t: "ocancel"; ticker?: string; nam
 // ── names (v1.1) ──
 export interface NameCommitRecord { v: 1; t: "ncommit"; commit: string }
 export interface NameRecord { v: 1; t: "name"; name: string; salt?: string }   // salt → reveal (back-dated)
+// v2.5: the winner-only register finalize. salt MANDATORY (self-contained re-derivation of the deep commit);
+// carries the reg fee to the treasury. Valid only after the displacement contest freezes (see V25_HEIGHT).
+export interface NameFinalizeRecord { v: 1; t: "nfinalize"; name: string; salt: string }
 export interface NameXferRecord { v: 1; t: "nxfer"; name: string; to: string }
 export interface NameSetRecord { v: 1; t: "nset"; name: string; addr: string }
 // ── v1.5 ──
@@ -298,7 +328,7 @@ export interface TokenMetaRecord { v: 1; t: "tmeta"; ticker: string; hash: strin
 export interface NameProfileRecord { v: 1; t: "nprofile"; name: string; p: Record<string, string> }
 export type CairnXRecord =
   | DeployRecord | MintRecord | TransferRecord | OfferRecord | BidRecord | OfferCancelAllRecord
-  | NameCommitRecord | NameRecord | NameXferRecord | NameSetRecord
+  | NameCommitRecord | NameRecord | NameFinalizeRecord | NameXferRecord | NameSetRecord
   | NameRenewRecord | TokenMetaRecord | NameProfileRecord;
 
 // ── chain events fed to the resolver (consensus data, normalized) ──
@@ -344,6 +374,11 @@ export interface NameState {
   paidThroughEpoch?: number;
   /** v1.5: true once the lease + grace lapsed (record kept for history; name is claimable) */
   expired?: true;
+  /** v2.5: a payment-free registration reservation awaiting nfinalize. NOT resolvable (confers no address)
+   *  and not actionable by the owner until finalized; auto-expires at finalizeBy. Materialized at v2.5+ tips
+   *  only, so every pre-v2.5 canonical hash stays byte-identical. */
+  pending?: true;
+  finalizeBy?: number;
   /** v1.9: ENS-class identity — a charset-locked string→string map (doc 36). INERT cosmetic metadata
    *  (NOT a send target; the verified address is `addr`). Materialized at v1.9+ tips only, cleared on
    *  every ownership change, absent when empty. */

@@ -3,7 +3,7 @@ import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 import {
   ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
-  type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
+  type NameFinalizeRecord, type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
   type OfferRecord, type TransferRecord,
 } from "./types.js";
 
@@ -85,6 +85,7 @@ export const TRANSFER_KEYS = new Set(["v", "t", "ticker", "to", "amount", "memo"
 export const OFFER_KEYS = new Set(["v", "t", "give", "want", "min", "bid", "taker", "memo", "ts"]);
 export const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
 export const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
+export const NFINALIZE_KEYS = new Set(["v", "t", "name", "salt"]);
 export const NPROFILE_KEYS = new Set(["v", "t", "name", "p"]);
 
 /**
@@ -214,6 +215,15 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       if (r.salt !== undefined && (typeof r.salt !== "string" || !SALT_RE.test(r.salt))) return null;
       return r as unknown as NameRecord;
     }
+    case "nfinalize": {
+      // v2.5 winner-only register finalize (carries the reg fee). Same decoy-key allowlist as `name`; salt is
+      // MANDATORY here (self-contained re-derivation of the deep commit binds the finalize to the reservation).
+      // Parse is height-agnostic; the resolve handler is V25-gated, so below V25 this is a no-op in both impls.
+      if (!onlyKeys(r, NFINALIZE_KEYS)) return null;
+      if (!isName(r.name)) return null;
+      if (typeof r.salt !== "string" || !SALT_RE.test(r.salt)) return null;
+      return r as unknown as NameFinalizeRecord;
+    }
     case "nxfer": {
       if (!isName(r.name) || !isAddr(r.to)) return null;
       if (Object.keys(r).length !== 4) return null;
@@ -287,6 +297,9 @@ export const nameCommitRecord = (r: Omit<NameCommitRecord, "v" | "t">): BuiltRec
   buildRecord({ v: 1, t: "ncommit", ...r });
 export const nameClaim = (r: Omit<NameRecord, "v" | "t">): BuiltRecord =>
   buildRecord({ v: 1, t: "name", ...r });
+// v2.5 winner-only register finalize (salt mandatory; carries the reg fee)
+export const nameFinalize = (r: Omit<NameFinalizeRecord, "v" | "t">): BuiltRecord =>
+  buildRecord({ v: 1, t: "nfinalize", ...r });
 export const nameXfer = (r: Omit<NameXferRecord, "v" | "t">): BuiltRecord =>
   buildRecord({ v: 1, t: "nxfer", ...r });
 export const nameSet = (r: Omit<NameSetRecord, "v" | "t">): BuiltRecord =>

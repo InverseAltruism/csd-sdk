@@ -10,8 +10,8 @@
 import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
-  MAX_ACTIVE_CLAIMS, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
+  MAX_ACTIVE_CLAIMS, MAX_PENDING_REG, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, SCORE_CANCEL, SCORE_CLAIM,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -28,7 +28,7 @@ function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOUNT_RE.t
 
 interface Bal { available: bigint; locked: bigint }
 interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }
-interface NameRec { owner: string; effHeight: number; pos: number; id: string; height: number; addr?: string; locked: boolean; viaFill?: boolean; paidThroughEpoch?: number; profile?: Record<string, string> }
+interface NameRec { owner: string; effHeight: number; pos: number; id: string; height: number; addr?: string; locked: boolean; viaFill?: boolean; paidThroughEpoch?: number; profile?: Record<string, string>; pending?: boolean; finalizeBy?: number }
 
 // Ordinal (code-unit) string comparison — the ONLY comparator allowed anywhere in the resolver.
 // localeCompare is ICU-collation-dependent and therefore non-reproducible across runtimes; a
@@ -103,6 +103,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     for (const b of bids.values()) {
       if (b.status === "open" && ep > effExpiry(b, height)) b.status = "expired";
     }
+    // v2.5: an un-finalized reservation past its finalize window is abandoned — drop it so the name reopens and
+    // canonical state does not accumulate dead reservations. Deterministic (keyed on the block height); below
+    // V25 no name is ever `pending`, so this is a no-op and pre-V25 hashes are byte-identical.
+    for (const nm of [...names.keys()]) { const n = names.get(nm)!; if (n.pending && n.finalizeBy !== undefined && height > n.finalizeBy) names.delete(nm); }
   };
 
   // ── v1.5 leases ── a name claimed pre-v1.5 is GRANDFATHERED one full term from activation
@@ -173,6 +177,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v16 = ev.height >= V16_HEIGHT;
     const v19 = ev.height >= V19_HEIGHT;
     const v23 = ev.height >= V23_HEIGHT;
+    const v25 = ev.height >= V25_HEIGHT;
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
@@ -231,30 +236,59 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       } else if (rec.t === "name") {
         if (!v11) { note(ev, ev.id, "name", false, "before v1.1 activation"); continue; }
         // effective (anchor) height: a reveal back-dates to its commit height (front-run defense).
+        // v2.5 couples the reveal window to REG_COMMIT_MAX_BLOCKS (the freeze), so no back-dated displacer
+        // can arrive after nfinalize; below V25 the 8h COMMIT_MAX_BLOCKS window is unchanged (byte-identical).
+        const regWindow = v25 ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
         let effHeight = ev.height;
         if (rec.salt !== undefined) {
           const ch = nameCommit(rec.name, rec.salt, who);
           const cH = commits.get(ch);
-          if (cH === undefined || cH >= ev.height || ev.height - cH > COMMIT_MAX_BLOCKS) {
+          if (cH === undefined || cH >= ev.height || ev.height - cH > regWindow) {
             note(ev, ev.id, "name", false, "no valid in-window commit for this reveal"); continue;
           }
           effHeight = cH;
         }
         const cur = names.get(rec.name);
         const epClaim = epochOf(ev.height);
+        // v2.5: a pending reservation past its finalize window auto-expires — the name reopens (lazy, like a
+        // lapsed lease). Below V25 no name is ever `pending`, so curActive === cur (pre-V25 byte-identical).
+        const curActive = (cur && cur.pending && cur.finalizeBy !== undefined && ev.height > cur.finalizeBy) ? undefined : cur;
         // v1.5: a LAPSED lease makes the name unowned again — claimable by anyone at the
         // decaying premium (squat recapture). The prior holder's basis is void, BUT the premium
         // re-claim establishes a fresh PAID basis, so it is itself displacement-immune (viaFill):
         // without this, a griefer who pre-commits the name before the lapse could reveal a
         // back-dated claim within COMMIT_MAX_BLOCKS and take the just-reclaimed name from the
         // premium payer for only the base reg fee — stealing it AND bypassing the premium entirely.
-        if (cur && v15 && lapsed(cur, epClaim)) {
-          const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
+        // (Recapture stays PAY-NOW until V26; a `pending` reservation holds no lease so it is never lapsed.)
+        if (curActive && !curActive.pending && v15 && lapsed(curActive, epClaim)) {
+          const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
           for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
           feesPaid += fee;
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
+          continue;
+        }
+        // v2.5 SEALED RESERVATION: the reveal is PAYMENT-FREE and creates a `pending` reservation; the reg fee
+        // moves to a winner-only `nfinalize` (below). A losing reveal costs only its ~0.25 anchor. Registration
+        // requires commit-reveal at V25 (no-salt direct-register is rejected: it can't be finalized).
+        if (v25) {
+          if (rec.salt === undefined) { note(ev, ev.id, "name", false, "v2.5: registration requires a commit-reveal (salt)"); continue; }
+          // lowest (effectiveHeight, pos, id) wins among live reservations/holders; a back-dated reveal displaces.
+          // A finalized name (effHeight = its commit height, past the freeze) can never be displaced here: any
+          // window-valid challenger has effHeight within REG_COMMIT_MAX_BLOCKS of now, hence strictly greater.
+          const better = !curActive || (!curActive.viaFill && (effHeight < curActive.effHeight ||
+            (effHeight === curActive.effHeight && (ev.pos < curActive.pos || (ev.pos === curActive.pos && ev.id < curActive.id)))));
+          if (!better) { note(ev, ev.id, "name", false, curActive?.viaFill ? "name taken (purchased — not displaceable)" : "name taken (earlier anchor wins)"); continue; }
+          // per-address concurrent-reservation cap (anti-Sybil; excludes a re-reveal of THIS name; expired don't count).
+          let myPending = 0;
+          for (const [nm, n] of names) if (n.pending && n.owner === who && nm !== rec.name && n.finalizeBy !== undefined && ev.height <= n.finalizeBy) myPending++;
+          if (myPending >= MAX_PENDING_REG) { note(ev, ev.id, "name", false, "too many pending reservations (max reached)"); continue; }
+          if (curActive) {
+            for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+          }
+          names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, pending: true, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
+          note(ev, ev.id, "name", true, curActive ? "reserved (displaced prior reservation)" : "reserved (pending finalize)");
           continue;
         }
         if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "name", false, "name registration fee unpaid"); continue; }
@@ -264,10 +298,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // v1.3: displacement arbitrates claim-vs-claim ONLY — a record acquired by a paid fill
         // (viaFill, only ever set at v1.3+ fills) is immune, so a back-dated reveal can never
         // take a name from the innocent buyer of a completed sale (red-team H3).
-        const better = !cur || (!cur.viaFill && (effHeight < cur.effHeight ||
-          (effHeight === cur.effHeight && (ev.pos < cur.pos || (ev.pos === cur.pos && ev.id < cur.id)))));
-        if (!better) { note(ev, ev.id, "name", false, cur?.viaFill ? "name taken (purchased — not displaceable)" : "name taken (earlier anchor wins)"); continue; }
-        if (cur) {
+        const better = !curActive || (!curActive.viaFill && (effHeight < curActive.effHeight ||
+          (effHeight === curActive.effHeight && (ev.pos < curActive.pos || (ev.pos === curActive.pos && ev.id < curActive.id)))));
+        if (!better) { note(ev, ev.id, "name", false, curActive?.viaFill ? "name taken (purchased — not displaceable)" : "name taken (earlier anchor wins)"); continue; }
+        if (curActive) {
           // displacement: void any open offer the wrongful holder made on this name. (The name
           // record itself is replaced below with locked:false, so the live name is never stuck;
           // releaseGive keeps lock-handling uniform with the cancel/expiry paths.)
@@ -275,11 +309,37 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         }
         names.set(rec.name, cand);
         feesPaid += nameRegFee(rec.name, ev.height);
-        note(ev, ev.id, "name", true, cur ? "displaced prior holder" : undefined);
+        note(ev, ev.id, "name", true, curActive ? "displaced prior holder" : undefined);
+
+      } else if (rec.t === "nfinalize") {
+        // v2.5 winner-only register finalize: pay the reg fee AFTER the displacement contest is frozen, so a
+        // losing reveal never pays. Promotes the reservation to a NORMAL registered name (NOT viaFill — a
+        // finalized registration is not a purchase, and marking it viaFill would trip the wallet's namespv
+        // caution on every fresh name; it is already displacement-immune by the freeze-window arithmetic).
+        if (!v25) { note(ev, ev.id, "nfinalize", false, "before v2.5 activation"); continue; }
+        const n = names.get(rec.name);
+        if (!n || !n.pending || n.owner !== who) { note(ev, ev.id, "nfinalize", false, "no matching pending reservation you own"); continue; }
+        // salt binds the finalize to the reservation's own commit (self-contained; must re-derive that commit).
+        const cH = commits.get(nameCommit(rec.name, rec.salt, who));
+        if (cH === undefined || cH !== n.effHeight) { note(ev, ev.id, "nfinalize", false, "salt does not match the reservation commit"); continue; }
+        if (!(ev.height > n.effHeight + REG_COMMIT_MAX_BLOCKS)) { note(ev, ev.id, "nfinalize", false, "too early — displacement contest not yet frozen"); continue; }
+        if (n.finalizeBy !== undefined && ev.height > n.finalizeBy) { note(ev, ev.id, "nfinalize", false, "reservation expired"); continue; }
+        if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "nfinalize", false, "name registration fee unpaid"); continue; }
+        // clear the reservation flags. NOTE for parity: this leaves the keys present-but-undefined while the
+        // Python mirror `.pop()`s them. That is SAFE ONLY because every reader tests truthiness (n.pending) /
+        // `!== undefined`, never key-PRESENCE — and a finalized name never reaches the pending materialization
+        // branch. If future code ever does `"pending" in n` or spreads `...n` into canonical output, switch this
+        // to `delete n.pending` to keep JS≡Python.
+        n.pending = undefined;
+        n.finalizeBy = undefined;
+        n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
+        feesPaid += nameRegFee(rec.name, ev.height);
+        note(ev, ev.id, "nfinalize", true);
 
       } else if (rec.t === "nxfer") {
         const n = names.get(rec.name);
         if (!n || n.owner !== who) { note(ev, ev.id, "nxfer", false, "not the name owner"); continue; }
+        if (n.pending) { note(ev, ev.id, "nxfer", false, "name reservation not yet finalized"); continue; }
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nxfer", false, "lease lapsed — claim it instead"); continue; }
         if (n.locked) { note(ev, ev.id, "nxfer", false, "name is locked by an open offer"); continue; }
         n.owner = rec.to.toLowerCase(); n.addr = undefined; n.profile = undefined; // ownership change clears the profile (doc 36)
@@ -288,6 +348,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       } else if (rec.t === "nset") {
         const n = names.get(rec.name);
         if (!n || n.owner !== who) { note(ev, ev.id, "nset", false, "not the name owner"); continue; }
+        if (n.pending) { note(ev, ev.id, "nset", false, "name reservation not yet finalized"); continue; }
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nset", false, "lease lapsed — claim it instead"); continue; }
         if (v23 && rec.addr.toLowerCase() === ZERO_ADDR) n.addr = undefined;   // v2.3 unset: clear the record → name falls back to its owner
         else n.addr = rec.addr.toLowerCase();
@@ -300,6 +361,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (!v19) { note(ev, ev.id, "nprofile", false, "before v1.9 activation"); continue; }
         const n = names.get(rec.name);
         if (!n || n.owner !== who) { note(ev, ev.id, "nprofile", false, "not the name owner"); continue; }
+        if (n.pending) { note(ev, ev.id, "nprofile", false, "name reservation not yet finalized"); continue; }
         if (v15 && lapsed(n, epochOf(ev.height))) { note(ev, ev.id, "nprofile", false, "lease lapsed — claim it instead"); continue; }
         n.profile = Object.keys(rec.p).length ? { ...rec.p } : undefined;
         note(ev, ev.id, "nprofile", true);
@@ -334,6 +396,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (!v11) { note(ev, ev.id, "offer", false, "name offers need v1.1"); continue; }
           const n = names.get(give.name);
           if (!n || n.owner !== who) { note(ev, ev.id, "offer", false, "you don't own this name"); continue; }
+          if (n.pending) { note(ev, ev.id, "offer", false, "name reservation not yet finalized"); continue; }
           if (n.locked) { note(ev, ev.id, "offer", false, "name already locked by another offer"); continue; }
           // v1.3: a claim-based name may not be offered until its claim out-ages the commit
           // window — every lurking commit's reveal deadline passes BEFORE a sale can exist, so
@@ -409,6 +472,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (!v15) { note(ev, ev.id, "nrenew", false, "nrenew needs v1.5"); continue; }
         const n = names.get(rec.name);
         const ep = epochOf(ev.height);
+        if (n && n.pending) { note(ev, ev.id, "nrenew", false, "name reservation not yet finalized"); continue; }
         if (!n || lapsed(n, ep)) { note(ev, ev.id, "nrenew", false, "no live lease (lapsed names are claimed, not renewed)"); continue; }
         // anyone may renew a LIVE lease (third-party gifting, ENS-style); in GRACE the owner
         // alone may — otherwise a squatter could extend a lapsing name they intend to take
@@ -633,8 +697,16 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const namesOut: Record<string, NameState> = {};
   const tipV15 = tipHeight >= V15_HEIGHT;
   const tipV19 = tipHeight >= V19_HEIGHT;
+  const tipV25 = tipHeight >= V25_HEIGHT;
   const tipEpoch = epochOf(tipHeight);
   for (const [nm, n] of [...names.entries()].sort(([a], [b]) => ord(a, b))) {
+    if (tipV25 && n.pending) {
+      // v2.5 reservation: a minimal shape (no addr/viaFill/profile/lease — it holds none yet). The closing sweep
+      // drops any reservation past finalizeBy, so a materialized `pending` name is always still finalizable
+      // (finalizeBy > tipHeight). Emitted only at v2.5+ tips, so every pre-v2.5 canonical hash is byte-identical.
+      namesOut[nm] = { name: nm, owner: n.owner, claimId: n.id, height: n.height, effectiveHeight: n.effHeight, locked: n.locked, pending: true as const, finalizeBy: n.finalizeBy! };
+      continue;
+    }
     namesOut[nm] = { name: nm, owner: n.owner, claimId: n.id, height: n.height, effectiveHeight: n.effHeight, locked: n.locked, ...(n.addr ? { addr: n.addr } : {}), ...(n.viaFill ? { viaFill: true as const } : {}),
       // v1.9 profile materialized at v1.9+ tips ONLY (the apply is also gated) → every pre-v1.9 canonical
       // hash stays byte-identical; absent when empty/unset.
