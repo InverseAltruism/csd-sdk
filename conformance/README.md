@@ -34,6 +34,11 @@ PARITY) and the **raw regex-vs-regex differential** (`crosscheck-regex.mjs`, 230
 7 fields) + the full parse gate (the trailing-control-char fork class, audit C1). A drift on any of these
 fails CI.
 
+**Money-safety audit tooling (report-only, on-demand):** beyond fork detection, `money-safety.mjs`
+and `race-harness.mjs` hunt the honest-user-burn class (a fee anchored then rejected). They are not
+part of the CI gate; run them on demand with `pnpm run audit:money-safety` / `audit:race` /
+`audit:all`. See `AUDIT.md` for the tools, the fan-out method, and the observability-gap review.
+
 **Fork the port caught (2026-06-15):** `canonicalState` = JS `JSON.stringify(sortKeys(...))`, and
 ECMAScript object enumeration emits **integer-index keys (`"0".."4294967294"`) ascending-numeric
 FIRST, then string keys in code-unit order:** overriding the code-unit sort. So a NUMERIC name
