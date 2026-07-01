@@ -15,7 +15,12 @@ const { resolve, canonicalState, payloadHash, canonicalJson, nameCommit, nameReg
         V26_HEIGHT, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN } = R;
 const TREAS = R.TREASURY_ADDR;
 const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), OLD = "0x" + "0d".repeat(20);
-const V = V26_HEIGHT, W = REG_COMMIT_MAX_BLOCKS, G = REG_FINALIZE_GRACE_BLOCKS;
+// V26_HEIGHT is the GATE. A name can only physically LAPSE ~1 year after the earliest V11 registration
+// (term 8760 + grace 720 epochs), so recapture must be exercised at a height where a real lapse exists —
+// independent of where the gate sits. V is that fixed recapture height; the gate just has to be <= it.
+const V26 = V26_HEIGHT, W = REG_COMMIT_MAX_BLOCKS, G = REG_FINALIZE_GRACE_BLOCKS;
+const V = 320_000;   // recapture height: a name planted at H0 (below) is ~86 epochs past grace here (live premium)
+if (V < V26) throw new Error(`test misconfig: recapture height V=${V} must be >= gate V26=${V26}`);
 const nid = (() => { let i = 1; return () => "0x" + (i++).toString(16).padStart(64, "0"); })();
 const cj = (r) => canonicalJson(r), ph = (r) => payloadHash(r);
 const saltFor = (o) => o === A ? "a1a1a1a1a1a1a1a1" : o === B ? "b2b2b2b2b2b2b2b2" : "0d0d0d0d0d0d0d0d";
@@ -49,11 +54,11 @@ let pass = 0, fail = 0;
 const ok = (n, c) => { c ? pass++ : fail++; console.log(`  ${c ? "✓" : "✗"} ${n}`); };
 const both = (n, ev, tip) => ok(`${n}: JS≡Python`, jsCanon(ev, tip) === pyCanon(ev, tip));
 
-console.log(`v26 sealed-recapture (V26=${V}, window=${W}, grace=${G}):`);
+console.log(`v26 sealed-recapture (gate V26=${V26}, recapture-height V=${V}, window=${W}, grace=${G}):`);
 
-// ── plant a LAPSED name: register "reco" pay-now at H0 so it is ~100 epochs past grace at V ──
-// graceEnd epoch = epochOf(H0)+NAME_TERM+NAME_GRACE; want epochOf(V) - graceEnd ≈ 100 (premium ~17x).
-const H0 = (epochOf(V) - 100 - NAME_TERM_EPOCHS - NAME_GRACE_EPOCHS) * EPOCH_LEN;   // < V25 → pay-now
+// ── plant a LAPSED name: register "reco" pay-now at a FIXED H0 (>= V11 so names are live, < V25 so it takes
+// the classic pay-now path) so it is ~86 epochs past grace at the fixed recapture height V (premium ~17x). ──
+const H0 = 33_000;   // epoch 1100: graceEnd = 1100+8760+720 = 10580 (h 317400); V=320000 (epoch 10666) is lapsed
 const REG = Number(nameRegFee("reco", H0));
 const paidThrough = epochOf(H0) + NAME_TERM_EPOCHS;
 const premiumAt = (h) => Number(expiredClaimFee("reco", epochOf(h) - (paidThrough + NAME_GRACE_EPOCHS), h));
@@ -61,7 +66,10 @@ const plant = [regPayNow(H0, "reco", OLD)];
 {
   const s = jsState(plant, V);
   ok("setup: 'reco' is planted and LAPSED at V (expired, recapturable)", s.names.reco?.expired === true && s.names.reco?.owner === OLD.toLowerCase());
-  ok("setup: premium at V is a multiple of the base fee (decay live, not 1x)", premiumAt(V + 11) > REG && premiumAt(V + 11) <= 20 * REG);
+  // the premium is priced at the RECAPTURE height (V24 schedule), which differs from the plant-height REG
+  // (H0 is under the old pre-V18 curve), so sanity-check the premium against its OWN base, not REG.
+  const baseAtV = Number(nameRegFee("reco", V + 11));
+  ok("setup: premium at V is a live multiple of the base fee (decay, not 1x)", premiumAt(V + 11) > baseAtV && premiumAt(V + 11) <= 20 * baseAtV);
   both("planted lapsed name", plant, V);
 }
 
@@ -114,19 +122,11 @@ const plant = [regPayNow(H0, "reco", OLD)];
   both("early recapture finalize rejected", ev, V + W + 1);
 }
 
-// 5) BELOW V26 — the pay-now reclaim is unchanged (a separate lapsed name reclaimed at a height < V26)
-{
-  // plant "recb" so it lapses just before a below-V26 height Hr; reclaim pay-now there.
-  const Hr = V - 10;                                             // < V26 (=V25) → pay-now reclaim
-  const H0b = (epochOf(Hr) - 100 - NAME_TERM_EPOCHS - NAME_GRACE_EPOCHS) * EPOCH_LEN;
-  const paidThroughB = epochOf(H0b) + NAME_TERM_EPOCHS;
-  const premB = Number(expiredClaimFee("recb", epochOf(Hr) - (paidThroughB + NAME_GRACE_EPOCHS), Hr));
-  const reclaim = { kind: "propose", id: nid(), proposer: A, uri: cj({ v: 1, t: "name", name: "recb" }), payloadHash: ph({ v: 1, t: "name", name: "recb" }), height: Hr, pos: 1, expiresEpoch: 9e14, paidTo: { [TREAS]: String(premB) } };
-  const ev = [regPayNow(H0b, "recb", OLD), reclaim];
-  const s = jsState(ev, Hr + 5);
-  ok("<V26 pay-now reclaim still works: 'recb' recaptured by A at the premium (viaFill, immune)", s.names.recb?.owner === A.toLowerCase() && s.names.recb?.viaFill === true);
-  both("below-V26 pay-now reclaim unchanged", ev, Hr + 5);
-}
+// 5) NON-RETROACTIVITY of the reclaim path. NOTE: with a close V26 gate (< ~314k) NO name can physically be
+// LAPSED below the gate (a lapse needs term+grace ~9480 epochs after the earliest V11 registration), so the
+// pre-V26 pay-now reclaim path is UNREACHABLE in production — recapture protection is universal from the very
+// first lapse. Below-gate byte-identity is proven by the full pinned corpus + 1500-fuzz staying byte-identical
+// (crosscheck-resolve + fuzz-resolve). There is no lapsed name to reclaim below the gate, so nothing to test here.
 
 console.log(`\nv26 recapture crosslang: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

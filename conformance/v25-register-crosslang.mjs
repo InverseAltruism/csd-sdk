@@ -136,7 +136,7 @@ for (const [label, aPos, bPos] of [["A reveals first", 1, 2], ["B reveals first"
 
 // 8) BELOW V25 — nfinalize is an inert no-op; pay-now registration is unchanged (non-retroactive)
 {
-  const H = 60_000;                                                        // < V25 (=10_000_000)
+  const H = 45_000;                                                        // < V25 (any close gate is >= 49_300)
   const feeH = Number(nameRegFee("belowv25", H));
   const payNow = { kind: "propose", id: nid(), proposer: A, uri: cj({ v: 1, t: "name", name: "belowv25" }), payloadHash: ph({ v: 1, t: "name", name: "belowv25" }), height: H, pos: 1, expiresEpoch: 9e14, paidTo: { [TREAS]: String(feeH) } };
   const ev = [payNow, finalize(H + 1, "belowv25", A, feeH)];               // finalize below V25 = no-op

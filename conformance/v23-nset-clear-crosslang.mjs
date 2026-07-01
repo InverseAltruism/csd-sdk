@@ -13,7 +13,7 @@
 import { spawnSync } from "node:child_process";
 import {
   resolve, canonicalState, nameClaim, nameSet, nameXfer,
-  V11_HEIGHT, V23_HEIGHT, ZERO_ADDR, TREASURY_ADDR, nameRegFee,
+  V11_HEIGHT, V23_HEIGHT, V25_HEIGHT, ZERO_ADDR, TREASURY_ADDR, nameRegFee,
   NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN,
 } from "../packages/cairnx/dist/index.js";
 
@@ -59,8 +59,10 @@ function primaryName(ev, tip, a) {
   return best ? best.name : null;
 }
 
-const PRE = V23_HEIGHT - 50;   // a band of heights below the gate (all >= V11)
-const POST = V23_HEIGHT + 5;   // above the gate
+const PRE = Math.min(V25_HEIGHT, V23_HEIGHT) - 50;   // registration band: below V25 (pay-now OWNED, not a
+                                                     // reservation) AND below V23 (so the pre-gate nset->ZERO
+                                                     // literal case still holds); all >= V11.
+const POST = V23_HEIGHT + 5;   // above the V23 gate (the CLEAR)
 const TIP = V23_HEIGHT + 100;
 
 console.log(`v23 nset-clear / forward-resolution (V11=${V11_HEIGHT}, V23=${V23_HEIGHT}, ZERO=${ZERO_ADDR.slice(0, 8)}…):`);

@@ -232,7 +232,7 @@ export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be reveale
 // EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT. Set the real
 // activation at rollout (tip + a short lockstep margin, ~150 blocks like V22); 10_000_000 = a far-future
 // placeholder that keeps V25 dormant for all dev replay/fuzz. MUST match cairnx_ref.py + helpers.js + wallet.
-export const V25_HEIGHT = 10_000_000;
+export const V25_HEIGHT = 51_000;
 export const REG_COMMIT_MAX_BLOCKS = 8;       // register commit->reveal window AND the displacement freeze
                                               // (one value, both roles: the freeze must equal the window so
                                               //  no back-dated displacer can arrive after nfinalize). ~16 min.
@@ -258,7 +258,7 @@ export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V
 // byte-identical. Independent gate from V25 (recapture is latent ~1yr; the operator may activate it later). Same
 // HARD-ADOPTION-GATE discipline as V25 (a stale wallet crossing V26 attaches a premium the fresh resolver ignores
 // -> burn). 10_000_000 = a far-future dormant placeholder. MUST match cairnx_ref.py + helpers.js + wallet.
-export const V26_HEIGHT = 10_000_000;
+export const V26_HEIGHT = 51_200;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 

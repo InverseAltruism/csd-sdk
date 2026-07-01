@@ -6122,17 +6122,17 @@
       "expectedState": {
         "balances": {},
         "bids": {},
-        "feesPaid": "19670000000",
+        "feesPaid": "670000000",
         "names": {
           "erin": {
-            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900051",
-            "effectiveHeight": 324603,
-            "height": 324603,
+            "claimId": "0x00000000000000000000000000000000000000000000000000000000f1900050",
+            "effectiveHeight": 40050,
+            "expired": true,
+            "height": 40052,
             "locked": false,
             "name": "erin",
-            "owner": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
-            "paidThroughEpoch": 19580,
-            "viaFill": true
+            "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "paidThroughEpoch": 10095
           }
         },
         "offers": {},

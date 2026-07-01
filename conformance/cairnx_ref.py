@@ -127,7 +127,7 @@ COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN
 # (lapsed recapture is a later V26). Non-retroactive + emit-gated -> pre-V25 byte-identical. HARD ADOPTION
 # GATE (V24-class). 10_000_000 = far-future dev placeholder; operator sets the real activation at rollout
 # (tip + ~150). MUST match types.ts/helpers.js/wallet.
-V25_HEIGHT = 10_000_000
+V25_HEIGHT = 51000
 REG_COMMIT_MAX_BLOCKS = 8       # register commit->reveal window AND the displacement freeze (one value, both roles)
 REG_FINALIZE_GRACE_BLOCKS = 20  # winner's window to land nfinalize before the reservation auto-expires (~36 min headroom)
 MAX_PENDING_REG = 3             # per-address concurrent un-finalized reservations (anti-Sybil; excludes a re-reveal)
@@ -136,7 +136,7 @@ FINALIZE_TIP_MARGIN = 2         # wallet-side band (mirrors V17 claimBlocksLeft 
 # reveal on a LAPSED name is PAYMENT-FREE -> an internal `recaptures` reservation (the lapsed record stays
 # UNTOUCHED, premium basis preserved); the decaying premium moves to the winner-only nfinalize. Internal map ->
 # not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). 10_000_000 = dormant.
-V26_HEIGHT = 10_000_000
+V26_HEIGHT = 51200
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")

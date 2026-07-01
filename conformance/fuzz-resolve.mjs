@@ -133,9 +133,13 @@ function v23ClearFlow(h0) {
   // "fee unpaid" at >=V18, leaving the name unowned so the clear would no-op (the bug the audit caught).
   const reg = (n, hh) => ev.push({ kind: "propose", id: nid(), proposer: D, uri: R.nameClaim({ name: n }).uri, payloadHash: R.nameClaim({ name: n }).payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: { [TREAS]: R.nameRegFee(n, hh).toString() } });
   const set = (n, a, hh) => ev.push({ kind: "propose", id: nid(), proposer: D, uri: R.nameSet({ name: n, addr: a }).uri, payloadHash: R.nameSet({ name: n, addr: a }).payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: {} });
-  const NM = "z" + ri(100, 9999); reg(NM, h); h += 2; set(NM, D, h); h += 2;
-  if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, h); h += 1; set(NM2, D, h); h += 1; }  // 2nd self-pointing name -> primary recompute on clear
-  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the reg arithmetic can land this event a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior) — not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
+  // Register+own the name BELOW V25: at >=V25 a `name` reveal is a payment-free RESERVATION, not an owned name,
+  // so its clear would no-op. V25 < V23, so a below-V25 registration is also below the V23 clear window and the
+  // owned name persists (no lapse for ~1yr) all the way to the clear. Keeps the clear coverage genuine.
+  const regH = Math.min(R.V25_HEIGHT, R.V23_HEIGHT) - 200;
+  const NM = "z" + ri(100, 9999); reg(NM, regH); set(NM, D, regH + 2);
+  if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, regH + 3); set(NM2, D, regH + 4); }  // 2nd self-pointing name -> primary recompute on clear
+  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the clear can land a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior) — not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
   set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is owned+paid so it APPLIES)
   if (chance(0.4)) { h += 2; set(NM, B, h); }   // sometimes re-point after clear (clear-then-reset)
   return ev;
@@ -289,12 +293,14 @@ console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`
 // >=V23 -> addr undefined), so the gV23Clears counter cannot silently lie again (audit caught a flat under-fee
 // that left the name unowned, no-op'ing every clear). Deterministic, independent of the random seed.
 {
-  const D = "0x" + "da".repeat(20), H = R.V23_HEIGHT + 50, NM = "selfchk";
+  const D = "0x" + "da".repeat(20), NM = "selfchk";
+  const regH = Math.min(R.V25_HEIGHT, R.V23_HEIGHT) - 100;   // PAID+OWNED below V25 (a V25 reveal is a reservation, not owned); < V23 so it persists to the clear
+  const H = R.V23_HEIGHT + 50;                                // the CLEAR happens here (>= V23)
   const mk = (rec, hh, paid) => ({ kind: "propose", id: nid(), proposer: D, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} });
   const seq = [
-    mk(R.nameClaim({ name: NM }), H, { [TREAS]: R.nameRegFee(NM, H).toString() }),   // PAID registration -> owned
-    mk(R.nameSet({ name: NM, addr: D }), H + 1),                                       // point at self
-    mk(R.nameSet({ name: NM, addr: R.ZERO_ADDR }), H + 2),                             // CLEAR at >=V23
+    mk(R.nameClaim({ name: NM }), regH, { [TREAS]: R.nameRegFee(NM, regH).toString() }),   // PAID registration below V25 -> owned
+    mk(R.nameSet({ name: NM, addr: D }), regH + 1),                                          // point at self
+    mk(R.nameSet({ name: NM, addr: R.ZERO_ADDR }), H),                                       // CLEAR at >=V23
   ];
   const n = resolve(seq, H + 5).names[NM];
   if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED — owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
