@@ -11,7 +11,7 @@ import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, MAX_PENDING_REG, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -52,6 +52,9 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const balances = new Map<string, Map<string, Bal>>();       // ticker → addr → bal
   const names = new Map<string, NameRec>();                   // name → record
   const commits = new Map<string, number>();                  // commitHash → earliest height seen
+  // v2.6 recapture reservations (INTERNAL, not materialized — like `commits`): name → the pending recapture
+  // reservation. The LAPSED record stays in `names` untouched (premium basis preserved) until a finalize wins.
+  const recaptures = new Map<string, { owner: string; effHeight: number; pos: number; id: string; height: number; finalizeBy: number }>();
   const offers = new Map<string, OfferState>();
   const offerLock = new Map<string, bigint>();                // token offers: id → locked amount
   const bids = new Map<string, BidState>();                   // v1.2 buy-side intents
@@ -107,6 +110,9 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     // canonical state does not accumulate dead reservations. Deterministic (keyed on the block height); below
     // V25 no name is ever `pending`, so this is a no-op and pre-V25 hashes are byte-identical.
     for (const nm of [...names.keys()]) { const n = names.get(nm)!; if (n.pending && n.finalizeBy !== undefined && height > n.finalizeBy) names.delete(nm); }
+    // v2.6: drop expired recapture reservations (the lapsed record in `names` is UNTOUCHED, so the name simply
+    // stays recapturable). Internal map -> no canonical-state effect; below V26 it is always empty (no-op).
+    for (const nm of [...recaptures.keys()]) { const r = recaptures.get(nm)!; if (height > r.finalizeBy) recaptures.delete(nm); }
   };
 
   // ── v1.5 leases ── a name claimed pre-v1.5 is GRANDFATHERED one full term from activation
@@ -178,6 +184,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const v19 = ev.height >= V19_HEIGHT;
     const v23 = ev.height >= V23_HEIGHT;
     const v25 = ev.height >= V25_HEIGHT;
+    const v26 = ev.height >= V26_HEIGHT;
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
@@ -238,7 +245,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // effective (anchor) height: a reveal back-dates to its commit height (front-run defense).
         // v2.5 couples the reveal window to REG_COMMIT_MAX_BLOCKS (the freeze), so no back-dated displacer
         // can arrive after nfinalize; below V25 the 8h COMMIT_MAX_BLOCKS window is unchanged (byte-identical).
-        const regWindow = v25 ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
+        // v2.6 recapture reuses the same short window (its freeze == this window too). Since V26 >= V25 by
+        // design, (v25 || v26) === v25, so this stays byte-identical below V25; the `|| v26` is a robustness
+        // guard so the recapture freeze can never exceed its reveal window even under a misordered gate.
+        const regWindow = (v25 || v26) ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
         let effHeight = ev.height;
         if (rec.salt !== undefined) {
           const ch = nameCommit(rec.name, rec.salt, who);
@@ -261,6 +271,26 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // premium payer for only the base reg fee — stealing it AND bypassing the premium entirely.
         // (Recapture stays PAY-NOW until V26; a `pending` reservation holds no lease so it is never lapsed.)
         if (curActive && !curActive.pending && v15 && lapsed(curActive, epClaim)) {
+          // v2.6 SEALED RECAPTURE: the lapsed-name reclaim is PAYMENT-FREE and reserves the name in the internal
+          // `recaptures` map; the decaying premium moves to the winner-only nfinalize, so a lost recapture race
+          // never burns the premium. Requires commit-reveal (salt). The lapsed record in `names` stays UNTOUCHED
+          // (premium basis preserved; an abandoned reservation cannot bypass the premium). Below V26 this whole
+          // branch is the unchanged pay-now reclaim (byte-identical).
+          if (v26) {
+            if (rec.salt === undefined) { note(ev, ev.id, "name", false, "v2.6: recapture requires a commit-reveal (salt)"); continue; }
+            const cr = recaptures.get(rec.name);
+            const crActive = (cr && ev.height > cr.finalizeBy) ? undefined : cr;   // an expired reservation reopens
+            // lowest (effHeight, pos, id) wins among recapture reservations (recaptures never carry viaFill).
+            const better = !crActive || (effHeight < crActive.effHeight ||
+              (effHeight === crActive.effHeight && (ev.pos < crActive.pos || (ev.pos === crActive.pos && ev.id < crActive.id))));
+            if (!better) { note(ev, ev.id, "name", false, "recapture already reserved (earlier anchor wins)"); continue; }
+            let myR = 0;                                                            // per-address recapture cap (anti-Sybil)
+            for (const [nm, r] of recaptures) if (r.owner === who && nm !== rec.name && ev.height <= r.finalizeBy) myR++;
+            if (myR >= MAX_PENDING_REG) { note(ev, ev.id, "name", false, "too many pending recaptures (max reached)"); continue; }
+            recaptures.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
+            note(ev, ev.id, "name", true, crActive ? "recapture reserved (displaced prior reservation)" : "recapture reserved (pending finalize)");
+            continue;
+          }
           const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
           for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
@@ -318,23 +348,50 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // caution on every fresh name; it is already displacement-immune by the freeze-window arithmetic).
         if (!v25) { note(ev, ev.id, "nfinalize", false, "before v2.5 activation"); continue; }
         const n = names.get(rec.name);
-        if (!n || !n.pending || n.owner !== who) { note(ev, ev.id, "nfinalize", false, "no matching pending reservation you own"); continue; }
-        // salt binds the finalize to the reservation's own commit (self-contained; must re-derive that commit).
-        const cH = commits.get(nameCommit(rec.name, rec.salt, who));
-        if (cH === undefined || cH !== n.effHeight) { note(ev, ev.id, "nfinalize", false, "salt does not match the reservation commit"); continue; }
-        if (!(ev.height > n.effHeight + REG_COMMIT_MAX_BLOCKS)) { note(ev, ev.id, "nfinalize", false, "too early — displacement contest not yet frozen"); continue; }
-        if (n.finalizeBy !== undefined && ev.height > n.finalizeBy) { note(ev, ev.id, "nfinalize", false, "reservation expired"); continue; }
-        if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "nfinalize", false, "name registration fee unpaid"); continue; }
-        // clear the reservation flags. NOTE for parity: this leaves the keys present-but-undefined while the
-        // Python mirror `.pop()`s them. That is SAFE ONLY because every reader tests truthiness (n.pending) /
-        // `!== undefined`, never key-PRESENCE — and a finalized name never reaches the pending materialization
-        // branch. If future code ever does `"pending" in n` or spreads `...n` into canonical output, switch this
-        // to `delete n.pending` to keep JS≡Python.
-        n.pending = undefined;
-        n.finalizeBy = undefined;
-        n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
-        feesPaid += nameRegFee(rec.name, ev.height);
-        note(ev, ev.id, "nfinalize", true);
+        if (n && n.pending && n.owner === who) {
+          // ── v2.5 REGISTRATION finalize (base fee) ──
+          // salt binds the finalize to the reservation's own commit (self-contained; must re-derive that commit).
+          const cH = commits.get(nameCommit(rec.name, rec.salt, who));
+          if (cH === undefined || cH !== n.effHeight) { note(ev, ev.id, "nfinalize", false, "salt does not match the reservation commit"); continue; }
+          if (!(ev.height > n.effHeight + REG_COMMIT_MAX_BLOCKS)) { note(ev, ev.id, "nfinalize", false, "too early — displacement contest not yet frozen"); continue; }
+          if (n.finalizeBy !== undefined && ev.height > n.finalizeBy) { note(ev, ev.id, "nfinalize", false, "reservation expired"); continue; }
+          if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "nfinalize", false, "name registration fee unpaid"); continue; }
+          // clear the reservation flags. NOTE for parity: this leaves the keys present-but-undefined while the
+          // Python mirror `.pop()`s them. That is SAFE ONLY because every reader tests truthiness (n.pending) /
+          // `!== undefined`, never key-PRESENCE — and a finalized name never reaches the pending materialization
+          // branch. If future code ever does `"pending" in n` or spreads `...n` into canonical output, switch this
+          // to `delete n.pending` to keep JS≡Python.
+          n.pending = undefined;
+          n.finalizeBy = undefined;
+          n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
+          feesPaid += nameRegFee(rec.name, ev.height);
+          note(ev, ev.id, "nfinalize", true);
+          continue;
+        }
+        // ── v2.6 RECAPTURE finalize (decaying premium) ──
+        // The reservation is in `recaptures`; the lapsed record is still in `names` (its paidThrough is the
+        // premium basis). The winner pays the premium priced at the FINALIZE height (slightly more decayed =
+        // favors the payer); the name becomes a NORMAL fresh lease (NOT viaFill — displacement-immune by the
+        // freeze-window arithmetic, exactly like a registration finalize).
+        const r = v26 ? recaptures.get(rec.name) : undefined;
+        if (r && r.owner === who) {
+          const cH = commits.get(nameCommit(rec.name, rec.salt, who));
+          if (cH === undefined || cH !== r.effHeight) { note(ev, ev.id, "nfinalize", false, "salt does not match the recapture commit"); continue; }
+          if (!(ev.height > r.effHeight + REG_COMMIT_MAX_BLOCKS)) { note(ev, ev.id, "nfinalize", false, "too early — recapture contest not yet frozen"); continue; }
+          if (ev.height > r.finalizeBy) { note(ev, ev.id, "nfinalize", false, "recapture reservation expired"); continue; }
+          const cur = names.get(rec.name);
+          const ep = epochOf(ev.height);
+          if (!cur || cur.pending || !lapsed(cur, ep)) { recaptures.delete(rec.name); note(ev, ev.id, "nfinalize", false, "name is no longer lapsed"); continue; }
+          const fee = expiredClaimFee(rec.name, ep - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
+          if (feeToTreasury < fee) { note(ev, ev.id, "nfinalize", false, "recapture premium unpaid (decaying)"); continue; }
+          for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+          names.set(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
+          recaptures.delete(rec.name);
+          feesPaid += fee;
+          note(ev, ev.id, "nfinalize", true, "recapture finalized (premium)");
+          continue;
+        }
+        note(ev, ev.id, "nfinalize", false, "no matching pending reservation you own");
 
       } else if (rec.t === "nxfer") {
         const n = names.get(rec.name);
@@ -718,8 +775,14 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   for (const [id, o] of [...offers.entries()].sort(([a], [b]) => ord(a, b))) offersOut[id] = o;
   const bidsOut: Record<string, BidState> = {};
   for (const [id, b] of [...bids.entries()].sort(([a], [b2]) => ord(a, b2))) bidsOut[id] = b;
+  // v2.6: the recapture reservations are a DIAGNOSTIC surface (like `events`) — EXCLUDED from canonicalState
+  // (see below), so zero fork surface. The cairnx service exposes it so a wallet/UI can confirm it is still the
+  // current recapture winner BEFORE spending the premium at nfinalize (a finalize by a reserver who was
+  // displaced in the reserve->freeze window would burn the premium; this lets the client refuse that).
+  const recapturesOut: Record<string, { owner: string; effectiveHeight: number; finalizeBy: number }> = {};
+  for (const [nm, r] of [...recaptures.entries()].sort(([a], [b]) => ord(a, b))) recapturesOut[nm] = { owner: r.owner, effectiveHeight: r.effHeight, finalizeBy: r.finalizeBy };
 
-  return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, events: log, feesPaid: feesPaid.toString() };
+  return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, recaptures: recapturesOut, events: log, feesPaid: feesPaid.toString() };
 }
 
 /** Canonical serialization of state (FORMAT 2) — byte-identical across honest resolvers.
@@ -737,6 +800,8 @@ export function canonicalState(s: CairnXState): string {
     }
     return v;
   };
-  const { events: _events, ...data } = s;
+  // `events` and `recaptures` are diagnostic surfaces, NOT canonical (recaptures is internal + wallet-facing
+  // only). Excluding both keeps the hash byte-identical to pre-v2.6 and to any resolver that omits them.
+  const { events: _events, recaptures: _recaptures, ...data } = s;
   return JSON.stringify(sortKeys(data));
 }

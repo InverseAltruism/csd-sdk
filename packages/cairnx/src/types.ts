@@ -248,6 +248,17 @@ export const MAX_PENDING_REG = 3;             // per-address concurrent un-final
                                               // mirrors MAX_ACTIVE_CLAIMS). Excludes a same-name re-reveal.
 export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V17 claimBlocksLeft >= 2 rule);
                                               // resolve() does not use it (client selector, single-sourced here).
+// v2.6 = the SAME sealed-reservation cure applied to lapsed-name RECAPTURE (the up-to-~300 CSD premium burn:
+// a losing recapture racer pays the full decaying premium and forfeits it). At height >= V26 a `name` reveal on
+// a LAPSED name is PAYMENT-FREE and creates a recapture reservation (tracked in an internal `recaptures` map;
+// the lapsed record in `names` is left UNTOUCHED so its premium basis is preserved and an abandoned reservation
+// cannot bypass the premium); the decaying premium moves to the winner-only `nfinalize`, priced at the finalize
+// height. Reuses REG_COMMIT_MAX_BLOCKS / REG_FINALIZE_GRACE_BLOCKS / MAX_PENDING_REG (own cap) / FINALIZE_TIP_MARGIN.
+// Non-retroactive + the recaptures map is INTERNAL (not materialized), so every pre-V26 canonical hash is
+// byte-identical. Independent gate from V25 (recapture is latent ~1yr; the operator may activate it later). Same
+// HARD-ADOPTION-GATE discipline as V25 (a stale wallet crossing V26 attaches a premium the fresh resolver ignores
+// -> burn). 10_000_000 = a far-future dormant placeholder. MUST match cairnx_ref.py + helpers.js + wallet.
+export const V26_HEIGHT = 10_000_000;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
@@ -423,6 +434,10 @@ export interface CairnXState {
   names: Record<string, NameState>;                        // name → state
   offers: Record<string, OfferState>;
   bids: Record<string, BidState>;                          // v1.2 buy-side intents
+  /** v2.6 pending recapture reservations (name → the current winner). DIAGNOSTIC, excluded from canonicalState
+   *  (like `events`); exposed so a wallet/UI can confirm it is still the winner before paying the premium.
+   *  resolve() always returns it; the one initial-state literal (cairnx service) constructs an empty {}. */
+  recaptures: Record<string, { owner: string; effectiveHeight: number; finalizeBy: number }>;
   events: AppliedEvent[];
   feesPaid: string;       // running total of protocol fees observed to the treasury (base units)
 }

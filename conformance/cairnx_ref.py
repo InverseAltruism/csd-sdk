@@ -132,6 +132,11 @@ REG_COMMIT_MAX_BLOCKS = 8       # register commit->reveal window AND the displac
 REG_FINALIZE_GRACE_BLOCKS = 20  # winner's window to land nfinalize before the reservation auto-expires (~36 min headroom)
 MAX_PENDING_REG = 3             # per-address concurrent un-finalized reservations (anti-Sybil; excludes a re-reveal)
 FINALIZE_TIP_MARGIN = 2         # wallet-side band (mirrors V17 claimBlocksLeft >= 2); resolve() does not use it
+# v2.6: the SAME sealed-reservation cure for lapsed-name RECAPTURE (the up-to-~300 CSD premium burn). A `name`
+# reveal on a LAPSED name is PAYMENT-FREE -> an internal `recaptures` reservation (the lapsed record stays
+# UNTOUCHED, premium basis preserved); the decaying premium moves to the winner-only nfinalize. Internal map ->
+# not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). 10_000_000 = dormant.
+V26_HEIGHT = 10_000_000
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")
@@ -366,6 +371,7 @@ def resolve(events, tip_height):
     balances = {}    # ticker -> addr -> {available, locked}
     names = {}       # name -> rec
     commits = {}     # commitHash -> earliest height
+    recaptures = {}  # v2.6 name -> recapture reservation (INTERNAL, not materialized; lapsed record untouched)
     offers = {}      # id -> OfferState (output shape, mutated in place)
     offer_lock = {}  # id -> int
     bids = {}        # id -> BidState
@@ -406,6 +412,9 @@ def resolve(events, tip_height):
         # canonical state does not accumulate dead reservations. Below V25 no name is `pending` -> no-op.
         for nm in [k for k, n in names.items() if n.get("pending") and n.get("finalizeBy") is not None and height > n["finalizeBy"]]:
             del names[nm]
+        # v2.6: drop expired recapture reservations (lapsed record untouched). Internal map -> no canonical effect.
+        for nm in [k for k, r in recaptures.items() if height > r["finalizeBy"]]:
+            del recaptures[nm]
 
     V15_EPOCH = epoch_of(V15_HEIGHT)
     def paid_through(n): return n["paidThroughEpoch"] if n.get("paidThroughEpoch") is not None else (V15_EPOCH + NAME_TERM_EPOCHS)
@@ -458,6 +467,7 @@ def resolve(events, tip_height):
         v19 = ev["height"] >= V19_HEIGHT
         v23 = ev["height"] >= V23_HEIGHT
         v25 = ev["height"] >= V25_HEIGHT
+        v26 = ev["height"] >= V26_HEIGHT
         fee_to_treasury = _pt((ev.get("paidTo") or {}).get(TREASURY_ADDR)) if ev["kind"] == "propose" else 0
 
         if ev["kind"] == "propose":
@@ -512,7 +522,8 @@ def resolve(events, tip_height):
             elif t == "name":
                 if not v11: continue
                 # v2.5 couples the reveal window to REG_COMMIT_MAX_BLOCKS (the freeze); below V25 unchanged.
-                reg_window = REG_COMMIT_MAX_BLOCKS if v25 else COMMIT_MAX_BLOCKS
+                # v2.6 recapture reuses it; V26 >= V25 by design so (v25 or v26) == v25 below V25 (byte-identical).
+                reg_window = REG_COMMIT_MAX_BLOCKS if (v25 or v26) else COMMIT_MAX_BLOCKS
                 eff_height = ev["height"]
                 if "salt" in rec:
                     ch = name_commit(rec["name"], rec["salt"], who)
@@ -523,8 +534,23 @@ def resolve(events, tip_height):
                 ep_claim = epoch_of(ev["height"])
                 # v2.5: a pending reservation past finalizeBy auto-expires (lazy reopen). Below V25 curActive == cur.
                 cur_active = None if (cur and cur.get("pending") and cur.get("finalizeBy") is not None and ev["height"] > cur["finalizeBy"]) else cur
-                # v1.5 lapsed recapture (UNCHANGED; pay-now until V26). A pending reservation holds no lease -> never lapsed.
+                # v1.5 lapsed recapture. Pay-now in [V15, V26); v2.6 makes it a PAYMENT-FREE recapture reservation
+                # (internal `recaptures`; lapsed record untouched) with the premium moving to the winner's nfinalize.
                 if cur_active and not cur_active.get("pending") and v15 and lapsed(cur_active, ep_claim):
+                    if v26:
+                        if "salt" not in rec: continue   # v2.6: recapture requires a commit-reveal (salt)
+                        cr = recaptures.get(rec["name"])
+                        cr_active = None if (cr and ev["height"] > cr["finalizeBy"]) else cr
+                        better = (cr_active is None) or (
+                            eff_height < cr_active["effHeight"] or
+                            (eff_height == cr_active["effHeight"] and (ev["pos"] < cr_active["pos"] or (ev["pos"] == cr_active["pos"] and lt(ev["id"], cr_active["id"])))))
+                        if not better: continue
+                        my_r = sum(1 for nm, r in recaptures.items()
+                                   if r["owner"] == who and nm != rec["name"] and ev["height"] <= r["finalizeBy"])
+                        if my_r >= MAX_PENDING_REG: continue
+                        recaptures[rec["name"]] = {"owner": who, "effHeight": eff_height, "pos": ev["pos"], "id": ev["id"],
+                                                   "height": ev["height"], "finalizeBy": eff_height + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS}
+                        continue
                     fee = expired_claim_fee(rec["name"], ep_claim - (paid_through(cur_active) + NAME_GRACE_EPOCHS), ev["height"])
                     if fee_to_treasury < fee: continue
                     for o in offers.values():
@@ -575,18 +601,39 @@ def resolve(events, tip_height):
                 # via the freeze-window math; viaFill would trip the wallet's namespv caution on every fresh name).
                 if not v25: continue
                 n = names.get(rec["name"])
-                if not n or not n.get("pending") or n["owner"] != who: continue
-                c_h = commits.get(name_commit(rec["name"], rec["salt"], who))
-                if c_h is None or c_h != n["effHeight"]: continue
-                if not (ev["height"] > n["effHeight"] + REG_COMMIT_MAX_BLOCKS): continue
-                if n.get("finalizeBy") is not None and ev["height"] > n["finalizeBy"]: continue
-                if fee_to_treasury < name_reg_fee(rec["name"], ev["height"]): continue
-                # parity note: JS mirror sets these to undefined (key kept); we pop (key removed). SAFE only
-                # because every reader tests truthiness, never key-presence, and a finalized name never hits the
-                # pending materialization branch. Keep both sides key-presence-agnostic.
-                n.pop("pending", None); n.pop("finalizeBy", None)
-                n["paidThroughEpoch"] = epoch_of(ev["height"]) + NAME_TERM_EPOCHS
-                fees_paid += name_reg_fee(rec["name"], ev["height"])
+                if n and n.get("pending") and n["owner"] == who:
+                    # ── v2.5 REGISTRATION finalize (base fee) ──
+                    c_h = commits.get(name_commit(rec["name"], rec["salt"], who))
+                    if c_h is None or c_h != n["effHeight"]: continue
+                    if not (ev["height"] > n["effHeight"] + REG_COMMIT_MAX_BLOCKS): continue
+                    if n.get("finalizeBy") is not None and ev["height"] > n["finalizeBy"]: continue
+                    if fee_to_treasury < name_reg_fee(rec["name"], ev["height"]): continue
+                    # parity note: JS mirror sets these to undefined (key kept); we pop (key removed). SAFE only
+                    # because every reader tests truthiness, never key-presence, and a finalized name never hits the
+                    # pending materialization branch. Keep both sides key-presence-agnostic.
+                    n.pop("pending", None); n.pop("finalizeBy", None)
+                    n["paidThroughEpoch"] = epoch_of(ev["height"]) + NAME_TERM_EPOCHS
+                    fees_paid += name_reg_fee(rec["name"], ev["height"])
+                    continue
+                # ── v2.6 RECAPTURE finalize (decaying premium) ──
+                r = recaptures.get(rec["name"]) if v26 else None
+                if r and r["owner"] == who:
+                    c_h = commits.get(name_commit(rec["name"], rec["salt"], who))
+                    if c_h is None or c_h != r["effHeight"]: continue
+                    if not (ev["height"] > r["effHeight"] + REG_COMMIT_MAX_BLOCKS): continue
+                    if ev["height"] > r["finalizeBy"]: continue
+                    cur = names.get(rec["name"]); ep = epoch_of(ev["height"])
+                    if not cur or cur.get("pending") or not lapsed(cur, ep):
+                        recaptures.pop(rec["name"], None); continue
+                    fee = expired_claim_fee(rec["name"], ep - (paid_through(cur) + NAME_GRACE_EPOCHS), ev["height"])
+                    if fee_to_treasury < fee: continue
+                    for o in offers.values():
+                        if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
+                            release_give(o); o["status"] = "cancelled"
+                    names[rec["name"]] = {"owner": who, "effHeight": r["effHeight"], "pos": r["pos"], "id": r["id"],
+                                          "height": r["height"], "locked": False, "paidThroughEpoch": ep + NAME_TERM_EPOCHS}
+                    recaptures.pop(rec["name"], None)
+                    fees_paid += fee
 
             elif t == "nxfer":
                 n = names.get(rec["name"])
