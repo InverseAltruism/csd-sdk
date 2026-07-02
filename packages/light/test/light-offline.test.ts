@@ -191,5 +191,58 @@ if (inclBlock) {
   ok("a tampered batch seed header is REJECTED (the batch path carries zero trust)", threwB);
 }
 
+// ── syncFromCheckpoint fails SOFT on batch-source unavailability (Plan 57 R1) ──
+// A configured-but-FAILING batch source (origin outage / 429 storm / empty page) must degrade the
+// cold start to the per-height provider, not hard-fail it (operator fail-soft directive). Only
+// the FETCH is guarded: a tampered seed still fails closed in seedTrusted whichever source
+// produced it, so the fallback trades zero trust for availability.
+{
+  let perHeight = 0, batchCalls = 0, batchDown = true;
+  const cProv: HeaderProvider = async (h: number) => { perHeight++; const r = byH.get(h); if (!r) throw new Error(`no fixture at ${h}`); return { header: r.header, hash: r.hash, txids: r.txids }; };
+  // Down during the cold start, recovers afterwards (sync() itself keeps the hard-fail posture on
+  // purpose: incremental callers re-poll, so a failed tick self-heals; only the SEED degrades).
+  const flakyBatch = async (from: number, count: number) => {
+    batchCalls++;
+    if (batchDown) throw new Error("upstream 429");
+    const out: { header: BlockHeader; hash: string }[] = [];
+    for (let h = from; h < from + count; h++) { const r = byH.get(h); if (!r) break; out.push({ header: r.header, hash: r.hash }); }
+    return out;
+  };
+  const lcD = new LightClient({ headerProvider: cProv, headersBatchProvider: flakyBatch });
+  await lcD.syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1);
+  ok("a THROWING batch source degrades the cold start to per-height (fail-soft, window re-fetched whole)",
+    batchCalls === 1 && perHeight === LWMA_WINDOW && lcD.tip!.height === CP && lcD.tip!.hash.toLowerCase() === cpHash.toLowerCase());
+  batchDown = false; // source recovers
+  const fwdD = await lcD.sync(FX.tip);
+  ok("the degraded-seed client verifies forward to the same tip once the batch source recovers", fwdD.height === FX.tip && fwdD.hash === verified.hash);
+
+  let perHeightE = 0;
+  const cProvE: HeaderProvider = async (h: number) => { perHeightE++; const r = byH.get(h)!; return { header: r.header, hash: r.hash, txids: r.txids }; };
+  const emptyBatch = async () => [] as { header: BlockHeader; hash: string }[];
+  const lcE = new LightClient({ headerProvider: cProvE, headersBatchProvider: emptyBatch });
+  await lcE.syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1);
+  ok("an EMPTY-PAGE batch response degrades the same way (availability failure, not a hard fail)",
+    perHeightE === LWMA_WINDOW && lcE.tip!.hash.toLowerCase() === cpHash.toLowerCase());
+
+  // zero trust preserved in degraded mode: batch down AND the per-height source tampered -> closed
+  const evilProv: HeaderProvider = async (h: number) => {
+    const r = byH.get(h)!;
+    if (h === CP - 3) {
+      const bad = { ...r.header, merkle: r.header.merkle.replace(/[0-9a-f]$/, (c) => (c === "0" ? "1" : "0")) } as BlockHeader;
+      return { header: bad, hash: r.hash, txids: r.txids };
+    }
+    return { header: r.header, hash: r.hash, txids: r.txids };
+  };
+  let threwD = false;
+  try { await new LightClient({ headerProvider: evilProv, headersBatchProvider: async () => { throw new Error("down"); } }).syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1); } catch { threwD = true; }
+  ok("degraded mode keeps zero trust: a tampered per-height seed is REJECTED", threwD);
+
+  // batch-ONLY client (no per-height source): the hard fail stays, and it surfaces the REAL
+  // batch error, not the default provider's misleading "needs a client/baseUrl" config error.
+  let msgO = "";
+  try { await new LightClient({ headersBatchProvider: async () => { throw new Error("upstream 429"); } }).syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1); } catch (e: any) { msgO = e?.message ?? String(e); }
+  ok("a batch-ONLY client still hard-fails with the ORIGINAL batch error", msgO === "upstream 429");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -26,6 +26,10 @@ ok("DET-PAIDTO-1 guard: negative, non-integer, unsafe, and non-number values are
     { addr: A, value: 3 },
   ]), { [A]: "3" }));
 ok("zero-value outputs still register the addr (value '0')", deepEq(paidToFromOutputs([{ addr: A, value: 0 }]), { [A]: "0" }));
+// Null-proto accumulator (Plan 57 R1): a hostile addr named "__proto__" must land as an OWN key
+// (a plain-object accumulator silently LOSES it to the prototype setter and emits "{}").
+ok("addr named __proto__ lands as an own key (null-proto accumulator)",
+  JSON.stringify(paidToFromOutputs([{ addr: "__proto__", value: 5 }])) === '{"__proto__":"5"}');
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

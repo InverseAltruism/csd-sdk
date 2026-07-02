@@ -44,7 +44,10 @@ export interface LightClientOptions {
   headerProvider?: HeaderProvider;
   /** Optional BATCH header source (e.g. an indexer /headers/{from}/{count} endpoint): sync()
    *  AND syncFromCheckpoint prefer it, collapsing per-height full-block fetches into a few
-   *  header-only requests. Carries zero trust either way (every row is PoW/LWMA-verified). */
+   *  header-only requests. Carries zero trust either way (every row is PoW/LWMA-verified).
+   *  Failure policy differs by call: syncFromCheckpoint DEGRADES to the per-height source when
+   *  the batch source throws or returns an empty page (one-shot cold start, no self-heal), while
+   *  sync() still hard-fails (incremental callers re-poll, so a failed tick heals itself). */
   headersBatchProvider?: HeadersBatchProvider;
   /** Pin checkpoints {height: expectedHash}: any header at a pinned height — whether synced forward,
    *  seeded, or restored from a snapshot — must match, else it's rejected (optional trust anchor). */
@@ -61,10 +64,13 @@ export class LightClient {
   baseHeight = 0;
 
   private readonly batch?: HeadersBatchProvider;
+  /** Whether a real per-height source exists (vs the default provider that can only throw). */
+  private readonly hasHeaderSource: boolean;
 
   constructor(opts: LightClientOptions = {}) {
     this.client = opts.client ?? (opts.baseUrl ? new CsdClient({ baseUrl: opts.baseUrl }) : undefined);
     this.batch = opts.headersBatchProvider;
+    this.hasHeaderSource = !!(opts.headerProvider ?? this.client);
     this.checkpoints = opts.checkpoints ?? {};
     this.provider = opts.headerProvider ?? (async (h: number) => {
       if (!this.client) throw new Error("LightClient needs a client/baseUrl or a headerProvider");
@@ -192,19 +198,34 @@ export class LightClient {
   /** Fetch + seed the LWMA window ending at `checkpointHeight`, asserting its hash, then ready to sync forward. */
   async syncFromCheckpoint(checkpointHeight: number, checkpointHash: string, context = LWMA_WINDOW): Promise<void> {
     const start = Math.max(0, checkpointHeight - context);
-    const seed: { height: number; header: BlockHeader; hash: string }[] = [];
+    let seed: { height: number; header: BlockHeader; hash: string }[] = [];
     // Prefer the batch source exactly like sync() does (Plan 56 A.3 finding 6: the common
     // cold-start path was paying the per-height full-block cost the batch hook exists to remove).
     // Same trust as the per-height provider: seedTrusted still checks PoW + prev links + pinned
     // checkpoints, and the final checkpoint-hash assert anchors the whole window.
+    // Fail-SOFT on batch-source unavailability (Plan 57 R1): a configured-but-failing batch
+    // source (origin outage, 429 storm, empty page) degrades the COLD START to the per-height
+    // provider instead of hard-failing it. Only the FETCH is guarded: a tampered seed still
+    // fails closed inside seedTrusted whichever source produced it, so the fallback trades zero
+    // trust for availability. A partial batch window is discarded and re-fetched whole. Cost is
+    // bounded to the pre-batch baseline (the per-height loop aborts on its FIRST failure, so a
+    // total-origin outage costs one batch attempt plus one per-height attempt, then fails
+    // closed). A batch-ONLY client (no per-height source) keeps the hard fail: surfacing the
+    // real batch error beats a misleading "needs a client/baseUrl" from the default provider.
     if (this.batch) {
-      for (let h = start; h <= checkpointHeight; ) {
-        const want = Math.min(512, checkpointHeight - h + 1);
-        const rows = await this.batch(h, want);
-        if (!rows.length) throw new Error(`batch provider returned no headers at ${h}`);
-        for (const r of rows.slice(0, want)) { seed.push({ height: h, header: r.header, hash: r.hash }); h++; }
+      try {
+        for (let h = start; h <= checkpointHeight; ) {
+          const want = Math.min(512, checkpointHeight - h + 1);
+          const rows = await this.batch(h, want);
+          if (!rows.length) throw new Error(`batch provider returned no headers at ${h}`);
+          for (const r of rows.slice(0, want)) { seed.push({ height: h, header: r.header, hash: r.hash }); h++; }
+        }
+      } catch (e) {
+        if (!this.hasHeaderSource) throw e;
+        seed = [];
       }
-    } else {
+    }
+    if (!seed.length) {
       for (let h = start; h <= checkpointHeight; h++) { const { header, hash } = await this.provider(h); seed.push({ height: h, header, hash }); }
     }
     this.seedTrusted(seed, checkpointHash);
