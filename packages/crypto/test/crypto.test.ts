@@ -1,6 +1,6 @@
 // @inversealtruism/csd-crypto conformance: address derivation, LOW-S determinism, verify, against the
 // node's funded key (block-21043 era) + property checks.
-import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig } from "../src/index.js";
+import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig, parseScriptSig, signerAddrFromScriptSig, recoverSigner } from "../src/index.js";
 import { sighash } from "@inversealtruism/csd-codec";
 import { GOLDEN_TX } from "@inversealtruism/csd-vectors";
 
@@ -39,6 +39,42 @@ ok("buildScriptSig is 99 bytes (0x40+64+0x21+33)", buildScriptSig(a.sig64, a.pub
 
 const g = keygen();
 ok("keygen produces a valid self-consistent keypair", isValidPriv(g.priv) && addrFromPriv(g.priv) === g.addr);
+
+// ── scriptSig parsing: the two contracts (Plan 57 B4; see the src block comment) ──
+{
+  const ss = buildScriptSig(a.sig64, a.pub33);           // a REAL signed script for this digest
+  const expectAddr = addrFromPriv(PRIV);
+
+  // round-trip: build -> parse recovers the exact fields
+  const p = parseScriptSig(ss);
+  ok("parseScriptSig round-trips buildScriptSig (sig64+pub33)", p !== null && p.sig64 === a.sig64 && p.pub33 === a.pub33);
+  ok("signerAddrFromScriptSig == hash160(pub) == the signer's addr", signerAddrFromScriptSig(ss) === expectAddr);
+
+  // SCANNER contract: trailing bytes tolerated (matches chainscan.ts/decode.ts byte-for-byte)
+  const trailing = ss + "deadbeef";
+  ok("scanner contract: trailing bytes tolerated by parse + addr", parseScriptSig(trailing) !== null && signerAddrFromScriptSig(trailing) === expectAddr);
+  // WALLET contract: exact length + signature must verify
+  ok("strict contract: recoverSigner REJECTS trailing bytes", recoverSigner(trailing, sh) === null);
+  ok("recoverSigner authenticates the honest script", recoverSigner(ss, sh) === expectAddr);
+  ok("recoverSigner rejects a wrong digest (anti re-attribution)", recoverSigner(ss, "0x" + "00".repeat(32)) === null);
+  {
+    // substitute another key's pubkey into the script: structural parse still succeeds (scanner
+    // attributes to the substituted key; the node validated the real spend), strict recover fails.
+    const forged = "0x40" + a.sig64.slice(2) + "21" + pubFromPriv("0x" + "22".repeat(32)).slice(2);
+    ok("substituted pubkey: scanner parses (structural), strict recover REFUSES", parseScriptSig(forged) !== null && recoverSigner(forged, sh) === null);
+  }
+  // malformations: both contracts refuse
+  ok("wrong sig-length prefix refused", parseScriptSig("0x41" + ss.slice(4)) === null);
+  ok("wrong pub-length marker refused", parseScriptSig(ss.slice(0, 132) + "22" + ss.slice(134)) === null);
+  ok("too-short script refused", parseScriptSig(ss.slice(0, 100)) === null && recoverSigner(ss.slice(0, 100), sh) === null);
+  ok("non-hex garbage refused without throwing", parseScriptSig("0x40" + "zz".repeat(64) + "21" + "aa".repeat(33)) === null);
+  {
+    // uppercase-hex script: both contracts normalize case (node RPC emits lowercase; defense only)
+    const upper = "0x" + ss.slice(2).toUpperCase();
+    ok("uppercase hex normalizes in both contracts", signerAddrFromScriptSig(upper) === expectAddr && recoverSigner(upper, sh) === expectAddr);
+  }
+  ok("null/undefined refused", parseScriptSig(null) === null && signerAddrFromScriptSig(undefined) === null && recoverSigner(null, sh) === null);
+}
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

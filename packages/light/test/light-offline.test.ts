@@ -156,5 +156,40 @@ if (inclBlock) {
   ok("H3: the real header at the tip (valid timestamp) still ingests", okReal);
 }
 
+// ── syncFromCheckpoint prefers the batch provider (Plan 57 B4; Plan 56 A.3 finding 6) ──
+// The common cold-start path used to fetch the ~45-header seed window one FULL BLOCK at a time
+// even when a batch hook was configured; sync() already preferred the batch. Prove: (1) the seed
+// now rides the batch (1 call, 0 per-height), (2) the batch-seeded client verifies forward to the
+// same tip as the per-height client, (3) a tampered batch seed row is rejected (zero-trust kept).
+{
+  let perHeight = 0, batchCalls = 0;
+  const cProv: HeaderProvider = async (h: number) => { perHeight++; const r = byH.get(h); if (!r) throw new Error(`no fixture at ${h}`); return { header: r.header, hash: r.hash, txids: r.txids }; };
+  const cBatch = async (from: number, count: number) => {
+    batchCalls++;
+    const out: { header: BlockHeader; hash: string }[] = [];
+    for (let h = from; h < from + count; h++) { const r = byH.get(h); if (!r) break; out.push({ header: r.header, hash: r.hash }); }
+    return out;
+  };
+  const lcB = new LightClient({ headerProvider: cProv, headersBatchProvider: cBatch });
+  // context = LWMA_WINDOW - 1: the fixture starts exactly one LWMA window before CP, so the
+  // default context (one extra header of slack) would reach below the fixture's first height.
+  await lcB.syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1);
+  ok("checkpoint seed rides the batch provider (1 batch call, 0 per-height fetches)", batchCalls === 1 && perHeight === 0);
+  ok("batch-seeded window ends at the pinned checkpoint", lcB.tip!.height === CP && lcB.tip!.hash.toLowerCase() === cpHash.toLowerCase());
+  const fwd = await lcB.sync(FX.tip);
+  ok("forward sync from a batch-seeded checkpoint reaches the same verified tip", fwd.height === FX.tip && fwd.hash === verified.hash);
+
+  const evilBatch = async (from: number, count: number) => {
+    const rows = await cBatch(from, count);
+    const mid = Math.floor(rows.length / 2);
+    const h = { ...rows[mid]!.header, merkle: rows[mid]!.header.merkle.replace(/[0-9a-f]$/, (c) => (c === "0" ? "1" : "0")) };
+    rows[mid] = { header: h, hash: rows[mid]!.hash }; // original hash + tampered header -> hash check must trip
+    return rows;
+  };
+  let threwB = false;
+  try { await new LightClient({ headerProvider: cProv, headersBatchProvider: evilBatch }).syncFromCheckpoint(CP, cpHash, LWMA_WINDOW - 1); } catch { threwB = true; }
+  ok("a tampered batch seed header is REJECTED (the batch path carries zero trust)", threwB);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

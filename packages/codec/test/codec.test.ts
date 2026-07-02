@@ -4,6 +4,8 @@ import {
   serialize, deserialize, txid, sighash, strippedTx,
   serializeHeader, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
   payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128, MAX_TX_BYTES,
+  COINBASE_TXID, COINBASE_VOUT, isCoinbaseInput,
+  blockReward, blockRewardBase, emittedSupplyBase, maxSupplyBase, INITIAL_REWARD, HALVING_INTERVAL,
 } from "../src/index.js";
 import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
 
@@ -111,6 +113,26 @@ console.log("\n— chainwork u128 faithfulness (A-S4: clamp per-block work to u1
 eq("workForBits clamps an extreme low-target to MAX_U128", workForBits(0x10000001) === MAX_U128, true);
 eq("workForBits at real difficulty is NOT clamped (< MAX_U128)", workForBits(LIVE_BLOCKS[0]!.header.bits) < MAX_U128, true);
 eq("workForBits at real difficulty is > 0", workForBits(LIVE_BLOCKS[0]!.header.bits) > 0n, true);
+
+console.log("\n— coinbase sentinels + exact-bigint emission (Plan 57 B4) —");
+eq("coinbase sentinel exports match the wire constants", COINBASE_TXID === "0x" + "00".repeat(32) && COINBASE_VOUT === 0xffffffff, true);
+eq("isCoinbaseInput: true only for the exact sentinel pair",
+  isCoinbaseInput({ prevTxid: COINBASE_TXID, vout: COINBASE_VOUT, scriptSig: "0x" })
+  && !isCoinbaseInput({ prevTxid: COINBASE_TXID, vout: 0, scriptSig: "0x" })
+  && !isCoinbaseInput({ prevTxid: "0x" + "11".repeat(32), vout: COINBASE_VOUT, scriptSig: "0x" }), true);
+eq("blockRewardBase mirrors blockReward across era boundaries",
+  [0, 1, HALVING_INTERVAL - 1, HALVING_INTERVAL, HALVING_INTERVAL * 2, HALVING_INTERVAL * 63, HALVING_INTERVAL * 64]
+    .every((h) => blockRewardBase(h) === BigInt(blockReward(h))), true);
+eq("emittedSupplyBase: a genesis-only chain has emitted one reward (blocks 0..0)", emittedSupplyBase(0) === BigInt(INITIAL_REWARD), true);
+// Live-chain pin (2026-07-02, tip 45560): the indexer's DB-derived emitted supply
+// (SUM(coinbase) - SUM(fees)) was 227805000000000 = 45561 blocks x 50 CSD. This is the
+// off-by-one contract consumers must rely on: blocks 0..height INCLUSIVE.
+eq("emittedSupplyBase matches the live indexer emitted_supply at height 45560", emittedSupplyBase(45560) === 227_805_000_000_000n, true);
+eq("emittedSupplyBase crosses the first halving exactly (one era-1 block)",
+  emittedSupplyBase(HALVING_INTERVAL) === BigInt(HALVING_INTERVAL) * BigInt(INITIAL_REWARD) + BigInt(INITIAL_REWARD) / 2n, true);
+eq("maxSupplyBase matches the live indexer max_supply", maxSupplyBase() === 10_511_999_988_436_800n, true);
+eq("emittedSupplyBase saturates at maxSupplyBase past the last era", emittedSupplyBase(HALVING_INTERVAL * 64 + 12_345) === maxSupplyBase(), true);
+eq("emittedSupplyBase: negative/NaN heights emit 0n", emittedSupplyBase(-5) === 0n && emittedSupplyBase(NaN) === 0n, true);
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

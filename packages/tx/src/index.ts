@@ -109,9 +109,11 @@ export interface BuildResult extends Partial<Signed> { ok: boolean; error?: stri
 // `verifyInputValues` in @inversealtruism/csd-client (used by the wallet and recommended for all
 // RPC-facing builders). A caller that legitimately wants a larger explicit fee passes `maxFee`.
 export const MAX_FEE_BACKSTOP = 100_000_000;   // 1 CSD absolute floor — every honest fee is well under this
-const MAX_FEE_INPUT_FRACTION = 0.10;           // …and ≤ 10% of inputs; a burned-change fee is ~100% of inputs
+// Exported (Plan 57 B4): cairnx/txbuild.ts carried a KEEP-IN-SYNC copy of this fraction exactly
+// because it was module-private. One source now; the copy retires at the next cairnx re-pin.
+export const MAX_FEE_INPUT_FRACTION = 0.10;    // …and ≤ 10% of inputs; a burned-change fee is ~100% of inputs
 /** The largest fee selectAndAssemble will assemble for this input total without an explicit override. */
-function feeCap(inTotal: number): number { return Math.max(MAX_FEE_BACKSTOP, Math.floor(inTotal * MAX_FEE_INPUT_FRACTION)); }
+export function feeCap(inTotal: number): number { return Math.max(MAX_FEE_BACKSTOP, Math.floor(inTotal * MAX_FEE_INPUT_FRACTION)); }
 
 /** Validate outputs + fee and return the output sum (or an error result). Shared by every builder. */
 function validateOuts(outs: TxOutput[], fee: number, maxFee?: number): { sumOut: number } | BuildResult {

@@ -25,9 +25,12 @@ export interface TxInput { prevTxid: string; vout: number; scriptSig: string }
 export interface TxOutput { value: number | bigint; scriptPubkey: string }
 export interface Tx { version: number; inputs: TxInput[]; outputs: TxOutput[]; locktime: number; app: App }
 
-const COINBASE_TXID = "0x" + "00".repeat(32);
-const COINBASE_VOUT = 0xffffffff;
-const isCoinbaseInput = (i: TxInput): boolean => i.prevTxid === COINBASE_TXID && i.vout === COINBASE_VOUT;
+/** The coinbase input sentinel (prevTxid all-zero, vout 0xffffffff). Exported (Plan 57 B4) so
+ *  scanners/tools stop re-typing the literals; the u32 writer's bounds-reject exists precisely
+ *  because vout=-1 would forge COINBASE_VOUT. */
+export const COINBASE_TXID = "0x" + "00".repeat(32);
+export const COINBASE_VOUT = 0xffffffff;
+export const isCoinbaseInput = (i: TxInput): boolean => i.prevTxid === COINBASE_TXID && i.vout === COINBASE_VOUT;
 
 /** Strip script_sig from every non-coinbase input (the txid/sighash preimage). */
 export function strippedTx(tx: Tx): Tx {

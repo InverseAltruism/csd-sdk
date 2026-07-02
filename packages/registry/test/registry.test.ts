@@ -187,3 +187,24 @@ test("M3: reverseIdentity picks the heavier handle (integer weight), order-indep
     assert.equal(got?.handle, "hx", `heavier handle (hx, fee 200) is primary regardless of feed order (seed ${s})`);
   }
 });
+
+// ── HTTP discovery error posture (Plan 57 B4): not-found is a VALUE, an outage is an ERROR ──
+test("resolveName/reverseName: 404 -> null, 5xx -> throw, 200 -> value (unified with discover*)", async () => {
+  const { resolveName, reverseName } = await import("../src/index.js");
+  const src = (status: number, body: unknown = null) => ({
+    baseUrl: "http://fixture",
+    fetch: (async () => ({ ok: status >= 200 && status < 300, status, json: async () => body })) as unknown as typeof fetch,
+  });
+  assert.equal(await resolveName(src(404), "ghost"), null, "unknown handle (404) is null");
+  assert.equal(await reverseName(src(404), "0x" + "aa".repeat(20)), null, "unknown address (404) is null");
+  await assert.rejects(() => resolveName(src(500), "any"), /500/, "an indexer outage THROWS (no longer conflated with absence)");
+  await assert.rejects(() => reverseName(src(503), "0x" + "aa".repeat(20)), /503/);
+  const hit = { handle: "alice", address: "0x" + "aa".repeat(20) };
+  assert.deepEqual(await resolveName(src(200, hit), "alice"), hit, "a 200 body flows through");
+});
+
+test("resolveName: 200 with a JSON null body is null (not-found as a value, indexer variant)", async () => {
+  const { resolveName } = await import("../src/index.js");
+  const src = { baseUrl: "http://fixture", fetch: (async () => ({ ok: true, status: 200, json: async () => null })) as unknown as typeof fetch };
+  assert.equal(await resolveName(src, "ghost"), null);
+});

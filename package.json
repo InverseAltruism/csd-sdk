@@ -14,7 +14,8 @@
     "audit:selftest": "node conformance/audit-selftest.mjs && node conformance/invariants.mjs --selftest",
     "audit:invariants": "node conformance/invariants.mjs",
     "audit:money-safety": "node conformance/money-safety.mjs",
-    "audit:race": "node conformance/race-harness.mjs"
+    "audit:race": "node conformance/race-harness.mjs",
+    "audit:scriptsig": "node conformance/scriptsig-differential.mjs"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

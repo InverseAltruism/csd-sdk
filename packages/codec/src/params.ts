@@ -48,3 +48,40 @@ export function blockReward(height: number): number {
   if (halvings >= MAX_HALVINGS) return 0;
   return Math.floor(INITIAL_REWARD / 2 ** halvings);
 }
+
+// ── exact-bigint emission (Plan 57 B4). The number `blockReward` above stays for compat; these
+// exist because the indexer's analytics discipline is exact BigInt end to end and it (plus
+// cairn's netstats) had re-typed this schedule locally. Semantics pinned by test against the
+// live chain: emission counts blocks 0..height INCLUSIVE (genesis pays), verified equal to the
+// indexer's DB-derived emitted supply (SUM(coinbase) - SUM(fees)) at a live height. ──
+
+/** blockReward, exact base-unit bigint. Non-finite heights yield 0n (the number twin yields NaN;
+ *  a bigint cannot, and 0n is the same "no reward" answer emittedSupplyBase gives). */
+export function blockRewardBase(height: number): bigint {
+  if (!Number.isFinite(height)) return 0n;
+  const era = Math.floor(height / HALVING_INTERVAL);
+  if (era >= MAX_HALVINGS) return 0n;
+  return BigInt(INITIAL_REWARD) >> BigInt(era);
+}
+
+/** Total subsidy emitted for blocks 0..height inclusive (exact base units). */
+export function emittedSupplyBase(height: number): bigint {
+  if (!Number.isFinite(height) || height < 0) return 0n;
+  const blocks = BigInt(Math.floor(height)) + 1n; // 0..height inclusive
+  const interval = BigInt(HALVING_INTERVAL);
+  let s = 0n;
+  for (let era = 0n; era < BigInt(MAX_HALVINGS); era++) {
+    const eraStart = era * interval;
+    if (blocks <= eraStart) break;
+    const inEra = blocks - eraStart < interval ? blocks - eraStart : interval;
+    s += (BigInt(INITIAL_REWARD) >> era) * inEra;
+  }
+  return s;
+}
+
+/** The asymptotic max supply (all MAX_HALVINGS eras fully emitted), exact base units. */
+export function maxSupplyBase(): bigint {
+  let s = 0n;
+  for (let era = 0n; era < BigInt(MAX_HALVINGS); era++) s += (BigInt(INITIAL_REWARD) >> era) * BigInt(HALVING_INTERVAL);
+  return s;
+}

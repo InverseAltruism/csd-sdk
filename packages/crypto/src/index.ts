@@ -61,3 +61,60 @@ export function verifyDigest(sig64: string, pub33: string, digestHex: string): b
 export function buildScriptSig(sig64: string, pub33: string): string {
   return "0x40" + strip0x(sig64) + "21" + strip0x(pub33);
 }
+
+// ── scriptSig parsing (Plan 56 item 18: the SDK gap that made three consumers re-roll this) ──
+// TWO exports with DELIBERATELY distinct contracts. Do not "unify" them:
+//   parseScriptSig / signerAddrFromScriptSig — STRUCTURAL, the scanner contract.
+//     Attribution-compatible with the copies it replaces (cairn chainscan.ts + csd-indexer
+//     decode.ts; one documented strictness, see the sig-regex note below): length >= 198 hex
+//     chars, TRAILING BYTES TOLERATED, no signature verification. Scanners attribute txs the node
+//     has already consensus-validated, so a sig check there is redundant CPU with new failure
+//     modes; changing tolerance would silently change historical attribution (the full-chain
+//     differential in conformance/ pins zero deltas before any consumer swap).
+//   recoverSigner — STRICT, the wallet/verifier contract (namespv): EXACT length AND the
+//     signature must verify against the caller-supplied digest (the merkle root commits the tx
+//     body but not the scriptSig, so without the sig check a lying node could re-attribute a
+//     record's author).
+
+export interface ParsedScriptSig { sig64: string; pub33: string }
+
+/** Structural parse of a CSD_SIG_V1 scriptSig (scanner contract; see block comment above).
+ *  null on malformation. Trailing bytes beyond the 99-byte script are tolerated by design. */
+export function parseScriptSig(scriptSig: string | null | undefined): ParsedScriptSig | null {
+  if (typeof scriptSig !== "string") return null;
+  const h = strip0x(scriptSig).toLowerCase();
+  if (h.length < 2 + 128 + 2 + 66) return null;
+  if (h.slice(0, 2) !== "40") return null;          // 0x40 = 64-byte sig follows
+  if (h.slice(130, 132) !== "21") return null;      // 0x21 = 33-byte pubkey follows
+  const sig = h.slice(2, 130), pub = h.slice(132, 198);
+  // One deliberate strictness over the replaced copies: the sig region is hex-validated too (the
+  // old scanners never read those bytes, so garbage there still attributed). Unreachable via node
+  // RPC (script_sig is bytes, always hex-encoded) and proven delta-free over the full live chain
+  // (conformance/scriptsig-differential.mjs); required so the returned sig64 is always safe to
+  // hand to verifyDigest and friends.
+  if (!/^[0-9a-f]{128}$/.test(sig) || !/^[0-9a-f]{66}$/.test(pub)) return null;
+  return { sig64: "0x" + sig, pub33: "0x" + pub };
+}
+
+/** The signer's addr20 (hash160 of the embedded pubkey) under the SCANNER contract.
+ *  Drop-in for the deriveAddr copies in cairn/chainscan.ts and csd-indexer/decode.ts. */
+export function signerAddrFromScriptSig(scriptSig: string | null | undefined): string | null {
+  const p = parseScriptSig(scriptSig);
+  if (!p) return null;
+  try { return hash160(hb(p.pub33)); } catch { return null; }
+}
+
+/** Recover + AUTHENTICATE the signer under the STRICT wallet contract: exact 99-byte script and
+ *  the signature must verify against `digestHex` (e.g. sighash(tx)). null on any malformation,
+ *  trailing bytes, or bad signature. Mirrors cairn-wallet namespv's recoverSigner. */
+export function recoverSigner(scriptSig: string | null | undefined, digestHex: string): string | null {
+  if (typeof scriptSig !== "string") return null;
+  const h = strip0x(scriptSig).toLowerCase();
+  if (h.length !== 198) return null;
+  const p = parseScriptSig(h);
+  if (!p) return null;
+  try {
+    if (!verifyDigest(p.sig64, p.pub33, digestHex)) return null;
+    return addrFromPub(p.pub33).toLowerCase();
+  } catch { return null; }
+}

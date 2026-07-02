@@ -43,7 +43,8 @@ export interface LightClientOptions {
   baseUrl?: string;
   headerProvider?: HeaderProvider;
   /** Optional BATCH header source (e.g. an indexer /headers/{from}/{count} endpoint): sync()
-   *  prefers it, collapsing per-height full-block fetches into a few header-only requests. */
+   *  AND syncFromCheckpoint prefer it, collapsing per-height full-block fetches into a few
+   *  header-only requests. Carries zero trust either way (every row is PoW/LWMA-verified). */
   headersBatchProvider?: HeadersBatchProvider;
   /** Pin checkpoints {height: expectedHash}: any header at a pinned height — whether synced forward,
    *  seeded, or restored from a snapshot — must match, else it's rejected (optional trust anchor). */
@@ -192,7 +193,20 @@ export class LightClient {
   async syncFromCheckpoint(checkpointHeight: number, checkpointHash: string, context = LWMA_WINDOW): Promise<void> {
     const start = Math.max(0, checkpointHeight - context);
     const seed: { height: number; header: BlockHeader; hash: string }[] = [];
-    for (let h = start; h <= checkpointHeight; h++) { const { header, hash } = await this.provider(h); seed.push({ height: h, header, hash }); }
+    // Prefer the batch source exactly like sync() does (Plan 56 A.3 finding 6: the common
+    // cold-start path was paying the per-height full-block cost the batch hook exists to remove).
+    // Same trust as the per-height provider: seedTrusted still checks PoW + prev links + pinned
+    // checkpoints, and the final checkpoint-hash assert anchors the whole window.
+    if (this.batch) {
+      for (let h = start; h <= checkpointHeight; ) {
+        const want = Math.min(512, checkpointHeight - h + 1);
+        const rows = await this.batch(h, want);
+        if (!rows.length) throw new Error(`batch provider returned no headers at ${h}`);
+        for (const r of rows.slice(0, want)) { seed.push({ height: h, header: r.header, hash: r.hash }); h++; }
+      }
+    } else {
+      for (let h = start; h <= checkpointHeight; h++) { const { header, hash } = await this.provider(h); seed.push({ height: h, header, hash }); }
+    }
     this.seedTrusted(seed, checkpointHash);
   }
 

@@ -1,6 +1,7 @@
 {
   "name": "@inversealtruism/csd-registry",
-  "version": "0.1.14",
+  "version": "0.1.15",
+  "engines": { "node": ">=18" },
   "description": "Compute Substrate L3 registries \u2014 peer/gateway/identity discovery built entirely on the Propose/Attest primitive. Pure deterministic resolvers (replay an epoch set \u2192 identical result anywhere) + commit-reveal identity + client-side or indexer-served discovery. No new tx types, no fork.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -8,9 +9,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     }
   },
   "files": [

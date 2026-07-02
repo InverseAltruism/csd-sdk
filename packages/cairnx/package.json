@@ -1,6 +1,7 @@
 {
   "name": "@inversealtruism/cairnx-core",
-  "version": "0.1.30",
+  "version": "0.1.31",
+  "engines": { "node": ">=18" },
   "description": "CairnX — tokens, atomic DvP trades and leased .csd names on Compute Substrate, as a pure deterministic convention library (Ordinals/Runes class). Ships the normative CONVENTION.md and the conformance vectors.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -8,9 +9,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     }
   },
   "files": [
@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/vectors.test.ts && tsx test/name-decoy.test.ts && tsx test/client-helpers.test.ts",
+    "test": "tsx test/vectors.test.ts && tsx test/name-decoy.test.ts && tsx test/client-helpers.test.ts && tsx test/paidto.test.ts",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

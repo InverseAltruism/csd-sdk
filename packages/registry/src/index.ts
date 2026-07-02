@@ -62,11 +62,23 @@ async function getJson<T>(src: IndexerSource, path: string): Promise<T> {
 }
 export async function discoverPeers(src: IndexerSource): Promise<RankedPeer[]> { return getJson<RankedPeer[]>(src, "/registry/peers"); }
 export async function discoverGateways(src: IndexerSource): Promise<RankedGateway[]> { return getJson<RankedGateway[]>(src, "/registry/gateways"); }
+// Unified error posture (Plan 57 B4, Plan 56 A.3 finding 7): "not found" is a VALUE (null, the
+// indexer 404s unknown handles), an OUTAGE is an ERROR (throw), matching the discover* siblings.
+// The old catch-all-to-null conflated an unreachable indexer with an unknown handle, so callers
+// could not tell absence from failure. Behavior change lands behind npm pins; call sites audited
+// at each consumer re-pin.
+async function getJsonOr404Null<T>(src: IndexerSource, path: string): Promise<T | null> {
+  const f = src.fetch ?? fetch;
+  const r = await f(src.baseUrl.replace(/\/$/, "") + path);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+  return r.json() as Promise<T | null>;
+}
 export async function resolveName(src: IndexerSource, handle: string): Promise<ResolvedIdentity | null> {
-  try { return await getJson<ResolvedIdentity | null>(src, `/identity/${encodeURIComponent(handle)}`); } catch { return null; }
+  return getJsonOr404Null<ResolvedIdentity>(src, `/identity/${encodeURIComponent(handle)}`);
 }
 export async function reverseName(src: IndexerSource, address: string): Promise<ResolvedIdentity | null> {
-  try { return await getJson<ResolvedIdentity | null>(src, `/address/${address}/identity`); } catch { return null; }
+  return getJsonOr404Null<ResolvedIdentity>(src, `/address/${address}/identity`);
 }
 
 // ── trust-minimized: compute the same answers client-side from raw records ──

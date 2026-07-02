@@ -1,6 +1,7 @@
 {
   "name": "@inversealtruism/csd-siwc",
-  "version": "0.1.14",
+  "version": "0.1.15",
+  "engines": { "node": ">=18" },
   "description": "Sign in with CSD (SIWC) \u2014 audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -8,9 +9,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     }
   },
   "files": [
@@ -33,6 +33,7 @@
   "publishConfig": {
     "access": "public"
   },
+  "homepage": "https://cairn-substrate.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/InverseAltruism/csd-sdk.git"
