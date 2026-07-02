@@ -72,10 +72,13 @@ export class CsdClient {
       try {
         const r = await this.f(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
         if (r.status >= 500 && attempt < maxRetries) { lastErr = new Error(`HTTP ${r.status}`); }
-        else if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`);
+        // 4xx is an answer, not an outage: mark it terminal so the catch below cannot spend the
+        // retry budget on it (pre-fix, the thrown 4xx landed in the same catch as network errors
+        // and WAS retried, violating the documented `retries` contract; found by hostile.test.ts).
+        else if (!r.ok) throw Object.assign(new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`), { terminal: r.status < 500 });
         else return (await this.readCapped(r, path)) as T;
       } catch (e) {
-        if (attempt >= maxRetries) throw e;
+        if (attempt >= maxRetries || (e as { terminal?: boolean } | null)?.terminal) throw e;
         lastErr = e;
       }
       // full-jitter backoff: 250ms·2^attempt, capped at 5s

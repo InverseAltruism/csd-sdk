@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/vectors.test.ts"
+    "test": "tsx test/vectors.test.ts",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "license": "MIT",
   "sideEffects": false,

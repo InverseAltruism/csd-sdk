@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/siwc.test.ts"
+    "test": "tsx test/siwc.test.ts",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
     "@inversealtruism/csd-codec": "workspace:*",
