@@ -56,6 +56,36 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+### 0.1.32: V27 young-name sale-embargo relaxation + polish (2026-07-03)
+- **Consensus change (gated, non-retroactive): V27_HEIGHT = 52,500.** At an offer's anchor height >= V27 the
+  young-name SALE embargo shrinks from `COMMIT_MAX_BLOCKS` (240 blocks, ~8h) to `REG_COMMIT_MAX_BLOCKS` (8
+  blocks, ~16min): `saleEmbargo = ev.height >= V27_HEIGHT ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS`
+  (resolve.ts offer branch; mirrored in cairnx_ref.py). Provably redundant under the V25 sealed model (an
+  offer requires a finalized/non-pending name, and finalize requires the displacement freeze
+  `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS` to have passed, so every window-valid displacer's reveal
+  deadline is closed by the time any sale can exist; displacement of a finalized name is arithmetically
+  impossible). Below V27: byte-identical (the 240-block rule). This is a RELAXATION, so it is a HARD ADOPTION
+  GATE: every replayer (Granus, clarvis, the vendored UI/wallet bundles) MUST run 0.1.32 before the tip
+  crosses 52,500, else a stale one rejects an offer the chain accepts (view divergence, no fund loss). Set
+  past V26 (51,200) and the unrelated V23 nset-clear gate (also 52,000) so no two activations share a block.
+  Pinned by conformance/v27-sale-embargo-crosslang.mjs (straddle, both languages) + a money-safety
+  sealed-sale scenario (0 burns); non-retroactivity proven by 64/64 unchanged vectors + fuzz 1500/1500 +
+  an independent old-0.1.31-vs-new-0.1.32 differential (1000/1000 byte-identical) + a live 269-event replay.
+- **Behavior-preserving polish (byte-identical below AND at every prior gate; proven by the same suites):**
+  the comment-truth pass (V18-V26 stale "placeholder/dormant" wording corrected to their active heights);
+  `delete n.pending/finalizeBy` instead of `= undefined` (removes the one JS/Python present-undefined-vs-pop
+  asymmetry); extracted `voidOpenNameOffers` (from 4 inline copies) and `earlierAnchor` (from 3 displacement
+  contests); dropped a dead `isName` import; documented the tip+1 closing sweep and the
+  unreachable-under-production-constants pay-now reclaim. **CONVENTION.md §5.1 A2:** documented the
+  numeric-key trap CORRECTLY for BOTH hash paths. `canonicalJson` (record/payload) sorts pure code-unit
+  (`"10"` before `"2"`), but `canonicalState` inherits `JSON.stringify`'s enumeration (integer-index keys
+  ascending-numeric FIRST, then code-unit, so `"2"` before `"10"`). A third-party impl MUST reproduce both;
+  a review caught the first draft had it inverted for canonicalState (a genuine fork trap for numeric names).
+- Bumped **only** cairnx-core (0.1.31 -> 0.1.32); csd-* stay 0.1.15.
+- (History note: 0.1.15-0.1.31 shipped V20-V26: late-fill fix, duration cap add/remove, nset-clear,
+  length-graded fee, and the V25/V26 sealed reservation/recapture. Those bumps were logged in their plan
+  docs + handoffs rather than here; this entry re-establishes the per-gate History convention.)
+
 ### 0.1.14 — quality/AI-slop pass (2026-06-20)
 - **No consensus-surface or runtime-behavior change** (the forward-codec + resolver differential vs the live
   node stays at 0; all suites byte-identical). Maintainability only: corrected over-claiming consensus comments
