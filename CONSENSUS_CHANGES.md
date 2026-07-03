@@ -56,7 +56,17 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-### 0.1.32: V27 young-name sale-embargo relaxation + polish (2026-07-03)
+## 0.1.33 (2026-07-03) - activation heights pulled in (no rule changes)
+
+`V24_HEIGHT` 49,200 -> 46,400 · `V25_HEIGHT` 51,000 -> 46,440 · `V26_HEIGHT` 51,200 -> 46,480 ·
+`V27_HEIGHT` 52,500 -> 46,520 (tip was ~46,071 at edit). ZERO byte-level rule changes: the same
+gates activate sooner. Safe ONLY as a coordinated same-day re-pin of every verifier (cairnx svc,
+mm, website vendor bundle, wallet vendored SPV, cli, clarvis) BEFORE the tip crosses 46,400 -
+operator-approved private-alpha compression of the adoption windows (the wallet is being
+resubmitted to CWS anyway). All recorded history (<= tip at edit) is below every new height, so
+pre-gate replay stays byte-identical and the pinned conformance corpus is unaffected.
+
+## 0.1.32: V27 young-name sale-embargo relaxation + polish (2026-07-03)
 - **Consensus change (gated, non-retroactive): V27_HEIGHT = 52,500.** At an offer's anchor height >= V27 the
   young-name SALE embargo shrinks from `COMMIT_MAX_BLOCKS` (240 blocks, ~8h) to `REG_COMMIT_MAX_BLOCKS` (8
   blocks, ~16min): `saleEmbargo = ev.height >= V27_HEIGHT ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS`

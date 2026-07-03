@@ -83,9 +83,18 @@ console.log(`v27 sale-embargo relaxation (V25=${V25}, V27=${V27}, newEmbargo=${W
 }
 
 // ── CONTROL: a name older than the OLD embargo is sellable under BOTH rules (V27 changes nothing for it). ──
+// The registration height C sits COMMIT_MAX_BLOCKS+60 below V27; whether that lands pre- or post-V25
+// depends on the live gate spacing (it moved when the 2026-07-03 height pull compressed the gates), so
+// register with whichever flow is valid AT C: sealed (commit → free reveal → finalize) at >= V25, or the
+// pre-V25 paid reveal (the reveal itself carries the reg fee; nfinalize does not exist yet down there).
+function paidReveal(h, name, pos = 1) {
+  const rec = { v: 1, t: "name", name, salt: SALT };
+  const fee = nameRegFee(name, h);
+  return { kind: "propose", id: nid(), proposer: A, uri: cj(rec), payloadHash: ph(rec), height: h, pos, expiresEpoch: 9e14, paidTo: { [TREAS]: String(fee) } };
+}
 {
   const C = V27 - (COMMIT_MAX_BLOCKS + 60);    // old enough that age > 240 even at a pre-V27 offer
-  const { events } = sealedReg(C, "oldname");
+  const events = C >= V25 ? sealedReg(C, "oldname").events : [commit(C, "oldname"), paidReveal(C + 2, "oldname")];
   const hPre = V27 - 10;                       // < V27; age = COMMIT_MAX_BLOCKS + 50 > 240
   ok(`control sanity: age ${hPre - C} exceeds the old embargo ${COMMIT_MAX_BLOCKS}`, hPre - C > COMMIT_MAX_BLOCKS);
   const evPre = [...events, offer(hPre, "oldname")];

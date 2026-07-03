@@ -105,7 +105,7 @@ export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
 // on the V24 bundle BEFORE the tip crosses V24; set the height with runway for wallet adoption, like V23. (Honest
 // registration is unaffected — the website builds the fee, the wallet only clear-signs it.) Height-pure / det.
 // Set the real activation at deploy AFTER all mirrors ship: tip + enough blocks for the chosen runway.
-export const V24_HEIGHT = 49_200;   // set ~7d out (tip ~44,150 + ~5050 ≈ 7 days) for wallet CWS adoption before the fee-increase gate
+export const V24_HEIGHT = 46_400;   // pulled in 2026-07-03 (was 49,200): private-alpha coordinated re-pin, operator-approved; all verifiers re-pinned same day
 export const NAME_FEE_LEN3_V24 = 1_500_000_000n;  // 15 CSD — names ≤ 3 chars
 export const NAME_FEE_LEN4_V24 = 1_000_000_000n;  // 10 CSD — names == 4 chars
 export const NAME_FEE_MID_V24 = 500_000_000n;     // 5 CSD  — names 5–9 chars
@@ -231,7 +231,7 @@ export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be reveale
 // EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT.
 // ACTIVE at height 51_000 (set 2026-07-01 for wallet CWS adoption before the sealed-reservation gate).
 // MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles + cli.
-export const V25_HEIGHT = 51_000;
+export const V25_HEIGHT = 46_440;   // pulled in 2026-07-03 (was 51,000), same coordinated re-pin
 export const REG_COMMIT_MAX_BLOCKS = 8;       // register commit->reveal window AND the displacement freeze
                                               // (one value, both roles: the freeze must equal the window so
                                               //  no back-dated displacer can arrive after nfinalize). ~16 min.
@@ -257,7 +257,7 @@ export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V
 // byte-identical. Independent gate from V25 (recapture is latent ~1yr; the operator may activate it later). Same
 // HARD-ADOPTION-GATE discipline as V25 (a stale wallet crossing V26 attaches a premium the fresh resolver ignores
 // -> burn). ACTIVE at height 51_200 (2 blocks past V25). MUST match cairnx_ref.py + helpers.js + wallet.
-export const V26_HEIGHT = 51_200;
+export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same coordinated re-pin
 
 // v2.7 = shrink the young-name SALE embargo. Under the V25 sealed model a name is only sellable once
 // finalized (non-pending), and finalize requires the displacement freeze (REG_COMMIT_MAX_BLOCKS) to have
@@ -273,7 +273,7 @@ export const V26_HEIGHT = 51_200;
 // ~1.8 days after V26. The redundancy proof needs the sealed model active and the only adopters are the
 // operator's two hosts + wallet build (no external audience yet). MUST match cairnx_ref.py + helpers.js
 // + the vendored UI/wallet bundles.
-export const V27_HEIGHT = 52_500;
+export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same coordinated re-pin
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 

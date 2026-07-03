@@ -86,7 +86,7 @@ V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/h
 V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee: ACTIVE at 40_000 (must match types.ts/helpers.js/wallet)
 NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
-V24_HEIGHT = 49_200               # v2.4 length-graded short-name premium — HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
+V24_HEIGHT = 46_400               # v2.4 length-graded short-name premium — HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
 NAME_FEE_LEN3_V24 = 1_500_000_000 # 15 CSD — names ≤ 3 chars
 NAME_FEE_LEN4_V24 = 1_000_000_000 # 10 CSD — names == 4 chars
 NAME_FEE_MID_V24 = 500_000_000    # 5 CSD  — names 5–9 chars
@@ -126,7 +126,7 @@ COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN
 # v2.5 sealed-reservation registration (payment-free reveal + winner-only nfinalize). Registration ONLY
 # (lapsed recapture is a later V26). Non-retroactive + emit-gated -> pre-V25 byte-identical. HARD ADOPTION
 # GATE (V24-class). ACTIVE at height 51000. MUST match types.ts/helpers.js/wallet.
-V25_HEIGHT = 51000
+V25_HEIGHT = 46440
 REG_COMMIT_MAX_BLOCKS = 8       # register commit->reveal window AND the displacement freeze (one value, both roles)
 REG_FINALIZE_GRACE_BLOCKS = 20  # winner's window to land nfinalize before the reservation auto-expires (~36 min headroom)
 MAX_PENDING_REG = 3             # per-address concurrent un-finalized reservations (anti-Sybil; excludes a re-reveal)
@@ -135,12 +135,12 @@ FINALIZE_TIP_MARGIN = 2         # wallet-side band (mirrors V17 claimBlocksLeft 
 # reveal on a LAPSED name is PAYMENT-FREE -> an internal `recaptures` reservation (the lapsed record stays
 # UNTOUCHED, premium basis preserved); the decaying premium moves to the winner-only nfinalize. Internal map ->
 # not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). ACTIVE at height 51200.
-V26_HEIGHT = 51200
+V26_HEIGHT = 46480
 # v2.7: shrink the young-name SALE embargo from COMMIT_MAX_BLOCKS (~8h) to REG_COMMIT_MAX_BLOCKS (~16 min)
 # for events >= V27. Redundant under the sealed model (a finalized name is displacement-immune by the freeze
 # arithmetic). Non-retroactive -> pre-V27 byte-identical. RELAXATION (all replayers before the tip crosses).
 # MUST match types.ts/helpers.js/wallet.
-V27_HEIGHT = 52500
+V27_HEIGHT = 46520
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")
