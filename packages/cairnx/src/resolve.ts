@@ -7,11 +7,11 @@
 //
 // v1.1 adds: names (commit-reveal back-dated registrar + transfer + set + name offers) and
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
-import { isName, nameCommit, parseAmount, parseRecord } from "./records.js";
+import { nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, MAX_PENDING_REG, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -130,6 +130,17 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const b = bids.get(o.bid);
     if (b && b.status === "open" && b.bidder === buyer) b.status = "done";
   };
+  // void every open offer that lists `name` (a displacement/reclaim/reservation-takeover cancels the
+  // wrongful holder's listings; releaseGive keeps lock-handling uniform with the cancel/expiry paths).
+  // Extracted verbatim from the four inline copies at the displacement/reservation/recapture sites.
+  const voidOpenNameOffers = (name: string) => {
+    for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === name) { releaseGive(o); o.status = "cancelled"; }
+  };
+  // does anchor (effHeight, pos, id) STRICTLY precede an incumbent's (lowest wins)? The (effHeight, pos,
+  // id) lexicographic contest is the same at every name-displacement site; extracted so the comparator
+  // has one definition (ord/ev.id `<` is code-unit order, identical to the inline `ev.id < inc.id`).
+  const earlierAnchor = (effHeight: number, pos: number, id: string, inc: { effHeight: number; pos: number; id: string }): boolean =>
+    effHeight < inc.effHeight || (effHeight === inc.effHeight && (pos < inc.pos || (pos === inc.pos && id < inc.id)));
   // v1.7/v2.0: a claim grants the claimer an EXCLUSIVE HOLD of an open offer = a window (the exclusivity
   // period) + a fill GRACE (v2.0/V20 only). Within the hold the claimer's fill is honored AND no other
   // address may claim — both governed by the SAME interval — so a fill submitted in-window that mines
@@ -281,8 +292,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
             const cr = recaptures.get(rec.name);
             const crActive = (cr && ev.height > cr.finalizeBy) ? undefined : cr;   // an expired reservation reopens
             // lowest (effHeight, pos, id) wins among recapture reservations (recaptures never carry viaFill).
-            const better = !crActive || (effHeight < crActive.effHeight ||
-              (effHeight === crActive.effHeight && (ev.pos < crActive.pos || (ev.pos === crActive.pos && ev.id < crActive.id))));
+            const better = !crActive || earlierAnchor(effHeight, ev.pos, ev.id, crActive);
             if (!better) { note(ev, ev.id, "name", false, "recapture already reserved (earlier anchor wins)"); continue; }
             let myR = 0;                                                            // per-address recapture cap (anti-Sybil)
             for (const [nm, r] of recaptures) if (r.owner === who && nm !== rec.name && ev.height <= r.finalizeBy) myR++;
@@ -291,9 +301,15 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
             note(ev, ev.id, "name", true, crActive ? "recapture reserved (displaced prior reservation)" : "recapture reserved (pending finalize)");
             continue;
           }
+          // NOTE: this pay-now reclaim (the pre-V26 rule) is UNREACHABLE under production constants: the
+          // earliest a lease can be `lapsed` is epoch > paidThrough + NAME_GRACE_EPOCHS, and the minimum
+          // paidThrough (V15_EPOCH + NAME_TERM_EPOCHS) puts the first possible lapse near height ~316k, far
+          // past V26 (51,200), so `v26` above is always true whenever `lapsed()` holds here. It is the
+          // correct historical rule (mirrored in Python, kept for replay integrity), but no production event
+          // sequence executes it, so no vector/fuzz can cover it.
           const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
-          for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+          voidOpenNameOffers(rec.name);
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
           feesPaid += fee;
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
@@ -307,15 +323,14 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // lowest (effectiveHeight, pos, id) wins among live reservations/holders; a back-dated reveal displaces.
           // A finalized name (effHeight = its commit height, past the freeze) can never be displaced here: any
           // window-valid challenger has effHeight within REG_COMMIT_MAX_BLOCKS of now, hence strictly greater.
-          const better = !curActive || (!curActive.viaFill && (effHeight < curActive.effHeight ||
-            (effHeight === curActive.effHeight && (ev.pos < curActive.pos || (ev.pos === curActive.pos && ev.id < curActive.id)))));
+          const better = !curActive || (!curActive.viaFill && earlierAnchor(effHeight, ev.pos, ev.id, curActive));
           if (!better) { note(ev, ev.id, "name", false, curActive?.viaFill ? "name taken (purchased — not displaceable)" : "name taken (earlier anchor wins)"); continue; }
           // per-address concurrent-reservation cap (anti-Sybil; excludes a re-reveal of THIS name; expired don't count).
           let myPending = 0;
           for (const [nm, n] of names) if (n.pending && n.owner === who && nm !== rec.name && n.finalizeBy !== undefined && ev.height <= n.finalizeBy) myPending++;
           if (myPending >= MAX_PENDING_REG) { note(ev, ev.id, "name", false, "too many pending reservations (max reached)"); continue; }
           if (curActive) {
-            for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+            voidOpenNameOffers(rec.name);
           }
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, pending: true, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
           note(ev, ev.id, "name", true, curActive ? "reserved (displaced prior reservation)" : "reserved (pending finalize)");
@@ -328,14 +343,13 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // v1.3: displacement arbitrates claim-vs-claim ONLY — a record acquired by a paid fill
         // (viaFill, only ever set at v1.3+ fills) is immune, so a back-dated reveal can never
         // take a name from the innocent buyer of a completed sale (red-team H3).
-        const better = !curActive || (!curActive.viaFill && (effHeight < curActive.effHeight ||
-          (effHeight === curActive.effHeight && (ev.pos < curActive.pos || (ev.pos === curActive.pos && ev.id < curActive.id)))));
+        const better = !curActive || (!curActive.viaFill && earlierAnchor(effHeight, ev.pos, ev.id, curActive));
         if (!better) { note(ev, ev.id, "name", false, curActive?.viaFill ? "name taken (purchased — not displaceable)" : "name taken (earlier anchor wins)"); continue; }
         if (curActive) {
           // displacement: void any open offer the wrongful holder made on this name. (The name
           // record itself is replaced below with locked:false, so the live name is never stuck;
           // releaseGive keeps lock-handling uniform with the cancel/expiry paths.)
-          for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+          voidOpenNameOffers(rec.name);
         }
         names.set(rec.name, cand);
         feesPaid += nameRegFee(rec.name, ev.height);
@@ -356,13 +370,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (!(ev.height > n.effHeight + REG_COMMIT_MAX_BLOCKS)) { note(ev, ev.id, "nfinalize", false, "too early — displacement contest not yet frozen"); continue; }
           if (n.finalizeBy !== undefined && ev.height > n.finalizeBy) { note(ev, ev.id, "nfinalize", false, "reservation expired"); continue; }
           if (feeToTreasury < nameRegFee(rec.name, ev.height)) { note(ev, ev.id, "nfinalize", false, "name registration fee unpaid"); continue; }
-          // clear the reservation flags. NOTE for parity: this leaves the keys present-but-undefined while the
-          // Python mirror `.pop()`s them. That is SAFE ONLY because every reader tests truthiness (n.pending) /
-          // `!== undefined`, never key-PRESENCE — and a finalized name never reaches the pending materialization
-          // branch. If future code ever does `"pending" in n` or spreads `...n` into canonical output, switch this
-          // to `delete n.pending` to keep JS≡Python.
-          n.pending = undefined;
-          n.finalizeBy = undefined;
+          // clear the reservation flags. `delete` (not `= undefined`) so the key is ABSENT, matching the
+          // Python mirror's `.pop()` exactly: the materialization step rebuilds a fresh object either way,
+          // so canonical output is unaffected, but this removes the JS-present-undefined vs Python-absent
+          // asymmetry at the source instead of relying on every reader testing truthiness.
+          delete n.pending;
+          delete n.finalizeBy;
           n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
           feesPaid += nameRegFee(rec.name, ev.height);
           note(ev, ev.id, "nfinalize", true);
@@ -384,7 +397,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (!cur || cur.pending || !lapsed(cur, ep)) { recaptures.delete(rec.name); note(ev, ev.id, "nfinalize", false, "name is no longer lapsed"); continue; }
           const fee = expiredClaimFee(rec.name, ep - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "nfinalize", false, "recapture premium unpaid (decaying)"); continue; }
-          for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === rec.name) { releaseGive(o); o.status = "cancelled"; }
+          voidOpenNameOffers(rec.name);
           names.set(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
           recaptures.delete(rec.name);
           feesPaid += fee;
@@ -455,11 +468,20 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (!n || n.owner !== who) { note(ev, ev.id, "offer", false, "you don't own this name"); continue; }
           if (n.pending) { note(ev, ev.id, "offer", false, "name reservation not yet finalized"); continue; }
           if (n.locked) { note(ev, ev.id, "offer", false, "name already locked by another offer"); continue; }
-          // v1.3: a claim-based name may not be offered until its claim out-ages the commit
+          // v1.3: a claim-based name may not be offered until its anchor out-ages the reveal
           // window — every lurking commit's reveal deadline passes BEFORE a sale can exist, so
           // viaFill immunity (below) can never shield a front-run squatter's quick flip.
-          if (ev.height >= V13_HEIGHT && !n.viaFill && ev.height - n.effHeight <= COMMIT_MAX_BLOCKS) {
-            note(ev, ev.id, "offer", false, "v1.3: name too young to sell (claim must out-age the commit window)"); continue;
+          // v2.7 (>= V27): the embargo shrinks from COMMIT_MAX_BLOCKS (~8h) to REG_COMMIT_MAX_BLOCKS
+          // (~16 min). Under the V25 sealed model a name is offerable only once non-pending (finalized,
+          // checked above), and finalize requires ev.height > effHeight + REG_COMMIT_MAX_BLOCKS, so by
+          // the time any sale can exist the freeze has passed and every window-valid displacer's reveal
+          // deadline (regWindow = REG_COMMIT_MAX_BLOCKS, keyed on reveal height) is closed; the shorter
+          // embargo is exactly sufficient. Below V27 the 240-block rule is unchanged (byte-identical);
+          // and by V27 (>= 52,000) any pre-V25 name is far past even the 240-block bar, so the
+          // relaxation only ever benefits genuinely-fresh sealed-era names.
+          const saleEmbargo = ev.height >= V27_HEIGHT ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
+          if (ev.height >= V13_HEIGHT && !n.viaFill && ev.height - n.effHeight <= saleEmbargo) {
+            note(ev, ev.id, "offer", false, "name too young to sell (must out-age the reveal window)"); continue;
           }
           // v1.5: the lease must outlive the offer window — so a fill can NEVER hit a lapsed
           // name (a no-op'd CSD fill would still have paid the seller; make it unrepresentable)
@@ -737,6 +759,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   }
 
   applyPendingCancels();   // flush the final block's deferred cancels before the closing sweep
+  // Closing sweep at tipHeight + 1 (NOT tipHeight): materialized state must reflect everything expired AS OF
+  // the tip, and an offer whose effExpiry epoch == epochOf(tip) is expired at the FIRST height of the next
+  // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
+  // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
   sweepExpired(tipHeight + 1);
 
   // ── materialize canonical state (sorted; values as decimal strings) ──

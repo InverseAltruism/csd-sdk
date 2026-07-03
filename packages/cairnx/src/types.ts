@@ -87,8 +87,8 @@ export const DEPLOY_FEE = 100_000_000;        // 1 CSD to deploy a token
 // v1.8: simplified 2-tier name fee — ACTIVATION (must match cairnx_ref.py + UI helpers.js + wallet
 // cairnx.ts). BELOW this height the original ENS-style 5-tier curve is preserved BYTE-IDENTICALLY, so
 // all historical replay + pinned vectors stay unchanged; AT/AFTER it a flat 2-tier applies. Height-pure
-// → deterministic. Placeholder height — the operator sets the real activation at deploy (non-retroactive:
-// no name registration below it is ever reinterpreted, so feesPaid / canonical state can't shift on replay).
+// → deterministic. ACTIVE at height 40_000 (non-retroactive: no name registration below it is ever
+// reinterpreted, so feesPaid / canonical state can't shift on replay).
 export const V18_HEIGHT = 40_000;
 export const NAME_FEE_SHORT_V18 = 670_000_000n;  // 6.7 CSD — names ≤ 4 chars (premium / anti-squat)
 export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
@@ -114,8 +114,8 @@ export const NAME_FEE_LONG_V24 = 300_000_000n;    // 3 CSD  — names ≥ 10 cha
 // string→string map of identity keys (avatar/display/socials/url). Pure metadata — no value, no fee, no
 // paidTo, NEVER a send target (the verified address stays in `nset`). Owner-gated, last-write-wins,
 // cleared on every ownership change like `addr`. Applied + materialized at v1.9+ tips ONLY, so every
-// pre-v1.9 canonical hash stays byte-identical. Placeholder height — operator sets the real activation
-// (non-retroactive). MUST match cairnx_ref.py + the wallet/UI mirrors.
+// pre-v1.9 canonical hash stays byte-identical. ACTIVE at height 36_700 (non-retroactive).
+// MUST match cairnx_ref.py + the wallet/UI mirrors.
 export const V19_HEIGHT = 36_700;
 // v2.0 (V20): open-lane claim→fill LATE-FILL FUND-LOSS FIX. Below V20 an open offer's fill is honored ONLY
 // while the claim window is live (`height < claimUntilHeight`), so a fill that mines AT/AFTER the boundary —
@@ -126,8 +126,8 @@ export const V19_HEIGHT = 36_700;
 // blocks). The SAME interval governs both, so a slightly-late in-window fill still delivers with NO displacement
 // race; it is NOT until-displaced — past the hold the offer reopens and a late fill is rejected (bounded).
 // Non-retroactive: below V20 the strict-window behavior is byte-identical (every pre-V20 canonical hash is
-// unchanged). Placeholder height — operator sets the real activation AFTER all mirrors (cairnx-core,
-// cairnx_ref.py, UI helpers/state/swapguard, vendored wallet bundle) are redeployed. MUST match every mirror.
+// unchanged). ACTIVE at height 38_400 (all mirrors: cairnx-core, cairnx_ref.py, UI helpers/state/swapguard,
+// vendored wallet bundle). MUST match every mirror.
 export const V20_HEIGHT = 38_400;
 // v2.1 (V21): MAX offer/bid duration cap. An open offer/bid may rest at most MAX_OFFER_EPOCHS epochs (7 days)
 // from its anchor — both rejected at creation if longer AND lazily swept once the effective (capped) expiry
@@ -136,8 +136,7 @@ export const V20_HEIGHT = 38_400;
 // slow cold sync. Capping listing lifetime keeps resting inventory shallow. The sweep cap is gated by the
 // CURRENT sweep height (deterministic), so existing over-cap offers expire exactly at V21 across all replayers.
 // Non-retroactive below V21 (every pre-V21 canonical hash unchanged). MUST match cairnx_ref.py + UI mirrors.
-// Placeholder height — operator sets the real activation AFTER all mirrors are redeployed (deploy BEFORE the
-// tip crosses it, else a stale resolver and a fresh one diverge at the gate).
+// ACTIVE at height 40_100 (all mirrors redeployed).
 export const V21_HEIGHT = 40_100;
 export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
 // v2.2 (V22): REMOVE the offer/bid duration cap from consensus. Listing duration becomes a pure UI/product
@@ -229,9 +228,9 @@ export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be reveale
 // Registration ONLY (lapsed recapture is a later V26). Non-retroactive + emit-gated: every pre-V25 canonical
 // hash is byte-identical, so a mixed-version fleet does NOT fork below the gate. HARD ADOPTION GATE (like V24):
 // a stale wallet crossing V25 attaches a fee the fresh resolver IGNORES on the payment-free reveal (burn), so
-// EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT. Set the real
-// activation at rollout (tip + a short lockstep margin, ~150 blocks like V22); 10_000_000 = a far-future
-// placeholder that keeps V25 dormant for all dev replay/fuzz. MUST match cairnx_ref.py + helpers.js + wallet.
+// EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT.
+// ACTIVE at height 51_000 (set 2026-07-01 for wallet CWS adoption before the sealed-reservation gate).
+// MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles + cli.
 export const V25_HEIGHT = 51_000;
 export const REG_COMMIT_MAX_BLOCKS = 8;       // register commit->reveal window AND the displacement freeze
                                               // (one value, both roles: the freeze must equal the window so
@@ -257,8 +256,24 @@ export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V
 // Non-retroactive + the recaptures map is INTERNAL (not materialized), so every pre-V26 canonical hash is
 // byte-identical. Independent gate from V25 (recapture is latent ~1yr; the operator may activate it later). Same
 // HARD-ADOPTION-GATE discipline as V25 (a stale wallet crossing V26 attaches a premium the fresh resolver ignores
-// -> burn). 10_000_000 = a far-future dormant placeholder. MUST match cairnx_ref.py + helpers.js + wallet.
+// -> burn). ACTIVE at height 51_200 (2 blocks past V25). MUST match cairnx_ref.py + helpers.js + wallet.
 export const V26_HEIGHT = 51_200;
+
+// v2.7 = shrink the young-name SALE embargo. Under the V25 sealed model a name is only sellable once
+// finalized (non-pending), and finalize requires the displacement freeze (REG_COMMIT_MAX_BLOCKS) to have
+// passed, so a finalized name is already displacement-immune by arithmetic. The pre-V25 embargo held a
+// fresh name unsellable for COMMIT_MAX_BLOCKS (~8h) to out-age every lurking pre-image reveal; post-V25
+// that full 8h is redundant. At EVENT height >= V27 the embargo threshold drops to REG_COMMIT_MAX_BLOCKS
+// (~16 min), so a fresh registration (or recapture) is listable ~16 min after finalize instead of ~8h.
+// Non-retroactive + emit-gated: below V27 the 240-block rule is unchanged, so every pre-V27 canonical
+// hash is byte-identical (a mixed-version fleet does not fork below the gate). It is a RELAXATION (fresh
+// resolvers accept a sale a stale one rejects), so EVERY replayer must run the V27 core BEFORE the tip
+// crosses V27_HEIGHT. Set at 52_500: past V26 (51_200) AND past the unrelated V23 nset-clear gate
+// (also 52_000, an independent already-shipped rule) so no two gate activations pile onto one block,
+// ~1.8 days after V26. The redundancy proof needs the sealed model active and the only adopters are the
+// operator's two hosts + wallet build (no external audience yet). MUST match cairnx_ref.py + helpers.js
+// + the vendored UI/wallet bundles.
+export const V27_HEIGHT = 52_500;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 

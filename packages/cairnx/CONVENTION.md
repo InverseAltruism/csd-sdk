@@ -215,6 +215,20 @@ once a replay hash is pinned over data that exercises them, so they are stated h
   `str::cmp` / Go `<` on `string` compare by UTF-8 bytes = codepoint order and are therefore WRONG** for
   a non-BMP key — implementers MUST compare UTF-16 code units (JS `localeCompare` is also wrong; use the
   default `<`/`>` on the JS string, i.e. code-unit order, which is what the resolver's `ord()` does).
+  **The numeric-key trap, and it points in OPPOSITE directions for the two hashes we compute, so read
+  carefully.** Nprofile maps (and all-digit names) can carry numeric-looking keys like `"2"`/`"10"`:
+  - **payloadHash / the record `uri` (`canonicalJson`)** sorts keys by pure code unit: `canonicalJson` is
+    `Object.keys(o).sort()`, and although JS's native `Object.keys` enumerates integer-index keys ascending-
+    NUMERIC (`"1","2","10"`), the trailing `.sort()` overrides that to code-unit order (`"1","10","2"`). So
+    for the record hash, `"10"` sorts BEFORE `"2"`. Do NOT special-case numeric keys here.
+  - **`sha256(canonicalState)` (the STATE hash)** is a DIFFERENT serializer (`sortKeys` + `JSON.stringify`,
+    not `canonicalJson`), and it INHERITS `JSON.stringify`'s native enumeration: ECMAScript array-index keys
+    (the canonical decimal of an integer in `[0, 2^32-2]`) are emitted FIRST in ascending-NUMERIC order,
+    THEN the remaining keys in code-unit order, regardless of the intermediate `.sort()`. So for the state
+    hash, `"2"` sorts BEFORE `"10"`. An implementer who applies the record-hash's pure-code-unit rule here
+    (or who ignores the integer-first enumeration) forks `sha256(canonicalState)` the first time a profile
+    carries two numeric keys. The reference Python mirror encodes exactly this split (`canonicalJson` vs
+    `_js_obj_key_order`/`_js_stringify` in `conformance/cairnx_ref.py`); a third impl MUST reproduce both.
 - **A3 — Field types (bare number/boolean vs decimal string vs identity string).** Canonical state mixes
   raw JSON integers and booleans with decimal-string amounts and raw identity strings. Emit as **bare
   integers**: `decimals, height, effectiveHeight, expiresEpoch, feeBps, tipHeight, paidThroughEpoch`, and

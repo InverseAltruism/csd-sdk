@@ -83,7 +83,7 @@ V14_HEIGHT = 31_400
 V15_HEIGHT = 32_000
 V16_HEIGHT = 33_600   # v1.6 fee update + maker rebate — ACTIVATION (must match types.ts/helpers.js/wallet)
 V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/helpers.js/wallet)
-V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee: ACTIVE at 40_000 (must match types.ts/helpers.js/wallet)
 NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
 NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
 V24_HEIGHT = 49_200               # v2.4 length-graded short-name premium — HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
@@ -91,8 +91,8 @@ NAME_FEE_LEN3_V24 = 1_500_000_000 # 15 CSD — names ≤ 3 chars
 NAME_FEE_LEN4_V24 = 1_000_000_000 # 10 CSD — names == 4 chars
 NAME_FEE_MID_V24 = 500_000_000    # 5 CSD  — names 5–9 chars
 NAME_FEE_LONG_V24 = 300_000_000   # 3 CSD  — names ≥ 10 chars
-V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
-V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced) — ACTIVATION placeholder (must match types.ts/helpers.js/wallet)
+V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile): ACTIVE at 36_700 (must match types.ts/helpers.js/wallet)
+V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced); ACTIVE at 38_400 (must match types.ts/helpers.js/wallet)
 V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
 MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
 V22_HEIGHT = 41_300             # v2.2 REMOVE the offer/bid duration cap from consensus (UI-only policy); keyed on the offer's ANCHOR height so [V21,V22) + pre-V21 stay byte-identical. Set 2026-06-26 at tip ~41145 (+155 safe lockstep margin); dormant under the UI cap so later activation is harmless. MUST match types.ts/helpers.js/wallet.
@@ -125,8 +125,7 @@ DEPLOY_FEE = 100_000_000
 COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN
 # v2.5 sealed-reservation registration (payment-free reveal + winner-only nfinalize). Registration ONLY
 # (lapsed recapture is a later V26). Non-retroactive + emit-gated -> pre-V25 byte-identical. HARD ADOPTION
-# GATE (V24-class). 10_000_000 = far-future dev placeholder; operator sets the real activation at rollout
-# (tip + ~150). MUST match types.ts/helpers.js/wallet.
+# GATE (V24-class). ACTIVE at height 51000. MUST match types.ts/helpers.js/wallet.
 V25_HEIGHT = 51000
 REG_COMMIT_MAX_BLOCKS = 8       # register commit->reveal window AND the displacement freeze (one value, both roles)
 REG_FINALIZE_GRACE_BLOCKS = 20  # winner's window to land nfinalize before the reservation auto-expires (~36 min headroom)
@@ -135,8 +134,13 @@ FINALIZE_TIP_MARGIN = 2         # wallet-side band (mirrors V17 claimBlocksLeft 
 # v2.6: the SAME sealed-reservation cure for lapsed-name RECAPTURE (the up-to-~300 CSD premium burn). A `name`
 # reveal on a LAPSED name is PAYMENT-FREE -> an internal `recaptures` reservation (the lapsed record stays
 # UNTOUCHED, premium basis preserved); the decaying premium moves to the winner-only nfinalize. Internal map ->
-# not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). 10_000_000 = dormant.
+# not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). ACTIVE at height 51200.
 V26_HEIGHT = 51200
+# v2.7: shrink the young-name SALE embargo from COMMIT_MAX_BLOCKS (~8h) to REG_COMMIT_MAX_BLOCKS (~16 min)
+# for events >= V27. Redundant under the sealed model (a finalized name is displacement-immune by the freeze
+# arithmetic). Non-retroactive -> pre-V27 byte-identical. RELAXATION (all replayers before the tip crosses).
+# MUST match types.ts/helpers.js/wallet.
+V27_HEIGHT = 52500
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")
@@ -676,7 +680,10 @@ def resolve(events, tip_height):
                     if not n or n["owner"] != who: continue
                     if n.get("pending"): continue
                     if n["locked"]: continue
-                    if ev["height"] >= V13_HEIGHT and not n.get("viaFill") and ev["height"] - n["effHeight"] <= COMMIT_MAX_BLOCKS: continue
+                    # v2.7 (>= V27): sale embargo shrinks from COMMIT_MAX_BLOCKS (~8h) to REG_COMMIT_MAX_BLOCKS
+                    # (~16 min); redundant under the sealed model. Below V27 the 240-block rule (byte-identical).
+                    sale_embargo = REG_COMMIT_MAX_BLOCKS if ev["height"] >= V27_HEIGHT else COMMIT_MAX_BLOCKS
+                    if ev["height"] >= V13_HEIGHT and not n.get("viaFill") and ev["height"] - n["effHeight"] <= sale_embargo: continue
                     if v15 and paid_through(n) < ev["expiresEpoch"]: continue
                     n["locked"] = True
                 else:
@@ -986,7 +993,12 @@ def main():
             "V11_HEIGHT": V11_HEIGHT, "V12_HEIGHT": V12_HEIGHT, "V13_HEIGHT": V13_HEIGHT,
             "V14_HEIGHT": V14_HEIGHT, "V15_HEIGHT": V15_HEIGHT, "V16_HEIGHT": V16_HEIGHT,
             "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT, "V20_HEIGHT": V20_HEIGHT,
+            "V21_HEIGHT": V21_HEIGHT, "V22_HEIGHT": V22_HEIGHT, "V23_HEIGHT": V23_HEIGHT, "V24_HEIGHT": V24_HEIGHT,
+            "V25_HEIGHT": V25_HEIGHT, "V26_HEIGHT": V26_HEIGHT, "V27_HEIGHT": V27_HEIGHT,
             "CLAIM_WINDOW_BLOCKS": CLAIM_WINDOW_BLOCKS, "CLAIM_WINDOW_BLOCKS_V20": CLAIM_WINDOW_BLOCKS_V20, "CLAIM_FILL_GRACE_BLOCKS": CLAIM_FILL_GRACE_BLOCKS,
+            "COMMIT_MAX_BLOCKS": COMMIT_MAX_BLOCKS, "REG_COMMIT_MAX_BLOCKS": REG_COMMIT_MAX_BLOCKS,
+            "REG_FINALIZE_GRACE_BLOCKS": REG_FINALIZE_GRACE_BLOCKS, "MAX_PENDING_REG": MAX_PENDING_REG,
+            "MAX_OFFER_EPOCHS": MAX_OFFER_EPOCHS, "DEPLOY_FEE": DEPLOY_FEE,
             "EPOCH_LEN": EPOCH_LEN, "TREASURY_ADDR": TREASURY_ADDR,
             "PROFILE_MAX_KEYS": PROFILE_MAX_KEYS, "PROFILE_MAX_VALUE_BYTES": PROFILE_MAX_VALUE_BYTES,
         }

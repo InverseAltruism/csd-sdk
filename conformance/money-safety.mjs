@@ -25,9 +25,9 @@
 // This file imports the compiled dist and modifies nothing.
 
 import {
-  resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT,
+  resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, REG_COMMIT_MAX_BLOCKS,
   NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN,
-  nameRegFee, nameClaim, nameCommit, nameCommitRecord,
+  nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameFinalize,
   deploy, mint, offer, tradeFee, FEE_BPS_V16,
 } from "../packages/cairnx/dist/index.js";
 
@@ -102,6 +102,27 @@ function corpus() {
     push("legacy fee-reveal crossing V25 (un-upgraded wallet)", "burn", [
       prop(A, nameClaim({ name: "abcd" }), h, { [T]: nameRegFee("abcd", h).toString() }),
     ], h + 5, "mitigation is process (ship wallet first), not code — surfaced so it is not forgotten");
+  }
+
+  // 3b. V27 YOUNG-NAME SALE. A name registered under the sealed model is finalized, then LISTED and SOLD
+  //     ~16 min after finalize (age within the new REG_COMMIT_MAX_BLOCKS embargo but under the old 240).
+  //     The point: the V27 relaxation introduces NO new burn; the finalized name is displacement-immune
+  //     (freeze-window arithmetic), so the buyer's fill delivers the name and NOTHING is stranded. The
+  //     offer itself pays no treasury fee; the fill pays the seller + the trade fee correctly.
+  {
+    const W = REG_COMMIT_MAX_BLOCKS, base = V27_HEIGHT + 100;
+    const cH = base, rH = base + 2, fH = base + W + 2;          // commit / payment-free reveal / finalize
+    const salt = "e".repeat(32);
+    const off = offer({ give: { name: "flip" }, want: { value: "100000000" }, taker: B });
+    const offEv = prop(A, off, fH + 3, {});                    // list at fH+3 (age = W+5 > W, still << 240); >= V27
+    const fee = tradeFee(100000000n, FEE_BPS_V16).toString();
+    const fill = att(B, offEv.id, fH + 5, { [A]: "100000000", [T]: fee });  // B pays seller A + trade fee → delivers
+    push("V27 young-name sale (sealed reg → finalize → sell ~16min later → fill)", "clean", [
+      prop(A, nameCommitRecord({ commit: nameCommit("flip", salt, A) }), cH),
+      prop(A, nameClaim({ name: "flip", salt }), rH),                        // payment-free sealed reveal
+      prop(A, nameFinalize({ name: "flip", salt }), fH, { [T]: nameRegFee("flip", fH).toString() }),
+      offEv, fill,
+    ], fH + 20, "V27 relaxation adds no burn: a finalized name is displacement-immune, the sale delivers");
   }
 
   // 4. DEPLOY-TAKEN race. Two deploys of the same ticker; the loser is rejected "ticker taken" but paid
