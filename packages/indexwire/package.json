@@ -1,0 +1,37 @@
+{
+  "name": "@inversealtruism/csd-indexwire",
+  "version": "0.1.0",
+  "engines": { "node": ">=18" },
+  "description": "The csd-indexer REST wire contract: TypeScript types for every served row shape (proposals, attestations, txs/outputs, health, analytics) + runtime guards that mirror the production consumer postures (fail-loud on structure, conservative on values). One source of truth for a contract that was previously hand-maintained in the indexer serializer, the cairnx scanner, cairn, cairn-sdk, and four test suites.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/indexwire.test.ts",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/indexwire"
+  },
+  "homepage": "https://cairn-substrate.com"
+}
