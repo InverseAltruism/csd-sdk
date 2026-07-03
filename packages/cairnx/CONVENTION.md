@@ -1,11 +1,15 @@
 # CairnX Convention v1
 
-**Status:** v2.1 (normative; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.7 (normative; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive — below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
-v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24).
-Sections §19–§24 are the normative semantics for v1.6–v2.1; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24) ·
+v2.2 @ 41 300 (§25) · v2.4 @ 49 200 (§27) · v2.5 @ 51 000 (§28) · v2.6 @ 51 200 (§29) · v2.3 @ 52 000 (§26) ·
+v2.7 @ 52 500 (§30).
+Sections §19–§30 are the normative semantics for v1.6–v2.7; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.6): a
+replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
 > **Canonical copy.** This spec ships in the published `@inversealtruism/cairnx-core` package; the source of
 > truth is `csd-sdk/packages/cairnx/CONVENTION.md`. Any in-repo mirror (e.g. the `cairnx` app repo) MUST be
@@ -815,3 +819,172 @@ epochs from its anchor:
   everyone. Below V21, `effExpiry = expires_epoch` — byte-identical history.
 - **Client expiry-height closed form** (mirrors the resolver's height-gated sweep, for buy-safety guards):
   `offerExpiryHeight = min( (expires_epoch+1)·30 , max( V21_HEIGHT , (epochOf(anchor)+168+1)·30 ) )`.
+
+---
+
+# CairnX Convention v2.2 (offer/bid duration cap removed, anchor-keyed)
+
+**Activation height: 41 300** (`V22_HEIGHT`; non-retroactive; keyed on the offer/bid ANCHOR height, not the sweep height).
+
+## 25. The §24 cap applies only to the [V21, V22) anchor era
+
+The §24 lifetime cap proved to be an infrastructure symptom, not a market need, and was lifted:
+
+- **Anchor ≥ 41 300:** the raw `expires_epoch` binds. No creation gate, no capped `effExpiry`. The 1-week
+  suggestion survives only as CLIENT policy (the reference UI defaults to it); it is not consensus.
+- **Anchor in [40 100, 41 300):** the §24 rules apply to that offer/bid FOREVER (creation gate at its
+  anchor, capped `effExpiry` in every later sweep). Era membership is fixed by the anchor, so every
+  replayer ages the same record identically regardless of when it replays.
+- **Anchor < 40 100:** raw `expires_epoch` binds (pre-V21 history, unchanged).
+- **Client closed form:** for anchor ≥ V22, `offerExpiryHeight = (expires_epoch+1)·30`; for the [V21, V22)
+  era use the §24 formula; below V21 use the raw form.
+- **Adoption note:** a relaxation. A v2.1-only replayer rejects (no-ops) a long-dated offer the chain
+  accepts, so its book diverges from the canonical one from the first over-cap anchor onward. Every
+  replayer must run the v2.2 core before the tip crosses 41 300 (already long past; stated for the record).
+
+---
+
+# CairnX Convention v2.3 (`nset` to the zero address clears the record)
+
+**Activation height: 52 000** (`V23_HEIGHT`; non-retroactive; keyed on the `nset` event height).
+
+## 26. Clearing a name's payment target
+
+`ZERO_ADDR = 0x` + 40 hex zeros.
+
+- **Event height ≥ 52 000:** an owner `nset` whose `addr` equals `ZERO_ADDR` CLEARS the record: the
+  canonical state materializes the name with NO `addr` key (absent, not `null`). A cleared name resolves
+  to its OWNER address (the §9 fallback) and drops out of the reverse-resolution / primary-name candidate
+  set. This is the supported way to switch which of several names is an address's primary.
+- **Event height < 52 000:** the identical record literally sets `addr` to the zero address (historical
+  behavior, byte-identical replay). The zero address has always been a VALID `addr`, so there is no
+  parser change in either direction.
+- **Guards unchanged:** `nset` on a lapsed lease stays a no-op (§17); owner-only as before.
+- **Adoption note (fund safety, the harder direction):** a stale (pre-v2.3) replayer shows a cleared name
+  still pointing at `0x000...0`. A payer trusting that stale view burns funds to the zero address. Wallets
+  MUST refuse to pay `0x000...0` regardless (the reference wallet hard-blocks it), and every replayer must
+  run the v2.3 core before the tip crosses 52 000.
+
+---
+
+# CairnX Convention v2.4 (length-graded registration fee increase)
+
+**Activation height: 49 200** (`V24_HEIGHT`; non-retroactive; keyed on the FEE-BEARING event's height).
+
+## 27. The fee curve
+
+`nameRegFee(name, height)` selects the regime by the height of the event that carries the fee: the `name`
+reveal below v2.5, the winner's `nfinalize` at/after v2.5 (§28), and every renewal at its own event height.
+
+| name length | < 40 000 | ≥ 40 000 (v1.8) | ≥ 49 200 (v2.4) |
+|---|---|---|---|
+| ≤ 3 chars | 5 CSD | 6.7 CSD | 15 CSD |
+| 4 chars | 2 CSD | 6.7 CSD | 10 CSD |
+| 5 chars | 1 CSD | 3 CSD | 5 CSD |
+| 6 - 9 chars | 0.5 CSD | 3 CSD | 5 CSD |
+| ≥ 10 chars | 0.1 CSD | 3 CSD | 3 CSD |
+
+- Underpayment is a **no-op** (`name registration fee unpaid`), and the §10 warning applies with force:
+  the attached payment outputs still settle on-chain. An underpaid registration or renewal is a burn.
+- **Adoption note (BOTH directions are hard):** a stale replayer ACCEPTS an underpaid post-49 200
+  registration the chain rejects (it shows a phantom owner), and a stale wallet ATTACHES the old fee and
+  burns it. Every replayer and every fee-quoting client must run the v2.4 core before the tip crosses
+  49 200.
+
+---
+
+# CairnX Convention v2.5 (sealed-reservation registration)
+
+**Activation height: 51 000** (`V25_HEIGHT`; non-retroactive; keyed on the reveal event height).
+
+Root fix for the reveal fee-burn: pre-v2.5, every losing racer in a §9 commit-reveal race paid the FULL
+registration fee for nothing (payment-without-delivery). At/after v2.5 the reveal is payment-free; only
+the settled winner ever pays.
+
+## 28. Commit, payment-free reveal, freeze, winner-only finalize
+
+- **Commit (unchanged):** a prior `ncommit` per §9. Back-dating is unchanged: the reveal's effective
+  anchor `effHeight` is its commit's height.
+- **Reveal window shrinks:** at/after v2.5 a reveal must land within `REG_COMMIT_MAX_BLOCKS = 8` blocks
+  of its commit (below v2.5: 240). One constant serves as BOTH the reveal window and the displacement
+  freeze, so no back-dated challenger can appear after the freeze has passed. Direct no-salt registration
+  is rejected at/after v2.5 (`v2.5: registration requires a commit-reveal (salt)`): an unsealed
+  registration could not be finalized.
+- **Reveal (`name` record, height ≥ 51 000):** carries NO registration fee. Creates a PENDING reservation,
+  materialized in canonical state as the name with `pending: true` and
+  `finalizeBy = effHeight + 8 + 20` (`REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`).
+- **Contest while pending:** a rival reveal with a strictly earlier `(effHeight, pos, id)` (numeric on
+  `effHeight` and `pos`, ordinal code-unit on `id`; earliest wins) DISPLACES the reservation; the displaced party has lost only its
+  ~0.25 CSD anchor. A FINALIZED name can never be displaced: any window-valid challenger has an
+  `effHeight` within 8 blocks of the current height, which is strictly later than a finalized name's
+  (its freeze has passed). Names owned `viaFill` are likewise never displaced.
+- **Per-address cap:** at most `MAX_PENDING_REG = 3` concurrent un-finalized reservations per owner
+  (expired ones and a re-reveal of the same name do not count); excess reveals are no-ops.
+- **Finalize (`nfinalize` record):** `{v:1, t:"nfinalize", name, salt}`. Valid iff ALL of: the name is
+  pending and owned by the sender; `salt` re-derives the SAME commit that anchored the reservation
+  (`sha256` per §9, binding name + salt + owner, and the commit's height must equal the reservation's
+  `effHeight`); the freeze has passed (`ev.height > effHeight + 8`); the reservation has not expired
+  (`ev.height ≤ finalizeBy`); and the payment to the treasury covers `nameRegFee(name, ev.height)`
+  (§27, priced at the FINALIZE height). On success the `pending`/`finalizeBy` keys become ABSENT, the
+  lease starts (`paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS`), and the name is NOT
+  `viaFill`.
+- **Reservation expiry (lazy):** past `finalizeBy` an un-finalized reservation is swept exactly like a
+  lapsed lease (at each event height and at the tip+1 closing sweep): the name record is DELETED and the
+  name reopens. The would-be winner has lost only anchors, never the registration fee.
+- **Client timing rule** (`FINALIZE_TIP_MARGIN = 2`, client-side only): sign the finalize at
+  `effHeight + 8 + 2` or later so one reorg cannot un-freeze the contest under a fee-bearing tx. The
+  20-block grace exists so a slow inclusion still lands before `finalizeBy`.
+- **Adoption note (hard gate):** a stale (pre-v2.5) wallet crossing 51 000 attaches the registration fee
+  to what is now a payment-free reveal; the resolver ignores the fee and the payment burns. Every
+  replayer AND every fee-attaching client must run the v2.5 core before the tip crosses 51 000.
+
+---
+
+# CairnX Convention v2.6 (sealed-reservation recapture)
+
+**Activation height: 51 200** (`V26_HEIGHT`; non-retroactive; keyed on the reveal event height).
+
+The §28 cure applied to LAPSED-name recapture (§17), whose losing racer previously forfeited the full
+decaying premium (up to hundreds of CSD).
+
+## 29. Recapture through the same sealed machinery
+
+- **Reveal on a lapsed name (height ≥ 51 200):** payment-free. Creates a recapture reservation in an
+  INTERNAL `recaptures` map. The reservation is NOT materialized in canonical state, and the lapsed
+  record in `names` is left untouched (it is the premium basis; an abandoned reservation can never
+  bypass the premium). Below v2.6, recapture stays pay-now at reveal (§17, byte-identical).
+- **Same windows and contest:** reveal window and freeze are `REG_COMMIT_MAX_BLOCKS = 8`;
+  `finalizeBy = effHeight + 8 + 20`; lowest `(effHeight, pos, id)` displaces among reservations; its own
+  `MAX_PENDING_REG = 3` per-address cap; overdue reservations are lazily swept.
+- **Finalize:** the same `nfinalize` record, salt-bound to the recapture commit. The winner pays the §17
+  decaying premium priced at the FINALIZE height (slightly more decayed than at reveal: rounding favors
+  the payer). On success the name becomes a normal fresh lease under the new owner, NOT `viaFill`
+  (displacement-immune by the same freeze arithmetic as §28).
+- **Replayer note:** because the reservation map is internal, pre-v2.6 canonical hashes are untouched,
+  but a third-party resolver MUST still replicate the map (reveal, displacement, expiry) to agree on
+  which later `nfinalize` succeeds. The map is defined by this section plus the reference resolver and
+  its Python mirror; the v2.6 conformance vectors pin it.
+- **Adoption note (hard gate):** same shape as §28. A stale wallet attaches the premium to a
+  payment-free recapture reveal and burns it. All replayers and clients on the v2.6 core before 51 200.
+
+---
+
+# CairnX Convention v2.7 (young-name sale embargo shrinks)
+
+**Activation height: 52 500** (`V27_HEIGHT`; non-retroactive; keyed on the OFFER event height).
+
+## 30. Sale embargo: 240 blocks becomes 8
+
+A name `offer` (§17 sale path) whose event height `H` satisfies `H − effHeight ≤ embargo` is a no-op
+(`name too young to sell (must out-age the reveal window)`), where `effHeight` is the name's effective
+anchor. `viaFill` names were never embargoed.
+
+- **`H` < 52 500:** `embargo = COMMIT_MAX_BLOCKS` (240 blocks, ≈ 8 h). The pre-sealed rule: a fresh name
+  had to out-age every lurking back-dated reveal before it could be sold.
+- **`H` ≥ 52 500:** `embargo = REG_COMMIT_MAX_BLOCKS` (8 blocks, ≈ 16 min). Under §28/§29 a finalized
+  name is displacement-immune the moment its freeze passes, so out-aging the old 240-block window is
+  redundant; 8 matches the freeze itself.
+- The gate keys on the OFFER's height, so the same young name can be unsellable at 52 499 and sellable
+  at 52 501. Deterministic for every replayer; no name-age era bookkeeping is needed.
+- **Adoption note:** a relaxation (fresh cores accept a sale a stale core no-ops), so every replayer must
+  run the v2.7 core before the tip crosses 52 500.
