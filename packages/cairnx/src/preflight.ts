@@ -18,7 +18,7 @@
 // behind registration finalize). The conformance vectors pin that they cannot drift (test/preflight.test.ts
 // asserts previewFill == the resolver's own delivered `got` at the C3 boundary).
 import {
-  FEE_BPS, V13_HEIGHT, V16_HEIGHT, V17_HEIGHT,
+  V13_HEIGHT, V16_HEIGHT, V17_HEIGHT,
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
 } from "./types.js";
@@ -48,7 +48,10 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
   // token-for-token: deliverability is the buyer's want-token balance, not computable from the offer alone
   if (isTokenWant(offer.want)) return { ...zero, reason: "not-csd-priced" };
   const want = BigInt((offer.want as { value: string }).value);
-  const feeBps = offer.feeBps || FEE_BPS;
+  // the offer's OWN stamped feeBps, verbatim: the resolver stamps 0 on pre-v1.1 offers and charges NO
+  // fee on them (`o.feeBps ? tradeFee(...) : 0n`), so a fallback constant here would quote a fee the
+  // chain does not require. The `feeBps ? … : 0n` guards below mirror the resolver's falsy-means-free.
+  const feeBps = offer.feeBps;
 
   // ── partial CSD-priced token offer (resolve.ts:631-670) ──
   if (offer.min !== undefined && !isNameGive(offer.give)) {

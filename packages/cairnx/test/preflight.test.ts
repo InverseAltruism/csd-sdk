@@ -76,6 +76,15 @@ console.log("previewFill == resolver delivered `got` at the C3 zero-delivery bou
   // boundary invariant giveTotal*min >= want: min = want exactly delivers 1
   const trapEdge: OfferState = { ...trapOff, min: "100000000000" };  // min == want (give=1 ⇒ boundary)
   ok("C3 boundary: min==want delivers exactly 1 (giveTotal*min == want)", previewFill(trapEdge, 100000000000n).got === 1n);
+  // feeBps=0 (a pre-v1.1-era offer): the resolver's `o.feeBps ? tradeFee : 0n` charges NOTHING — the
+  // preview must quote 0 too, never a fallback constant (an over-quote makes the taker overpay treasury)
+  const freeEraPartial: OfferState = { ...trapEdge, feeBps: 0 };
+  const freeP = previewFill(freeEraPartial, 100000000000n);
+  ok("feeBps=0 partial: previewFill quotes fee 0n (resolver falsy-means-free, exact mirror)", freeP.deliverable && freeP.fee === 0n);
+  const freeEraWhole: OfferState = { id: nid(), seller: A, give: { ticker: "RARE", amount: "3" } as OfferState["give"],
+    want: { value: "100000000", payto: A } as OfferState["want"], status: "open", expiresEpoch: 9e15, height: h0, feeBps: 0, taker: B };
+  const freeW = previewFill(freeEraWhole, 100000000n);
+  ok("feeBps=0 whole fill: previewFill quotes fee 0n", freeW.deliverable && freeW.fee === 0n);
 }
 
 // ── fillIsSafe: C2/C4 open-CSD live-claim gate + taker match ──
