@@ -26,9 +26,9 @@
 
 import {
   resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, REG_COMMIT_MAX_BLOCKS,
-  NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN,
+  REG_FINALIZE_GRACE_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN, epochOf,
   nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameFinalize,
-  deploy, mint, offer, tradeFee, FEE_BPS_V16,
+  deploy, mint, offer, tradeFee, makerRebate, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL,
 } from "../packages/cairnx/dist/index.js";
 
 const T = TREASURY_ADDR;
@@ -123,6 +123,93 @@ function corpus() {
       prop(A, nameFinalize({ name: "flip", salt }), fH, { [T]: nameRegFee("flip", fH).toString() }),
       offEv, fill,
     ], fH + 20, "V27 relaxation adds no burn: a finalized name is displacement-immune, the sale delivers");
+  }
+
+  // ── THE LOSER'S FOLLOW-ON FEE-BEARING TX (deep-review 2026-07-03 §5) ──────────────────────────────────
+  // The root cause of the misses: prior V25/V26 fixtures STOP at the payment-free reveal ("the loser's
+  // reveal is rejected but costs no fee") and never construct the loser's follow-on nfinalize / fill, which
+  // is where the fee actually rides. These scenarios build that follow-on so `findBurns` re-surfaces the
+  // C1/C2/C4/C5 classes forever. (The client-side cure is the Tier 0 sign-time re-check / previewFill /
+  // live-claim gate; these fixtures prove the burn EXISTS if a client skips it.)
+
+  // C1. REGISTER-RACE displaced nfinalize (operator edge case #1). A commits earlier (pos 0) → wins the
+  //     reservation; B commits+reveals later → displaced (payment-FREE, no burn); then B ALSO finalizes,
+  //     paying the reg fee → owner=A ≠ B → rejected "no matching pending reservation you own" → B burns it.
+  {
+    const h = V25_HEIGHT + 500, saltA = "a".repeat(32), saltB = "b".repeat(32), fH = h + REG_COMMIT_MAX_BLOCKS + 2;
+    push("C1 register-race displaced nfinalize (loser's finalize burns the reg fee)", "burn", [
+      { ...prop(A, nameCommitRecord({ commit: nameCommit("gm", saltA, A) }), h), pos: 0 },
+      { ...prop(B, nameCommitRecord({ commit: nameCommit("gm", saltB, B) }), h), pos: 1 },
+      { ...prop(A, nameClaim({ name: "gm", salt: saltA }), h + 2), pos: 0 },   // A reveals → pending winner
+      { ...prop(B, nameClaim({ name: "gm", salt: saltB }), h + 2), pos: 1 },   // B reveals → displaced, payment-free
+      prop(A, nameFinalize({ name: "gm", salt: saltA }), fH, { [T]: nameRegFee("gm", fH).toString() }),       // A owns
+      prop(B, nameFinalize({ name: "gm", salt: saltB }), fH + 1, { [T]: nameRegFee("gm", fH + 1).toString() }), // B → BURN
+    ], fH + 40, "cure: sign-time winner re-fetch on registration-finalize (previewFill/finalizeWinnerCheck)");
+  }
+
+  // C5. nfinalize confirming OUTSIDE the (effHeight+8, effHeight+28] window. The reservation auto-expires
+  //     (sweepExpired), the name reopens, and a finalize one block late is rejected AFTER its fee anchored.
+  {
+    const h = V25_HEIGHT + 700, salt = "c".repeat(32);
+    const finalizeBy = h + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS;
+    push("C5 late nfinalize (past finalizeBy → swept → fee burned)", "burn", [
+      prop(A, nameCommitRecord({ commit: nameCommit("late", salt, A) }), h),
+      prop(A, nameClaim({ name: "late", salt }), h + 2),                                                  // payment-free reveal
+      prop(A, nameFinalize({ name: "late", salt }), finalizeBy + 1, { [T]: nameRegFee("late", finalizeBy + 1).toString() }),
+    ], finalizeBy + 10, "irreducible timing residual — a client refuses to sign without runway before finalizeBy");
+  }
+
+  // C2. Non-claimant OPEN-CSD name fill (operator edge case #2). An open (untaken) CSD name offer uses
+  //     claim-to-fill: B claims (wins), C fills WITHOUT a live claim → rejected "claim it first" AFTER the
+  //     treasury fee anchored → C burns it (and the seller payment is a separate payment-without-delivery).
+  {
+    const H = V27_HEIGHT + 200, salt = "d".repeat(32), cH = H, rH = H + 2, fH = H + REG_COMMIT_MAX_BLOCKS + 2;
+    const listH = fH + 300, exp = epochOf(listH) + 50, val = 100000000n, fee = tradeFee(val, FEE_BPS_V16), reb = makerRebate(val);
+    const offEv = { ...prop(A, offer({ give: { name: "alicexyz" }, want: { value: val.toString() } }), listH, {}), expiresEpoch: exp };
+    push("C2 non-claimant open-CSD fill (full payment lost by a non-claimer)", "burn", [
+      prop(A, nameCommitRecord({ commit: nameCommit("alicexyz", salt, A) }), cH),
+      prop(A, nameClaim({ name: "alicexyz", salt }), rH),
+      prop(A, nameFinalize({ name: "alicexyz", salt }), fH, { [T]: nameRegFee("alicexyz", fH).toString() }),
+      offEv,
+      att(B, offEv.id, listH + 5, {}, SCORE_CLAIM, 0),                                          // B claims → wins
+      att(C, offEv.id, listH + 6, { [A]: (val + reb).toString(), [T]: fee.toString() }, SCORE_FILL, 1), // C fills → BURN
+    ], listH + 20, "cure: wallet/SDK open-CSD fill gated on a live buried claim (fillIsSafe/hasLiveClaim)");
+  }
+
+  // C4. SAME-BLOCK claim+fill race loser. Two buyers each bundle claim+fill in one block; B's claim wins by
+  //     pos, so C's fill lands into an already-filled offer → rejected → C's anchored treasury fee burns.
+  {
+    const H = V27_HEIGHT + 400, salt = "e".repeat(32), cH = H, rH = H + 2, fH = H + REG_COMMIT_MAX_BLOCKS + 2;
+    const listH = fH + 300, exp = epochOf(listH) + 50, bh = listH + 5, val = 100000000n, fee = tradeFee(val, FEE_BPS_V16), reb = makerRebate(val);
+    const offEv = { ...prop(A, offer({ give: { name: "racey" }, want: { value: val.toString() } }), listH, {}), expiresEpoch: exp };
+    const pay = { [A]: (val + reb).toString(), [T]: fee.toString() };
+    push("C4 same-block claim+fill loser (loser's bundled fill burns)", "burn", [
+      prop(A, nameCommitRecord({ commit: nameCommit("racey", salt, A) }), cH),
+      prop(A, nameClaim({ name: "racey", salt }), rH),
+      prop(A, nameFinalize({ name: "racey", salt }), fH, { [T]: nameRegFee("racey", fH).toString() }),
+      offEv,
+      att(B, offEv.id, bh, {}, SCORE_CLAIM, 0),
+      att(C, offEv.id, bh, {}, SCORE_CLAIM, 1),
+      att(B, offEv.id, bh, pay, SCORE_FILL, 2),   // B won the claim → fill applies
+      att(C, offEv.id, bh, pay, SCORE_FILL, 3),   // C's fill → offer already filled → BURN
+    ], bh + 20, "cure: never bundle claim+fill in one block; require a confirmation between them");
+  }
+
+  // C3. PARTIAL-FILL zero-delivery trap (maker-craftable, operator edge case #4). A partial offer with a
+  //     tiny give and huge want: any partial payment floors to 0 tokens (floor(give*pay/want)=0) and is
+  //     rejected AFTER the CSD moved. Taker-bound here so the fill reaches the delivery math (not the claim
+  //     gate). The website already refuses (got===0n); this proves off-website clients burn without the guard.
+  {
+    const h0 = V27_HEIGHT + 600;
+    const off = offer({ give: { ticker: "RARE", amount: "1" }, want: { value: "100000000000" }, min: "100000000", taker: B }); // 1000 CSD, min 1
+    const offEv = prop(A, off, h0 + 2, {});
+    const fee = tradeFee(50000000000n, FEE_BPS_V16); // fee on the clamped 500 CSD payment
+    push("C3 partial zero-delivery trap (taker pays, receives 0 tokens)", "burn", [
+      prop(A, deploy({ ticker: "RARE", decimals: 0, supply: "1", mint: "issuer" }), h0, { [T]: DEPLOY_FEE.toString() }),
+      prop(A, mint({ ticker: "RARE", amount: "1" }), h0 + 1),
+      offEv,
+      att(B, offEv.id, h0 + 4, { [A]: "50000000000", [T]: fee.toString() }),   // pay 500 CSD → 0 tokens → BURN
+    ], h0 + 40, "cure: lift the website got===0 refuse into the shared previewFill gate in every fill builder");
   }
 
   // 4. DEPLOY-TAKEN race. Two deploys of the same ticker; the loser is rejected "ticker taken" but paid

@@ -8,7 +8,7 @@ import { keygen } from "@inversealtruism/csd-crypto";
 import { EPOCH_LEN } from "@inversealtruism/csd-codec";
 import {
   buildPeerRecord, buildGatewayRecord, buildIdentityCommit, buildIdentityReveal,
-  resolvePeers, resolveGateways, resolveIdentity, reverseIdentity,
+  resolvePeers, resolveGateways, resolveIdentity, reverseIdentity, DOMAINS,
   type ChainRecord, type ResolveOpts, type BuiltRecord, type AttRecord,
 } from "../src/index.js";
 
@@ -207,4 +207,42 @@ test("resolveName: 200 with a JSON null body is null (not-found as a value, inde
   const { resolveName } = await import("../src/index.js");
   const src = { baseUrl: "http://fixture", fetch: (async () => ({ ok: true, status: 200, json: async () => null })) as unknown as typeof fetch };
   assert.equal(await resolveName(src, "ghost"), null);
+});
+
+// ── M2 (deep-review 2026-07-03): a malformed `pub`/`sig` must be SKIPPED, not crash the resolve ──
+// `addrFromPub`/`verifyDigest` call hexToBytes, which THROWS on non-hex/odd-length input. These verifiers
+// run inside resolve's `.filter()`, so before the fix one cheap malformed record (with expiresEpoch=0, which
+// never lapses) propagated its throw and PERMANENTLY errored the whole discovery domain — a one-record DoS.
+// After the safe() wrapper a malformed record fails closed (skipped) and the honest records still resolve.
+test("M2: a malformed pub does not crash resolvePeers — the record is skipped, honest peers survive", () => {
+  const good = keygen();
+  const honest = rec(buildPeerRecord({ priv: good.priv, peer_id: "12D3KooWHONEST", multiaddrs: ["/ip4/1.2.3.4/tcp/8792"], address: good.addr }), good.addr, 100_000_000, 100, { expiresEpoch: 0 });
+  // a poison record: non-hex, odd-length pub (would throw in hexToBytes → uncaught before the fix)
+  const poison: ChainRecord = {
+    domain: DOMAINS.peers, proposalId: txid(), proposer: "0x" + "11".repeat(20), payloadHash: "0x" + "22".repeat(32),
+    fee: 100_000_000, height: 101, expiresEpoch: 0,
+    content: { t: "peer", peer_id: "12D3KooWPOISON", multiaddrs: ["/ip4/9.9.9.9/tcp/1"], pub: "0xZZZZ_not_hex_odd", sig: "nope" } as any,
+    attestations: [],
+  };
+  let out: ReturnType<typeof resolvePeers> | null = null;
+  assert.doesNotThrow(() => { out = resolvePeers(shuffle([honest, poison]), OPTS); }, "a malformed pub must not throw out of resolve");
+  assert.ok(out !== null && out!.some((p) => p.peer_id === "12D3KooWHONEST"), "the honest peer still resolves");
+  assert.ok(out!.every((p) => p.peer_id !== "12D3KooWPOISON"), "the malformed peer is skipped, not counted");
+});
+
+test("M2: a malformed pub does not crash resolveGateways or resolveIdentity either", () => {
+  const good = keygen();
+  const gw = rec(buildGatewayRecord({ priv: good.priv, url: "https://gw.example/{hash}", address: good.addr }), good.addr, 100_000_000, 100, { expiresEpoch: 0 });
+  const poisonGw: ChainRecord = {
+    domain: DOMAINS.gateways, proposalId: txid(), proposer: "0x" + "33".repeat(20), payloadHash: "0x" + "44".repeat(32),
+    fee: 100_000_000, height: 101, expiresEpoch: 0,
+    content: { t: "gateway", url: "https://evil/{hash}", pub: "0xODD", sig: "xyz" } as any, attestations: [],
+  };
+  assert.doesNotThrow(() => resolveGateways(shuffle([gw, poisonGw]), { ...OPTS, freshWithin: 1_000_000 } as ResolveOpts), "malformed gateway pub must not throw");
+  const poisonId: ChainRecord = {
+    domain: DOMAINS.identity, proposalId: txid(), proposer: "0x" + "55".repeat(20), payloadHash: "0x" + "66".repeat(32),
+    fee: 100_000_000, height: 101, expiresEpoch: 0,
+    content: { t: "identity-reveal", handle: "evil", address: "0x" + "55".repeat(20), pub: "0xODD", sig: "xyz" } as any, attestations: [],
+  };
+  assert.doesNotThrow(() => resolveIdentity([poisonId], "evil", OPTS), "malformed identity pub must not throw");
 });

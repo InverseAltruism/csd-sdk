@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-registry",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "engines": { "node": ">=18" },
   "description": "Compute Substrate L3 registries \u2014 peer/gateway/identity discovery built entirely on the Propose/Attest primitive. Pure deterministic resolvers (replay an epoch set \u2192 identical result anywhere) + commit-reveal identity + client-side or indexer-served discovery. No new tx types, no fork.",
   "type": "module",

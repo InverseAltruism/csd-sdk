@@ -22,24 +22,40 @@ export function signBinding(kind: string, obj: Record<string, unknown>, priv: st
 
 const eq = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
+// M2 (deep-review 2026-07-03): `addrFromPub`/`verifyDigest` call `hexToBytes`, which THROWS on a
+// non-hex / odd-length `pub` or `sig`. These verifiers run inside `.filter()` in resolve.ts, so an
+// uncaught throw propagates out and PERMANENTLY errors the whole discovery domain (one cheap malformed
+// record with expiresEpoch=0 never lapses → a one-record DoS of csd:peers / csd:gateways / csd:identity).
+// A malformed record is already invalid, so parsing failure MUST be a skip (false), never fatal. Wrap
+// each verifier so any parse throw fails closed to "not a valid record".
+function safe(fn: () => boolean): boolean {
+  try { return fn(); } catch { return false; }
+}
+
 export function verifyPeer(r: ChainRecord): boolean {
-  const c = r.content as PeerContent | null;
-  if (!c || c.t !== "peer" || !c.pub || !c.sig || !c.peer_id) return false;
-  if (!eq(addrFromPub(c.pub), r.proposer)) return false; // key must hash to the proposer
-  return verifyDigest(c.sig, c.pub, bindDigest("peer", { peer_id: c.peer_id, address: r.proposer.toLowerCase() }));
+  return safe(() => {
+    const c = r.content as PeerContent | null;
+    if (!c || c.t !== "peer" || !c.pub || !c.sig || !c.peer_id) return false;
+    if (!eq(addrFromPub(c.pub), r.proposer)) return false; // key must hash to the proposer
+    return verifyDigest(c.sig, c.pub, bindDigest("peer", { peer_id: c.peer_id, address: r.proposer.toLowerCase() }));
+  });
 }
 
 export function verifyGateway(r: ChainRecord): boolean {
-  const c = r.content as GatewayContent | null;
-  if (!c || c.t !== "gateway" || !c.pub || !c.sig || !c.url || !c.url.includes("{hash}")) return false;
-  if (!eq(addrFromPub(c.pub), r.proposer)) return false;
-  return verifyDigest(c.sig, c.pub, bindDigest("gateway", { url: c.url, address: r.proposer.toLowerCase() }));
+  return safe(() => {
+    const c = r.content as GatewayContent | null;
+    if (!c || c.t !== "gateway" || !c.pub || !c.sig || !c.url || !c.url.includes("{hash}")) return false;
+    if (!eq(addrFromPub(c.pub), r.proposer)) return false;
+    return verifyDigest(c.sig, c.pub, bindDigest("gateway", { url: c.url, address: r.proposer.toLowerCase() }));
+  });
 }
 
 export function verifyIdentitySig(r: ChainRecord): boolean {
-  const c = r.content as IdentityRevealContent | null;
-  if (!c || c.t !== "identity-reveal" || !c.pub || !c.sig || !c.handle || !c.address) return false;
-  // the bound address must equal both the key's address AND the proposing address
-  if (!eq(addrFromPub(c.pub), c.address) || !eq(c.address, r.proposer)) return false;
-  return verifyDigest(c.sig, c.pub, bindDigest("identity", { handle: c.handle, address: c.address.toLowerCase() }));
+  return safe(() => {
+    const c = r.content as IdentityRevealContent | null;
+    if (!c || c.t !== "identity-reveal" || !c.pub || !c.sig || !c.handle || !c.address) return false;
+    // the bound address must equal both the key's address AND the proposing address
+    if (!eq(addrFromPub(c.pub), c.address) || !eq(c.address, r.proposer)) return false;
+    return verifyDigest(c.sig, c.pub, bindDigest("identity", { handle: c.handle, address: c.address.toLowerCase() }));
+  });
 }
