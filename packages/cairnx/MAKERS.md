@@ -1,9 +1,13 @@
 # Run a CairnX market maker
 
-CairnX has **no AMM and no escrow** — native CSD can't be pooled (CONVENTION §6). Liquidity is whoever
+CairnX has **no AMM and no escrow**; native CSD can't be pooled (CONVENTION §6). Liquidity is whoever
 runs a *maker loop*. This guide is everything you need to join as a market maker, end to end. Anyone
 may run one, against any token, with their own key. It builds only on the public package
 [`@inversealtruism/cairnx-core`](https://www.npmjs.com/package/@inversealtruism/cairnx-core).
+
+> Sibling doc: the `cairnx` app repo ships a repo-centric **Maker Kit** (`cairnx/MAKERS.md`) covering
+> the reference `mm-bot` implementation, its config, and ops runbook. The two are different documents
+> for different audiences by design, not drifted copies of one file.
 
 ## How the market works (RFQ)
 

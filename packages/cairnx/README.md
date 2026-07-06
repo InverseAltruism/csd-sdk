@@ -131,8 +131,8 @@ stateDiagram-v2
 | Lease term | ~1 year (`NAME_TERM_EPOCHS = 8760`) | 1 epoch ≈ 1 h (30 blocks) |
 | Grace window | ~30 days (`NAME_GRACE_EPOCHS = 720`) | owner-only renewal |
 | Recapture premium | **20× → 1×** over ~30 days | decaying Dutch auction on lapsed names |
-| Reveal window | ~8 h (`COMMIT_MAX_BLOCKS = 240`) | commit-reveal deadline |
-| Registration fee | **6.7 CSD** (≤4 chars) · **3 CSD** (≥5 chars) | flat 2-tier (v1.8); paid to the treasury |
+| Reveal window | ~16 min (`REG_COMMIT_MAX_BLOCKS = 8`, v2.5+; was 240 blocks below v2.5) | commit-reveal deadline; doubles as the displacement freeze |
+| Registration fee | **15 / 10 / 5 / 3 CSD** by length (≤3 / 4 / 5-9 / ≥10 chars, v2.4) | length-graded (was flat 6.7 / 3 CSD under v1.8); paid to the treasury at finalize (v2.5+) |
 
 ### 2.4 · How a name resolves, and what's actually *verified*
 
@@ -249,12 +249,23 @@ is bounded in the light client, not the chain.
 | v1.8 | 40 000 | flat two-tier name fee (6.7 / 3 CSD) |
 | v2.1 | 40 100 | offer/bid duration cap (`MAX_OFFER_EPOCHS = 168`), *superseded by v2.2* |
 | v2.2 | 41 300 | duration cap **removed from consensus** → UI policy; bound moves to the light client |
+| v2.4 | 46 400 | length-graded registration fee (15 / 10 / 5 / 3 CSD by name length) |
+| v2.5 | 46 440 | sealed-reservation registration: payment-free reveal, winner-only fee at `nfinalize` |
+| v2.6 | 46 480 | sealed-reservation recapture (lapsed-name premium paid by the settled winner only) |
+| v2.7 | 46 520 | young-name sale embargo shrinks 240 → 8 blocks |
+| v2.3 | 52 000 | `nset` to the zero address CLEARS the pointer (*still pending as of 2026-07-06, tip ~48 300*) |
+
+v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (49 200 / 51 000 / 51 200 /
+52 500) — see the re-pin history note in `CONVENTION.md` and `CONSENSUS_CHANGES.md` 0.1.33.
 
 ### Package layout
 
 `src/resolve.ts` (the ledger) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
-height-gated client selectors) · `src/client.ts` (reorg-safety helpers a payer applies) · `CONVENTION.md`
-(normative spec, §1–§24) · `test/vectors/` (portable conformance corpus).
+height-gated client selectors) · `src/client.ts` (reorg-safety helpers a payer applies) · `src/preflight.ts`
+(build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
+`buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
+`primaryRankBefore`, the one primary-name selection every host must agree on) · `CONVENTION.md`
+(normative spec, §1–§30) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
 
@@ -277,8 +288,8 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 
 ### Write a conformant resolver in another language
 
-1. Implement `CONVENTION.md` §1–§24 (apply order, every record type, the `V*_HEIGHT` activations, the
-   canonical-state format, ordinal key ordering, data surface only).
+1. Implement `CONVENTION.md` §1–§30 (apply order, every record type, the `V*_HEIGHT` activations — using
+   the re-pinned v2.4–v2.7 heights — the canonical-state format, ordinal key ordering, data surface only).
 2. Replay `test/vectors/cases.json`: your canonical state must equal `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare `sha256(canonicalState)` against `test/vectors/replay-hashes.json`.
 
