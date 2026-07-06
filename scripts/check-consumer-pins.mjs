@@ -32,3 +32,23 @@ for (const [name, rel] of CONSUMERS) {
 }
 if (bad) { console.error(`\nconsumer-pin coherence FAILED (${bad}/${seen})`); process.exit(1); }
 console.log(`\nconsumer-pin coherence OK (${seen} npm-pinning consumers). Bundled consumers (cairn UI, wallet) are guarded by their own vendor-freshness gates.`);
+
+// ── ADVISORY (never fails the run): vendored-consumer lag. The wallet/cairn PROVENANCE pins a
+// csd-sdk commit; their freshness gates prove the bundle matches THAT commit, but nothing says how
+// far behind HEAD it sits. Re-vendoring is deliberate (release-gated), so this only WARNS when the
+// pinned commit is older than ~14 days of csd-sdk history — a nudge, not a gate.
+const STALE_DAYS = 14;
+for (const [name, rel] of [["cairn-wallet", "cairn-wallet/src/vendor/PROVENANCE.json"], ["cairn UI", "cairn/public/vendor/PROVENANCE.json"]]) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) { console.log(`  • ${name}: no PROVENANCE — skip`); continue; }
+  try {
+    const commit = JSON.parse(readFileSync(p, "utf8")).csdSdkCommit;
+    const { execSync } = await import("node:child_process");
+    const sdk = join(ROOT, "csd-sdk");
+    const at = Number(execSync(`git -C ${sdk} log -1 --format=%ct ${commit}`, { encoding: "utf8" }).trim()) * 1000;
+    const head = Number(execSync(`git -C ${sdk} log -1 --format=%ct HEAD`, { encoding: "utf8" }).trim()) * 1000;
+    const lagDays = Math.floor((head - at) / 86_400_000);
+    if (lagDays > STALE_DAYS) console.warn(`  ⚠ ${name} vendors csd-sdk ${String(commit).slice(0, 12)} — ${lagDays} days behind HEAD (advisory; re-vendor when convenient)`);
+    else console.log(`  ✓ ${name} vendor commit is ${lagDays}d behind HEAD (fresh enough)`);
+  } catch (e) { console.log(`  • ${name}: lag check skipped (${e?.message?.split("\n")[0] ?? e})`); }
+}
