@@ -176,3 +176,25 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
    inter-dep pinned to the exact published version, so the set stays coherent without lockstep bumps.
 3. Add an entry here describing exactly what bytes/math changed and why.
 4. Run the full suite against a live node (oracle + light full-range) before `pnpm -r publish`.
+
+## Rollout checklist for a NEW GATE or FEE TIER (V28+)
+
+Since the 2026-07-06 promotions, a new name-fee tier is a ONE-FILE core change; the rest is
+mechanical refresh. In order:
+
+1. Add the gate height to `packages/cairnx/src/types.ts` and, for a fee tier, add it to
+   `NAME_FEE_GATES` in `packages/cairnx/src/preflight.ts` (buildFeeHeight owns the list; the
+   wallet and the trade UI import it, so no hand edit exists anywhere else).
+2. Vectors + conformance: extend `packages/cairnx/test/preflight.test.ts` (gate +/- margin grid),
+   add the crosslang case if the change affects canonical state, re-pin replay hashes if (and
+   only if) resolve() behavior changed.
+3. Bump `packages/cairnx` version, `pnpm -r build`, `pnpm publish` (publish-guard enforces pnpm).
+4. Re-pin the npm consumers: cairnx svc + cairn-cli package.json, `node scripts/check-consumer-pins.mjs`,
+   reinstall, restart cairnx.service off-peak (never during a gate crossing).
+5. Re-vendor the bundled consumers: wallet `bash scripts/build-spv-vendor.sh` +
+   `node scripts/check-vendor-fresh.mjs --write`; cairn `bash scripts/build-trade-vendor.sh` +
+   `node scripts/check-vendor-fresh.mjs --write`. Land these promptly: both freshness gates diff
+   against csd-sdk HEAD, so their CI is red between the core merge and the re-vendor commit.
+6. Grep the ecosystem for the new height as a raw literal; the only hits should be vendored
+   bundles and parity-test expectation grids.
+7. Purge Cloudflare for cairn (`/vendor/cairnx-core.js` + the usual .js/.css) after deploy.
