@@ -38,8 +38,15 @@ t("expired and locked candidates are excluded", () =>
   assert.equal(pickPrimaryName([
     n({ name: "lapsed", expired: true }), n({ name: "held", locked: true, effectiveHeight: 50 }), n({ name: "live", effectiveHeight: 200 }),
   ], A), "live"));
-t("UPPERCASE query address resolves identically (query is lowercased, records are canonical)", () =>
-  assert.equal(pickPrimaryName([n({ name: "casefold" })], A.toUpperCase().replace("0X", "0x")), "casefold"));
+t("UPPERCASE query address resolves identically (query is lowercased, records are canonical)", () => {
+  // MUST use an address with a-f hex letters: an all-digit address uppercases to itself, so it would
+  // pass with or without the defensive .toLowerCase() and pin nothing. This C-bearing address exercises
+  // the case-fold for real - drop the lowercase in pickPrimaryName and this fails.
+  const C = "0x" + "cd".repeat(20);
+  const rec = n({ name: "casefold", owner: C, addr: C });
+  assert.equal(pickPrimaryName([rec], C.toUpperCase().replace("0X", "0x")), "casefold");
+  assert.equal(pickPrimaryName([rec], C), "casefold");   // lowercase query still works (idempotent)
+});
 t("primaryRankBefore: the exported comparator matches the selection order", () => {
   assert.equal(primaryRankBefore(n({ name: "x", effectiveHeight: 1 }), n({ name: "y", effectiveHeight: 2 })), true);
   assert.equal(primaryRankBefore(n({ name: "x", claimId: "0xaa" }), n({ name: "y", claimId: "0xbb" })), true);
