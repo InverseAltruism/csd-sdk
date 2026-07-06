@@ -20,6 +20,16 @@ ok("dedupes the same outpoint", selectInputs([utxo(100, 6, false, 0), utxo(100, 
 ok("rejects unsafe-magnitude value", selectInputs([{ ...utxo(0), value: Number.MAX_SAFE_INTEGER + 4 }], 1) === null);
 ok("prefers non-coinbase, falls back to coinbase", selectInputs([utxo(1000, 6, true, 9)], 100)?.total === 1000);
 
+console.log("\n— selectInputs `exclude` (0.1.16 upstream of the wallet's ghost-coin skip; mirrors cairn-wallet/test/selectinputs-parity.ts) —");
+{
+  const key = (u: { txid: string; vout: number }) => `${u.txid.toLowerCase()}:${u.vout}`;
+  const best = utxo(900, 6, false, 9), other = utxo(800, 6, false, 1); // best's txid ends …0a (carries a hex letter)
+  ok("an excluded outpoint is never selected, even as the best coin", selectInputs([best, other], 700, new Set([key(best)]))?.inputs[0]?.txid === other.txid);
+  ok("exclusion can exhaust the pool → null", selectInputs([best], 100, new Set([key(best)])) === null);
+  ok("exclude key is case-sensitive by contract: an UPPERCASE-txid key excludes NOTHING (the caller must lowercase)", selectInputs([best, other], 700, new Set([`0x${best.txid.slice(2).toUpperCase()}:${best.vout}`]))?.inputs[0]?.txid === best.txid);
+  ok("2-arg call behavior unchanged (no exclude → best coin picked)", selectInputs([best, other], 700)?.inputs[0]?.txid === best.txid);
+}
+
 console.log("\n— buildSend —");
 const send = buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1000)], priv: PRIV });
 ok("buildSend ok", send.ok === true);

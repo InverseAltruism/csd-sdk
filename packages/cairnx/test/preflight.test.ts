@@ -184,6 +184,12 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   ok("one unit under on the seller leg → resolver REFUSES the fill", filledAt(outsToPaidTo(outs, A)) === false);
   ok("one unit under on the treasury leg → resolver REFUSES the fill", filledAt(outsToPaidTo(outs, T)) === false);
 
+  // whole-fill OVERPAY: previewFill clamps the effective pay to want (`pay: want`, fee on want), so a
+  // payRaw above want sizes IDENTICAL outputs to par — this map can never make a taker overpay a leg
+  const outsOver = requiredFillOutputs(openOffer, val * 3n)!;
+  ok("whole-fill overpay (payRaw = 3×want) clamps to want: outputs identical to par", outsOver.length === outs.length && outsOver.every((o, i) => o.to === outs[i].to && o.value === outs[i].value));
+  ok("previewFill pins the whole-fill clamp: pay == want, fee on want", (() => { const p = previewFill(openOffer, val * 3n); return p.deliverable && p.pay === val && p.fee === tradeFee(val, FEE_BPS_V16); })());
+
   // PARTIAL fill (taker-bound token offer): pay + fee(clamped), NO rebate leg
   const G2 = 10n, W2 = 100_00000000n, unit = W2 / G2;
   const partialOffer = (): { o: OfferState; base: ChainEvent[]; offId: string } => {
@@ -211,6 +217,33 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   const freeEra: OfferState = { ...po, feeBps: 0 };
   const fouts = requiredFillOutputs(freeEra, unit)!;
   ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0].to === A);
+}
+
+// ── OVERPAY CLAMP on a partially-filled offer: payRaw beyond the REMAINDER is clamped by previewFill
+// (resolve.ts:647 `x = pay < remaining ? pay : remaining`, fee ON the clamp) — the sized outputs carry
+// exactly the remainder, the resolver ACCEPTS them (the offer completes), and the fee leg is refused
+// one unit under. NOTE what the clamp does NOT guarantee: a pay leg one unit under the remainder is
+// still >= effMin, so the resolver ACCEPTS it and just delivers less (offer left open one unit short) —
+// pinned as-is so nobody "hardens" the clamp into an over-ask ──
+console.log("\nrequiredFillOutputs — overpay clamped to the remainder (fee on the clamp), resolver-pinned:");
+{
+  const H2 = V27_HEIGHT + 3000, G3 = 10n, W3 = 100_00000000n, unit3 = W3 / G3; // 10 CSD per token
+  const dep = prop(A, deploy({ ticker: "CLMP", decimals: 0, supply: G3.toString(), mint: "issuer" }), H2, { [T]: "100000000" });
+  const mintEv = prop(A, mint({ ticker: "CLMP", amount: G3.toString() }), H2 + 1);
+  const offEv = prop(A, offer({ give: { ticker: "CLMP", amount: G3.toString() }, want: { value: W3.toString() }, min: unit3.toString(), taker: B }), H2 + 2, {});
+  const first = 3n * unit3;   // 3 tokens already bought — 70 CSD remaining
+  const base2 = [dep, mintEv, offEv, att(B, offEv.id, H2 + 3, { [A]: first.toString(), [T]: tradeFee(first, FEE_BPS_V16).toString() }, SCORE_FILL, 2)];
+  const o2 = resolve(base2, H2 + 4).offers[offEv.id];
+  const remaining = W3 - first;
+  const over = requiredFillOutputs(o2, W3)!;   // payRaw = the FULL want, well over the remainder
+  ok("overpaid partial: pay leg = the clamped remainder, fee computed ON THE CLAMP (never on payRaw)", over.length === 2 && over[0].to === A && over[0].value === remaining && over[1].to === T && over[1].value === tradeFee(remaining, FEE_BPS_V16));
+  const p2 = previewFill(o2, W3);
+  ok("previewFill guarantee: pay clamped to remaining, got = the 7 undelivered tokens", p2.deliverable && p2.pay === remaining && p2.got === 7n);
+  const after = (paidTo: Record<string, string>): OfferState => resolve([...base2, att(B, offEv.id, H2 + 5, paidTo, SCORE_FILL, 2)], H2 + 6).offers[offEv.id];
+  const par = Object.fromEntries(over.map((x) => [x.to, x.value.toString()]));
+  ok("resolver ACCEPTS exactly the clamped outputs — the offer completes (filled, all 10 delivered)", (() => { const o = after(par); return o.status === "filled" && o.delivered === G3.toString(); })());
+  ok("one unit under on the fee leg (fee owed on the CLAMPED amount) → resolver REFUSES the fill", (after({ ...par, [T]: (tradeFee(remaining, FEE_BPS_V16) - 1n).toString() }).fills?.length ?? 0) === 1);
+  ok("one unit under on the pay leg is ACCEPTED but does NOT complete (still ≥ effMin; 1 unit left owing)", (() => { const o = after({ ...par, [A]: (remaining - 1n).toString() }); return o.status === "open" && (o.fills?.length ?? 0) === 2; })());
 }
 
 // ── buildFeeHeight: the approach-the-gate build heuristic, pinned at every gate ± margin ──
