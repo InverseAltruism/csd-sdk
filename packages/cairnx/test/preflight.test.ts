@@ -5,8 +5,10 @@
 import assert from "node:assert/strict";
 import {
   resolve, offer, deploy, mint, previewFill, fillIsSafe, finalizeWinnerCheck,
+  requiredFillOutputs, buildFeeHeight, FEE_GATE_MARGIN_BLOCKS,
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
-  TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, REG_COMMIT_MAX_BLOCKS, epochOf,
+  TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
+  REG_COMMIT_MAX_BLOCKS, epochOf,
   type ChainEvent, type OfferState, type NameState,
 } from "../src/index.js";
 
@@ -142,6 +144,86 @@ console.log("\nend-to-end: fillIsSafe refuses exactly the fill the resolver woul
   // C (no claim) is about to fill → the preflight must refuse BEFORE C signs (matching the on-chain reject)
   ok("C is refused by fillIsSafe (no live claim) — the burn the resolver would take", fillIsSafe(o, C, val + reb, listH + 6).safe === false);
   ok("B (the live claimant) is allowed by fillIsSafe", fillIsSafe(o, B, val + reb, listH + 6).safe === true);
+}
+
+// ── requiredFillOutputs: the output list it sizes is ACCEPTED by the real resolver, and any
+// single-unit per-address underpayment is REFUSED (the pay-without-delivery burn class this
+// function now single-sources for the wallet, the cairnx service, and the cairn UI) ──
+console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refused one unit under:");
+{
+  const outsToPaidTo = (outs: { to: string; value: bigint }[], dropOne?: string): Record<string, string> =>
+    Object.fromEntries(outs.map((o) => [o.to, (dropOne === o.to ? o.value - 1n : o.value).toString()]));
+
+  // WHOLE fill on an OPEN v1.7 name ask (claim-to-fill lane) — payto defaults to the seller, so the
+  // want and the maker rebate land on ONE address and must be ACCUMULATED (the resolver sums them).
+  const H = V27_HEIGHT + 2000, salt = "e".repeat(32);
+  const val = 100000000n, reb = makerRebate(val);
+  const mkEvents = (paidTo: Record<string, string>): { ev: ChainEvent[]; offId: string } => {
+    const offEv = { ...prop(A, offer({ give: { name: "bobcatxyz" }, want: { value: val.toString() } }), H + 300, {}), expiresEpoch: epochOf(H + 300) + 50 };
+    return {
+      offId: offEv.id,
+      ev: [
+        prop(A, nameCommitRecord({ commit: nameCommit("bobcatxyz", salt, A) }), H),
+        prop(A, nameClaim({ name: "bobcatxyz", salt }), H + 2),
+        prop(A, nameFinalize({ name: "bobcatxyz", salt }), H + REG_COMMIT_MAX_BLOCKS + 2, { [T]: nameRegFee("bobcatxyz", H + REG_COMMIT_MAX_BLOCKS + 2).toString() }),
+        offEv,
+        att(B, offEv.id, H + 305, {}, SCORE_CLAIM, 0),
+        att(B, offEv.id, H + 306, paidTo, SCORE_FILL, 2),
+      ],
+    };
+  };
+  const { ev: probeEv, offId: probeId } = mkEvents({});
+  const openOffer = resolve(probeEv.slice(0, 5), H + 305).offers[probeId];
+  const outs = requiredFillOutputs(openOffer, val)!;
+  ok("open-ask whole fill: 2 outputs (payto==seller ACCUMULATED with rebate, + treasury)", outs.length === 2 && outs[0].to === A && outs[0].value === val + reb && outs[1].to === T);
+  const filledAt = (paidTo: Record<string, string>): boolean => {
+    const { ev, offId } = mkEvents(paidTo);
+    return resolve(ev, H + 307).offers[offId]?.status === "filled";
+  };
+  ok("resolver ACCEPTS exactly these outputs (name delivered)", filledAt(outsToPaidTo(outs)) === true);
+  ok("one unit under on the seller leg → resolver REFUSES the fill", filledAt(outsToPaidTo(outs, A)) === false);
+  ok("one unit under on the treasury leg → resolver REFUSES the fill", filledAt(outsToPaidTo(outs, T)) === false);
+
+  // PARTIAL fill (taker-bound token offer): pay + fee(clamped), NO rebate leg
+  const G2 = 10n, W2 = 100_00000000n, unit = W2 / G2;
+  const partialOffer = (): { o: OfferState; base: ChainEvent[]; offId: string } => {
+    const dep = prop(A, deploy({ ticker: "PART", decimals: 0, supply: G2.toString(), mint: "issuer" }), H, { [T]: "100000000" });
+    const mintEv = prop(A, mint({ ticker: "PART", amount: G2.toString() }), H + 1);
+    const offEv = prop(A, offer({ give: { ticker: "PART", amount: G2.toString() }, want: { value: W2.toString() }, min: unit.toString(), taker: B }), H + 2, {});
+    return { o: resolve([dep, mintEv, offEv], H + 3).offers[offEv.id], base: [dep, mintEv, offEv], offId: offEv.id };
+  };
+  const { o: po, base, offId } = partialOffer();
+  const pouts = requiredFillOutputs(po, unit)!;
+  ok("partial fill: 2 outputs (clamped pay + fee), NO rebate leg", pouts.length === 2 && pouts[0].value === unit && pouts[1].to === T && pouts[1].value === tradeFee(unit, FEE_BPS_V16));
+  const partialFills = (paidTo: Record<string, string>): boolean => {
+    const st = resolve([...base, att(B, offId, H + 4, paidTo, SCORE_FILL, 2)], H + 5);
+    return (st.offers[offId]?.fills?.length ?? 0) > 0;
+  };
+  ok("resolver ACCEPTS the partial at par", partialFills(outsToPaidTo(pouts)) === true);
+  ok("one unit under the min on the pay leg → resolver REFUSES", partialFills(outsToPaidTo(pouts, A)) === false);
+  ok("one unit under on the fee leg → resolver REFUSES", partialFills(outsToPaidTo(pouts, T)) === false);
+
+  // shape contract: token-priced ⇒ [] (no CSD outputs); undeliverable ⇒ null; feeBps=0 ⇒ no treasury leg
+  const tokenPriced: OfferState = { id: nid(), seller: A, give: { ticker: "PART", amount: "1" } as OfferState["give"],
+    want: { ticker: "OTHER", amount: "5", payto: A } as unknown as OfferState["want"], status: "open", expiresEpoch: 9e15, height: H, feeBps: FEE_BPS_V16 };
+  ok("token-priced offer → [] (a token fill carries no CSD outputs)", requiredFillOutputs(tokenPriced, 1n)?.length === 0);
+  ok("undeliverable (below min) → null", requiredFillOutputs(po, unit - 1n) === null);
+  const freeEra: OfferState = { ...po, feeBps: 0 };
+  const fouts = requiredFillOutputs(freeEra, unit)!;
+  ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0].to === A);
+}
+
+// ── buildFeeHeight: the approach-the-gate build heuristic, pinned at every gate ± margin ──
+console.log("\nbuildFeeHeight — margin behavior at every name-fee gate:");
+{
+  ok("FEE_GATE_MARGIN_BLOCKS is 5 (the value both UI copies carried)", FEE_GATE_MARGIN_BLOCKS === 5);
+  for (const g of [V18_HEIGHT, V24_HEIGHT]) {
+    ok(`gate ${g}: just outside the margin (g-6) builds at tip`, buildFeeHeight(g - 6) === g - 6);
+    ok(`gate ${g}: margin edge (g-5) builds at the GATE (overpay-safe)`, buildFeeHeight(g - 5) === g);
+    ok(`gate ${g}: one below (g-1) builds at the GATE`, buildFeeHeight(g - 1) === g);
+    ok(`gate ${g}: at the gate builds at tip (tier already live)`, buildFeeHeight(g) === g);
+    ok(`gate ${g}: past the gate builds at tip`, buildFeeHeight(g + 1) === g + 1);
+  }
 }
 
 console.log(`\npreflight: ${pass} passed, ${fail} failed`);

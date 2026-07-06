@@ -18,7 +18,7 @@
 // behind registration finalize). The conformance vectors pin that they cannot drift (test/preflight.test.ts
 // asserts previewFill == the resolver's own delivered `got` at the C3 boundary).
 import {
-  V13_HEIGHT, V16_HEIGHT, V17_HEIGHT,
+  V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, TREASURY_ADDR,
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
 } from "./types.js";
@@ -79,6 +79,49 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
   const got = isNameGive(offer.give) ? 1n : BigInt((offer.give as { amount: string }).amount);
   return { deliverable: true, reason: "ok", got, pay: want, fee, rebate };
 }
+
+/** The exact CSD outputs a fill of `offer` paying `payRaw` must carry to clear the resolver's value
+ *  gate — the addr→sum map of resolve.ts:699-712 (whole: payto + treasury fee + maker rebate) and
+ *  :643-649 (partial: clamped payment + fee on the clamped amount, NO rebate), as a build-ready output
+ *  list. Amounts are ACCUMULATED per address (payto === seller is the common case; the resolver checks
+ *  the per-address SUM, so two merged entries must merge here too), insertion order payto → treasury →
+ *  seller, zero-value entries omitted (a 0 output is unbuildable and the resolver requires nothing).
+ *
+ *  Returns [] for a token-priced offer (a token⇄token fill carries NO CSD outputs) and null when the
+ *  payment is undeliverable — gate with fillIsSafe FIRST; this sizes outputs, it does not re-judge
+ *  claims/takers. Until 2026-07-06 this map was hand-mirrored in the wallet's fillOffer, the cairnx
+ *  service txbuild, and TWICE in the cairn trade UI — four copies of fund-loss-class math with no
+ *  cross-repo lock. This is now the only place it lives; test/preflight.test.ts pins it against the
+ *  real resolver (outputs accepted; any single-unit per-address underpayment refused). */
+export function requiredFillOutputs(
+  offer: OfferState,
+  payRaw: bigint | string | number,
+): { to: string; value: bigint }[] | null {
+  if (isTokenWant(offer.want)) return [];
+  const p = previewFill(offer, payRaw);
+  if (!p.deliverable) return null;
+  const need = new Map<string, bigint>();
+  const add = (a: string, v: bigint) => { if (v > 0n) { const k = a.toLowerCase(); need.set(k, (need.get(k) ?? 0n) + v); } };
+  add((offer.want as { payto: string }).payto, p.pay);
+  add(TREASURY_ADDR, p.fee);
+  add(offer.seller, p.rebate);
+  return [...need].map(([to, value]) => ({ to, value }));
+}
+
+/** Name-fee build heuristic (app-side, NOT a resolver rule): a name-fee OUTPUT built just below a fee
+ *  gate but mined at/after it underpays the new tier → resolver rejects → the treasury-fee UTXO is
+ *  forfeit. Within FEE_GATE_MARGIN_BLOCKS below ANY upcoming fee gate, price the BUILD at that gate:
+ *  overpay is always accepted (the resolver gate is strict `<`), so this only ever PREVENTS a forfeit,
+ *  never causes one. Display paths must pass the SAME buildFeeHeight(tip) so the quoted price matches
+ *  what gets signed. Owns the gate list: a future fee tier (V28+) is added HERE, once — the wallet and
+ *  the trade UI import this (they each hand-carried a copy of this function + list until 2026-07-06). */
+export const FEE_GATE_MARGIN_BLOCKS = 5;
+const NAME_FEE_GATES = [V18_HEIGHT, V24_HEIGHT];   // ascending name-fee activation heights
+export const buildFeeHeight = (tip: number): number => {
+  const t = Number(tip);
+  for (const g of NAME_FEE_GATES) if (t < g && t >= g - FEE_GATE_MARGIN_BLOCKS) return g;
+  return t;
+};
 
 /** Is the offer an OPEN (untaken) CSD-priced offer subject to the v1.7 claim-to-fill gate at `tip`?
  *  Such an offer may be filled ONLY by the holder of a LIVE claim (resolve.ts openFillReject:166-171). */

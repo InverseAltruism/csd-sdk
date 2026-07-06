@@ -12,8 +12,13 @@ export interface Selection { inputs: { txid: string; vout: number; value: number
  * hostile/buggy RPC: missing confirmations → 0 (unspendable), dedupe by (case-normalized)
  * outpoint, drop non-positive/unsafe values, refuse to exceed the consensus input cap, and
  * safe-integer-guard the running sum so no mis-signed value can slip in.
+ *
+ * `exclude` skips specific outpoints, keyed EXACTLY `${txid.toLowerCase()}:${vout}` (the same
+ * case-normalized key the dedupe uses — a mixed-case caller key silently excludes nothing).
+ * Upstreamed 2026-07-06 from the wallet's ghost-coin recovery (0.2.53): coins a prior verify
+ * round proved unfetchable are excluded fail-closed instead of poisoning every retry.
  */
-export function selectInputs(utxos: Utxo[], need: number): Selection | null {
+export function selectInputs(utxos: Utxo[], need: number, exclude?: ReadonlySet<string>): Selection | null {
   const seen = new Set<string>();
   const confirmed = utxos.filter((x) => {
     // maturity gate: an immature/0-conf coin is unspendable. Use Number.isFinite so a hostile RPC
@@ -24,6 +29,7 @@ export function selectInputs(utxos: Utxo[], need: number): Selection | null {
     const v = Number(x.value);
     if (!Number.isFinite(v) || v <= 0 || !Number.isSafeInteger(v)) return false;
     const key = `${String(x.txid).toLowerCase()}:${Number(x.vout)}`;
+    if (exclude?.has(key)) return false;
     if (seen.has(key)) return false; seen.add(key);
     return true;
   });

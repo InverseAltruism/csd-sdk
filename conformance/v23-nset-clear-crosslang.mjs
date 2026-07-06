@@ -12,7 +12,7 @@
 //   • owner nsets TEST -> ZERO at height>=V23 -> addr CLEARED -> resolves to the OWNER again (the unset)
 import { spawnSync } from "node:child_process";
 import {
-  resolve, canonicalState, nameClaim, nameSet, nameXfer,
+  resolve, canonicalState, nameClaim, nameSet, nameXfer, pickPrimaryName,
   V11_HEIGHT, V23_HEIGHT, V25_HEIGHT, ZERO_ADDR, TREASURY_ADDR, nameRegFee,
   NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN,
 } from "../packages/cairnx/dist/index.js";
@@ -46,18 +46,11 @@ const both = (label, ev, tip) => ok(`${label}: JS≡Python`, jsCanon(ev, tip) ==
 // the consensus send target = addr if set, else owner (mirrors service.resolveName)
 const sendTarget = (ev, tip, name) => { const n = resolve(ev, tip).names[name]; return n ? (n.addr ?? n.owner) : null; };
 const ownerOf = (ev, tip, name) => resolve(ev, tip).names[name]?.owner ?? null;
-// primaryName, computed exactly as the resolver's service.primaryName (oldest self-pointing, by
-// effectiveHeight then claimId). NOTE: the materialized NameState exposes `effectiveHeight`/`claimId`
-// (resolve.ts emits `effectiveHeight: n.effHeight, claimId: n.id`), NOT the internal `effHeight`/`id`.
-function primaryName(ev, tip, a) {
-  const st = resolve(ev, tip); let best = null;
-  for (const n of Object.values(st.names)) {
-    if (n.owner !== a || n.addr !== a || n.expired === true || n.locked) continue;
-    if (!best || n.effectiveHeight < best.effectiveHeight ||
-        (n.effectiveHeight === best.effectiveHeight && n.claimId < best.claimId)) best = n;
-  }
-  return best ? best.name : null;
-}
+// primaryName now uses the PRODUCTION export (packages/cairnx/src/primary.ts, promoted 2026-07-06)
+// instead of a local re-implementation. The expected names in the assertions below stay hand-written,
+// so this tests production code against an independent oracle - stronger than the old mirror-vs-oracle.
+// The Python canonicalState cross-check is unaffected (primary is not part of canonical state).
+const primaryName = (ev, tip, a) => pickPrimaryName(Object.values(resolve(ev, tip).names), a);
 
 const PRE = Math.min(V25_HEIGHT, V23_HEIGHT) - 50;   // registration band: below V25 (pay-now OWNED, not a
                                                      // reservation) AND below V23 (so the pre-gate nset->ZERO

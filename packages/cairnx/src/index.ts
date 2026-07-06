@@ -15,9 +15,12 @@ export * from "./types.js";
 export * from "./records.js";
 export { resolve, canonicalState } from "./resolve.js";
 export * from "./client.js";
-// preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck);
-// mirrors the resolver's fill + claim + freeze math so every value-bearing builder inherits loss-safety.
+// preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
+// requiredFillOutputs / buildFeeHeight); mirrors the resolver's fill + claim + freeze math so every
+// value-bearing builder inherits loss-safety.
 export * from "./preflight.js";
+// primary — the reverse-resolution (addr→primary name) selector every host must compute identically.
+export * from "./primary.js";
 export { paidToFromOutputs } from "./paidto.js";
 // Re-export the csd-codec primitives the cairnx consumers need so the browser UI / wallet import a SINGLE
 // surface (cairnx-core) rather than re-typing canonicalJson or the reward/fee constants. (csd-codec stays
