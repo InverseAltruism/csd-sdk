@@ -244,5 +244,64 @@ if (inclBlock) {
   ok("a batch-ONLY client still hard-fails with the ORIGINAL batch error", msgO === "upstream 429");
 }
 
+// 9) C1: ANCHOR CONTAINMENT — a checkpoint-configured client must refuse a snapshot that does not
+//    span its lowest pinned checkpoint. The per-header pin only fires for heights INSIDE the
+//    snapshot, so a poisoned snapshot rooted ABOVE the checkpoint carries no anchor at all and its
+//    `trusted` seed prefix (attacker-controlled flags) is honoured at face value — the exact
+//    poisoning defense the doc-comment claims. Requires storage-write + hostile RPC to exploit,
+//    but the anchor must hold even then.
+{
+  const honest = new LightClient({ headerProvider: provider });
+  honest.seedTrusted(seed, cpHash);
+  await honest.sync(FX.tip);
+  const snap = honest.toSnapshot();
+
+  // the attack: trim the snapshot to root ABOVE the checkpoint and flag the new prefix trusted:true
+  // (skipping LWMA re-derivation, exactly what seedTrusted's trade allows for a genuine seed)
+  const cut = CP + 1 - snap.baseHeight;
+  const relocated = {
+    ...snap, baseHeight: CP + 1,
+    headers: snap.headers.slice(cut).map((e, i) => (i < LWMA_WINDOW ? { ...e, trusted: true } : e)),
+  };
+  let threwA = false, msgA = "";
+  try { LightClient.fromSnapshot(relocated, { checkpoints: { [CP]: cpHash } }); } catch (e: any) { threwA = true; msgA = e?.message ?? String(e); }
+  ok("C1: a snapshot rooted ABOVE the configured checkpoint is REJECTED (not silently unanchored)", threwA && /anchored/.test(msgA));
+
+  // the other half: a snapshot ENDING BELOW the pinned checkpoint is equally unanchored
+  const short = { ...snap, headers: snap.headers.slice(0, -3) };
+  let threwB = false, msgB = "";
+  try { LightClient.fromSnapshot(short, { checkpoints: { [FX.tip]: byH.get(FX.tip)!.hash } }); } catch (e: any) { threwB = true; msgB = e?.message ?? String(e); }
+  ok("C1: a snapshot ending BELOW the configured checkpoint is REJECTED", threwB && /anchored/.test(msgB));
+
+  // no false positive: the honest full-span snapshot restores under the same checkpoint config
+  let okSpan = false;
+  try { const r = LightClient.fromSnapshot(snap, { checkpoints: { [CP]: cpHash } }); okSpan = r.tip!.height === FX.tip; } catch { okSpan = false; }
+  ok("C1: the honest checkpoint-spanning snapshot still restores cleanly", okSpan);
+
+  // scope pin: a client with NO checkpoints configured keeps the old semantics (nothing to anchor
+  // to; genesis-rooted files are separately anchored by the H4 genesis check)
+  let okNoCp = false;
+  try { const r = LightClient.fromSnapshot(relocated); okNoCp = r.tip!.height === FX.tip; } catch { okNoCp = false; }
+  ok("C1 scope: without configured checkpoints the relocated snapshot is not the anchor rule's problem", okNoCp);
+}
+
+// 10) C1 defense-in-depth: the H3 timestamp rules now also run on RESTORE (same set of headers as
+//     the LWMA re-derivation, same verifyOne order: time BEFORE bits BEFORE PoW). A snapshot whose
+//     tip time is rewound to its parent's time must die on the TIME rule — pre-change it slipped
+//     the restore path entirely (only PoW caught the byte change, with a misleading error).
+{
+  const honest = new LightClient({ headerProvider: provider });
+  honest.seedTrusted(seed, cpHash);
+  await honest.sync(FX.tip);
+  const snap = honest.toSnapshot();
+  const last = snap.headers[snap.headers.length - 1]!;
+  const parent = snap.headers[snap.headers.length - 2]!;
+  const badTime = { ...last.header, time: parent.header.time } as BlockHeader;
+  const tampered = { ...snap, headers: [...snap.headers.slice(0, -1), { ...last, header: badTime, hash: headerHash(badTime) }] };
+  let threwT = false, msgT = "";
+  try { LightClient.fromSnapshot(tampered); } catch (e: any) { threwT = true; msgT = e?.message ?? String(e); }
+  ok("H3 on restore: a snapshot header with time <= parent.time is REJECTED on the timestamp rule", threwT && /time/.test(msgT));
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

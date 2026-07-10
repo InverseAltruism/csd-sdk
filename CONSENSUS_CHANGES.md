@@ -56,6 +56,24 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-light 0.1.17 (2026-07-10) - snapshot anchor containment + restore-time timestamp rules (reject-more only)
+
+`LightClient.fromSnapshot` (`packages/light/src/index.ts`) hardens the restore path in two
+reject-more-never-accept-different ways. (1) Anchor containment: a checkpoint-configured client now
+refuses any snapshot whose range does not CONTAIN its lowest pinned checkpoint (genesis-rooted
+snapshots stay exempt, anchored by the H4 genesis check). Previously the per-header `pinCheckpoint`
+only fired when the pinned height happened to sit inside the snapshot, so a poisoned snapshot rooted
+ABOVE the checkpoint carried no trust anchor at all and its attacker-controlled `trusted` seed prefix
+skipped LWMA re-derivation (grindable at POW_LIMIT; requires storage-write + a hostile RPC to
+exploit). (2) The H3 timestamp rules (min-spacing, MTP, future-drift) now also run on restore for
+exactly the headers whose LWMA window is re-derived, in `verifyOne`'s check order (time before bits
+before PoW, as the node does). Deterministic for min-spacing/MTP and the wall-clock bound only
+loosens with time, so an honestly-synced snapshot can never regress on restore. Forward-sync
+(`sync`/`ingest`/`verifyOne`), LWMA math, header bytes: untouched. Every accepted header set for
+honest chains is identical; only forged/unanchored snapshots are newly rejected. Pinned by three new
+mutation tests in `light-offline.test.ts` (each fails on 0.1.16). No height gate needed
+(client-local trust hardening, no consensus-byte change).
+
 ## csd-light 0.1.16 (2026-07-10) - LWMA bits->target memo (perf only, byte-identical)
 
 `packages/light/src/lwma.ts` gains a module-scope memo of the pure `targetToBigInt(bitsToTarget(bits))`

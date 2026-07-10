@@ -315,18 +315,35 @@ export class LightClient {
   }
 
   /**
-   * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, PoW on every
-   * header, AND `bits` re-derived from the LWMA window for every NON-trusted (forward-synced)
-   * header, exactly as the live `sync`/`verifyOne` path accepted it. Only the original seed window
-   * (`trusted`) skips LWMA — the same posture `seedTrusted` allows for the checkpoint trade — but a
-   * snapshot cannot smuggle trust past the pinned checkpoint hash: if `checkpoints` is configured,
-   * any restored header at a pinned height must match. So a localStorage-poisoned snapshot that
-   * inserts a min-difficulty (POW_LIMIT) header is REJECTED here, not restored as verified.
-   * chainwork is recomputed, never read from the file.
+   * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, timestamp
+   * rules, PoW on every header, AND `bits` re-derived from the LWMA window for every NON-trusted
+   * (forward-synced) header, exactly as the live `sync`/`verifyOne` path accepted it. Only the
+   * original seed window (`trusted`) skips the time/LWMA re-derivation — the same posture
+   * `seedTrusted` allows for the checkpoint trade. A checkpoint-configured client additionally
+   * refuses any snapshot (other than a genesis-rooted one, anchored by H4 below) that does not
+   * CONTAIN its lowest pinned checkpoint: the per-header pin can only assert the baked hash when
+   * the pinned height is inside the restored range, so without the containment rule a poisoned
+   * snapshot rooted ABOVE the checkpoint would carry no anchor at all and its `trusted` seed
+   * prefix would be honoured at face value (grindable at POW_LIMIT). So a localStorage-poisoned
+   * snapshot is REJECTED here, not restored as verified. chainwork is recomputed, never read
+   * from the file.
    */
   static fromSnapshot(s: ChainSnapshot, opts: LightClientOptions = {}): LightClient {
     if (s.v !== 1 || !Array.isArray(s.headers) || !s.headers.length) throw new Error("bad snapshot");
     const lc = new LightClient(opts);
+    // Anchor containment (C1): a snapshot for a checkpoint-configured client must span its lowest
+    // pinned checkpoint, or the in-loop pinCheckpoint never fires and nothing ties the restored
+    // chain to the baked trust root. Genesis-rooted snapshots (baseHeight 0) are exempt: they are
+    // anchored by the GENESIS_HASH check instead and may legitimately end below a checkpoint.
+    // On rejection the caller discards the snapshot and cold-starts via syncFromCheckpoint.
+    const pinnedHeights = Object.keys(lc.checkpoints).map(Number);
+    if (pinnedHeights.length && s.baseHeight > 0) {
+      const cpMin = Math.min(...pinnedHeights);
+      const last = s.baseHeight + s.headers.length - 1;
+      if (s.baseHeight > cpMin || last < cpMin) {
+        throw new Error(`snapshot not anchored: range [${s.baseHeight}..${last}] does not contain checkpoint ${cpMin}`);
+      }
+    }
     lc.baseHeight = s.baseHeight;
     let prevHash: string | null = null;
     let work = 0n;
@@ -342,17 +359,23 @@ export class LightClient {
         if (e.header.bits !== INITIAL_BITS) throw new Error("snapshot genesis bits != INITIAL_BITS");
       }
       if (prevHash && e.header.prev.toLowerCase() !== prevHash) throw new Error(`snapshot prev link broken at ${e.height}`);
-      if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${e.height}`);
-      // LWMA must be re-derived for every header whose FULL preceding window is present in the snapshot,
-      // REGARDLESS of the attacker-controllable `trusted` flag (H4). Trust-skip is honoured ONLY for the
-      // genuine seed prefix (the first LWMA_WINDOW headers, whose window extends below baseHeight and so
-      // cannot be re-derived) — exactly the run seedTrusted legitimately trusts. So a poisoned snapshot
-      // can no longer mark a low-difficulty FORWARD header trusted:true to bypass the difficulty check.
+      // Timestamp + LWMA rules must be re-derived for every header whose FULL preceding window is
+      // present in the snapshot, REGARDLESS of the attacker-controllable `trusted` flag (H4).
+      // Trust-skip is honoured ONLY for the genuine seed prefix (the first LWMA_WINDOW headers,
+      // whose window extends below baseHeight and so cannot be re-derived) — exactly the run
+      // seedTrusted legitimately trusts. Check order mirrors verifyOne (time BEFORE bits BEFORE
+      // PoW, as the node does). The H3 time rules are deterministic for min-spacing/MTP and the
+      // wall-clock future-drift bound only loosens as time passes, so an honestly-synced snapshot
+      // can never regress on restore.
       const fullWindowAvailable = e.height - s.baseHeight >= LWMA_WINDOW;
       if (e.height > 0 && (!e.trusted || fullWindowAvailable)) {
-        const exp = expectedBitsFromWindow(lc.windowBefore(e.height), e.height);
+        const window = lc.windowBefore(e.height);
+        const parent = lc.chain[i - 1];
+        if (parent) lc.checkTimeRules(e.height, e.header, window, parent);
+        const exp = expectedBitsFromWindow(window, e.height);
         if (e.header.bits !== exp) throw new Error(`snapshot bad bits at ${e.height}: ${e.header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
       }
+      if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${e.height}`);
       lc.pinCheckpoint(e.height, hash); // the baked checkpoint hash is the one true anchor
       work = satAddWork(work, e.header.bits);
       lc.chain.push({ height: e.height, hash, header: e.header, chainwork: work, ...(e.trusted ? { trusted: true } : {}) });
