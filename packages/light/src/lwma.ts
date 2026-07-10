@@ -6,7 +6,28 @@ import {
   INITIAL_BITS, POW_LIMIT_BITS, LWMA_WINDOW, LWMA_SOLVETIME_MAX_FACTOR, TARGET_BLOCK_SECS,
 } from "@inversealtruism/csd-codec";
 
-const POW_LIMIT_TARGET = targetToBigInt(bitsToTarget(POW_LIMIT_BITS));
+// Memoized bits -> target as a BigInt. `targetToBigInt(bitsToTarget(bits))` is a pure function of
+// the u32 `bits`, and LWMA windows slide one header at a time, so a linear sync/restore re-converts
+// the SAME header's bits in up to LWMA_WINDOW consecutive windows (~45x each; measured ~85% of a
+// LightClient.fromSnapshot restore). Every invalid compact encoding (exp 0, mant 0, sign bit,
+// exp>32, overflow) decodes to the all-zero target, i.e. 0n — callers treat a 0n result as invalid,
+// which is byte-identical to the old `tb.every(b => b === 0)` check. The map is capped: real chains
+// add at most ~1 new bits value per block, but a hostile snapshot could feed arbitrary distinct
+// values; clear-at-cap keeps it bounded, and the 45-header window locality restores a ~98% hit rate
+// within one window even right after a clear. Values are cached BigInts (immutable), so a hit can
+// never differ from a fresh computation (pinned by test/lwma-memo.test.ts against the raw codec).
+const TARGET_MEMO_CAP = 4096;
+const targetMemo = new Map<number, bigint>();
+function bitsToTargetBigInt(bits: number): bigint {
+  const hit = targetMemo.get(bits);
+  if (hit !== undefined) return hit;
+  const v = targetToBigInt(bitsToTarget(bits));
+  if (targetMemo.size >= TARGET_MEMO_CAP) targetMemo.clear();
+  targetMemo.set(bits, v);
+  return v;
+}
+
+const POW_LIMIT_TARGET = bitsToTargetBigInt(POW_LIMIT_BITS);
 
 /**
  * Expected `bits` for the block at `height`, given the CHRONOLOGICAL window of the (up to
@@ -28,10 +49,10 @@ export function expectedBitsFromWindow(window: BlockHeader[], height: number): n
   const times: bigint[] = [];
   const targets: bigint[] = [];
   for (const h of w) {
-    const tb = bitsToTarget(h.bits);
-    if (tb.every((b) => b === 0)) throw new Error("expectedBits: invalid compact bits in window");
+    const tg = bitsToTargetBigInt(h.bits); // memoized; 0n === the all-zero (invalid) target
+    if (tg === 0n) throw new Error("expectedBits: invalid compact bits in window");
     times.push(BigInt(h.time));
-    targets.push(targetToBigInt(tb));
+    targets.push(tg);
   }
   if (times.length < 2) return parent.bits;
   const m = times.length;
@@ -60,7 +81,7 @@ export function expectedBitsFromWindow(window: BlockHeader[], height: number): n
   if (nextTarget === 0n || nextTarget >= 1n << 256n) return POW_LIMIT_BITS;
 
   const bits = targetToBits(bigIntToTarget(nextTarget));
-  if (targetToBigInt(bitsToTarget(bits)) > POW_LIMIT_TARGET) return POW_LIMIT_BITS;
+  if (bitsToTargetBigInt(bits) > POW_LIMIT_TARGET) return POW_LIMIT_BITS;
   return bits;
 }
 

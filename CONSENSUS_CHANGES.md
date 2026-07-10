@@ -56,6 +56,19 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-light 0.1.16 (2026-07-10) - LWMA bits->target memo (perf only, byte-identical)
+
+`packages/light/src/lwma.ts` gains a module-scope memo of the pure `targetToBigInt(bitsToTarget(bits))`
+composition (capped Map, clear-at-cap 4096; invalid encodings cache as `0n` and still throw exactly
+where the old all-zero-bytes check threw). ZERO math changes: every accepted/rejected `bits` and every
+derived target is identical; the sliding 45-header window just stops re-converting the same header's
+bits up to 45 times. Motivation: a wallet-scale `LightClient.fromSnapshot` restore measured ~85% LWMA
+re-derivation; the memo cuts restore cost ~4x (192 -> 47 us/header on the real-header fixture).
+Byte-identity pinned by the new `packages/light/test/lwma-memo.test.ts` (memoized impl vs an
+unmemoized raw-codec reference on every real fixture window + edge encodings + forced cap eviction)
+and by the unchanged `light-offline.test.ts` golden (real mainnet headers incl. the H4 poison vector).
+No height gate needed (no behavior change).
+
 ## 0.1.33 (2026-07-03) - activation heights pulled in (no rule changes)
 
 `V24_HEIGHT` 49,200 -> 46,400 · `V25_HEIGHT` 51,000 -> 46,440 · `V26_HEIGHT` 51,200 -> 46,480 ·

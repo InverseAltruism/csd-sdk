@@ -106,14 +106,15 @@ Vendored consumers: the cairn website serves the packages server-side and ships 
 
 ## State snapshot (2026-07-09; ephemeral facts live HERE; verify with git/npm before trusting)
 
-Snapshot taken at master 6cccfd1 (docs: corrected V24-V27 heights). Root csd-sdk 0.1.10 (private, never published). In-tree versions == npm for all 10 packages:
+Snapshot updated 2026-07-10 (csd-light 0.1.16 LWMA memo). Root csd-sdk 0.1.10 (private, never published). In-tree versions == npm for all packages EXCEPT csd-light (0.1.16 in-tree, publish pending maintainer say-so):
 
 | Package | Version |
 |---|---|
 | cairnx-core | 0.1.35 |
 | csd-tx | 0.1.16 |
 | csd-registry | 0.1.16 |
-| csd-client, csd-codec, csd-crypto, csd-light, csd-siwc, csd-vectors | 0.1.15 |
+| csd-light | 0.1.16 (in-tree; npm at 0.1.15 until the next publish — LWMA memo, perf-only, see CONSENSUS_CHANGES) |
+| csd-client, csd-codec, csd-crypto, csd-siwc, csd-vectors | 0.1.15 |
 | csd-indexwire | 0.1.0 |
 
 Published sibling consumers at snapshot time: cairn-cli 0.3.19, cairn-sdk 0.2.1, csd-indexer 0.2.6. Known doc wart: the npm tarball for cairnx-core 0.1.35 ships a stale pre-re-pin CONVENTION/README (heights corrected in-tree by 6cccfd1); per the no-docs-only-republish rule the fix rides the next real release.

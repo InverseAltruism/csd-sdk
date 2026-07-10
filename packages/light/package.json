@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-light",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "engines": { "node": ">=18" },
   "description": "Compute Substrate light client \u2014 headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
   "type": "module",
@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/light-offline.test.ts && tsx test/light.test.ts",
+    "test": "tsx test/light-offline.test.ts && tsx test/lwma-memo.test.ts && tsx test/light.test.ts",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
