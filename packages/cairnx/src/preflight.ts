@@ -19,6 +19,7 @@
 // asserts previewFill == the resolver's own delivered `got` at the C3 boundary).
 import {
   V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, TREASURY_ADDR,
+  REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN,
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
 } from "./types.js";
@@ -162,16 +163,25 @@ export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string |
 }
 
 /** C1: may `me` safely sign the fee-bearing registration `nfinalize` for `nameState` committed at
- *  `commitHeight`? The reg fee rides nfinalize; a finalize on a reservation that was displaced or has
- *  expired is REJECTED after the fee moved (a burn). Sound by the freeze arithmetic: once a client waits
- *  for `tip > effectiveHeight + REG_COMMIT_MAX_BLOCKS` (which the UI's finalizeReady already enforces) no
- *  new displacer can appear, so a re-fetch showing "still my live pending reservation at my commit height"
- *  guarantees the finalize lands. Pass the AUTHORITATIVE (freshly re-fetched) name record — never a cached
- *  one — as `nameState` (undefined = the resolver returns 404 / unregistered, which is a definitive loss). */
+ *  `commitHeight`? The reg fee rides nfinalize; a finalize on a reservation that was displaced, has
+ *  expired, OR is raised before the displacement contest froze is REJECTED after the fee moved (a burn).
+ *  Sound by the freeze arithmetic: once a client waits for `tip > effectiveHeight + REG_COMMIT_MAX_BLOCKS`
+ *  no new displacer can appear, so a re-fetch showing "still my live pending reservation at my commit
+ *  height" guarantees the finalize lands. Pass the AUTHORITATIVE (freshly re-fetched) name record — never
+ *  a cached one — as `nameState` (undefined = the resolver returns 404 / unregistered, a definitive loss).
+ *
+ *  Pass `tip` (the freshest chain tip you have) to ALSO gate the finalize WINDOW, both sides, mirroring
+ *  the resolver's authoritative checks (resolve.ts nfinalize: rejects unless
+ *  `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when `ev.height > finalizeBy`) with the
+ *  client-side FINALIZE_TIP_MARGIN band the site's finalizeReady applies: the tx signs at `tip` but mines
+ *  at tip+1 or later, so the margin keeps a boundary-signed finalize from mining outside the window (too
+ *  early: rejected as unfrozen; too late: past the deadline — either way the fee burned). `tip` is
+ *  optional so callers without a tip keep the winner-only semantics; N-2 closes only when it is passed. */
 export function finalizeWinnerCheck(
   nameState: NameState | null | undefined,
   me: string,
   commitHeight: number,
+  tip?: number | null,
 ): { safe: boolean; reason: string } {
   const m = me.toLowerCase();
   if (!nameState) return { safe: false, reason: "no reservation on-chain (displaced, swept, or never accepted) — a finalize now would burn the fee" };
@@ -180,5 +190,20 @@ export function finalizeWinnerCheck(
   if (nameState.pending !== true) return { safe: false, reason: "already registered to you — no second finalize fee is needed" };
   if (Number(nameState.effectiveHeight) !== Number(commitHeight))
     return { safe: false, reason: "your reservation was displaced (effective height changed) — a finalize now would burn the fee" };
+  // N-2: the finalize window, both sides. freezeEnd derives from the reservation's own finalizeBy when it
+  // carries one (finalizeBy − REG_FINALIZE_GRACE_BLOCKS, the resolver's construction inverted) with the
+  // constant fallback for records that predate materialized finalizeBy — the same derivation as the site's
+  // regstage freezeEnd, so wallet and site refuse on identical boundaries.
+  if (tip !== undefined && tip !== null && Number.isFinite(Number(tip))) {
+    const t = Number(tip);
+    const eff = Number(nameState.effectiveHeight);
+    const fin = nameState.finalizeBy !== undefined && nameState.finalizeBy !== null ? Number(nameState.finalizeBy) : undefined;
+    const freezeEnd = fin !== undefined ? fin - REG_FINALIZE_GRACE_BLOCKS : eff + REG_COMMIT_MAX_BLOCKS;
+    const closeAt = (fin !== undefined ? fin : freezeEnd + REG_FINALIZE_GRACE_BLOCKS) - FINALIZE_TIP_MARGIN;
+    if (t <= freezeEnd + FINALIZE_TIP_MARGIN)
+      return { safe: false, reason: `too early — the displacement contest is not frozen yet (finalizable after block ${freezeEnd + FINALIZE_TIP_MARGIN}, chain tip ${t}); the resolver would reject the finalize after the fee moved, burning it` };
+    if (t > closeAt)
+      return { safe: false, reason: `this reservation's finalize window has closed (safe until block ${closeAt}, chain tip ${t}); a finalize now would mine past the deadline and burn the fee` };
+  }
   return { safe: true, reason: "ok" };
 }

@@ -56,6 +56,19 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## 0.1.36 (2026-07-10) - finalizeWinnerCheck gains the finalize-window checks (client helper only, replay untouched)
+
+`packages/cairnx/src/preflight.ts` completes `finalizeWinnerCheck` with the N-2 finalize-window
+checks: an optional `tip` parameter adds BOTH the freeze-window ("too early") and expiry ("window
+closed") refusals, mirroring the resolver's authoritative nfinalize gates (`resolve.ts`: rejects
+unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`; rejects when `ev.height > finalizeBy`) with
+the client-side `FINALIZE_TIP_MARGIN` band the site's `finalizeReady` already applies. Callers that
+omit `tip` keep the exact winner-only semantics (backward compatible). The consensus surface is
+UNTOUCHED: the `resolve.ts`/`records.ts`/`types.ts` diff for this release is empty, no serialization,
+gate, constant, or replay byte changes, so replayers on 0.1.35 compute byte-identical canonical
+state. Pinned by an 8-case window grid in `test/preflight.test.ts` (the refusal cases fail on
+0.1.35). No height gate needed (additive client-selector logic).
+
 ## csd-light 0.1.17 (2026-07-10) - snapshot anchor containment + restore-time timestamp rules (reject-more only)
 
 `LightClient.fromSnapshot` (`packages/light/src/index.ts`) hardens the restore path in two

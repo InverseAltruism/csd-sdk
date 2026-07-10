@@ -8,7 +8,7 @@ import {
   requiredFillOutputs, buildFeeHeight, FEE_GATE_MARGIN_BLOCKS,
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
-  REG_COMMIT_MAX_BLOCKS, epochOf,
+  REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN, epochOf,
   type ChainEvent, type OfferState, type NameState,
 } from "../src/index.js";
 
@@ -124,6 +124,27 @@ console.log("\nfinalizeWinnerCheck — the C1 registration-finalize gate:");
   ok("owned by someone else → NOT safe (outbid)", finalizeWinnerCheck({ ...mine, owner: B }, A, commitHeight).safe === false);
   ok("effective height changed (displaced) → NOT safe", finalizeWinnerCheck({ ...mine, effectiveHeight: commitHeight + 1 }, A, commitHeight).safe === false);
   ok("already finalized to me (pending cleared) → NOT safe (no second fee needed)", finalizeWinnerCheck({ ...mine, pending: undefined }, A, commitHeight).safe === false);
+
+  // ── N-2: the finalize WINDOW, both sides, when a tip is passed (freeze + expiry, resolver-mirrored
+  //    boundaries with the FINALIZE_TIP_MARGIN band — identical to the site's finalizeReady) ──
+  const eff = commitHeight;
+  const finalizeBy = eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS;
+  const resv: NameState = { ...mine, finalizeBy };
+  const freezeGate = eff + REG_COMMIT_MAX_BLOCKS + FINALIZE_TIP_MARGIN;   // pass STRICTLY ABOVE this
+  const closeAt = finalizeBy - FINALIZE_TIP_MARGIN;                       // pass AT OR BELOW this
+  ok("N-2: tip inside the frozen window → safe", finalizeWinnerCheck(resv, A, commitHeight, freezeGate + 3).safe === true);
+  const early = finalizeWinnerCheck(resv, A, commitHeight, freezeGate);
+  ok("N-2: tip at the freeze gate (not yet frozen) → NOT safe, 'too early'", early.safe === false && /too early/.test(early.reason));
+  ok("N-2: tip one block past the freeze gate → safe (exact-boundary pass, no over-refusal)", finalizeWinnerCheck(resv, A, commitHeight, freezeGate + 1).safe === true);
+  ok("N-2: tip at the close boundary → still safe", finalizeWinnerCheck(resv, A, commitHeight, closeAt).safe === true);
+  const late = finalizeWinnerCheck(resv, A, commitHeight, closeAt + 1);
+  ok("N-2: tip past the close boundary → NOT safe, 'window has closed'", late.safe === false && /closed/.test(late.reason));
+  // records that predate a materialized finalizeBy fall back to the constant window
+  const bare = finalizeWinnerCheck(mine, A, commitHeight, eff + REG_COMMIT_MAX_BLOCKS + FINALIZE_TIP_MARGIN);
+  ok("N-2 fallback (no finalizeBy): freeze gate still enforced", bare.safe === false && /too early/.test(bare.reason));
+  ok("N-2 fallback (no finalizeBy): inside-window tip → safe", finalizeWinnerCheck(mine, A, commitHeight, eff + REG_COMMIT_MAX_BLOCKS + FINALIZE_TIP_MARGIN + 1).safe === true);
+  // no tip → winner-only semantics preserved (existing callers unchanged)
+  ok("N-2: omitted tip keeps the winner-only contract", finalizeWinnerCheck(resv, A, commitHeight).safe === true && finalizeWinnerCheck(resv, A, commitHeight, null).safe === true);
 }
 
 // ── end-to-end: fillIsSafe agrees with the resolver on the C2 non-claimant burn sequence ──
