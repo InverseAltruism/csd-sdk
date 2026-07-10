@@ -15,23 +15,48 @@ const canonical = JSON.parse(readFileSync(join(ROOT, "csd-sdk/packages/cairnx/pa
 
 // consumers that pin cairnx-core directly via npm (the bundled consumers — cairn UI / cairn-wallet — carry a
 // vendored esbuild instead and are guarded by their own check-vendor-fresh + PROVENANCE, not a pin).
+// Tiers (Plans/68 D3): "strict" = any pin mismatch is fatal (live replayers and their operator CLI must
+// never lag at all). "graded" = a lag is fatal ONLY when the pinned-version..canonical diff touches the
+// consensus surface (packages/cairnx/src/{resolve,records,types}.ts — the bytes a replayer derives state
+// from); a helpers-only lag (preflight/primary/client-selector logic) is an ADVISORY nudge, because the
+// lagging consumer still computes byte-identical canonical state. Grading needs the cairnx-core-<ver> tag
+// to compute the diff; an unknown pinned version fails CLOSED (fatal) rather than guessing.
 const CONSUMERS = [
-  ["cairnx svc", "cairnx/package.json"],
-  ["cairn-cli", "cairn-cli/package.json"],
+  ["cairnx svc", "cairnx/package.json", "strict"],
+  ["cairn-cli", "cairn-cli/package.json", "strict"],
+  ["cairn-sdk", "cairn-sdk/package.json", "graded"],
+  ["clarvis", "clarvis/package.json", "graded"], // second-source resolver; usually on its own host — skips here
 ];
 
+const { execSync } = await import("node:child_process");
+const SDK = join(ROOT, "csd-sdk");
+const CONSENSUS_SURFACE = ["packages/cairnx/src/resolve.ts", "packages/cairnx/src/records.ts", "packages/cairnx/src/types.ts"];
+/** "" when ver..HEAD leaves the consensus surface untouched; a --stat summary when it drifted; null when unknowable. */
+function consensusDrift(ver) {
+  try {
+    return execSync(`git -C ${SDK} diff cairnx-core-${ver} HEAD --stat -- ${CONSENSUS_SURFACE.join(" ")}`, { encoding: "utf8" }).trim();
+  } catch { return null; }
+}
+
 console.log(`cairnx-core canonical version: ${canonical}`);
-let bad = 0, seen = 0;
-for (const [name, rel] of CONSUMERS) {
+let bad = 0, seen = 0, advis = 0;
+for (const [name, rel, tier] of CONSUMERS) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) { console.log(`  • ${name}: not present — skip`); continue; }
   seen++;
   const dep = JSON.parse(readFileSync(p, "utf8")).dependencies?.["@inversealtruism/cairnx-core"];
-  if (dep === canonical) console.log(`  ✓ ${name} pins cairnx-core ${dep}`);
-  else { console.error(`  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical} — re-pin + reinstall + (svc) restart`); bad++; }
+  if (dep === canonical) { console.log(`  ✓ ${name} pins cairnx-core ${dep}`); continue; }
+  if (tier === "graded") {
+    const drift = consensusDrift(dep);
+    if (drift === "") { console.warn(`  ⚠ ${name} pins cairnx-core ${dep} != canonical ${canonical} — helpers-only lag (consensus surface identical); re-pin when convenient`); advis++; continue; }
+    if (drift === null) { console.error(`  ✗ ${name} pins cairnx-core ${dep} — UNKNOWN version (no cairnx-core-${dep} tag to grade against) — treat as drift, re-pin`); bad++; continue; }
+    console.error(`  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical} — CONSENSUS-SURFACE DRIFT, a live replayer on it forks:\n${drift.split("\n").map((l) => "      " + l).join("\n")}`);
+    bad++; continue;
+  }
+  console.error(`  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical} — re-pin + reinstall + (svc) restart`); bad++;
 }
 if (bad) { console.error(`\nconsumer-pin coherence FAILED (${bad}/${seen})`); process.exit(1); }
-console.log(`\nconsumer-pin coherence OK (${seen} npm-pinning consumers). Bundled consumers (cairn UI, wallet) are guarded by their own vendor-freshness gates.`);
+console.log(`\nconsumer-pin coherence OK (${seen} npm-pinning consumers${advis ? `, ${advis} advisory helpers-only lag` : ""}). Bundled consumers (cairn UI, wallet) are guarded by their own vendor-freshness gates.`);
 
 // ── ADVISORY (never fails the run): vendored-consumer lag. The wallet/cairn PROVENANCE pins a
 // csd-sdk commit; their freshness gates prove the bundle matches THAT commit, but nothing says how
