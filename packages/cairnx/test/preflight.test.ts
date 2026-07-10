@@ -145,6 +145,15 @@ console.log("\nfinalizeWinnerCheck — the C1 registration-finalize gate:");
   ok("N-2 fallback (no finalizeBy): inside-window tip → safe", finalizeWinnerCheck(mine, A, commitHeight, eff + REG_COMMIT_MAX_BLOCKS + FINALIZE_TIP_MARGIN + 1).safe === true);
   // no tip → winner-only semantics preserved (existing callers unchanged)
   ok("N-2: omitted tip keeps the winner-only contract", finalizeWinnerCheck(resv, A, commitHeight).safe === true && finalizeWinnerCheck(resv, A, commitHeight, null).safe === true);
+
+  // S1 (fresh-eyes fund-safety): the window is derived PURELY from eff, so a hostile/buggy resolver
+  // returning an INFLATED finalizeBy cannot widen the safe band and walk the caller into a fee burn.
+  // A tip past the TRUE closeAt (eff+26) must still refuse even when the record claims a far-future
+  // finalizeBy. MUTATION CONTRACT: pre-S1 (finalizeBy-derived closeAt) this returned safe:true.
+  const lyingResv: NameState = { ...mine, finalizeBy: eff + 1000 };
+  const lied = finalizeWinnerCheck(lyingResv, A, commitHeight, closeAt + 1);
+  ok("S1: an inflated resolver finalizeBy is IGNORED — a tip past the eff-derived close still refuses", lied.safe === false && /closed/.test(lied.reason));
+  ok("S1: the honest in-window boundary is unchanged by the pure derivation", finalizeWinnerCheck(lyingResv, A, commitHeight, closeAt).safe === true);
 }
 
 // ── end-to-end: fillIsSafe agrees with the resolver on the C2 non-claimant burn sequence ──

@@ -197,16 +197,18 @@ export function finalizeWinnerCheck(
   if (nameState.pending !== true) return { safe: false, reason: "already registered to you — no second finalize fee is needed" };
   if (Number(nameState.effectiveHeight) !== Number(commitHeight))
     return { safe: false, reason: "your reservation was displaced (effective height changed) — a finalize now would burn the fee" };
-  // N-2: the finalize window, both sides. freezeEnd derives from the reservation's own finalizeBy when it
-  // carries one (finalizeBy − REG_FINALIZE_GRACE_BLOCKS, the resolver's construction inverted) with the
-  // constant fallback for records that predate materialized finalizeBy — the same derivation as the site's
-  // regstage freezeEnd, so wallet and site refuse on identical boundaries.
+  // N-2: the finalize window, both sides. The window is derived PURELY from `eff` (= the caller's own
+  // commitHeight, pinned by the effectiveHeight guard above), NOT from the resolver-supplied finalizeBy:
+  // the true on-chain deadline is ALWAYS `eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
+  // (resolve.ts:335/:300 construct it that way), so a hostile/buggy resolver returning an inflated
+  // finalizeBy cannot widen the safe band and walk the caller into a fee burn — this keeps the module's
+  // "a deterministic function of record fields, no resolver boolean can induce a loss" invariant (S1).
+  // The boundaries are byte-identical to the site's regstage freezeEnd for an honest record.
   if (tip !== undefined && tip !== null && Number.isFinite(Number(tip))) {
     const t = Number(tip);
     const eff = Number(nameState.effectiveHeight);
-    const fin = nameState.finalizeBy !== undefined && nameState.finalizeBy !== null ? Number(nameState.finalizeBy) : undefined;
-    const freezeEnd = fin !== undefined ? fin - REG_FINALIZE_GRACE_BLOCKS : eff + REG_COMMIT_MAX_BLOCKS;
-    const closeAt = (fin !== undefined ? fin : freezeEnd + REG_FINALIZE_GRACE_BLOCKS) - FINALIZE_TIP_MARGIN;
+    const freezeEnd = eff + REG_COMMIT_MAX_BLOCKS;
+    const closeAt = eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS - FINALIZE_TIP_MARGIN;
     if (t <= freezeEnd + FINALIZE_TIP_MARGIN)
       return { safe: false, reason: `too early — the displacement contest is not frozen yet (finalizable after block ${freezeEnd + FINALIZE_TIP_MARGIN}, chain tip ${t}); the resolver would reject the finalize after the fee moved, burning it` };
     if (t > closeAt)

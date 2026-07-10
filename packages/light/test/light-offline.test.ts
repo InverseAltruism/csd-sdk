@@ -267,6 +267,21 @@ if (inclBlock) {
   try { LightClient.fromSnapshot(relocated, { checkpoints: { [CP]: cpHash } }); } catch (e: any) { threwA = true; msgA = e?.message ?? String(e); }
   ok("C1: a snapshot rooted ABOVE the configured checkpoint is REJECTED (not silently unanchored)", threwA && /anchored/.test(msgA));
 
+  // H1 (the poisoning BAND the first containment left open, PoC-confirmed by the consensus red-team):
+  // a snapshot rooted AT the checkpoint (baseHeight == CP) puts the checkpoint at index 0, so the pin
+  // forces ONLY CP real while headers CP+1..CP+LWMA_WINDOW-1 fall inside the trusted-skip prefix and,
+  // pre-fix, restored as "verified" on min-difficulty PoW alone (grindable). Forge exactly that: a
+  // min-difficulty child at CP+1 flagged trusted. The completed rule (trusted prefix must be COVERED by
+  // a checkpoint: baseHeight + LWMA_WINDOW - 1 <= cp) rejects the whole snapshot on geometry.
+  const bandCut = CP - snap.baseHeight;
+  const bandHeaders = snap.headers.slice(bandCut).map((e, i) => (i < LWMA_WINDOW ? { ...e, trusted: true } : e));
+  const forgedChild = { ...bandHeaders[1]!.header, bits: POW_LIMIT_BITS, merkle: "0x" + "de".repeat(32) };
+  bandHeaders[1] = { ...bandHeaders[1]!, header: forgedChild, hash: headerHash(forgedChild), trusted: true };
+  const band = { ...snap, baseHeight: CP, headers: bandHeaders };
+  let threwH1 = false, msgH1 = "";
+  try { LightClient.fromSnapshot(band, { checkpoints: { [CP]: cpHash } }); } catch (e: any) { threwH1 = true; msgH1 = e?.message ?? String(e); }
+  ok("H1: a snapshot rooted AT the checkpoint (forged trusted header above it) is REJECTED (band closed)", threwH1 && /anchored/.test(msgH1));
+
   // the other half: a snapshot ENDING BELOW the pinned checkpoint is equally unanchored
   const short = { ...snap, headers: snap.headers.slice(0, -3) };
   let threwB = false, msgB = "";

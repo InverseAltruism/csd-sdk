@@ -56,36 +56,45 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## 0.1.36 (2026-07-10) - finalizeWinnerCheck gains the finalize-window checks (client helper only, replay untouched)
+## cairnx-core 0.1.36 (2026-07-10) - finalizeWinnerCheck gains the finalize-window checks (client helper only, replay untouched)
 
 `packages/cairnx/src/preflight.ts` completes `finalizeWinnerCheck` with the N-2 finalize-window
 checks: an optional `tip` parameter adds BOTH the freeze-window ("too early") and expiry ("window
 closed") refusals, mirroring the resolver's authoritative nfinalize gates (`resolve.ts`: rejects
 unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`; rejects when `ev.height > finalizeBy`) with
 the client-side `FINALIZE_TIP_MARGIN` band the site's `finalizeReady` already applies. Callers that
-omit `tip` keep the exact winner-only semantics (backward compatible). The consensus surface is
+omit `tip` keep the exact winner-only semantics (backward compatible). The window is derived PURELY
+from the caller's pinned `commitHeight` (`= effectiveHeight`), NEVER from the resolver-supplied
+`finalizeBy` (the true deadline is always `eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`),
+so a hostile resolver returning an inflated `finalizeBy` cannot widen the safe band into a fee burn --
+preserving the module's "no resolver value can induce a loss" invariant. The consensus surface is
 UNTOUCHED: the `resolve.ts`/`records.ts`/`types.ts` diff for this release is empty, no serialization,
 gate, constant, or replay byte changes, so replayers on 0.1.35 compute byte-identical canonical
-state. Pinned by an 8-case window grid in `test/preflight.test.ts` (the refusal cases fail on
-0.1.35). No height gate needed (additive client-selector logic).
+state. Pinned by a 10-case window grid in `test/preflight.test.ts` (the refusal + lying-finalizeBy
+cases fail on 0.1.35). No height gate needed (additive client-selector logic).
 
 ## csd-light 0.1.17 (2026-07-10) - snapshot anchor containment + restore-time timestamp rules (reject-more only)
 
 `LightClient.fromSnapshot` (`packages/light/src/index.ts`) hardens the restore path in two
 reject-more-never-accept-different ways. (1) Anchor containment: a checkpoint-configured client now
-refuses any snapshot whose range does not CONTAIN its lowest pinned checkpoint (genesis-rooted
-snapshots stay exempt, anchored by the H4 genesis check). Previously the per-header `pinCheckpoint`
-only fired when the pinned height happened to sit inside the snapshot, so a poisoned snapshot rooted
-ABOVE the checkpoint carried no trust anchor at all and its attacker-controlled `trusted` seed prefix
-skipped LWMA re-derivation (grindable at POW_LIMIT; requires storage-write + a hostile RPC to
-exploit). (2) The H3 timestamp rules (min-spacing, MTP, future-drift) now also run on restore for
+refuses any snapshot unless a pinned checkpoint COVERS the whole trusted seed prefix, i.e. some
+configured `cp` with `baseHeight + LWMA_WINDOW - 1 <= cp <= last` (genesis-rooted snapshots stay
+exempt, anchored by the H4 genesis check; honest wallet snapshots seed `baseHeight = cp - LWMA_WINDOW`
+so they pass with zero false-reject). The restored `trusted` seed prefix (first `LWMA_WINDOW` headers)
+skips LWMA/time re-derivation, so it is only safe when a checkpoint's hash-pin sits at/above its top
+and the backward prev-chain forces every prefix header real. Without this a poisoned snapshot could
+place forged min-difficulty headers inside the prefix and restore them as verified (grindable at
+POW_LIMIT; requires storage-write + a hostile RPC). This supersedes the initial "must contain the
+lowest checkpoint" rule, which still left a poisoning BAND (`baseHeight` within `LWMA_WINDOW` of the
+checkpoint) open -- closed here and pinned by a dedicated band test. (2) The H3 timestamp rules
+(min-spacing, MTP, future-drift) now also run on restore for
 exactly the headers whose LWMA window is re-derived, in `verifyOne`'s check order (time before bits
 before PoW, as the node does). Deterministic for min-spacing/MTP and the wall-clock bound only
 loosens with time, so an honestly-synced snapshot can never regress on restore. Forward-sync
 (`sync`/`ingest`/`verifyOne`), LWMA math, header bytes: untouched. Every accepted header set for
-honest chains is identical; only forged/unanchored snapshots are newly rejected. Pinned by three new
-mutation tests in `light-offline.test.ts` (each fails on 0.1.16). No height gate needed
-(client-local trust hardening, no consensus-byte change).
+honest chains is identical; only forged/unanchored snapshots are newly rejected. Pinned by the C1/H1
+containment + band + H3-on-restore mutation tests in `light-offline.test.ts` (each fails on 0.1.16).
+No height gate needed (client-local trust hardening, no consensus-byte change).
 
 ## csd-light 0.1.16 (2026-07-10) - LWMA bits->target memo (perf only, byte-identical)
 

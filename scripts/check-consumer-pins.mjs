@@ -33,6 +33,9 @@ const SDK = join(ROOT, "csd-sdk");
 const CONSENSUS_SURFACE = ["packages/cairnx/src/resolve.ts", "packages/cairnx/src/records.ts", "packages/cairnx/src/types.ts"];
 /** "" when ver..HEAD leaves the consensus surface untouched; a --stat summary when it drifted; null when unknowable. */
 function consensusDrift(ver) {
+  // ver comes from a sibling package.json (trusted), but guard the shape anyway before it reaches a
+  // shell tag ref: anything but an exact semver is treated as unknowable (fail-closed to fatal drift).
+  if (!/^\d+\.\d+\.\d+$/.test(String(ver))) return null;
   try {
     return execSync(`git -C ${SDK} diff cairnx-core-${ver} HEAD --stat -- ${CONSENSUS_SURFACE.join(" ")}`, { encoding: "utf8" }).trim();
   } catch { return null; }

@@ -320,28 +320,39 @@ export class LightClient {
    * (forward-synced) header, exactly as the live `sync`/`verifyOne` path accepted it. Only the
    * original seed window (`trusted`) skips the time/LWMA re-derivation — the same posture
    * `seedTrusted` allows for the checkpoint trade. A checkpoint-configured client additionally
-   * refuses any snapshot (other than a genesis-rooted one, anchored by H4 below) that does not
-   * CONTAIN its lowest pinned checkpoint: the per-header pin can only assert the baked hash when
-   * the pinned height is inside the restored range, so without the containment rule a poisoned
-   * snapshot rooted ABOVE the checkpoint would carry no anchor at all and its `trusted` seed
-   * prefix would be honoured at face value (grindable at POW_LIMIT). So a localStorage-poisoned
-   * snapshot is REJECTED here, not restored as verified. chainwork is recomputed, never read
-   * from the file.
+   * refuses any snapshot (other than a genesis-rooted one, anchored by the H4 GENESIS_HASH check
+   * below) unless a pinned checkpoint COVERS the whole trusted seed prefix — `baseHeight +
+   * LWMA_WINDOW - 1 <= cp <= last` for some configured `cp` (see the containment block for why).
+   * Without that, a poisoned snapshot could place forged min-difficulty headers inside the
+   * LWMA-skipping prefix and restore them as verified (grindable at POW_LIMIT). With it, a
+   * localStorage-poisoned snapshot is REJECTED here, not restored as verified. chainwork is
+   * recomputed, never read from the file.
    */
   static fromSnapshot(s: ChainSnapshot, opts: LightClientOptions = {}): LightClient {
     if (s.v !== 1 || !Array.isArray(s.headers) || !s.headers.length) throw new Error("bad snapshot");
     const lc = new LightClient(opts);
-    // Anchor containment (C1): a snapshot for a checkpoint-configured client must span its lowest
-    // pinned checkpoint, or the in-loop pinCheckpoint never fires and nothing ties the restored
-    // chain to the baked trust root. Genesis-rooted snapshots (baseHeight 0) are exempt: they are
-    // anchored by the GENESIS_HASH check instead and may legitimately end below a checkpoint.
-    // On rejection the caller discards the snapshot and cold-starts via syncFromCheckpoint.
+    // Anchor containment (C1). A restored `trusted` header skips the LWMA/time/bits re-derivation, so
+    // the trusted seed prefix — the first LWMA_WINDOW headers, heights [baseHeight .. baseHeight +
+    // LWMA_WINDOW - 1] — is accepted on PoW + prev-link alone. That is only SAFE when a pinned
+    // checkpoint sits AT OR ABOVE the top of that prefix AND inside the snapshot: the checkpoint's
+    // hash-pin forces its header real, and the backward prev-chain then forces every header at or below
+    // it real, so no forged trusted header can hide in the prefix. Require exactly that: some configured
+    // checkpoint `cp` with `baseHeight + LWMA_WINDOW - 1 <= cp <= last`.
+    //   - Honest wallet snapshots seed baseHeight = CP - LWMA_WINDOW (syncFromCheckpoint), so
+    //     baseHeight + LWMA_WINDOW - 1 = CP - 1 <= CP — accepted, zero false-reject.
+    //   - The prior check only required `baseHeight <= cp <= last`, which left a poisoning BAND
+    //     (baseHeight in [cp - LWMA_WINDOW + 1 .. cp]) where forged min-difficulty headers ABOVE the
+    //     checkpoint fell inside the trusted-skip prefix and restored as verified (H1, PoC-confirmed).
+    //     The `+ LWMA_WINDOW - 1` term closes that band.
+    // Genesis-rooted snapshots (baseHeight 0) are exempt: they carry no trusted prefix (every header is
+    // forward-verified from genesis) and are anchored by the GENESIS_HASH check below. On rejection the
+    // caller discards the snapshot and cold-starts via syncFromCheckpoint.
     const pinnedHeights = Object.keys(lc.checkpoints).map(Number);
     if (pinnedHeights.length && s.baseHeight > 0) {
-      const cpMin = Math.min(...pinnedHeights);
       const last = s.baseHeight + s.headers.length - 1;
-      if (s.baseHeight > cpMin || last < cpMin) {
-        throw new Error(`snapshot not anchored: range [${s.baseHeight}..${last}] does not contain checkpoint ${cpMin}`);
+      const anchored = pinnedHeights.some((cp) => s.baseHeight + LWMA_WINDOW - 1 <= cp && cp <= last);
+      if (!anchored) {
+        throw new Error(`snapshot not anchored: no checkpoint in [${s.baseHeight + LWMA_WINDOW - 1}..${last}] to cover the trusted seed prefix`);
       }
     }
     lc.baseHeight = s.baseHeight;
