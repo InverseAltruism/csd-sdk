@@ -172,18 +172,26 @@ export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string |
 /** C1: may `me` safely sign the fee-bearing registration `nfinalize` for `nameState` committed at
  *  `commitHeight`? The reg fee rides nfinalize; a finalize on a reservation that was displaced, has
  *  expired, OR is raised before the displacement contest froze is REJECTED after the fee moved (a burn).
- *  Sound by the freeze arithmetic: once a client waits for `tip > effectiveHeight + REG_COMMIT_MAX_BLOCKS`
- *  no new displacer can appear, so a re-fetch showing "still my live pending reservation at my commit
- *  height" guarantees the finalize lands. Pass the AUTHORITATIVE (freshly re-fetched) name record — never
- *  a cached one — as `nameState` (undefined = the resolver returns 404 / unregistered, a definitive loss).
  *
- *  Pass `tip` (the freshest chain tip you have) to ALSO gate the finalize WINDOW, both sides, mirroring
- *  the resolver's authoritative checks (resolve.ts nfinalize: rejects unless
- *  `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when `ev.height > finalizeBy`) with the
- *  client-side FINALIZE_TIP_MARGIN band the site's finalizeReady applies: the tx signs at `tip` but mines
- *  at tip+1 or later, so the margin keeps a boundary-signed finalize from mining outside the window (too
- *  early: rejected as unfrozen; too late: past the deadline — either way the fee burned). `tip` is
- *  optional so callers without a tip keep the winner-only semantics; N-2 closes only when it is passed. */
+ *  TRUST SCOPE (read before relying on this): this is a STALE-STATE and displacement-race guard under an
+ *  HONEST resolver, NOT a Byzantine-resolver defense. Its safety rests on `commitHeight` coming from a
+ *  source INDEPENDENT of `nameState` — then `effectiveHeight !== commitHeight` genuinely detects a
+ *  displaced/forged reservation. A caller that passes `nameState.effectiveHeight` AS `commitHeight` makes
+ *  that guard a tautology (`X !== X`), so `eff` becomes resolver-controlled and this helper gives
+ *  window-SHAPE correctness only, not protection against a resolver that lies about `effectiveHeight`.
+ *  No field arithmetic here can defeat a resolver that forges the whole record (owner/pending/eff at once);
+ *  that closure is registration-state SPV (roadmapped), the same posture the fill path documents (a
+ *  coherently lying resolver is the fill-SPV item, not this guard). Pass the AUTHORITATIVE (freshly
+ *  re-fetched) name record — never a cached one — as `nameState` (undefined = 404 / unregistered = loss).
+ *
+ *  Pass `tip` to ALSO gate the finalize WINDOW, both sides, mirroring the resolver's authoritative checks
+ *  (resolve.ts nfinalize rejects unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when
+ *  `ev.height > finalizeBy`) with the client-side FINALIZE_TIP_MARGIN band the site's finalizeReady applies:
+ *  the tx signs at `tip` but mines at tip+1 or later, so the margin keeps a boundary-signed finalize from
+ *  mining outside the window (too early: rejected as unfrozen; too late: past the deadline — either way the
+ *  fee burns). The window is derived purely from `eff` (never the resolver's `finalizeBy`), so a lying
+ *  `finalizeBy` cannot widen it — but per the trust scope above, a lying `eff` still can for a caller that
+ *  does not supply an independent `commitHeight`. `tip` is optional; without it the winner-only path runs. */
 export function finalizeWinnerCheck(
   nameState: NameState | null | undefined,
   me: string,
