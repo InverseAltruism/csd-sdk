@@ -17,6 +17,13 @@
 // value gate at :672-728, the open-CSD claim gate `openFillReject` at :166-171, and the freeze arithmetic
 // behind registration finalize). The conformance vectors pin that they cannot drift (test/preflight.test.ts
 // asserts previewFill == the resolver's own delivered `got` at the C3 boundary).
+//
+// FETCH POSTURE (the caller's half of the contract, M-MKT-5): these helpers judge a record you HAND them,
+// so what you do when the record cannot be fetched is part of the safety story. Before signing a fill,
+// FAIL CLOSED unless the resolver POSITIVELY answers with a parseable open offer: a clean 404 (a valid L1
+// proposal that is not a CairnX offer) and a 200 without a parseable `status` both mean the resolver will
+// NOT settle the fill — the payment moves on L1 and burns. Refuse with retryable copy (a brand-new offer
+// appears after the resolver's next scan, ~15s); never treat "no data" as "safe to proceed".
 import {
   V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, TREASURY_ADDR,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN,
