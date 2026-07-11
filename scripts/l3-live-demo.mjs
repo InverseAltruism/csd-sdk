@@ -7,7 +7,7 @@ import { canonicalJson } from "@inversealtruism/csd-codec";
 import { buildGatewayRecord } from "@inversealtruism/csd-registry";
 import { readFileSync } from "node:fs";
 
-const t = JSON.parse(readFileSync("/home/inverse/.config/cairn/treasury.json", "utf8"));
+const t = JSON.parse(readFileSync(process.env.CAIRN_KEY || `${process.env.HOME}/.config/cairn/treasury.json`, "utf8"));
 const priv = t.privkey;
 const addr = "0x" + String(t.addr20).replace(/^0x/, "");
 const node = new CsdClient({ baseUrl: "http://127.0.0.1:8790" });
