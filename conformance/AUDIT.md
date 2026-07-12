@@ -141,6 +141,17 @@ change once added:
 - recapture reservation consistency (a `recaptures` entry corresponds to a currently-lapsed name).
 - lease sanity (`paidThroughEpoch >= registration epoch`; a renew advances it by exactly one term).
 - bid consistency (status is known; a bid-to-offer link resolves).
+- **v2.8 fclaim honest-burn invariant (CONVENTION §31; add as a `--selftest` DETECTOR ASSERTION, not just a
+  corpus scenario, so `audit:all` actually fails on a regression rather than only printing a burn-table row).**
+  Every fclaim-lane fill that is L0-minable (mined at `h <= holdEnd` on the chain carrying the granted fclaim)
+  and signed by the holder with the exact `requiredFillOutputs` against an offer + fclaim (+ earlier fill-basis
+  for a partial tail) all buried `>= requiredClaimDepth` is ACCEPTED. Every fclaim-lane REJECTION must be one
+  of: L0-co-enforced-unreachable (an attest past `holdEnd` is block-invalid), attacker-authored,
+  buyer-self-authored, or the deep-reorg finality residual every CSD payment already carries. There is NO
+  honest-buyer burn lane: a denied-fclaim fill is reachable only by a client that skipped grant replay, and the
+  partial tail-flip is deep-reorg-plus-censorship bounded and closed by fill-basis burial. The detector asserts
+  that no `resolve().events` entry rejects an fclaim fill whose offer + fclaim were granted-and-held at the fill
+  height (the payment-without-delivery class, extended to the fclaim routing).
 
 ## The red-team fan-out, run soundly
 The fan-out is a discovery engine, not a verdict machine. Its value is finding niche things across a

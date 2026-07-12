@@ -25,7 +25,7 @@
 // NOT settle the fill — the payment moves on L1 and burns. Refuse with retryable copy (a brand-new offer
 // appears after the resolver's next scan, ~15s); never treat "no data" as "safe to proceed".
 import {
-  V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, TREASURY_ADDR,
+  V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, V28_HEIGHT, TREASURY_ADDR,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN,
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
@@ -143,8 +143,20 @@ export function hasLiveClaim(offer: OfferState, me: string, tip: number): boolea
   if (tip < V17_HEIGHT) return false;
   if (offer.claimedBy === undefined || offer.claimUntilHeight === undefined) return false;
   if (offer.claimedBy.toLowerCase() !== me.toLowerCase()) return false;
-  const grace = claimGraceOf(offer.claimUntilHeight);
+  // claimTxid-aware: an fclaim hold (V28+) has grace 0 (its L0 deadline IS holdEnd), so the client and the
+  // resolver agree on hold liveness. Passing offer.claimTxid keeps this in lockstep with resolve.ts claimGrace.
+  const grace = claimGraceOf(offer.claimUntilHeight, offer.claimTxid);
   return tip < offer.claimUntilHeight + grace;
+}
+
+/** v2.8 Correction 1 mirror (§31): the proposal txid a fill of `offer` MUST attest at `tip`. During a live
+ *  fclaim hold (V28+) the payment must target the FCLAIM txid, not the offer id (an offer-txid fill is
+ *  resolver-rejected while a hold is live, `openFillReject`). Below V28, or with no live fclaim hold, the
+ *  target is the offer id (legacy). A client builds the fill against this id so it never signs a doomed
+ *  offer-txid fill during a hold. */
+export function fillTargetId(offer: OfferState, tip: number): string {
+  if (tip >= V28_HEIGHT && offer.claimTxid !== undefined && offer.claimUntilHeight !== undefined && tip < offer.claimUntilHeight) return offer.claimTxid;
+  return offer.id;
 }
 
 /** The union verdict a client must clear BEFORE signing a fill of `offer` paying `pay`, as `me`, at `tip`.

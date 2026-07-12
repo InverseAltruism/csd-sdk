@@ -11,8 +11,8 @@ import { nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, MAX_PENDING_REG, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
-  claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, V28_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
+  EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
   type Give, type NameState, type OfferState, type ProposeEvent, type TokenState,
@@ -58,6 +58,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const offers = new Map<string, OfferState>();
   const offerLock = new Map<string, bigint>();                // token offers: id → locked amount
   const bids = new Map<string, BidState>();                   // v1.2 buy-side intents
+  // v2.8 fclaim (§31): fclaimTxid → the linked offer + grant outcome. Records BOTH granted and DENIED grants
+  // (a denied fclaim is an L0-valid fill target, so the audit needs to see it). The GRANTED subset is
+  // materialized into state.fclaims (diagnostic, excluded from canonicalState).
+  const fclaims = new Map<string, { offer: string; proposer: string; expiresEpoch: number; height: number; granted: boolean }>();
   const log: AppliedEvent[] = [];
   let feesPaid = 0n;
 
@@ -133,8 +137,14 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // void every open offer that lists `name` (a displacement/reclaim/reservation-takeover cancels the
   // wrongful holder's listings; releaseGive keeps lock-handling uniform with the cancel/expiry paths).
   // Extracted verbatim from the four inline copies at the displacement/reservation/recapture sites.
-  const voidOpenNameOffers = (name: string) => {
-    for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === name) { releaseGive(o); o.status = "cancelled"; }
+  const voidOpenNameOffers = (name: string, height: number) => {
+    for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === name) {
+      // v2.8: a name-offer carrying a live fclaim hold is FROZEN against a displacement/recapture void (the
+      // lease-lapse-mid-hold safety: a lapsed name recaptured during a hold must not strand the buyer's
+      // L0-minable fill). Same predicate as Correction 2, keyed on the voiding event's height.
+      if (height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, height)) continue;
+      releaseGive(o); o.status = "cancelled";
+    }
   };
   // does anchor (effHeight, pos, id) STRICTLY precede an incumbent's (lowest wins)? The (effHeight, pos,
   // id) lexicographic contest is the same at every name-displacement site; extracted so the comparator
@@ -154,7 +164,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // V20+ ⇒ CLAIM_FILL_GRACE_BLOCKS, else 0; undefined claimUntilHeight ⇒ 0). claimWindowAt is likewise the
   // imported selector, so the resolver and the exported client helpers share one definition (cannot drift).
   const claimGrace = (o: OfferState): number =>
-    o.claimUntilHeight !== undefined ? claimGraceOf(o.claimUntilHeight) : 0;
+    o.claimUntilHeight !== undefined ? claimGraceOf(o.claimUntilHeight, o.claimTxid) : 0;
   // is the offer still EXCLUSIVELY HELD (window + grace) at `height`? Lazy lapse — a past hold reads as
   // "not held" (no mutation). Used for BOTH the fill gate (with who===claimedBy) and the new-claim block.
   const claimHeld = (o: OfferState, height: number): boolean =>
@@ -163,9 +173,13 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // ── shared SCORE_FILL helpers (dedup of the three fill paths — behaviour-preserving) ──
   // v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the holder of a live claim;
   // in [V13,V17) open CSD fills stay banned. Returns the rejection reason, or undefined if allowed.
-  const openFillReject = (o: OfferState, height: number, who: string): string | undefined => {
+  const openFillReject = (o: OfferState, height: number, who: string, targetId: string): string | undefined => {
     if (!(height >= V13_HEIGHT && !o.taker)) return undefined;
     if (height < V17_HEIGHT) return "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)";
+    // v2.8 Correction 1 (§31): during an fclaim hold the payment MUST attest the FCLAIM txid, not the offer id
+    // (whose L0 deadline is the offer's far-off expiry). An offer-txid fill (targetId === o.id) is rejected; an
+    // fclaim fill routes here with targetId === o.claimTxid !== o.id, so it is admitted by the hold check below.
+    if (height >= V28_HEIGHT && o.claimTxid !== undefined && targetId === o.id) return "v2.8: fill the fclaim txid, not the offer";
     if (!(claimHeld(o, height) && who === o.claimedBy)) return "v1.7: open offer — claim it first (no live claim by you)";
     return undefined;
   };
@@ -309,7 +323,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // sequence executes it, so no vector/fuzz can cover it.
           const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
-          voidOpenNameOffers(rec.name);
+          voidOpenNameOffers(rec.name, ev.height);
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
           feesPaid += fee;
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
@@ -330,7 +344,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           for (const [nm, n] of names) if (n.pending && n.owner === who && nm !== rec.name && n.finalizeBy !== undefined && ev.height <= n.finalizeBy) myPending++;
           if (myPending >= MAX_PENDING_REG) { note(ev, ev.id, "name", false, "too many pending reservations (max reached)"); continue; }
           if (curActive) {
-            voidOpenNameOffers(rec.name);
+            voidOpenNameOffers(rec.name, ev.height);
           }
           names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, pending: true, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
           note(ev, ev.id, "name", true, curActive ? "reserved (displaced prior reservation)" : "reserved (pending finalize)");
@@ -349,7 +363,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // displacement: void any open offer the wrongful holder made on this name. (The name
           // record itself is replaced below with locked:false, so the live name is never stuck;
           // releaseGive keeps lock-handling uniform with the cancel/expiry paths.)
-          voidOpenNameOffers(rec.name);
+          voidOpenNameOffers(rec.name, ev.height);
         }
         names.set(rec.name, cand);
         feesPaid += nameRegFee(rec.name, ev.height);
@@ -397,7 +411,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (!cur || cur.pending || !lapsed(cur, ep)) { recaptures.delete(rec.name); note(ev, ev.id, "nfinalize", false, "name is no longer lapsed"); continue; }
           const fee = expiredClaimFee(rec.name, ep - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "nfinalize", false, "recapture premium unpaid (decaying)"); continue; }
-          voidOpenNameOffers(rec.name);
+          voidOpenNameOffers(rec.name, ev.height);
           names.set(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
           recaptures.delete(rec.name);
           feesPaid += fee;
@@ -530,6 +544,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         const targets: OfferState[] = [];
         for (const o of offers.values()) {
           if (o.status !== "open" || o.seller !== who) continue;
+          if (o.taker !== undefined && o.height >= V28_HEIGHT) continue; // v2.8 Lane B: a taker-bound V28+ offer is a firm quote (uncancellable)
           if (rec.ticker !== undefined && !(!isNameGive(o.give) && o.give.ticker === rec.ticker)) continue;
           if (rec.name !== undefined && !(isNameGive(o.give) && o.give.name === rec.name)) continue;
           targets.push(o);
@@ -538,7 +553,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // v1.4: defer the effect to the block boundary — same-block fills win (anti-snipe)
           pendingCancels.push(() => {
             let n = 0;
-            for (const o of targets) if (o.status === "open") { releaseGive(o); o.status = "cancelled"; n++; }
+            for (const o of targets) {
+              // v2.8 Correction 2: freeze a live fclaim hold, keyed on the CANCEL's OWN block (ev.height) and
+              // evaluated LIVE on the offer object (a same-block higher-pos grant mutated it after the snapshot).
+              if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) continue;
+              if (o.status === "open") { releaseGive(o); o.status = "cancelled"; n++; }
+            }
             note(ev, ev.id, "ocancel", true, `${n} cancelled (deferred past same-block fills)`);
           });
         } else {
@@ -568,13 +588,55 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (who !== tok.meta.deployer) { note(ev, ev.id, "tmeta", false, "issuer-only metadata"); continue; }
         tok.meta.tmeta = rec.hash;  // last write wins; content lives in csd-swarm (self-certifying)
         note(ev, ev.id, "tmeta", true);
+
+      } else if (rec.t === "fclaim") {
+        // ── v2.8 (§31) open-lane claim GRANT: reserve an OPEN, CSD-priced, untaken offer with a short-expiry
+        // Propose. The fill attests THIS txid, so L0's attest-existence + attest-after-expiry rules enforce the
+        // hold deadline. On grant, claimedBy/claimUntilHeight/claimTxid are set LAST-WRITE-WINS (a later grant on
+        // the same offer re-assigns all three; claimTxid is never left stale and never cleared). ──
+        if (ev.height < V28_HEIGHT) { note(ev, ev.id, "fclaim", false, "fclaim needs v2.8"); continue; }
+        const target = offers.get(rec.offer);
+        const E = ev.expiresEpoch;
+        const deny = (why: string) => { fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: false }); note(ev, ev.id, "fclaim", false, why); };
+        if (!target) { deny("unknown offer"); continue; }
+        if (target.status !== "open") { deny(`offer ${target.status}`); continue; }
+        if (target.taker) { deny("taker-bound offer needs no claim"); continue; }
+        if (isTokenWant(target.want)) { deny("claims are for CSD-priced offers"); continue; }
+        if (E > effExpiry(target, ev.height)) { deny("hold would outlive the offer expiry"); continue; }
+        if (E > epochOf(ev.height) + FCLAIM_MAX_EPOCH_AHEAD) { deny("hold too far ahead (anti-squat)"); continue; }
+        if (epochOf(ev.height) > E) { deny("expiry already in the past"); continue; }
+        if (claimHeld(target, ev.height)) { deny("offer already claimed (hold live)"); continue; }
+        // cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
+        if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("claim cooldown (you just held this offer)"); continue; }
+        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height)) liveN++;
+        if (liveN >= MAX_ACTIVE_CLAIMS) { deny(`max ${MAX_ACTIVE_CLAIMS} live claims per address`); continue; }
+        target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
+        fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
+        note(ev, ev.id, "fclaim", true);
       }
 
     } else {
       // ── attest: fill (score=100) / cancel (score=0) on a CairnX offer or bid ──
-      const o = offers.get(ev.proposalId);
       const who = ev.attester.toLowerCase();
+      let o = offers.get(ev.proposalId);
+      // v2.8 fclaim fill routing (§31): a SCORE_FILL on a GRANTED fclaim txid targets the fclaim's linked offer
+      // (the fclaim txid is not in `offers`). Resolving `o` to the linked offer routes the payment through the
+      // SAME §4/§19 machinery; openFillReject sees targetId === o.claimTxid !== o.id, so Correction 1 ADMITS this
+      // path while still blocking an offer-txid fill during the hold.
+      if (!o && ev.height >= V28_HEIGHT && ev.score === SCORE_FILL) {
+        const fc = fclaims.get(ev.proposalId);
+        if (fc && fc.granted) {
+          const linked = offers.get(fc.offer);
+          if (linked && linked.claimTxid === ev.proposalId) o = linked;
+        }
+      }
       if (!o) {
+        // v2.8: a SCORE_FILL on a KNOWN but DENIED/ungranted fclaim mines on L0 yet delivers nothing (a burn);
+        // note it so the money-safety audit flags the pay-without-delivery. (An unrelated attest is a no-op.)
+        if (ev.height >= V28_HEIGHT && ev.score === SCORE_FILL && fclaims.has(ev.proposalId)) {
+          note(ev, ev.txid, "fill", false, "fclaim not current (denied or superseded): no delivery, denied-fclaim fill");
+          continue;
+        }
         // v1.2: bids are proposals too — the bidder cancels with score=0
         const b = bids.get(ev.proposalId);
         if (b && ev.score === SCORE_CANCEL) {
@@ -589,9 +651,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       if (ev.score === SCORE_CANCEL) {
         if (who !== o.seller) { note(ev, ev.txid, "cancel", false, "only seller may cancel"); continue; }
         if (o.status !== "open") { note(ev, ev.txid, "cancel", false, `offer ${o.status}`); continue; }
+        if (o.taker !== undefined && o.height >= V28_HEIGHT) { note(ev, ev.txid, "cancel", false, "v2.8: taker-bound offers are firm quotes (uncancellable)"); continue; } // Lane B
         if (ev.height >= V14_HEIGHT) {
           // v1.4: defer the effect to the block boundary — a same-block fill wins (anti-snipe)
           pendingCancels.push(() => {
+            // v2.8 Correction 2: freeze a live fclaim hold (keyed on the cancel's own ev.height, live-read on o).
+            if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) { note(ev, ev.txid, "cancel", false, "v2.8: frozen (fclaim hold live)"); return; }
             if (o.status === "open") { releaseGive(o); o.status = "cancelled"; note(ev, ev.txid, "cancel", true); }
             else note(ev, ev.txid, "cancel", false, "superseded by same-block fill (v1.4)");
           });
@@ -634,7 +699,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
         // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
-        const blk = openFillReject(o, ev.height, who);
+        const blk = openFillReject(o, ev.height, who, ev.proposalId);
         if (blk) { note(ev, ev.txid, "fill", false, blk); continue; }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
@@ -674,7 +739,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); continue; }
         // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
         // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
-        const blk = openFillReject(o, ev.height, who);
+        const blk = openFillReject(o, ev.height, who, ev.proposalId);
         if (blk) { note(ev, ev.txid, "fill", false, blk); continue; }
         const pt = ev.paidTo ?? {};
         const want = BigInt((o.want as { value: string }).value);
@@ -728,6 +793,10 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         note(ev, ev.txid, "fill", true);
 
       } else if (ev.height >= V17_HEIGHT && ev.score === SCORE_CLAIM) {
+        // v2.8 (§31): at V28+ the legacy claim attest is REJECTED (claims are fclaim proposals now) so a stale
+        // wallet's claim is diagnosable. A pre-V28 live hold still honors legacy fills until it lapses (the
+        // sunset); this only stops NEW legacy claims. No height literal is needed in the fill predicate.
+        if (ev.height >= V28_HEIGHT) { note(ev, ev.txid, "claim", false, "v2.8: claims are fclaim proposals now"); continue; }
         // ── v1.7 claim-to-fill: reserve an OPEN CSD offer for the FIRST claimer (consensus order) for
         // CLAIM_WINDOW_BLOCKS. Payment-free → a losing same-block claimer forfeits only the attest fee,
         // never a payment. Only the live claimer may fill (enforced in the fill paths above). ──
@@ -808,7 +877,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const recapturesOut: Record<string, { owner: string; effectiveHeight: number; finalizeBy: number }> = {};
   for (const [nm, r] of [...recaptures.entries()].sort(([a], [b]) => ord(a, b))) recapturesOut[nm] = { owner: r.owner, effectiveHeight: r.effHeight, finalizeBy: r.finalizeBy };
 
-  return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, recaptures: recapturesOut, events: log, feesPaid: feesPaid.toString() };
+  // v2.8: materialize the GRANTED fclaims (drop the `granted` flag; denials live only in the events log for the
+  // money-safety audit). Sorted by txid for determinism. Diagnostic surface, EXCLUDED from canonicalState, so
+  // every pre-V28 replay hash is byte-identical (no grants exist below the gate).
+  const fclaimsOut: Record<string, { offer: string; proposer: string; expiresEpoch: number; height: number }> = {};
+  for (const [txid, fc] of [...fclaims.entries()].sort(([a], [b]) => ord(a, b))) if (fc.granted) fclaimsOut[txid] = { offer: fc.offer, proposer: fc.proposer, expiresEpoch: fc.expiresEpoch, height: fc.height };
+  return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, recaptures: recapturesOut, fclaims: fclaimsOut, events: log, feesPaid: feesPaid.toString() };
 }
 
 /** Canonical serialization of state (FORMAT 2) — byte-identical across honest resolvers.
@@ -826,8 +900,9 @@ export function canonicalState(s: CairnXState): string {
     }
     return v;
   };
-  // `events` and `recaptures` are diagnostic surfaces, NOT canonical (recaptures is internal + wallet-facing
-  // only). Excluding both keeps the hash byte-identical to pre-v2.6 and to any resolver that omits them.
-  const { events: _events, recaptures: _recaptures, ...data } = s;
+  // `events`, `recaptures`, and `fclaims` are diagnostic surfaces, NOT canonical (recaptures + fclaims are
+  // internal + wallet/UI-facing only). Excluding them keeps the hash byte-identical to history and to any
+  // resolver that omits them; every pre-V28 replay hash is unchanged (no pre-V28 offer carries claimTxid).
+  const { events: _events, recaptures: _recaptures, fclaims: _fclaims, ...data } = s;
   return JSON.stringify(sortKeys(data));
 }

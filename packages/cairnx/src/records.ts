@@ -4,7 +4,7 @@ import {
   ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
   type NameFinalizeRecord, type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
-  type OfferRecord, type TransferRecord,
+  type OfferRecord, type TransferRecord, type FclaimRecord,
 } from "./types.js";
 
 export interface BuiltRecord { record: CairnXRecord; uri: string; payloadHash: string }
@@ -87,6 +87,7 @@ export const BID_KEYS = new Set(["v", "t", "want", "give", "memo", "ts"]);
 export const NAME_KEYS = new Set(["v", "t", "name", "salt"]);
 export const NFINALIZE_KEYS = new Set(["v", "t", "name", "salt"]);
 export const NPROFILE_KEYS = new Set(["v", "t", "name", "p"]);
+export const FCLAIM_KEYS = new Set(["v", "t", "offer"]);
 
 /**
  * Parse + validate a record from an anchored `uri`. Returns null for anything invalid —
@@ -266,6 +267,14 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       if (Object.keys(r).length !== 4) return null;
       return r as unknown as TokenMetaRecord;
     }
+    case "fclaim": {
+      // v2.8 open-lane claim (§31). Parse is HEIGHT-AGNOSTIC; the resolve GRANT handler is V28-gated, so below
+      // V28 a parsed fclaim is inert (the nfinalize precedent). Exact-key allowlist + isHash(offer); the expiry
+      // rides the carrying Propose's expires_epoch, so there is NO expiresEpoch in the body.
+      if (!onlyKeys(r, FCLAIM_KEYS)) return null;
+      if (!isHash(r.offer)) return null;
+      return r as unknown as FclaimRecord;
+    }
     default:
       return null; // unknown t — forward-compatible no-op
   }
@@ -313,3 +322,6 @@ export const tokenMeta = (r: Omit<TokenMetaRecord, "v" | "t">): BuiltRecord =>
 // matching the semantics-agnostic resolver.
 export const nameProfile = (r: Omit<NameProfileRecord, "v" | "t">): BuiltRecord =>
   buildRecord({ v: 1, t: "nprofile", ...r });
+// v2.8 open-lane claim (§31): a short-expiry Propose reserving an offer; the fill Attests this record's txid.
+export const fclaim = (r: Omit<FclaimRecord, "v" | "t">): BuiltRecord =>
+  buildRecord({ v: 1, t: "fclaim", ...r });

@@ -56,6 +56,68 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.1.37 (2026-07-12, PENDING publish + activation) - V28 fclaim open-lane settlement atomicity (CONVENTION v2.8, §31)
+
+**Consensus change (gated, non-retroactive): `V28_HEIGHT` = 55,000.** The largest CairnX replay change since the
+gate ladder began. It closes the cross-block "pay without delivery" flaw on the open-lane marketplace buy
+(CX-DVP-CROSSBLOCK-1): Half A (seller cancels in block N, buyer fills in N+1 - L0 satisfied, overlay rejects
+delivery) and Half B (a fill delayed past the overlay hold but before offer expiry). Neither half is closable
+app-layer-only (Half A's burn lands after the buyer signs; Half B has no client-enforceable expiry since L0 does
+not enforce locktime), so the fix is a resolver rule change, which in this architecture is a coordinated
+height-gated replayer upgrade, NOT an L0 hard fork (the Rust node is untouched; the independent miners are
+unaffected).
+
+At an event height >= V28 the following apply (all in `packages/cairnx/src/{resolve,types,records,preflight}.ts`,
+mirrored in `conformance/cairnx_ref.py`):
+- The open-lane claim becomes a short-expiry **`fclaim` Propose** (`{v,t:"fclaim",offer}`, FCLAIM_KEYS), and the
+  open-lane fill **Attests that fclaim's txid** (not the offer id). L0's own attest-existence + attest-after-
+  `expires_epoch` invalidity rules THEN ARE the hold deadline, so the overlay hold deadline == the L0 minability
+  deadline and the cross-block window is removed by construction.
+- **Grant ladder**: an fclaim is GRANTED as the offer's live hold only if the offer is open, CSD-priced, not
+  taker-bound, not already held, past `CLAIM_COOLDOWN_BLOCKS`, with `E in [epochOf(h), epochOf(h)+
+  FCLAIM_MAX_EPOCH_AHEAD]` (anti-squat) and under `MAX_ACTIVE_CLAIMS`; else DENIED. Denials are recorded
+  `granted:false` in an internal `fclaims` map that is materialized GRANTED-only and **excluded from
+  `canonicalState`** (so it never enters the replay hash - byte-identity preserved).
+- **Correction 1**: an offer-txid fill during a live fclaim hold is rejected (openFillReject; both whole + partial).
+- **Correction 2**: an offer cancel (ocancel or a score-0 cancel) landing during a live hold is FROZEN (no-op),
+  keyed on the cancel's OWN captured block height, evaluated live on the offer object. This IS the Half A closure.
+- **Lane B**: taker-bound V28+ offers are uncancellable (kills Half A for firm RFQ quotes).
+- **SCORE_CLAIM sunset**: legacy claim Attests stop granting holds at V28 (self-sunsetting, no-height-literal
+  predicate; otherwise legacy claims would keep minting Half-B-vulnerable holds forever). A pre-V28 legacy hold's
+  fill is still HONORED after V28 until the hold lapses (no fork on the honored fill).
+- **Last-write-wins `claimTxid`**: re-assigned on every grant, never cleared (a stale claimTxid = a second-holder
+  burn).
+- New client fund boundary **`verifyFillSpv`** (`verifyfill.ts`): the shared, fail-closed fill-SPV surface the
+  site + wallet run before building an open-lane fill (grant replay over merkle-proven events; refuses a denied /
+  superseded fclaim, a forged-holder fill, a below-depth fill, a cross-offer `MAX_ACTIVE_CLAIMS` over-cap, and a
+  past-deadline strand). New selectors `fclaimHoldEnd`/`fclaimEpochFor`; `GAP_NEEDED`=104, `MAX_SCAN`=134.
+
+New constants: `V28_HEIGHT`=55,000, `FCLAIM_MAX_EPOCH_AHEAD`=2, `FILL_TIP_MARGIN`=2.
+
+**Byte-identity**: every pre-V28 canonical-state replay hash is byte-identical (`vectors.test.ts` 71/71; all
+pinned real-chain heights <= 45,959 < 55,000). Only events at height >= 55,000 see the new rules; the live tip
+was ~52.6k at the edit, so nothing is active yet. `resolve.ts` grew only ~+111 lines and `cairnx_ref.py` ~+76;
+7 new `v28-*` golden vectors in `cases.json` (regenerated relative to V28_HEIGHT).
+
+**Adoption discipline (HARD gate, both directions)**: this is a fund-safety rule change, so EVERY replayer
+(cairnx svc, clarvis, cairn-cli, cairn-sdk, and the vendored cairn-site + cairn-wallet bundles) MUST be on this
+core before the tip reaches 55,000, or a stale replayer forks the app layer (stale clients strand, never burn -
+the fail direction is safe). The D2 service alias (cairnx svc + clarvis) bridges the stale CWS field wallet so it
+does not 404 into an open-lane outage. STRONG COMPANION: the node reorg ghost-UTXO fix (finding-9,
+`cairn-node-v0.1.4`) must land BEFORE V28 - V28 sharpens its trigger (a reorg-orphaned short-lived fclaim Propose
+plus a payment-bearing fill Attest hits the app-phase existence/expiry bail mid-apply). 55,000 is legally
+BUMP-able (a coordinated same-day re-pin of every verifier) if the rollout needs more runway.
+
+**Audit**: `test:crosslang` v28 26/26 (JS==Python at 55k, incl. below-gate inertness) + all v20-v27 grids +
+fuzz 1500 + regex 2301; `audit:all` money-safety --selftest green (v2.8 honest fclaim fill silent, every known
+misbehaving-client burn re-surfaced); 4,800 newly-authored fclaim fuzz scenarios (0 zero-delivery accepts) + a
+3-agent red-team (found + fixed 3 client-side burns; the consensus core resisted every attack, no break).
+DEDUP DEBT noted for follow-up: the client fill-SPV evidence layer (scan + prevout bind + cap count + give-backing
+synthesis) is hand-implemented TWICE (site swapguard.js + wallet fillspv.ts) with divergent algorithms and no
+shared vector; consolidate into a shared cairnx-core evidence helper before the next such change. Rollout order:
+follow "Rollout checklist for a NEW GATE" below (this is a rule change, not just a fee tier, so step 2 adds the
+crosslang cases + re-pins nothing that resolve() did not change - all pre-V28 hashes stayed identical).
+
 ## cairnx-core 0.1.36 (2026-07-10) - finalizeWinnerCheck gains the finalize-window checks (client helper only, replay untouched)
 
 `packages/cairnx/src/preflight.ts` completes `finalizeWinnerCheck` with the N-2 finalize-window

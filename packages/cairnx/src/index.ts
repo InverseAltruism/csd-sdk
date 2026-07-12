@@ -21,6 +21,10 @@ export * from "./client.js";
 export * from "./preflight.js";
 // primary — the reverse-resolution (addr→primary name) selector every host must compute identically.
 export * from "./primary.js";
+// verifyfill: the shared client-side fill-SPV surface (§31), the fail-closed fund boundary for the
+// open-lane fclaim buy. Pure record re-derivation + mandatory grant REPLAY (replayLiveHold) + the offer/
+// fclaim/fill-basis depth gate (GAP_NEEDED) over an injected PoW-verified, merkle-proven FillSpvIo seam.
+export * from "./verifyfill.js";
 export { paidToFromOutputs } from "./paidto.js";
 // Re-export the csd-codec primitives the cairnx consumers need so the browser UI / wallet import a SINGLE
 // surface (cairnx-core) rather than re-typing canonicalJson or the reward/fee constants. (csd-codec stays

@@ -70,6 +70,13 @@ export const CLAIM_WINDOW_BLOCKS_V20 = 40;
 export const CLAIM_FILL_GRACE_BLOCKS = 5;
 export const MAX_ACTIVE_CLAIMS = 3;        // a single address may hold ≤ this many LIVE claims at once (anti-squat)
 export const CLAIM_COOLDOWN_BLOCKS = 15;   // a just-lapsed claimer cannot re-grab the SAME offer for this long
+// v2.8 fclaim (§31, V28+): the open-lane claim becomes a short-expiry Propose and the fill Attests it, so L0's
+// own attest-existence + attest-after-expiry rules enforce the hold deadline. A grant may request an expiry at
+// most FCLAIM_MAX_EPOCH_AHEAD epochs ahead (anti-squat: bounds a hold to EPOCH_LEN*(2+1)-1 = 89 blocks).
+export const FCLAIM_MAX_EPOCH_AHEAD = 2;
+// Client policy (NOT consensus): a filler refuses to broadcast within this many blocks of holdEnd (a stranded
+// no-op, never a fund risk), computed from the fclaim's actual confirmed height + expires_epoch.
+export const FILL_TIP_MARGIN = 2;
 // Token-priced fills debit the ATTESTER's token balance, so they must be an explicit opt-in:
 // normal signaling attests use confidence 0–100 — this magic value can't happen by accident.
 export const CONF_TOKEN_FILL = 1_000_000;
@@ -274,6 +281,15 @@ export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same c
 // operator's two hosts + wallet build (no external audience yet). MUST match cairnx_ref.py + helpers.js
 // + the vendored UI/wallet bundles.
 export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same coordinated re-pin
+// v2.8 fclaim (§31). Operator-chosen activation height, set 2026-07-12. ~2,400 blocks (~3.3 days at 120s) above
+// the live tip (~52.6k), so ALL current chain data + every pre-V28 replay vector (max 45,959) is below the gate
+// and byte-identical. V28 test vectors are generated RELATIVE to this constant (like the preflight tests'
+// V27_HEIGHT + N), so they regenerate correctly. TIGHT-TIMING WARNING: the whole rollout wave (publish the V28
+// core -> re-pin + deploy the cairnx service + clarvis WITH the D2 alias -> re-vendor the site bundle + land B5
+// + CF-purge) MUST complete before the tip reaches 55,000, or a still-stale replayer forks the app layer. This
+// height is legally BUMP-able (a coordinated same-day re-pin of every verifier) if more runway is needed; the
+// CWS field wallet may lag (D2 covers stale wallets) and the BN node fix is off the fclaim critical path.
+export const V28_HEIGHT = 55_000;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
@@ -292,8 +308,17 @@ export const claimWindowOf = (claimUntilHeight: number): number =>
   (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
 // The fill GRACE baked into a stored claim (V20+ only = CLAIM_FILL_GRACE_BLOCKS, else 0), recovered from
 // its era by the same unambiguous inverse. resolve()'s claimGrace(offer) is this applied to claimUntilHeight.
-export const claimGraceOf = (claimUntilHeight: number): number =>
-  (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_FILL_GRACE_BLOCKS : 0;
+// v2.8: an fclaim hold (claimTxid set, V28+) has grace 0; its L0 deadline IS holdEnd = (E+1)*EPOCH_LEN-1, so
+// there is no late-fill slack. Callers MUST pass the offer's claimTxid so the resolver and every client bundle
+// (preflight.hasLiveClaim, swapguard) agree; below V28 no offer has a claimTxid, so this is inert + byte-identical.
+export const claimGraceOf = (claimUntilHeight: number, claimTxid?: string): number =>
+  claimTxid !== undefined ? 0
+    : (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_FILL_GRACE_BLOCKS : 0;
+// v2.8 fclaim selectors (pure, shared): the client's requested hold-end epoch E (approximating the legacy
+// ~45-block hold while never exceeding the offer's expiry), and holdEnd = the last L0-minable fill height.
+export const fclaimEpochFor = (tipHeight: number, offerExpiresEpoch: number): number =>
+  Math.min(epochOf(tipHeight + CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOCKS), offerExpiresEpoch);
+export const fclaimHoldEnd = (expiresEpoch: number): number => (expiresEpoch + 1) * EPOCH_LEN - 1;
 // The first height at which the resolver treats an offer/bid (anchored at `anchorHeight`, raw expiry epoch
 // `expiresEpoch`) as EXPIRED — the height projection of effExpiry + sweepExpired (resolve.ts). v2.1 (≥V21)
 // caps the effective expiry at anchorEpoch + MAX_OFFER_EPOCHS; v2.2 (anchor >= V22) REMOVES the cap (raw
@@ -352,10 +377,14 @@ export interface TokenMetaRecord { v: 1; t: "tmeta"; ticker: string; hash: strin
 // ENS-class identity. `p` = string→string map of ENSIP-5 keys (avatar/display/socials/url). INERT
 // cosmetic metadata — never a send target (the verified address is `nset`). Empty `p` clears the profile.
 export interface NameProfileRecord { v: 1; t: "nprofile"; name: string; p: Record<string, string> }
+// ── v2.8 ──
+// The open-lane claim record. `offer` = the 0x-hex id of the offer being reserved. The expiry rides the
+// carrying Propose's `expires_epoch` (no `expiresEpoch` in the body, like `offer`/OfferRecord). §31.
+export interface FclaimRecord { v: 1; t: "fclaim"; offer: string }
 export type CairnXRecord =
   | DeployRecord | MintRecord | TransferRecord | OfferRecord | BidRecord | OfferCancelAllRecord
   | NameCommitRecord | NameRecord | NameFinalizeRecord | NameXferRecord | NameSetRecord
-  | NameRenewRecord | TokenMetaRecord | NameProfileRecord;
+  | NameRenewRecord | TokenMetaRecord | NameProfileRecord | FclaimRecord;
 
 // ── chain events fed to the resolver (consensus data, normalized) ──
 export interface ProposeEvent {
@@ -428,6 +457,10 @@ export interface OfferState {
   /** v1.7 claim-to-fill: the current exclusive claimer + the height their window ends. Lazy lapse —
    *  a past claimUntilHeight just means no live claim (the fields persist as the last-claim record). */
   claimedBy?: string; claimUntilHeight?: number;
+  /** v2.8 fclaim (§31, V28+): the txid of the granting fclaim Propose. LAST-WRITE-WINS (re-assigned on every
+   *  grant, never set-once, never cleared), so fill-routing (claimTxid === fclaimTxid) tracks the CURRENT holder.
+   *  Present only once granted at V28+; a canonical offer field (§5.1). */
+  claimTxid?: string;
   fill?: FillEntry;
 }
 export type BidStatus = "open" | "cancelled" | "expired" | "done";
@@ -453,6 +486,11 @@ export interface CairnXState {
    *  (like `events`); exposed so a wallet/UI can confirm it is still the winner before paying the premium.
    *  resolve() always returns it; the one initial-state literal (cairnx service) constructs an empty {}. */
   recaptures: Record<string, { owner: string; effectiveHeight: number; finalizeBy: number }>;
+  /** v2.8 fclaim (§31): GRANTED fclaims (fclaimTxid → linked offer + proposer + expiry epoch + grant height),
+   *  for the wallet/UI and the cairnx service D2 alias. DIAGNOSTIC, excluded from canonicalState (like
+   *  `recaptures`/`events`); resolve() always returns it, and the one initial-state literal (cairnx service)
+   *  constructs an empty {}. */
+  fclaims: Record<string, { offer: string; proposer: string; expiresEpoch: number; height: number }>;
   events: AppliedEvent[];
   feesPaid: string;       // running total of protocol fees observed to the treasury (base units)
 }

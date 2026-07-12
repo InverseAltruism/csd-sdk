@@ -141,6 +141,12 @@ V26_HEIGHT = 46480
 # arithmetic). Non-retroactive -> pre-V27 byte-identical. RELAXATION (all replayers before the tip crosses).
 # MUST match types.ts/helpers.js/wallet.
 V27_HEIGHT = 46520
+# v2.8 (§31): the open-lane claim becomes a short-expiry Propose and the fill Attests it, so L0's own
+# attest-existence + attest-after-expiry rules enforce the hold deadline. PLACEHOLDER height baked at Batch P;
+# set far above the live tip so all current data + every pre-V28 vector stays byte-identical. MUST match types.ts.
+V28_HEIGHT = 55000
+FCLAIM_MAX_EPOCH_AHEAD = 2   # a grant may request an expiry at most this many epochs ahead (anti-squat; hold <= 89 blocks)
+FILL_TIP_MARGIN = 2          # client policy (NOT consensus): refuse to broadcast a fill within this many blocks of holdEnd
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")
@@ -219,6 +225,7 @@ BID_KEYS = {"v", "t", "want", "give", "memo", "ts"}
 NAME_KEYS = {"v", "t", "name", "salt"}
 NFINALIZE_KEYS = {"v", "t", "name", "salt"}
 NPROFILE_KEYS = {"v", "t", "name", "p"}
+FCLAIM_KEYS = {"v", "t", "offer"}
 
 def _only_keys(r, allowed): return set(r.keys()) <= allowed
 
@@ -359,6 +366,12 @@ def parse_record(uri, payload_hash_hex):
         if not isinstance(r.get("hash"), str) or not HASH_RE.fullmatch(r["hash"]): return None
         if len(r.keys()) != 4: return None
         return r
+    if t == "fclaim":
+        # v2.8 open-lane claim (§31). Height-agnostic parse; the resolve GRANT handler is V28-gated (below V28 a
+        # parsed fclaim is inert). Exact-key allowlist + isHash(offer); the expiry rides Propose.expires_epoch.
+        if not _only_keys(r, FCLAIM_KEYS): return None
+        if not is_hash(r.get("offer")): return None
+        return r
     return None
 
 def is_name_give(g): return isinstance(g.get("name"), str)
@@ -379,6 +392,7 @@ def resolve(events, tip_height):
     offers = {}      # id -> OfferState (output shape, mutated in place)
     offer_lock = {}  # id -> int
     bids = {}        # id -> BidState
+    fclaims = {}     # v2.8 fclaimTxid -> {offer, proposer, expiresEpoch, height, granted}; granted subset materialized
     fees_paid = 0
 
     pending_cancels = []
@@ -435,6 +449,7 @@ def resolve(events, tip_height):
     # delivers, with no displacement race. Below V20: window 15, grace 0 (byte-identical). The grace is
     # derived from the claim's ERA (a V20 claim has claimUntilHeight >= V20+40; [V20+15,V20+40) is unreachable).
     def claim_grace(o):
+        if o.get("claimTxid") is not None: return 0  # v2.8: an fclaim hold has grace 0 (its L0 deadline IS holdEnd)
         cu = o.get("claimUntilHeight")
         return CLAIM_FILL_GRACE_BLOCKS if (cu is not None and cu - CLAIM_WINDOW_BLOCKS_V20 >= V20_HEIGHT) else 0
     def claim_held(o, height):  # still exclusively held (window + grace) at `height`?
@@ -443,10 +458,12 @@ def resolve(events, tip_height):
         return CLAIM_WINDOW_BLOCKS_V20 if height >= V20_HEIGHT else CLAIM_WINDOW_BLOCKS
 
     # ── shared SCORE_FILL helpers (mirrors resolve.ts — dedup of the three fill paths) ──
-    def open_fill_blocked(o, height, who):
+    def open_fill_blocked(o, height, who, target_id):
         # v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the live-claim holder; [V13,V17) banned.
         if not (height >= V13_HEIGHT and not o.get("taker")): return False
         if height < V17_HEIGHT: return True
+        # v2.8 Correction 1: during an fclaim hold the payment MUST attest the fclaim txid, not the offer id.
+        if height >= V28_HEIGHT and o.get("claimTxid") is not None and target_id == o["id"]: return True
         return not (claim_held(o, height) and who == o.get("claimedBy"))
     def deliver_name_to_buyer(n, who, ev):
         # name sale: transfer to buyer, clear addr+profile, and (v1.3+) re-stamp a displacement-immune viaFill basis
@@ -458,6 +475,14 @@ def resolve(events, tip_height):
         bal(t, o["seller"])["locked"] -= amt
         bal(t, who)["available"] += amt
         offer_lock.pop(o["id"], None)
+    def void_open_name_offers(name, height):
+        # void every open offer listing `name` (displacement/reclaim/reservation-takeover). v2.8: a name-offer
+        # with a live fclaim hold is FROZEN (lease-lapse safety: a lapsed name recaptured mid-hold must not
+        # strand the buyer's L0-minable fill). Same predicate as Correction 2, keyed on the voiding event height.
+        for o in offers.values():
+            if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == name:
+                if height >= V28_HEIGHT and o.get("claimTxid") is not None and claim_held(o, height): continue
+                release_give(o); o["status"] = "cancelled"
 
     for ev in ordered:
         if ev["height"] < ACTIVATION_HEIGHT: continue
@@ -557,9 +582,7 @@ def resolve(events, tip_height):
                         continue
                     fee = expired_claim_fee(rec["name"], ep_claim - (paid_through(cur_active) + NAME_GRACE_EPOCHS), ev["height"])
                     if fee_to_treasury < fee: continue
-                    for o in offers.values():
-                        if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
-                            release_give(o); o["status"] = "cancelled"
+                    void_open_name_offers(rec["name"], ev["height"])
                     names[rec["name"]] = {"owner": who, "effHeight": eff_height, "pos": ev["pos"], "id": ev["id"],
                                           "height": ev["height"], "locked": False, "viaFill": True,
                                           "paidThroughEpoch": ep_claim + NAME_TERM_EPOCHS}
@@ -577,9 +600,7 @@ def resolve(events, tip_height):
                                      and n.get("finalizeBy") is not None and ev["height"] <= n["finalizeBy"])
                     if my_pending >= MAX_PENDING_REG: continue
                     if cur_active:
-                        for o in offers.values():
-                            if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
-                                release_give(o); o["status"] = "cancelled"
+                        void_open_name_offers(rec["name"], ev["height"])
                     names[rec["name"]] = {"owner": who, "effHeight": eff_height, "pos": ev["pos"], "id": ev["id"],
                                           "height": ev["height"], "locked": False, "pending": True,
                                           "finalizeBy": eff_height + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS}
@@ -593,9 +614,7 @@ def resolve(events, tip_height):
                     (eff_height == cur_active["effHeight"] and (ev["pos"] < cur_active["pos"] or (ev["pos"] == cur_active["pos"] and lt(ev["id"], cur_active["id"]))))))
                 if not better: continue
                 if cur_active:
-                    for o in offers.values():
-                        if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
-                            release_give(o); o["status"] = "cancelled"
+                    void_open_name_offers(rec["name"], ev["height"])
                 names[rec["name"]] = cand
                 fees_paid += name_reg_fee(rec["name"], ev["height"])
 
@@ -631,9 +650,7 @@ def resolve(events, tip_height):
                         recaptures.pop(rec["name"], None); continue
                     fee = expired_claim_fee(rec["name"], ep - (paid_through(cur) + NAME_GRACE_EPOCHS), ev["height"])
                     if fee_to_treasury < fee: continue
-                    for o in offers.values():
-                        if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == rec["name"]:
-                            release_give(o); o["status"] = "cancelled"
+                    void_open_name_offers(rec["name"], ev["height"])
                     names[rec["name"]] = {"owner": who, "effHeight": r["effHeight"], "pos": r["pos"], "id": r["id"],
                                           "height": r["height"], "locked": False, "paidThroughEpoch": ep + NAME_TERM_EPOCHS}
                     recaptures.pop(rec["name"], None)
@@ -718,16 +735,18 @@ def resolve(events, tip_height):
                 targets = []
                 for o in offers.values():
                     if o["status"] != "open" or o["seller"] != who: continue
+                    if o.get("taker") is not None and o["height"] >= V28_HEIGHT: continue  # v2.8 Lane B: taker-bound V28+ offer uncancellable
                     if "ticker" in rec and not (not is_name_give(o["give"]) and o["give"]["ticker"] == rec["ticker"]): continue
                     if "name" in rec and not (is_name_give(o["give"]) and o["give"]["name"] == rec["name"]): continue
                     targets.append(o)
                 if ev["height"] >= V14_HEIGHT:
-                    def mk(targets):
+                    def mk(targets, h):
                         def f():
                             for o in targets:
+                                if h >= V28_HEIGHT and o.get("claimTxid") is not None and claim_held(o, h): continue  # v2.8 Correction 2 freeze (cancel's own block, live read)
                                 if o["status"] == "open": release_give(o); o["status"] = "cancelled"
                         return f
-                    pending_cancels.append(mk(targets))
+                    pending_cancels.append(mk(targets, ev["height"]))
                 else:
                     for o in targets: release_give(o); o["status"] = "cancelled"
 
@@ -748,9 +767,39 @@ def resolve(events, tip_height):
                 if who != tok["meta"]["deployer"]: continue
                 tok["meta"]["tmeta"] = rec["hash"]
 
+            elif t == "fclaim":
+                # v2.8 (§31) open-lane claim GRANT. Below V28 inert. Grant ladder (order-independent ANDs):
+                if ev["height"] < V28_HEIGHT: continue
+                target = offers.get(rec["offer"])
+                E = ev["expiresEpoch"]
+                def deny(rec=rec, who=who, E=E, ev=ev):
+                    fclaims[ev["id"]] = {"offer": rec["offer"], "proposer": who, "expiresEpoch": E, "height": ev["height"], "granted": False}
+                if target is None: deny(); continue
+                if target["status"] != "open": deny(); continue
+                if target.get("taker"): deny(); continue
+                if is_token_want(target["want"]): deny(); continue
+                if E > eff_expiry(target, ev["height"]): deny(); continue
+                if E > epoch_of(ev["height"]) + FCLAIM_MAX_EPOCH_AHEAD: deny(); continue
+                if epoch_of(ev["height"]) > E: deny(); continue
+                if claim_held(target, ev["height"]): deny(); continue
+                # cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
+                if target.get("claimedBy") == who and target.get("claimUntilHeight") is not None and ev["height"] < target["claimUntilHeight"] + claim_grace(target) + CLAIM_COOLDOWN_BLOCKS: deny(); continue
+                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]))
+                if liveN >= MAX_ACTIVE_CLAIMS: deny(); continue
+                # grant: last-write-wins on all three fields (claimTxid never left stale, never cleared)
+                target["claimedBy"] = who; target["claimUntilHeight"] = (E + 1) * EPOCH_LEN; target["claimTxid"] = ev["id"]
+                fclaims[ev["id"]] = {"offer": rec["offer"], "proposer": who, "expiresEpoch": E, "height": ev["height"], "granted": True}
+
         else:  # attest
-            o = offers.get(ev["proposalId"])
             who = ev["attester"].lower()
+            o = offers.get(ev["proposalId"])
+            # v2.8 fclaim fill routing (§31): a SCORE_FILL on a GRANTED fclaim txid targets the fclaim's linked
+            # offer (the fclaim txid is not in `offers`). open_fill_blocked then admits it (target_id != o.id).
+            if o is None and ev["height"] >= V28_HEIGHT and ev.get("score") == SCORE_FILL:
+                fc = fclaims.get(ev["proposalId"])
+                if fc and fc["granted"]:
+                    linked = offers.get(fc["offer"])
+                    if linked and linked.get("claimTxid") == ev["proposalId"]: o = linked
             if not o:
                 b = bids.get(ev["proposalId"])
                 if b and ev.get("score") == SCORE_CANCEL:
@@ -762,12 +811,14 @@ def resolve(events, tip_height):
             if ev.get("score") == SCORE_CANCEL:
                 if who != o["seller"]: continue
                 if o["status"] != "open": continue
+                if o.get("taker") is not None and o["height"] >= V28_HEIGHT: continue  # v2.8 Lane B: taker-bound V28+ offer uncancellable
                 if ev["height"] >= V14_HEIGHT:
-                    def mk(o):
+                    def mk(o, h):
                         def f():
+                            if h >= V28_HEIGHT and o.get("claimTxid") is not None and claim_held(o, h): return  # v2.8 Correction 2 freeze (cancel's own block, live read)
                             if o["status"] == "open": release_give(o); o["status"] = "cancelled"
                         return f
-                    pending_cancels.append(mk(o))
+                    pending_cancels.append(mk(o, ev["height"]))
                 else:
                     release_give(o); o["status"] = "cancelled"
 
@@ -798,7 +849,7 @@ def resolve(events, tip_height):
             elif ev.get("score") == SCORE_FILL and o.get("min") is not None and not is_name_give(o["give"]):
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if open_fill_blocked(o, ev["height"], who): continue
+                if open_fill_blocked(o, ev["height"], who, ev["proposalId"]): continue
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 paid_so_far = int(o.get("paid") or "0")
@@ -832,7 +883,7 @@ def resolve(events, tip_height):
             elif ev.get("score") == SCORE_FILL:
                 if o["status"] != "open": continue
                 if o.get("taker") and who != o["taker"]: continue
-                if open_fill_blocked(o, ev["height"], who): continue
+                if open_fill_blocked(o, ev["height"], who, ev["proposalId"]): continue
                 pt = ev.get("paidTo") or {}
                 want = int(o["want"]["value"])
                 fee = trade_fee(want, o["feeBps"]) if o["feeBps"] else 0
@@ -861,6 +912,7 @@ def resolve(events, tip_height):
                 mark_bid_done(o, who)
 
             elif ev["height"] >= V17_HEIGHT and ev.get("score") == SCORE_CLAIM:
+                if ev["height"] >= V28_HEIGHT: continue  # v2.8 (§31): claims are fclaim proposals now
                 # v1.7 claim-to-fill: reserve an OPEN CSD offer for the first claimer for a short window
                 if o["status"] != "open": continue
                 if o.get("taker"): continue
@@ -994,13 +1046,15 @@ def main():
             "V14_HEIGHT": V14_HEIGHT, "V15_HEIGHT": V15_HEIGHT, "V16_HEIGHT": V16_HEIGHT,
             "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT, "V20_HEIGHT": V20_HEIGHT,
             "V21_HEIGHT": V21_HEIGHT, "V22_HEIGHT": V22_HEIGHT, "V23_HEIGHT": V23_HEIGHT, "V24_HEIGHT": V24_HEIGHT,
-            "V25_HEIGHT": V25_HEIGHT, "V26_HEIGHT": V26_HEIGHT, "V27_HEIGHT": V27_HEIGHT,
+            "V25_HEIGHT": V25_HEIGHT, "V26_HEIGHT": V26_HEIGHT, "V27_HEIGHT": V27_HEIGHT, "V28_HEIGHT": V28_HEIGHT,
+            "FCLAIM_MAX_EPOCH_AHEAD": FCLAIM_MAX_EPOCH_AHEAD, "FILL_TIP_MARGIN": FILL_TIP_MARGIN,
             "CLAIM_WINDOW_BLOCKS": CLAIM_WINDOW_BLOCKS, "CLAIM_WINDOW_BLOCKS_V20": CLAIM_WINDOW_BLOCKS_V20, "CLAIM_FILL_GRACE_BLOCKS": CLAIM_FILL_GRACE_BLOCKS,
             "COMMIT_MAX_BLOCKS": COMMIT_MAX_BLOCKS, "REG_COMMIT_MAX_BLOCKS": REG_COMMIT_MAX_BLOCKS,
             "REG_FINALIZE_GRACE_BLOCKS": REG_FINALIZE_GRACE_BLOCKS, "MAX_PENDING_REG": MAX_PENDING_REG,
             "MAX_OFFER_EPOCHS": MAX_OFFER_EPOCHS, "DEPLOY_FEE": DEPLOY_FEE,
             "EPOCH_LEN": EPOCH_LEN, "TREASURY_ADDR": TREASURY_ADDR,
             "PROFILE_MAX_KEYS": PROFILE_MAX_KEYS, "PROFILE_MAX_VALUE_BYTES": PROFILE_MAX_VALUE_BYTES,
+            "RESERVED_NAMES": sorted(RESERVED_NAMES),
         }
     if "regex" in job:
         # C2: DIRECT regex-vs-regex differential over raw strings (the corpus the builder-based fuzzer

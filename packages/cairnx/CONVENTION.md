@@ -1,13 +1,13 @@
 # CairnX Convention v1
 
-**Status:** v2.7 (normative; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.8 (normative; v2.8 pending activation at `V28_HEIGHT`, see §31; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive — below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
 v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24) ·
 v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 46 480 (§29) · v2.7 @ 46 520 (§30) ·
-v2.3 @ 52 000 (§26).
-Sections §19–§30 are the normative semantics for v1.6–v2.7; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+v2.3 @ 52 000 (§26) · v2.8 @ `V28_HEIGHT` (§31, PENDING activation).
+Sections §19–§31 are the normative semantics for v1.6–v2.8; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -997,3 +997,125 @@ anchor. `viaFill` names were never embargoed.
   at 46 521. Deterministic for every replayer; no name-age era bookkeeping is needed.
 - **Adoption note:** a relaxation (fresh cores accept a sale a stale core no-ops), so every replayer must
   run the v2.7 core before the tip crosses 46 520.
+
+---
+
+# CairnX Convention v2.8 (fclaim: atomic open-lane settlement)
+
+**Activation height: `V28_HEIGHT`** (baked at rollout; non-retroactive; each rule keys on its OWN governed
+event's height, and Lane B additionally on the offer's anchor era).
+Below it an `fclaim` record parses to a forward-compatible no-op (like `nprofile` below V19, §22), `SCORE_CLAIM`
+claims work exactly as §20/§23, and every replay hash is byte-identical.
+
+## 31. `fclaim`: the open-lane claim becomes a short-expiry proposal, the fill attests it
+
+v1.7 (§20) moved the open-CSD race to a payment-free claim (`Attest score = 50`), but the resulting hold is an
+overlay-only deadline invisible to L0: a fill delayed past the hold, or a cancel reordered against the fill, can
+still burn a paid buyer (the cross-block delivery-versus-payment flaw). v2.8 closes it by making the claim a
+**short-expiry `Propose`** and the fill an **`Attest` on that proposal**, so L0's own rules (an Attest to an
+unknown proposal is block-invalid, and an Attest mined in an epoch past the proposal's `expires_epoch` is
+block-invalid) enforce the SAME hold deadline the overlay uses. Delivery and payment become one
+consensus-observable quantity.
+
+**Record.** `fclaim = {v, t:"fclaim", offer}`, where `offer` is the 0x-hex id (`isHash`) of an open,
+CSD-priced, untaken offer. `FCLAIM_KEYS = {"v","t","offer"}` (exact-key set, §5.1). The expiry rides the
+carrying `Propose.expires_epoch`; there is no `expiresEpoch` in the record body (matching the `offer` /
+`OfferRecord` precedent). Parsing is height-agnostic; the resolve handler is `V28_HEIGHT`-gated, so below the
+gate a parsed fclaim is inert (nfinalize precedent, §28).
+
+**The two transactions.**
+- **Claim** = `Propose(uri = the fclaim record, expires_epoch = E)`, with `E` the desired hold-end epoch. The
+  network fee is the propose floor 0.25 CSD (up from the 0.05 attest floor). A client picks
+  `E = min(epochOf(tip + 45), offer.expiresEpoch)` to approximate the legacy 45-block hold while never
+  requesting an `E` the grant would deny.
+- **Fill** = `Attest(score = SCORE_FILL = 100)` on the **fclaim txid** (not the offer id), paying the SAME
+  §4 / §19 delivery outputs (the CSD `want.value` sum plus the §19 fee and maker rebate). The fill itself
+  stays at the 0.05 attest floor; only the claim rises to the 0.25 propose floor.
+
+**Grant (the propose handler, at height `h >= V28_HEIGHT`).** A well-formed fclaim grants a hold iff, in order:
+the referenced offer exists AND is `open` AND untaken (`!taker`) AND CSD-priced; `E <= effExpiry(offer, h)`
+(§24 / §25, so the hold never outlives the offer); `E <= epochOf(h) + FCLAIM_MAX_EPOCH_AHEAD` (`= 2`, anti-squat,
+bounding a hold to `EPOCH_LEN*(2 + 1) - 1 = 89` blocks); `epochOf(h) <= E` (lower bound); the offer has no live
+hold (`!claimHeld`, unifying legacy and fclaim holds so one offer is never double-held); the same-offer cooldown
+has elapsed (`h >= o.claimUntilHeight + grace + CLAIM_COOLDOWN_BLOCKS` for the last holder, where `grace` is the
+prior hold's era grace per §20 / §23, i.e. 0 for a prior fclaim hold and `CLAIM_FILL_GRACE_BLOCKS` for a prior
+legacy hold; the cooldown runs from the END of the prior hold, so a straddling legacy hold and a fresh fclaim
+never disagree); and the proposer holds fewer than `MAX_ACTIVE_CLAIMS` (`= 3`) live holds. This clause order is
+normative (the from-spec oracle emits deny reasons in this order). On grant the resolver records `claimedBy = proposer`, `claimUntilHeight = (E + 1)*EPOCH_LEN`, and
+`claimTxid = fclaimTxid`.
+
+**Last-write-wins (fund-safety).** All three fields are last-write-wins: a later grant on the same offer (after
+a prior hold has lapsed) RE-ASSIGNS all three unconditionally. `claimTxid` is never left stale behind an
+`if (claimTxid === undefined)` guard and is never cleared. (If a later holder's `claimTxid` were left stale,
+fill-routing (`claimTxid === proposalId`) would fail for that holder while their payment mined on the new
+fclaim, a burn.) A denied fclaim records `{granted:false}` in the internal `fclaims` map (for the money-safety
+audit) and grants no hold.
+
+**Canonical surface (§5.1).** `claimTxid` is a canonical offer field (§5.1-A3, present only once granted at
+V28+, following the §20 `claimedBy` / `claimUntilHeight` precedent). The `fclaims` map is INTERNAL and is NOT
+materialized in canonical state (the §29 `recaptures` precedent). So every pre-V28 replay hash is unchanged,
+and post-V28 canonical hashes cover `claimTxid` only.
+
+**Hold and grace.** `claimHeld(o, h)` keeps its form, but grace is fclaim-aware: an fclaim hold (`claimTxid`
+set) has grace 0, so the hold is exactly `[grantHeight, holdEnd]` with `holdEnd = (E + 1)*EPOCH_LEN - 1`, the
+last L0-minable height for the fill (an attest at `h > holdEnd` is in an epoch `> E` and L0-invalid). The
+resolver-local grace and the shared `claimGraceOf` selector are made `claimTxid`-aware TOGETHER so the resolver
+and every client bundle stay in lockstep.
+
+**Fill routing.** A `SCORE_FILL` attest on an fclaim txid looks up the linked offer and delivers iff: the
+fclaim was `granted`; the offer is `open`; `claimTxid === fclaimTxid && claimHeld(o, h)`; and
+`attester === claimedBy`. It then runs the EXISTING §4 / §19 (whole) and §12 (partial) value-and-delivery
+machinery unchanged (same required outputs, keyed on the offer). Partial fills ride the fclaim lane and the
+hold PERSISTS across them until `holdEnd` or a whole fill. A granted fclaim's own `paidTo` is
+allowed-and-ignored (the §28 payment-free-reveal precedent). Any non-`SCORE_FILL` score on an fclaim txid is a
+no-op (no buyer early-release).
+
+**Correction 1 (offer-txid fill blocked during a hold).** At `h >= V28`, an open **offer-txid** fill on an
+offer with `claimTxid !== undefined` is rejected. Without it, an updated buyer (or a stale bundle) could route
+the payment through the offer id, whose L0 deadline is the offer's far-off expiry, silently reopening the
+delayed-fill burn. One guard covers both the whole and partial offer-txid fill paths; token-priced fills never
+carry a `claimTxid`.
+
+**Correction 2 (cancel-freeze at apply-time, on the cancel's own block).** §16 defers a cancel's effect to the
+block boundary. At `h >= V28`, both deferred closures (the `ocancel` Propose and the score-0 cancel Attest)
+SKIP any target with a live fclaim hold: evaluate `claimTxid !== undefined && claimHeld(o, ev.height)` LIVE on
+the offer object INSIDE the closure, keyed on the cancel's OWN block height. (A same-block higher-pos grant
+mutates that offer object, so an inside-closure read sees the hold; a value snapshotted at the `ocancel`
+apply-time target scan would not.) The freeze is scoped to `claimTxid !== undefined`, so pre-V28 legacy holds
+keep §16 behavior byte-for-byte.
+
+**Lane B (taker-bound offers become uncancellable at V28).** A taker-bound (RFQ) answer is a firm quote: at
+`h >= V28`, both cancel paths reject a cancel when `o.taker !== undefined` and the offer was anchored at V28+.
+The maker exits by letting the answer expire (one epoch, about an hour). This eliminates the cancel-reorder half
+for the RFQ lane entirely.
+
+**Name-offer freeze (lease-lapse safety).** A held offer that sells a **name** is also protected from
+`voidOpenNameOffers`: at `h >= V28`, a recapture or displacement does not void an offer carrying a live
+`claimTxid` hold (the same predicate as Correction 2). Without this, a name whose lease lapses mid-hold could be
+recaptured and its offer voided, stranding the buyer's L0-minable fill.
+
+**`SCORE_CLAIM` sunset.** At `h >= V28` a `SCORE_CLAIM` attest is explicitly rejected (`claims are fclaim
+proposals now`) so a stale wallet's claim is diagnosable rather than silently inert. Pre-V28 live holds continue
+to honor legacy `SCORE_FILL` fills until they lapse (all within 45 blocks of the gate); the legacy lane
+self-sunsets with no height literal in the predicate.
+
+**Denied-fclaim is an L0-valid fill target (the sharp edge).** L0 stores every mined Propose, and an Attest's
+existence check only reads storage, so a fill on a resolver-DENIED fclaim (for example on a taken or expired
+offer) still MINES and, because the resolver denied the hold, BURNS. A client therefore MUST re-derive the
+entire grant itself over PoW-buried offer + fclaim events before signing a fill, and MUST NOT trust fclaim
+inclusion or any resolver `granted` assertion. The `fclaims` map records the denied grant so the money-safety
+audit flags such a burn.
+
+**Client policy (not consensus, does not affect canonical state).** A filler waits a value-scaled
+`requiredClaimDepth` (§20 reorg note) on BOTH the offer and the fclaim (and, for a partial tail-fill, on the
+offer's earlier fill-basis events) before signing, and refuses to broadcast a fill within `FILL_TIP_MARGIN`
+(`= 2`) blocks of `holdEnd` (a stranded no-op, never a fund risk), computed from the fclaim's actual confirmed
+height and `expires_epoch`. A clean-start SPV scan must cover
+`GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS` (`= 104`) blocks so it can
+never false-accept a denied fclaim.
+
+- **Adoption note:** at/above V28 the fill's referenced proposal changes (offer id becomes fclaim txid) and
+  `SCORE_CLAIM` is rejected, so v2.8 is BOTH a relaxation (an fclaim fill a fresh core accepts, a stale core
+  no-ops) AND a tightening (a stale core still grants legacy claims a fresh core rejects). Every replayer,
+  resolver, and client bundle MUST run the v2.8 core before the tip crosses `V28_HEIGHT`. Below the gate every
+  rule above is inert and all replay is byte-identical.

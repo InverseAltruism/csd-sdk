@@ -25,10 +25,10 @@
 // This file imports the compiled dist and modifies nothing.
 
 import {
-  resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, REG_COMMIT_MAX_BLOCKS,
+  resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, V28_HEIGHT, REG_COMMIT_MAX_BLOCKS,
   REG_FINALIZE_GRACE_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN, epochOf,
   nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameFinalize,
-  deploy, mint, offer, tradeFee, makerRebate, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL,
+  deploy, mint, offer, fclaim, tradeFee, makerRebate, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL,
 } from "../packages/cairnx/dist/index.js";
 
 const T = TREASURY_ADDR;
@@ -258,6 +258,33 @@ function corpus() {
     const fillEv = att(B, offEv.id, h0 + 4, { [A]: "100000000", [T]: tradeFee(100000000n, FEE_BPS_V16).toString() });
     push("clean happy fill (deploy→mint→offer→fill)", "clean",
       [depEv, mintEv, offEv, fillEv], h0 + 40, "guarded happy path — must be silent");
+  }
+
+  // 8. v2.8 FCLAIM lane (§31). The honest open-lane fclaim buy is CLEAN; a denied-fclaim fill and an
+  //    offer-txid fill during a live hold are BURNS the detector must surface (the client-side grant replay
+  //    and the Correction-1 target guard, B4/B5, are what PREVENT building them). These assert the detector
+  //    classifies the v2.8 routing correctly, so `audit:all --selftest` FAILS if a future change reopens the
+  //    honest lane as a burn or lets a denied-fclaim fill deliver.
+  {
+    const h0 = V28_HEIGHT + 100;
+    const depEv = prop(A, deploy({ ticker: "FCL", decimals: 0, supply: "1000000", mint: "issuer" }), h0, { [T]: DEPLOY_FEE.toString() });
+    const mintEv = prop(A, mint({ ticker: "FCL", amount: "1000000" }), h0 + 1);
+    const offEv = prop(A, offer({ give: { ticker: "FCL", amount: "10" }, want: { value: "100000000", payto: A } }), h0 + 2);
+    const E = epochOf(h0 + 3) + 1;
+    const val = 100000000n, fee = tradeFee(val, FEE_BPS_V16), reb = makerRebate(val);
+    const pay = { [A]: (val + reb).toString(), [T]: fee.toString() };
+
+    const grant = { ...prop(B, fclaim({ offer: offEv.id }), h0 + 3), expiresEpoch: E };
+    push("v2.8 clean fclaim fill (grant then fclaim-txid fill delivers)", "clean",
+      [depEv, mintEv, offEv, grant, att(B, grant.id, h0 + 5, pay)], h0 + 60, "the honest open-lane fclaim buy (must be silent)");
+
+    const grant2 = { ...prop(B, fclaim({ offer: offEv.id }), h0 + 3), expiresEpoch: E };
+    push("v2.8 offer-txid fill during a hold (Correction 1 rejects, buyer would burn)", "burn",
+      [depEv, mintEv, offEv, grant2, att(B, offEv.id, h0 + 5, pay)], h0 + 60, "a client that ignored fillTargetId: Correction 1 rejects the offer-txid fill after it paid");
+
+    const denied = { ...prop(C, fclaim({ offer: nid() }), h0 + 3), expiresEpoch: E };
+    push("v2.8 denied-fclaim fill (pay-without-delivery burn)", "burn",
+      [depEv, mintEv, offEv, denied, att(C, denied.id, h0 + 5, { [A]: val.toString(), [T]: fee.toString() })], h0 + 60, "a client that skipped grant replay: the denied fclaim mines and the payment burns");
   }
 
   return out;
