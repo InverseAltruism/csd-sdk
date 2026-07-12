@@ -17,10 +17,10 @@
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
   type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
-  verifyMerkleProof, merkleBranch, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
+  verifyMerkleProof, merkleBranch, txid as codecTxid, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
   MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
-import { CsdClient, rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
+import { CsdClient, rpcHeaderToHeader, rpcTxToTx, type RpcTxJson } from "@inversealtruism/csd-client";
 import { expectedBitsFromWindow } from "./lwma.js";
 
 export { expectedBits, expectedBitsFromWindow } from "./lwma.js";
@@ -31,7 +31,16 @@ const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForB
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
 export interface VerifiedHeader { height: number; hash: string; header: BlockHeader; chainwork: bigint; trusted?: boolean }
-export interface InclusionResult { trustLevel: TrustLevel; included: boolean; blockHeight?: number; confirmations?: number; reason?: string }
+export interface InclusionResult {
+  trustLevel: TrustLevel; included: boolean; blockHeight?: number; confirmations?: number; reason?: string;
+  /** SG-CONTENT-BIND-1: on a `verified-inclusion` result, the MERKLE-PROVEN tx body (its re-derived
+   *  txid IS the merkle leaf we folded to the PoW-verified root), so a caller can re-derive
+   *  `txid(tx)` and bind an offer record to the ON-CHAIN commitment, not a resolver-served /proposal. */
+  tx?: RpcTxJson;
+  /** SG-CONTENT-BIND-1: the proven tx's committed `app.payload_hash` when it is a Propose (else undefined).
+   *  This is the on-chain commitment an offer record must hash to — never the served `p.payload_hash`. */
+  appPayloadHash?: string;
+}
 export interface ReorgResult { adopted: boolean; rolledBack?: number; newTip?: number; reason?: string }
 
 export type HeaderProvider = (height: number) => Promise<{ header: BlockHeader; hash: string; txids: string[] }>;
@@ -264,7 +273,19 @@ export class LightClient {
     return { adopted: true, rolledBack, newTip: altTip.height };
   }
 
-  /** Verify a tx's inclusion against a verified header (merkle proof built from the block). */
+  /**
+   * Verify a tx's inclusion against a verified header (merkle proof built from the block).
+   *
+   * SG-CONTENT-BIND-1: the merkle branch is folded over a txid RE-DERIVED from each tx BODY
+   * (`codecTxid(rpcTxToTx(body))`), NEVER the server-reported `.txid` field. The txid commits to the
+   * whole tx (incl. `app.payload_hash`), so a body whose recomputed id folds to the PoW-verified merkle
+   * root is authentic byte-for-byte — a lying read path that swaps a body while keeping the reported
+   * `.txid` re-derives to a different id and fails closed (it neither matches the requested txid nor
+   * folds to the root). On a proven inclusion we SURFACE the proven tx (`tx`) and, for a Propose, its
+   * committed `appPayloadHash`, so a caller can bind an offer's terms to the ON-CHAIN commitment
+   * instead of a resolver-served `/proposal` (which the same routed backend controls). This mirrors the
+   * shipped `verifyClaimSPV` block re-derivation (cairn swapguard.js), made canonical here for A1/B4.
+   */
   async verifyTxInclusion(txidHex: string): Promise<InclusionResult> {
     if (!this.client) return { trustLevel: "rpc-trusted", included: false, reason: "no client for proof fetch" };
     const t = await this.client.tx(txidHex);
@@ -283,12 +304,22 @@ export class LightClient {
     const verified = this.at(height);
     if (!verified) return { trustLevel: "rpc-trusted", included: false, reason: "could not verify the containing header" };
     const b = await this.client.blockByHeight(height);
-    const txids = b.txs.map((x) => x.txid);
-    const pos = txids.findIndex((x) => x.toLowerCase() === txidHex.toLowerCase());
-    if (pos < 0) return { trustLevel: "rpc-trusted", included: false, reason: "tx not listed in block" };
-    const ok = verifyMerkleProof(txidHex, pos, merkleBranch(txids, pos), verified.header.merkle);
+    // RE-DERIVE every tx's id from its BODY (consensus codec), never the server-reported `.txid`. A
+    // forged/undecodable body fails closed here rather than passing an authentic-looking id downstream.
+    const derivedIds: string[] = [];
+    for (const jt of b.txs) {
+      try { derivedIds.push(codecTxid(rpcTxToTx(jt))); }
+      catch { return { trustLevel: "rpc-trusted", included: false, reason: "undecodable tx in block (tampered read path)" }; }
+    }
+    const pos = derivedIds.findIndex((x) => x.toLowerCase() === txidHex.toLowerCase());
+    if (pos < 0) return { trustLevel: "rpc-trusted", included: false, reason: "tx body not found in block (or re-derived txid mismatch)" };
+    // Fold the RE-DERIVED leaf (== the body's real txid) to the PoW-verified root — so the merkle
+    // proof authenticates the exact body we surface, not merely the requested id.
+    const ok = verifyMerkleProof(derivedIds[pos]!, pos, merkleBranch(derivedIds, pos), verified.header.merkle);
     if (!ok) return { trustLevel: "rpc-trusted", included: false, reason: "merkle proof failed" };
-    return { trustLevel: "verified-inclusion", included: true, blockHeight: height, confirmations: tipHeight - height + 1 };
+    const provenTx = b.txs[pos]!;
+    const appPayloadHash = provenTx.app.type === "Propose" ? provenTx.app.payload_hash : undefined;
+    return { trustLevel: "verified-inclusion", included: true, blockHeight: height, confirmations: tipHeight - height + 1, tx: provenTx, appPayloadHash };
   }
 
   /**

@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/light-offline.test.ts && tsx test/lwma-memo.test.ts && tsx test/light.test.ts",
+    "test": "tsx test/light-offline.test.ts && tsx test/content-bind.test.ts && tsx test/lwma-memo.test.ts && tsx test/light.test.ts",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
