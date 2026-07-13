@@ -58,7 +58,8 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## cairnx-core 0.1.37 (2026-07-12, PENDING publish + activation) - V28 fclaim open-lane settlement atomicity (CONVENTION v2.8, §31)
 
-**Consensus change (gated, non-retroactive): `V28_HEIGHT` = 55,000.** The largest CairnX replay change since the
+**Consensus change (gated, non-retroactive): `V28_HEIGHT` = 60,000.** (Set 55,000 on 2026-07-12; bumped to
+60,000 on 2026-07-13 for a ~9-10 day deploy runway; tip was ~53.1k at the bump.) The largest CairnX replay change since the
 gate ladder began. It closes the cross-block "pay without delivery" flaw on the open-lane marketplace buy
 (CX-DVP-CROSSBLOCK-1): Half A (seller cancels in block N, buyer fills in N+1 - L0 satisfied, overlay rejects
 delivery) and Half B (a fill delayed past the overlay hold but before offer expiry). Neither half is closable
@@ -92,21 +93,28 @@ mirrored in `conformance/cairnx_ref.py`):
   superseded fclaim, a forged-holder fill, a below-depth fill, a cross-offer `MAX_ACTIVE_CLAIMS` over-cap, and a
   past-deadline strand). New selectors `fclaimHoldEnd`/`fclaimEpochFor`; `GAP_NEEDED`=104, `MAX_SCAN`=134.
 
-New constants: `V28_HEIGHT`=55,000, `FCLAIM_MAX_EPOCH_AHEAD`=2, `FILL_TIP_MARGIN`=2.
+New constants: `V28_HEIGHT`=60,000, `FCLAIM_MAX_EPOCH_AHEAD`=2, `FILL_TIP_MARGIN`=2.
 
 **Byte-identity**: every pre-V28 canonical-state replay hash is byte-identical (`vectors.test.ts` 71/71; all
-pinned real-chain heights <= 45,959 < 55,000). Only events at height >= 55,000 see the new rules; the live tip
-was ~52.6k at the edit, so nothing is active yet. `resolve.ts` grew only ~+111 lines and `cairnx_ref.py` ~+76;
-7 new `v28-*` golden vectors in `cases.json` (regenerated relative to V28_HEIGHT).
+pinned real-chain heights <= 45,959 < 60,000). Only events at height >= 60,000 see the new rules; the live tip
+was ~53.1k at the bump, so nothing is active yet. `resolve.ts` grew only ~+111 lines and `cairnx_ref.py` ~+76;
+7 new `v28-*` golden vectors in `cases.json` (regenerated relative to V28_HEIGHT). This release also cherry-picks
+the csd-light SG-CONTENT-BIND-1 merkle re-derive-txid change (see the csd-light 0.1.18 entry below), so the site
+fill-SPV binds an offer record to the on-chain commitment, not a resolver-served /proposal.
 
-**Adoption discipline (HARD gate, both directions)**: this is a fund-safety rule change, so EVERY replayer
-(cairnx svc, clarvis, cairn-cli, cairn-sdk, and the vendored cairn-site + cairn-wallet bundles) MUST be on this
-core before the tip reaches 55,000, or a stale replayer forks the app layer (stale clients strand, never burn -
-the fail direction is safe). The D2 service alias (cairnx svc + clarvis) bridges the stale CWS field wallet so it
-does not 404 into an open-lane outage. STRONG COMPANION: the node reorg ghost-UTXO fix (finding-9,
-`cairn-node-v0.1.4`) must land BEFORE V28 - V28 sharpens its trigger (a reorg-orphaned short-lived fclaim Propose
-plus a payment-bearing fill Attest hits the app-phase existence/expiry bail mid-apply). 55,000 is legally
-BUMP-able (a coordinated same-day re-pin of every verifier) if the rollout needs more runway.
+**Adoption discipline (HARD gate, both directions)**: this is a fund-safety rule change, so EVERY PRIMARY replayer
+(the cairnx svc, cairn-cli, cairn-sdk, and the vendored cairn-site + cairn-wallet bundles) MUST be on this core
+before the tip reaches 60,000, or a stale replayer forks the app layer (stale clients strand, never burn - the
+fail direction is safe). clarvis is a STRICTLY-OPTIONAL second source (the wallet's clarvis paths are all
+fail-soft: a clarvis 404/timeout/unreachable PROCEEDS, only a value conflict from a REACHABLE clarvis refuses),
+so a stale clarvis degrades to single-source verification, never a burn; upgrade clarvis when convenient but do
+NOT gate the launch on it. The D2 service alias on the PRIMARY resolver (cairnx svc) is the one availability hard
+requirement - it bridges the stale CWS field wallet so its `GET /cairnx/offer/{fclaimTxid}` does not 404 into an
+open-lane outage; D2 on clarvis is optional (only relevant to a wallet whose configured primary is clarvis, or a
+primary-down failover). STRONG COMPANION: the node reorg ghost-UTXO fix (finding-9, `cairn-node-v0.1.4`) must
+land BEFORE V28 - V28 sharpens its trigger (a reorg-orphaned short-lived fclaim Propose plus a payment-bearing
+fill Attest hits the app-phase existence/expiry bail mid-apply). 60,000 is legally BUMP-able (a coordinated
+same-day re-pin of every verifier) if the rollout needs more runway.
 
 **Audit**: `test:crosslang` v28 26/26 (JS==Python at 55k, incl. below-gate inertness) + all v20-v27 grids +
 fuzz 1500 + regex 2301; `audit:all` money-safety --selftest green (v2.8 honest fclaim fill silent, every known
@@ -117,6 +125,22 @@ synthesis) is hand-implemented TWICE (site swapguard.js + wallet fillspv.ts) wit
 shared vector; consolidate into a shared cairnx-core evidence helper before the next such change. Rollout order:
 follow "Rollout checklist for a NEW GATE" below (this is a rule change, not just a fee tier, so step 2 adds the
 crosslang cases + re-pins nothing that resolve() did not change - all pre-V28 hashes stayed identical).
+
+## csd-light 0.1.18 (2026-07-13, rides the V28 rollout) - SG-CONTENT-BIND-1: verifyTxInclusion re-derives txid + surfaces the proven tx
+
+`LightClient.verifyTxInclusion` (`packages/light/src/index.ts`) now folds the merkle branch over a txid
+RE-DERIVED from each tx BODY (`codecTxid(rpcTxToTx(body))`), never the server-reported `.txid` field, and on a
+proven inclusion SURFACES the proven `tx` plus (for a Propose) its committed `appPayloadHash` on the
+`InclusionResult`. This closes SG-CONTENT-BIND-1: a caller (the cairn site swapguard `verifyOfferContent`) can now
+bind an offer record to the ON-CHAIN commitment instead of the resolver-served `/proposal` (which the same routed
+backend controls). A lying read path that swaps a tx body while keeping the reported `.txid` re-derives to a
+different id and fails closed (it matches neither the requested txid nor the PoW-verified merkle root). Reject-more
+only: every honest inclusion that verified before still verifies (the re-derived id of an honest body equals its
+reported id); the added `tx`/`appPayloadHash` fields are additive (no existing `InclusionResult` consumer breaks).
+NO consensus-byte change, no height gate; it rides the V28 wave because the V28 site fill-SPV depends on the
+surfaced fields. Pinned by `packages/light/test/content-bind.test.ts` (the forged-record attack rejected; deleting
+the bind lets the old server-txid fold accept the forgery). Mirrors the shipped `verifyClaimSPV` block
+re-derivation, made canonical in the SDK for the A1/B4 fill-SPV surface.
 
 ## cairnx-core 0.1.36 (2026-07-10) - finalizeWinnerCheck gains the finalize-window checks (client helper only, replay untouched)
 

@@ -142,9 +142,10 @@ V26_HEIGHT = 46480
 # MUST match types.ts/helpers.js/wallet.
 V27_HEIGHT = 46520
 # v2.8 (§31): the open-lane claim becomes a short-expiry Propose and the fill Attests it, so L0's own
-# attest-existence + attest-after-expiry rules enforce the hold deadline. PLACEHOLDER height baked at Batch P;
-# set far above the live tip so all current data + every pre-V28 vector stays byte-identical. MUST match types.ts.
-V28_HEIGHT = 55000
+# attest-existence + attest-after-expiry rules enforce the hold deadline. Activation height baked 2026-07-12,
+# bumped 2026-07-13 (55,000 -> 60,000) for deploy runway. Set far above the live tip (~53.1k) so all current data
+# + every pre-V28 vector stays byte-identical. MUST match types.ts.
+V28_HEIGHT = 60000
 FCLAIM_MAX_EPOCH_AHEAD = 2   # a grant may request an expiry at most this many epochs ahead (anti-squat; hold <= 89 blocks)
 FILL_TIP_MARGIN = 2          # client policy (NOT consensus): refuse to broadcast a fill within this many blocks of holdEnd
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}

@@ -281,15 +281,17 @@ export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same c
 // operator's two hosts + wallet build (no external audience yet). MUST match cairnx_ref.py + helpers.js
 // + the vendored UI/wallet bundles.
 export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same coordinated re-pin
-// v2.8 fclaim (§31). Operator-chosen activation height, set 2026-07-12. ~2,400 blocks (~3.3 days at 120s) above
-// the live tip (~52.6k), so ALL current chain data + every pre-V28 replay vector (max 45,959) is below the gate
-// and byte-identical. V28 test vectors are generated RELATIVE to this constant (like the preflight tests'
-// V27_HEIGHT + N), so they regenerate correctly. TIGHT-TIMING WARNING: the whole rollout wave (publish the V28
-// core -> re-pin + deploy the cairnx service + clarvis WITH the D2 alias -> re-vendor the site bundle + land B5
-// + CF-purge) MUST complete before the tip reaches 55,000, or a still-stale replayer forks the app layer. This
-// height is legally BUMP-able (a coordinated same-day re-pin of every verifier) if more runway is needed; the
-// CWS field wallet may lag (D2 covers stale wallets) and the BN node fix is off the fclaim critical path.
-export const V28_HEIGHT = 55_000;
+// v2.8 fclaim (§31). Operator-chosen activation height, set 2026-07-12, bumped 2026-07-13 (55,000 -> 60,000) for
+// deploy runway. ~6,900 blocks (~9.6 days at 120s) above the live tip (~53.1k), so ALL current chain data + every
+// pre-V28 replay vector (max 45,959) is below the gate and byte-identical. V28 test vectors are generated RELATIVE
+// to this constant (like the preflight tests' V27_HEIGHT + N), so they regenerate correctly. TIMING: the rollout
+// wave (publish the V28 core -> re-pin + deploy the cairnx service WITH the D2 alias -> re-vendor the site bundle
+// + land B5 + CF-purge) MUST complete before the tip reaches 60,000, or a still-stale replayer forks the app
+// layer. The ONLY per-host hard requirement is that the PRIMARY resolver (cairnx svc) runs this core + D2; clarvis
+// is a STRICTLY-OPTIONAL second source (every client clarvis path is fail-soft), so V28 may launch with clarvis
+// down and clarvis is upgraded when convenient. This height is legally BUMP-able (a coordinated same-day re-pin of
+// every verifier); the CWS field wallet may lag (D2 covers stale wallets) and the BN node fix rides the node canary.
+export const V28_HEIGHT = 60_000;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
