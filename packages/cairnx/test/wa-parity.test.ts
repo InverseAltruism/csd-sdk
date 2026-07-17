@@ -39,7 +39,7 @@ const corpus = JSON.parse(corpusRaw) as WaCorpus;
 // This is the I2 dead-green cure applied to the corpus itself: a drifted copy FAILS, never skips. The hash is
 // over the PARSED-then-canonicalised object (whitespace-independent), so the wallet/site copies can be
 // pretty-printed differently and still match iff the DATA is identical.
-export const WA_CORPUS_SHA = "0x0a4e1072ed97b1b08877fa1968154345508e514daeba854b8da560ffec25f047";
+export const WA_CORPUS_SHA = "0x514874b3036a78e0b8429d44777da7a3d20793525c022b440868e4a720f78ffd";
 const actualSha = payloadHash(corpus);
 ok(actualSha === WA_CORPUS_SHA, `corpus hash matches the pin (got ${actualSha})`);
 

@@ -147,7 +147,7 @@ V27_HEIGHT = 46520
 # + every pre-V28 vector stays byte-identical. MUST match types.ts.
 V28_HEIGHT = 60000
 FCLAIM_MAX_EPOCH_AHEAD = 2   # a grant may request an expiry at most this many epochs ahead (anti-squat; hold <= 89 blocks)
-FILL_TIP_MARGIN = 2          # client policy (NOT consensus): refuse to broadcast a fill within this many blocks of holdEnd
+FILL_TIP_MARGIN = 4          # client policy (NOT consensus): refuse to broadcast a fill within this many blocks of holdEnd (widened 2->4, Plan 70 R2 L1)
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,11}$")

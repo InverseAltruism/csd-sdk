@@ -75,8 +75,11 @@ export const CLAIM_COOLDOWN_BLOCKS = 15;   // a just-lapsed claimer cannot re-gr
 // most FCLAIM_MAX_EPOCH_AHEAD epochs ahead (anti-squat: bounds a hold to EPOCH_LEN*(2+1)-1 = 89 blocks).
 export const FCLAIM_MAX_EPOCH_AHEAD = 2;
 // Client policy (NOT consensus): a filler refuses to broadcast within this many blocks of holdEnd (a stranded
-// no-op, never a fund risk), computed from the fclaim's actual confirmed height + expires_epoch.
-export const FILL_TIP_MARGIN = 2;
+// no-op, never a fund risk), computed from the fclaim's actual confirmed height + expires_epoch. Widened
+// 2->4 (Plan 70 R2 L1): a larger deadline cushion is fail-safe reject-more (it only declines a fill closer to
+// the hold deadline, never accepts one it should refuse), reducing fills stranded as L0-unminable no-ops under
+// congestion. Not a fund risk and not consensus, so it never touches resolve()/replay-hashes.
+export const FILL_TIP_MARGIN = 4;
 // Token-priced fills debit the ATTESTER's token balance, so they must be an explicit opt-in:
 // normal signaling attests use confidence 0–100 — this magic value can't happen by accident.
 export const CONF_TOKEN_FILL = 1_000_000;

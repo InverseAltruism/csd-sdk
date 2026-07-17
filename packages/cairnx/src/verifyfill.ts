@@ -14,8 +14,9 @@
 import { payloadHash } from "@inversealtruism/csd-codec";
 import {
   V28_HEIGHT, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, EPOCH_LEN, FILL_TIP_MARGIN, SCORE_FILL, MAX_ACTIVE_CLAIMS,
+  V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16, ADDR_RE,
   fclaimHoldEnd, isTokenWant,
-  type OfferState, type ChainEvent, type ProposeEvent, type AttestEvent, type CairnXState, type CairnXRecord,
+  type OfferState, type ChainEvent, type ProposeEvent, type AttestEvent, type CairnXState, type CairnXRecord, type OfferRecord,
 } from "./types.js";
 import { resolve } from "./resolve.js";
 import { requiredClaimDepth } from "./client.js";
@@ -236,4 +237,90 @@ export async function verifyFillSpv(
   if (holdEnd < tip + FILL_TIP_MARGIN) return no(`too close to the hold deadline (holdEnd ${holdEnd}, tip ${tip}) - would strand`);
 
   return { safe: true, reason: "ok" };
+}
+
+// ── the SHARED fill-boundary TERM bind (Plan 70 R2 Option B: single-source the R1 hand-copies) ──────────
+// verifyFillSpv proves the grant/hold/DELIVERY over merkle-proven events but takes NO served offer, so the
+// CALLER (wallet fillspv/wallet.ts, site swapguard.js, a diligent dApp) must bind the resolver-SERVED offer's
+// fee/rebate-sizing fields to the merkle-proven ones before it sizes requiredFillOutputs. requiredFillOutputs
+// sizes the treasury fee from offer.feeBps (= feeBpsAt(the on-chain creation height)), the maker rebate from
+// offer.height/taker/bid, the payment from want.value, and pivots partial-vs-whole SOLELY on `offer.min !==
+// undefined`; a lying resolver deflating/adding any of them makes the caller build a mis-sized fill that
+// resolve() (using the proven values) rejects AFTER the payment leg moved = pay-without-delivery burn (theft
+// if the attacker is the seller). Before R2 this predicate was hand-copied into three seams (wallet.ts
+// provenTermsMismatch, swapguard.js verifyOfferContent amount-leg, and here-adjacent callers); they were
+// already behaviourally identical (the R1.1 min bind), differing only in shape (a pre-built ProvenOfferTerms
+// vs an inline record+height). Option B homes the ONE verdict here and vendors it into both bundles.
+
+// The fee/rebate-relevant fields of an offer, derived from the MERKLE-PROVEN offer (never a resolver-served
+// object). `min` is the ONLY on-chain partial-fill field (OFFER_KEYS in records.ts; copied verbatim onto
+// OfferState at creation). `paid`/`delivered` are resolver-derived RUNNING fill state (init 0, accumulated per
+// fill), NOT in the record and NOT merkle-provable, so they are deliberately ABSENT here (binding them would
+// false-refuse every partially-filled offer). previewFill pivots partial-vs-whole SOLELY on `offer.min !==
+// undefined`, so binding `min` pins the caller to the exact branch resolve() takes (F2 partial-fill leg).
+export interface ProvenOfferTerms { height: number; feeBps: number; value?: string; taker?: string; bid?: string; min?: string }
+
+// The treasury fee rate the resolver STAMPS on an offer at its creation height (resolve.ts: v11 ? (v16 ?
+// FEE_BPS_V16 : FEE_BPS) : 0). requiredFillOutputs sizes the treasury fee from offer.feeBps, so binding a
+// served feeBps to feeBpsAt(the MERKLE-PROVEN creation height) stops a lying resolver deflating it. Single-
+// sourced here so the wallet fillspv, the site swapguard and any dApp bind the SAME rate.
+export const feeBpsAt = (height: number): number =>
+  height >= V11_HEIGHT ? (height >= V16_HEIGHT ? FEE_BPS_V16 : FEE_BPS) : 0;
+
+// Build the normalized ProvenOfferTerms from a MERKLE-PROVEN offer record + its proven creation height. The
+// value/taker/bid/min are copied from the record (lower-cased for addr-like fields, string-coerced), feeBps is
+// derived from the height. A caller feeds this the record it already merkle-bound (bindRecord / verifyTxInclusion).
+export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): ProvenOfferTerms {
+  const w = offerRec.want as { value?: string };
+  return {
+    height: Number(provenHeight),
+    feeBps: feeBpsAt(Number(provenHeight)),
+    value: w.value !== undefined ? String(w.value) : undefined,
+    taker: offerRec.taker !== undefined ? String(offerRec.taker).toLowerCase() : undefined,
+    bid: offerRec.bid !== undefined ? String(offerRec.bid).toLowerCase() : undefined,
+    min: offerRec.min !== undefined ? String(offerRec.min) : undefined,
+  };
+}
+
+/**
+ * The fill-boundary TERM-MISMATCH verdict: `true` iff any fee/rebate/partial-sizing field of the resolver-
+ * SERVED offer diverges from the merkle-proven terms `t`. FAIL-CLOSED semantics (any divergence => true =>
+ * the caller refuses). Byte-identical in behaviour to the wallet's old provenTermsMismatch and the site's
+ * old inline amount-leg bind (they were reconciled to be one predicate here):
+ *   - height    (offer.height     vs t.height)
+ *   - feeBps    (offer.feeBps     vs t.feeBps = feeBpsAt(creation height))
+ *   - value     (offer.want.value vs t.value, only when the proven offer is CSD-priced)
+ *   - taker     (offer.taker      vs t.taker, case-insensitive, undefined/null == "")
+ *   - bid       (offer.bid        vs t.bid,   same normalization)
+ *   - min       presence AND value: an ADDED spurious min (whole->partial rebate-drop burn) OR a deflated min
+ *               both mismatch. EXPLICIT presence (a served min="" must not slip past a proven-absent min).
+ * `value` is bound only when `t.value` is defined so a token<->token offer (no CSD value) is not spuriously
+ * refused; a caller that binds want.value separately (the site does) may still pass it here (redundant-safe).
+ */
+export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boolean {
+  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown }; taker?: unknown; bid?: unknown; min?: unknown };
+  const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v).toLowerCase());
+  if (Number(o?.height) !== t.height) return true;
+  if (Number(o?.feeBps) !== t.feeBps) return true;
+  if (t.value !== undefined && String(o?.want?.value) !== t.value) return true;
+  if (s(o?.taker) !== s(t.taker)) return true;
+  if (s(o?.bid) !== s(t.bid)) return true;
+  const om = o?.min;
+  if ((om !== undefined && om !== null) !== (t.min !== undefined)) return true;
+  if (t.min !== undefined && String(om) !== t.min) return true;
+  return false;
+}
+
+// Derive the payment recipients + terms from a MERKLE-PROVEN offer Propose event (the "expose proven
+// terms/author" surface). `seller` = the event's prevout-bound author (proposer, consensus hash160(input[0]));
+// `payto` = the record's explicit want.payto (merkle-committed) or, absent, the seller; `terms` = the
+// normalized ProvenOfferTerms. Returns null (fail closed) if the event does not bind to an offer record. The
+// caller binds the resolver-served payto/seller to these and calls bindOfferTerms(servedOffer, result.terms).
+export function bindProvenOffer(offerEv: ProvenPropose): { payto: string; seller: string; terms: ProvenOfferTerms } | null {
+  const rec = bindRecord(offerEv);
+  if (!rec || rec.t !== "offer") return null;
+  const seller = String(offerEv.proposer).toLowerCase();
+  const w = rec.want as { payto?: string };
+  const payto = (w.payto && ADDR_RE.test(String(w.payto).toLowerCase())) ? String(w.payto).toLowerCase() : seller;
+  return { payto, seller, terms: provenOfferTerms(rec, offerEv.height) };
 }
