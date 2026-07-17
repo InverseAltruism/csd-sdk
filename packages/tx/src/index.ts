@@ -258,4 +258,49 @@ export function buildAttest(p: { proposalId: string; score: number; confidence: 
   return selectAndAssemble(p.utxos, outs, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv, maxFee);
 }
 
+/**
+ * F9-C — the input-value-VERIFIED Propose (the UTXO-VALUE-1 fund-burn cure applied to a money-out board
+ * post). Mirrors buildSendVerified: select by REPORTED utxo values, VERIFY the selected inputs' real value
+ * against the chain via `verify` (fail-closed), then assemble the Propose from the VERIFIED total, so an
+ * under-reporting/lying RPC can no longer collapse change and burn the surplus as an implicit fee. Optional
+ * `outputs` ride in the SAME tx (atomic fee-bearing record / DvP). Same fee-floor + max-fee-backstop checks
+ * as the pure `buildPropose`. RPC-facing callers (the cairn server-post + treasury paths) should prefer this.
+ */
+export async function buildProposeVerified(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; verify: InputVerifier; outputs?: { to: string; value: number }[]; maxFee?: number }): Promise<BuildResult> {
+  if (p.fee < MIN_FEE_PROPOSE) return { ok: false, error: `propose fee must be ≥ ${MIN_FEE_PROPOSE} (0.25 CSD)` };
+  const outs = valueOuts(p.outputs);
+  if ("error" in outs) return { ok: false, error: outs.error };
+  const v = validateOuts(outs, p.fee, p.maxFee);
+  if ("ok" in v) return v;
+  const sel = selectInputs(p.utxos, v.sumOut + p.fee);          // selection by REPORTED values
+  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
+  let verified: { ok: boolean; total: number };
+  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
+  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
+  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv, addrFromPriv(p.priv), p.maxFee);
+}
+
+/**
+ * F9-C — the input-value-VERIFIED Attest (fee = weight). Mirrors buildProposeVerified; the attest weight is
+ * the user's deliberate stake so the default backstop honors it (max(weight, backstop)), while change is
+ * still computed from the RPC-VERIFIED input total so a lying RPC can't burn the surplus. Optional `outputs`
+ * ride in the SAME tx (atomic DvP). Same score/confidence + fee-floor checks as the pure `buildAttest`.
+ */
+export async function buildAttestVerified(p: { proposalId: string; score: number; confidence: number; fee: number; utxos: Utxo[]; priv: string; verify: InputVerifier; outputs?: { to: string; value: number }[]; maxFee?: number }): Promise<BuildResult> {
+  if (p.fee < MIN_FEE_ATTEST) return { ok: false, error: `attest fee must be ≥ ${MIN_FEE_ATTEST} (0.05 CSD)` };
+  if (!Number.isSafeInteger(p.score) || p.score < 0 || p.score > 0xffff_ffff) return { ok: false, error: `score ${p.score} out of u32 range` };
+  if (!Number.isSafeInteger(p.confidence) || p.confidence < 0 || p.confidence > 0xffff_ffff) return { ok: false, error: `confidence ${p.confidence} out of u32 range` };
+  const outs = valueOuts(p.outputs);
+  if ("error" in outs) return { ok: false, error: outs.error };
+  const maxFee = p.maxFee !== undefined ? p.maxFee : Math.max(p.fee, MAX_FEE_BACKSTOP);
+  const v = validateOuts(outs, p.fee, maxFee);
+  if ("ok" in v) return v;
+  const sel = selectInputs(p.utxos, v.sumOut + p.fee);          // selection by REPORTED values
+  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
+  let verified: { ok: boolean; total: number };
+  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
+  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
+  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv, addrFromPriv(p.priv), maxFee);
+}
+
 export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";
