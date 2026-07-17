@@ -1,5 +1,5 @@
 // @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
-import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, signTx, txToNodeJson } from "../src/index.js";
+import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson } from "../src/index.js";
 import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 
@@ -133,6 +133,29 @@ console.log("\n— H2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure) �
   // honest case: verify confirms the reported value → same result as buildSend
   const vh = await buildSendVerified({ outputs: [{ to: RCPT2, value: 100 }], fee: 10_000_000, utxos: [u(5_000_000_000)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
   ok("honest verify → ok, change from the (true) total", vh.ok === true && vh.change === 5_000_000_000 - 100 - 10_000_000);
+}
+
+console.log("\n— F9-C: buildProposeVerified / buildAttestVerified (money-out board-post builders fail-closed) —");
+{
+  const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });
+  const PH = "0x" + "ab".repeat(32), PID = "0x" + "cd".repeat(32);
+  // honest verify → builds a Propose, change computed from the VERIFIED (higher) total → surplus not burned.
+  const pv = await buildProposeVerified({ domain: "csd:board", payloadHash: PH, uri: "cairn:v1:abc", expiresEpoch: 9999, fee: MIN_FEE_PROPOSE, utxos: [u(1_000_000_100)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
+  ok("buildProposeVerified honest → ok + app=Propose", pv.ok === true && pv.tx!.app.type === "Propose");
+  ok("buildProposeVerified change from the VERIFIED total (no burn)", pv.inTotal === 5_000_000_000 && pv.change === 5_000_000_000 - MIN_FEE_PROPOSE);
+  // fail-closed: verify {ok:false} → signs nothing (an under-reporting RPC can't trick a burn through).
+  const pf = await buildProposeVerified({ domain: "d", payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(1_000_000_000)], priv: PRIV, verify: async () => ({ ok: false, total: 0 }) });
+  ok("buildProposeVerified FAILS CLOSED when verify !ok (signs nothing)", pf.ok === false && pf.txid === undefined && !pf.nodeJson);
+  const pt = await buildProposeVerified({ domain: "d", payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(1_000_000_000)], priv: PRIV, verify: async () => { throw new Error("rpc lied"); } });
+  ok("buildProposeVerified fails closed when verify throws", pt.ok === false && !pt.nodeJson);
+  ok("buildProposeVerified rejects sub-minimum fee (fee-floor twin)", (await buildProposeVerified({ domain: "d", payloadHash: PH, uri: "u", expiresEpoch: 1, fee: 1, utxos: [u(1e9)], priv: PRIV, verify: async () => ({ ok: true, total: 1e9 }) })).ok === false);
+
+  const av = await buildAttestVerified({ proposalId: PID, score: 80, confidence: 60, fee: 5_000_000, utxos: [u(1_000_000_100)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
+  ok("buildAttestVerified honest → ok + app=Attest + change from verified total", av.ok === true && av.tx!.app.type === "Attest" && av.inTotal === 5_000_000_000);
+  const af = await buildAttestVerified({ proposalId: PID, score: 80, confidence: 60, fee: 5_000_000, utxos: [u(1_000_000_000)], priv: PRIV, verify: async () => ({ ok: false, total: 0 }) });
+  ok("buildAttestVerified FAILS CLOSED when verify !ok (signs nothing)", af.ok === false && af.txid === undefined && !af.nodeJson);
+  ok("buildAttestVerified rejects sub-minimum fee (fee-floor twin)", (await buildAttestVerified({ proposalId: PID, score: 1, confidence: 1, fee: 1, utxos: [u(1e9)], priv: PRIV, verify: async () => ({ ok: true, total: 1e9 }) })).ok === false);
+  ok("buildAttestVerified honors the CONF_TOKEN_FILL marker confidence=1_000_000", (await buildAttestVerified({ proposalId: PID, score: 100, confidence: 1_000_000, fee: 5_000_000, utxos: [u(1e8)], priv: PRIV, verify: async () => ({ ok: true, total: 1e8 }) })).ok === true);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

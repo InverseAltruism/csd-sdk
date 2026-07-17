@@ -13,10 +13,12 @@ import path from "node:path";
 import {
   deploy, mint, offer, fclaim, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
+  bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, FILL_TIP_MARGIN, MAX_ACTIVE_CLAIMS,
+  V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
   TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
 } from "../src/index.js";
-import type { ChainEvent, OfferState, ProvenEvent, FillSpvIo } from "../src/index.js";
+import type { ChainEvent, OfferState, ProvenEvent, ProvenPropose, FillSpvIo } from "../src/index.js";
 
 let pass = 0;
 const ok = (cond: boolean, name: string) => { assert.ok(cond, name); pass++; };
@@ -172,9 +174,11 @@ const tipHolder = holdEnd - 5;
     const v = await vfs(POID, pFc, B, makeIo([...pBase, pGrant, priorFill], tip));
     ok(v.safe === false && /fill-basis/.test(v.reason), `shallow earlier fill-basis is REFUSED (${v.reason})`);
   }
-  // once the fill-basis is buried too, the tail fill is accepted (no false refusal)
+  // once the fill-basis is buried too, the tail fill is accepted (no false refusal). tip = holdEnd - 5 sits
+  // clear of the FILL_TIP_MARGIN deadline cushion (widened 2->4 in Plan 70 R2 L1), so this exercises the DEPTH
+  // gate (the property under test), not the deadline; holdEnd - 3 would now trip the wider cushion.
   {
-    const tip = holdEndP - 3;
+    const tip = holdEndP - 5;
     const v = await vfs(POID, pFc, B, makeIo([...pBase, pGrant, priorFill], tip));
     ok(v.safe === true, `buried earlier fill-basis -> tail fill ACCEPTED (${v.reason})`);
   }
@@ -249,6 +253,50 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   };
   const v = await verifyFillSpv(OID, fcTx, B, nanIo, { myLiveHoldsAtGrant: 0 });
   ok(v.safe === false && /buried/.test(v.reason), `NaN depth fails CLOSED at the depth gate (${v.reason})`);
+}
+
+// ── 10. bindOfferTerms / provenOfferTerms / bindProvenOffer / feeBpsAt (Plan 70 R2: the single-sourced
+// fill-boundary TERM bind that replaces the three R1 hand-copies). Pin the exact mismatch verdict the seams
+// rely on so a future edit here reds the corpus AND these units. ──
+{
+  ok(feeBpsAt(V11_HEIGHT - 1) === 0, "feeBpsAt below V11 = 0");
+  ok(feeBpsAt(V11_HEIGHT) === FEE_BPS && feeBpsAt(V16_HEIGHT - 1) === FEE_BPS, "feeBpsAt in [V11,V16) = FEE_BPS (100)");
+  ok(feeBpsAt(V16_HEIGHT) === FEE_BPS_V16, "feeBpsAt at/above V16 = FEE_BPS_V16 (150)");
+
+  const H = H0 + 2;                       // a >= V16 creation height (feeBps 150)
+  const t = provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A } } as never, H);
+  ok(t.height === H && t.feeBps === 150 && t.value === "500000000" && t.min === undefined && t.taker === undefined && t.bid === undefined,
+    "provenOfferTerms derives {height, feeBps=150, value, no min/taker/bid} from a whole-fill CSD offer");
+
+  // the honest served offer matches every proven field -> NO mismatch (no false refuse)
+  const served = { height: H, feeBps: 150, want: { value: "500000000" }, taker: undefined, bid: undefined, min: undefined };
+  ok(bindOfferTerms(served, t) === false, "bindOfferTerms: honest served offer == proven terms -> no mismatch");
+  // each single-field lie flips to mismatch (true)
+  ok(bindOfferTerms({ ...served, height: H + 1 }, t) === true, "bindOfferTerms: wrong height -> mismatch");
+  ok(bindOfferTerms({ ...served, feeBps: 0 }, t) === true, "bindOfferTerms: deflated feeBps -> mismatch");
+  ok(bindOfferTerms({ ...served, want: { value: "1" } }, t) === true, "bindOfferTerms: wrong value -> mismatch");
+  ok(bindOfferTerms({ ...served, taker: C }, t) === true, "bindOfferTerms: spurious taker -> mismatch");
+  ok(bindOfferTerms({ ...served, bid: id("bb") }, t) === true, "bindOfferTerms: spurious bid -> mismatch");
+  ok(bindOfferTerms({ ...served, min: "1" }, t) === true, "bindOfferTerms: spurious min added to a whole-fill offer -> mismatch (rebate-drop burn averted)");
+  // a genuine partial offer: presence must match AND value must match
+  const tPartial = provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A }, min: "100000000" } as never, H);
+  ok(bindOfferTerms({ ...served, min: "100000000" }, tPartial) === false, "bindOfferTerms: matching min -> no mismatch");
+  ok(bindOfferTerms({ ...served, min: "1" }, tPartial) === true, "bindOfferTerms: deflated min -> mismatch");
+  ok(bindOfferTerms({ ...served, min: undefined }, tPartial) === true, "bindOfferTerms: absent served min vs proven partial -> mismatch");
+  // taker/bid are case-insensitive and undefined/null == "" (no false refuse on case or nullish)
+  ok(bindOfferTerms({ ...served, taker: null }, t) === false, "bindOfferTerms: served taker null == proven undefined");
+
+  // bindProvenOffer derives {payto, seller, terms} from a merkle-proven offer event; payto defaults to the
+  // author when the record has no want.payto, and returns null for a non-offer record.
+  const offerEv = base[2] as ProvenPropose;             // the OPEN offer (proposer = A, want.payto = A)
+  const bo = bindProvenOffer(offerEv);
+  ok(bo !== null && bo.seller === A && bo.payto === A && bo.terms.feeBps === 150 && bo.terms.value === "500000000",
+    "bindProvenOffer: seller=author, payto=want.payto, terms derived");
+  const paytoLessEv = { kind: "propose", id: OID, proposer: A, ...offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000" } }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
+  const boPL = bindProvenOffer(paytoLessEv);
+  ok(boPL !== null && boPL.payto === A, "bindProvenOffer: payto-less record defaults payto to the proven author");
+  const notOffer = { kind: "propose", id: OID, proposer: A, ...fclaim({ offer: OID }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
+  ok(bindProvenOffer(notOffer) === null, "bindProvenOffer: a non-offer record fails closed (null)");
 }
 
 console.log(`cairnx-core verifyfill B4 (fill-SPV fund boundary): ${pass} passed`);

@@ -4,7 +4,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   resolve, canonicalState, requiredFillOutputs, deploy, mint, offer, offerCancelAll, fclaim,
+  nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   canonicalJson, payloadHash, V28_HEIGHT, EPOCH_LEN, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, SCORE_CLAIM, epochOf,
+  REG_COMMIT_MAX_BLOCKS, FCLAIM_MAX_EPOCH_AHEAD,
 } from "../packages/cairnx/dist/index.js";
 
 const T = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016";
@@ -37,6 +39,26 @@ const add = (name, events, tipHeight) => { built.push({ name, events, tipHeight,
 { const tOID = nid(), to = PE(offer({ give: { ticker: "AAA", amount: "5" }, want: { value: "1", payto: A }, taker: B }), H0 + 3, A, 9e9, 0, {}, tOID);
   add("v28-laneb-taker-uncancellable", [...base(), to, AE(tOID, A, H0 + 5, {}, SCORE_CANCEL)], H0 + 10); }
 add("v28-score-claim-sunset-rejected", [...base(), AE(OID, B, H0 + 3, {}, SCORE_CLAIM)], H0 + 10);
+
+// v28 NAME-GIVE fclaim delivery (Plan 70 R2/R3 I1): an offer selling a .csd NAME, settled via an fclaim hold
+// + whole fill → ownership transfers to the buyer (viaFill). This is the scenario the crosslang harness
+// (v28-namegive-fclaim-crosslang.mjs) also drives against the independent Python oracle; pinning it here puts
+// it through the golden vector self-check AND the crosscheck-resolve JS⇄Python differential. Derived from
+// CONVENTION §15 (name fill delivery), §25/§27 (sealed reg + young-name sale embargo), §31 (fclaim).
+{
+  const SALT = "a1a1a1a1a1a1a1a1", NAME = "gemname", W = REG_COMMIT_MAX_BLOCKS;
+  const cm = PE(nameCommitRecord({ commit: nameCommit(NAME, SALT, A) }), H0, A, 9e14, 1, {}, nid());
+  const rv = PE(nameClaim({ name: NAME, salt: SALT }), H0 + 2, A, 9e14, 1, {}, nid());
+  const finH = H0 + W + 2;
+  const fin = PE(nameFinalize({ name: NAME, salt: SALT }), finH, A, 9e14, 1, { [T]: String(nameRegFee(NAME, finH)) }, nid());
+  const offH = H0 + W + 3, nOID = nid();                       // clears effHeight + saleEmbargo(W); past finalize
+  const nOffer = PE(offer({ give: { name: NAME }, want: { value: "1000000000", payto: A } }), offH, A, epochOf(offH) + 24, 0, {}, nOID);
+  const gH = offH + 1, nE = epochOf(gH) + FCLAIM_MAX_EPOCH_AHEAD, nHoldEnd = (nE + 1) * EPOCH_LEN - 1;
+  const ng = PE(fclaim({ offer: nOID }), gH, B, nE, 0, {}, nid());
+  const roots = [cm, rv, fin, nOffer, ng];
+  const nPay = Object.fromEntries(requiredFillOutputs(resolve(roots, nHoldEnd + 5).offers[nOID], "1000000000").map((x) => [x.to, String(x.value)]));
+  add("v28-namegive-fclaim-fill", [...roots, AE(ng.id, B, nHoldEnd, nPay)], nHoldEnd + 5);
+}
 
 for (const c of built) { const s = c.expectedState; const offs = Object.values(s.offers || {}).map((o) => `${o.status}${o.claimTxid ? "/held" : ""}`).join(","); console.log(`  ${c.name.padEnd(42)} offers=[${offs}] feesPaid=${s.feesPaid}`); }
 

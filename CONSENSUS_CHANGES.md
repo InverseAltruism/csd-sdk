@@ -56,6 +56,15 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.1.38 + csd-tx 0.1.17 (2026-07-17, Plan 70 R2) - fill-boundary consolidation + L1 cushion + verified builders (CLIENT reject-more; resolve() byte-identical)
+
+NOT a canonicalState change: `resolve.ts` and `replay-hashes.json` are byte-identical to 0.1.37 (72/72 golden vectors + crosslang + 1000-seq fuzz unchanged; the WA-PARITY 3-seam corpus proves the fill-boundary behavior is preserved). This is CLIENT-side reject-more + additive, non-retroactive, needs NO height gate: a stale verifier keeps the old (still fund-safe) behavior, no fork.
+
+- cairnx-core: exported `bindOfferTerms(servedOffer, provenTerms)` + `bindProvenOffer` (Plan 70 Option B) - the ONE shared fill-boundary term-mismatch predicate the site (swapguard) and wallet (fillspv) seams now both call instead of three R1 hand-copies (which were already behaviourally identical). And **L1**: `FILL_TIP_MARGIN` 2 -> 4 (the client fclaim fill-deadline cushion; a fail-safe reject-more that declines only near the hold deadline as a no-op, reducing stranded fills under congestion). No `resolve()` path uses `FILL_TIP_MARGIN`, so canonical state is untouched.
+- csd-tx: added `buildProposeVerified` / `buildAttestVerified` (F9-C) - input-value-VERIFIED twins of `buildPropose`/`buildAttest` (re-derive change from a chain-verified input total via the `InputVerifier` callback, exactly like `buildSendVerified`). Additive; no existing builder's output bytes change.
+
+Rollout: re-vendor the two bundles (done, PROVENANCE re-pinned), re-pin the npm consumers (cli/sdk/svc) to 0.1.38 at publish, grep the ecosystem for FILL_TIP_MARGIN literals (only vendored bundles + parity grids), CF-purge cairn `/vendor/cairnx-core.js`. Full sequencing in cairn/docs/handoffs/71.
+
 ## cairnx-core 0.1.37 (2026-07-12, PENDING publish + activation) - V28 fclaim open-lane settlement atomicity (CONVENTION v2.8, §31)
 
 **Consensus change (gated, non-retroactive): `V28_HEIGHT` = 60,000.** (Set 55,000 on 2026-07-12; bumped to
