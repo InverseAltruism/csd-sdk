@@ -39,7 +39,7 @@ const corpus = JSON.parse(corpusRaw) as WaCorpus;
 // This is the I2 dead-green cure applied to the corpus itself: a drifted copy FAILS, never skips. The hash is
 // over the PARSED-then-canonicalised object (whitespace-independent), so the wallet/site copies can be
 // pretty-printed differently and still match iff the DATA is identical.
-export const WA_CORPUS_SHA = "0x1db06152e56a722a4755937b4774bf1c33ea23ba5e3e12fcbf660b10b74ab400";
+export const WA_CORPUS_SHA = "0x0a4e1072ed97b1b08877fa1968154345508e514daeba854b8da560ffec25f047";
 const actualSha = payloadHash(corpus);
 ok(actualSha === WA_CORPUS_SHA, `corpus hash matches the pin (got ${actualSha})`);
 
@@ -73,9 +73,10 @@ const PE = (id: string, built: { uri: string; payloadHash: string }, height: num
 
 // Materialise ONE scenario as abstract ChainEvents (the honest, on-chain-truth event set). The 'terms' family
 // attacks live in the SERVED offer only, which this layer never sees, so the on-chain events are always honest.
-function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fillFclaimId: string; me: string; tip: number; pay?: string } {
+function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fillFclaimId: string; me: string; tip: number; pay?: string; withheldIds: string[] } {
   const idOf: Record<string, string> = {};
   const events: ChainEvent[] = [];
+  const withheldIds: string[] = [];   // on-chain events the resolver hint list OMITS (F8 completeness attack)
   // backing (deploy + mint), shared across scenarios
   for (const b of corpus.backing) {
     const by = ADDR[b.by];
@@ -105,6 +106,7 @@ function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fi
       events.push(PE(eid, fclaim({ offer: offerId }), resolveHeight(e.height), ADDR[e.by], resolveEe(e.ee!)));
     } else if (e.kind === "ocancel") {
       events.push(PE(eid, offerCancelAll({ ticker: e.ticker! }), resolveHeight(e.height), ADDR[e.by], 9e9));
+      if (e.withheld) withheldIds.push(eid.toLowerCase());   // on-chain but omitted from io.offerEventIds
     } else throw new Error(`bad extra kind ${e.kind}`);
   }
   // fill target + tip
@@ -114,14 +116,15 @@ function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fi
   if (s.fill.tip.kind === "holdEndMinus") tip = fclaimHoldEnd(fillEe) - s.fill.tip.n!;
   else if (s.fill.tip.kind === "absolute") tip = resolveHeight(s.fill.tip.h!);
   else throw new Error(`bad tip ${JSON.stringify(s.fill.tip)}`);
-  return { events, offerId, fillFclaimId, me: ADDR[s.fill.me], tip, pay: s.fill.pay ?? undefined };
+  return { events, offerId, fillFclaimId, me: ADDR[s.fill.me], tip, pay: s.fill.pay ?? undefined, withheldIds };
 }
 
 const idKey = (e: ChainEvent) => (e.kind === "propose" ? e.id : e.txid).toLowerCase();
-function makeIo(events: ChainEvent[], tip: number): FillSpvIo {
+function makeIo(events: ChainEvent[], tip: number, withheld: Set<string> = new Set()): FillSpvIo {
   return {
     async tip() { return tip; },
-    async offerEventIds() { return events.map(idKey); },
+    // A withheld event is on-chain (provable) but OMITTED from the hint list - the exact F8 completeness attack.
+    async offerEventIds() { return events.map(idKey).filter((id) => !withheld.has(id)); },
     async provenEvent(x: string) {
       const e = events.find((y) => idKey(y) === String(x).toLowerCase());
       return e ? ({ ...e, depth: tip - e.height + 1 } as ProvenEvent) : null;
@@ -135,23 +138,33 @@ const vfs = (oid: string, fc: string, me: string, io: FillSpvIo, pay?: string) =
 // ── 2. drive every scenario through the cairnx-core seam ──
 let replayRun = 0, termsRun = 0;
 for (const s of corpus.scenarios) {
-  const { events, offerId, fillFclaimId, me, tip, pay } = materialise(s);
+  const { events, offerId, fillFclaimId, me, tip, pay, withheldIds } = materialise(s);
   const isCairnx = s.seams.includes("cairnxCore");
+  const io = makeIo(events, tip, new Set(withheldIds));
   if (s.family === "replay") {
-    ok(isCairnx, `[${s.name}] replay-family scenario includes cairnxCore`);
-    const v = await vfs(offerId, fillFclaimId, me, makeIo(events, tip), pay);
-    ok(v.safe === (s.expect === "accept"), `[${s.name}] cairnx-core verdict = ${s.expect} (got safe=${v.safe} :: ${v.reason})`);
+    if (isCairnx) {
+      ok(withheldIds.length === 0, `[${s.name}] a cairnxCore replay scenario has no withheld events (nothing hidden from the pure layer)`);
+      const v = await vfs(offerId, fillFclaimId, me, io, pay);
+      ok(v.safe === (s.expect === "accept"), `[${s.name}] cairnx-core verdict = ${s.expect} (got safe=${v.safe} :: ${v.reason})`);
+    } else {
+      // seam-completeness (withheld event): the pure layer's event set IS the seam's hint list, so it CANNOT
+      // catch an event withheld from that list. Assert it ACCEPTS - which is exactly why the wallet/site seams
+      // must scan block bodies themselves (their adapters assert those seams REJECT this same scenario).
+      ok(withheldIds.length > 0, `[${s.name}] a replay scenario excluding cairnxCore must be a withheld/seam-completeness case`);
+      const v = await vfs(offerId, fillFclaimId, me, io, pay);
+      ok(v.safe === true, `[${s.name}] cairnx-core ACCEPTS with the offending event withheld from its hint list; catching it is a SEAM obligation (${v.reason})`);
+    }
     replayRun++;
   } else if (s.family === "terms") {
     // cairnx-core has NO served offer, so it CANNOT see a served-terms lie: assert it is correctly N/A here,
     // and that it ACCEPTS the honest underlying fill (proving the bind is genuinely the caller's job).
     ok(!isCairnx, `[${s.name}] terms-family scenario correctly EXCLUDES cairnxCore (no served offer at this layer)`);
-    const v = await vfs(offerId, fillFclaimId, me, makeIo(events, tip), pay);
+    const v = await vfs(offerId, fillFclaimId, me, io, pay);
     ok(v.safe === true, `[${s.name}] cairnx-core ACCEPTS the honest underlying fill; the served-terms lie is above this layer (${v.reason})`);
     termsRun++;
   } else throw new Error(`unknown family ${(s as WaScenario).family}`);
 }
-ok(replayRun >= 6, `ran the replay-family scenarios through cairnx-core (${replayRun})`);
+ok(replayRun >= 7, `ran the replay-family scenarios through cairnx-core (${replayRun})`);
 ok(termsRun >= 5, `confirmed the terms-family scenarios are cairnx-core-N/A + honest-accepting (${termsRun})`);
 
 // ── 3. MUTATION GATE (load-bearing): the corpus reject-cases must be enforced by the actual guards. Remove
@@ -185,7 +198,7 @@ console.log(`wa-parity (cairnx-core seam): ${pass} checks passed`);
 // ── types (structural; the json is the source of truth) ──
 interface EeSpec { kind: "epochOfPlus"; of: string; plus: number }
 interface TipSpec { kind: "holdEndMinus" | "absolute"; n?: number; h?: string }
-interface WaExtra { kind: "fclaim" | "ocancel"; id: string; by: string; offer?: string; height: string; ee?: EeSpec; ticker?: string }
+interface WaExtra { kind: "fclaim" | "ocancel"; id: string; by: string; offer?: string; height: string; ee?: EeSpec; ticker?: string; withheld?: boolean }
 interface WaScenario {
   name: string; family: "replay" | "terms"; seams: string[]; desc: string;
   offer: { id: string; by: string; height: string; give: { ticker: string; amount: string }; want: { value: string; payto: string | null }; min: string | null };

@@ -98,6 +98,20 @@
       "expect": "reject"
     },
     {
+      "name": "withheld-cancel",
+      "family": "replay",
+      "seams": ["wallet", "site"],
+      "desc": "Seller A posts ocancel {AAA} on-chain BEFORE the fclaim grant, but a lying resolver OMITS the ocancel from the event/hint list it serves (the F8 COMPLETENESS attack, distinct from ocancel-before-grant where the cancel IS in the served set). Each seam must find the cancel via its OWN PoW-verified block-body scan and REFUSE. cairnx-core verifyFillSpv canNOT catch a withheld event - its event set IS the seam's hint list (io.offerEventIds), so completeness is a SEAM obligation the pure layer cannot verify. Hence this scenario is wallet/site-only; the cairnx-core adapter demonstrates the gap by materialising the withheld cancel on-chain-but-excluded-from-hints and asserting verifyFillSpv ACCEPTS (safe), which is exactly why the seams do their own scan.",
+      "offer": { "id": "OFFER", "by": "A", "height": "H0+2", "give": { "ticker": "AAA", "amount": "10" }, "want": { "value": "500000000", "payto": "A" }, "min": null },
+      "fclaim": { "id": "F1", "by": "B", "offer": "OFFER", "height": "H0+5", "ee": { "kind": "epochOfPlus", "of": "H0+5", "plus": 2 } },
+      "extra": [
+        { "kind": "ocancel", "id": "OC", "by": "A", "ticker": "AAA", "height": "H0+3", "withheld": true }
+      ],
+      "fill": { "me": "B", "fclaim": "F1", "tip": { "kind": "holdEndMinus", "n": 5 }, "pay": null },
+      "attack": { "type": "withheld-event", "event": "OC" },
+      "expect": "reject"
+    },
+    {
       "name": "payto-strip",
       "family": "terms",
       "seams": ["wallet", "site"],
