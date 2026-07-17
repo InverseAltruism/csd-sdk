@@ -378,7 +378,7 @@ def parse_record(uri, payload_hash_hex):
 def is_name_give(g): return isinstance(g.get("name"), str)
 def is_token_want(w): return isinstance(w.get("ticker"), str)
 
-# ── the full resolver (mirror resolve.ts; canonical DATA surface only, no event log) ────────────────
+# ── the full resolver: resolve(events, tip) → the canonical DATA surface per CONVENTION.md (no event log) ──
 def resolve(events, tip_height):
     def sort_key(e):
         ident = e["id"] if e["kind"] == "propose" else e["txid"]
@@ -458,16 +458,19 @@ def resolve(events, tip_height):
     def claim_window_at(height):  # exclusivity window a claim placed at `height` gets
         return CLAIM_WINDOW_BLOCKS_V20 if height >= V20_HEIGHT else CLAIM_WINDOW_BLOCKS
 
-    # ── shared SCORE_FILL helpers (mirrors resolve.ts — dedup of the three fill paths) ──
+    # ── shared SCORE_FILL helpers: the CONVENTION §4 / §12 / §15 / §19 value-and-delivery machinery plus the
+    #    §31 fclaim fill routing, in one copy the whole/partial/token-want fill paths all reuse ──
     def open_fill_blocked(o, height, who, target_id):
         # v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the live-claim holder; [V13,V17) banned.
         if not (height >= V13_HEIGHT and not o.get("taker")): return False
         if height < V17_HEIGHT: return True
-        # v2.8 Correction 1: during an fclaim hold the payment MUST attest the fclaim txid, not the offer id.
+        # CONVENTION §31 "Correction 1": during a live fclaim hold the payment MUST attest the fclaim txid, not the
+        # offer id (an offer-txid fill would ride the offer's far-off L0 expiry and reopen the delayed-fill burn).
         if height >= V28_HEIGHT and o.get("claimTxid") is not None and target_id == o["id"]: return True
         return not (claim_held(o, height) and who == o.get("claimedBy"))
     def deliver_name_to_buyer(n, who, ev):
-        # name sale: transfer to buyer, clear addr+profile, and (v1.3+) re-stamp a displacement-immune viaFill basis
+        # CONVENTION §9 / §15 name sale: a fill transfers ownership to the buyer, clears the resolver addr+profile,
+        # and (≥ v1.3) re-stamps a displacement-immune `viaFill` basis to the fill event.
         n["owner"] = who; n["locked"] = False; n["addr"] = None; n["profile"] = None
         if ev["height"] >= V13_HEIGHT:
             n["effHeight"] = ev["height"]; n["pos"] = ev["pos"]; n["id"] = ev["txid"]; n["height"] = ev["height"]; n["viaFill"] = True
@@ -477,9 +480,10 @@ def resolve(events, tip_height):
         bal(t, who)["available"] += amt
         offer_lock.pop(o["id"], None)
     def void_open_name_offers(name, height):
-        # void every open offer listing `name` (displacement/reclaim/reservation-takeover). v2.8: a name-offer
-        # with a live fclaim hold is FROZEN (lease-lapse safety: a lapsed name recaptured mid-hold must not
-        # strand the buyer's L0-minable fill). Same predicate as Correction 2, keyed on the voiding event height.
+        # void every open offer listing `name` (displacement/reclaim/reservation-takeover). CONVENTION §31
+        # name-offer freeze: at ≥ V28 a name-offer carrying a live fclaim hold is FROZEN (lease-lapse safety: a
+        # name recaptured mid-hold must not strand the buyer's L0-minable fill). Same freeze predicate as the
+        # §31 "Correction 2" cancel-freeze, keyed on the voiding event's own block height.
         for o in offers.values():
             if o["status"] == "open" and is_name_give(o["give"]) and o["give"]["name"] == name:
                 if height >= V28_HEIGHT and o.get("claimTxid") is not None and claim_held(o, height): continue

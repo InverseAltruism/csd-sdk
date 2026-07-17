@@ -7450,6 +7450,129 @@
      }
     }
    }
+  },
+  {
+   "name": "v28-namegive-fclaim-fill",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000fc28001d",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"commit\":\"0x103fb8eeae5e6827389b7a7b51ae659d5d0118d9d21398c3d9f1181440149364\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0xaa38d67cedbf151f9f167d49991427d85353017304426db1af63d81e642e6cc5",
+     "expiresEpoch": 900000000000000,
+     "height": 60000,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000fc28001e",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"gemname\",\"salt\":\"a1a1a1a1a1a1a1a1\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0x4b496fea674f44b47b597633f7317dc0d1f2d871a7c7947a56246181c57fa2b4",
+     "expiresEpoch": 900000000000000,
+     "height": 60002,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000fc28001f",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"gemname\",\"salt\":\"a1a1a1a1a1a1a1a1\",\"t\":\"nfinalize\",\"v\":1}",
+     "payloadHash": "0x63926275c4b89a7788ab506af975805569362a347f246ac96454552750167fa8",
+     "expiresEpoch": 900000000000000,
+     "height": 60010,
+     "pos": 1,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "500000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000fc280020",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"give\":{\"name\":\"gemname\"},\"t\":\"offer\",\"v\":1,\"want\":{\"payto\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"value\":\"1000000000\"}}",
+     "payloadHash": "0x0379d4c9e1aa33fd6159dc46ca69f16e726ef8430618d069da3ed2c0de4e890d",
+     "expiresEpoch": 2024,
+     "height": 60011,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000fc280021",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"offer\":\"0x00000000000000000000000000000000000000000000000000000000fc280020\",\"t\":\"fclaim\",\"v\":1}",
+     "payloadHash": "0x64dd224736e033203635889c53a4ecd8c58ad20905e38c1465b54874e0e06439",
+     "expiresEpoch": 2002,
+     "height": 60012,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "attest",
+     "txid": "0x00000000000000000000000000000000000000000000000000000000fc280022",
+     "proposalId": "0x00000000000000000000000000000000000000000000000000000000fc280021",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 60089,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "1030000000",
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "15000000"
+     }
+    }
+   ],
+   "tipHeight": 60094,
+   "expectedState": {
+    "balances": {},
+    "bids": {},
+    "feesPaid": "515000000",
+    "names": {
+     "gemname": {
+      "claimId": "0x00000000000000000000000000000000000000000000000000000000fc280022",
+      "effectiveHeight": 60089,
+      "height": 60089,
+      "locked": false,
+      "name": "gemname",
+      "owner": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "paidThroughEpoch": 10760,
+      "viaFill": true
+     }
+    },
+    "offers": {
+     "0x00000000000000000000000000000000000000000000000000000000fc280020": {
+      "claimTxid": "0x00000000000000000000000000000000000000000000000000000000fc280021",
+      "claimUntilHeight": 60090,
+      "claimedBy": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "expiresEpoch": 2024,
+      "feeBps": 150,
+      "fill": {
+       "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "fee": "15000000",
+       "height": 60089,
+       "paid": "1030000000",
+       "txid": "0x00000000000000000000000000000000000000000000000000000000fc280022"
+      },
+      "give": {
+       "name": "gemname"
+      },
+      "height": 60011,
+      "id": "0x00000000000000000000000000000000000000000000000000000000fc280020",
+      "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "status": "filled",
+      "want": {
+       "payto": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "value": "1000000000"
+      }
+     }
+    },
+    "tipHeight": 60094,
+    "tokens": {}
+   }
   }
  ]
 }
