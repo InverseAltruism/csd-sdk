@@ -118,16 +118,62 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
   probe("s12 legacy hold live", st.offers[oL].claimedBy === B && st.offers[oL].claimUntilHeight === H0 + 37);
   probe("s12 g2/g3 granted, g4 denied by cap", st.offers[o2].claimTxid === g2.id && st.offers[o3].claimTxid === g3.id && st.offers[o4].claimTxid === undefined);
   both("mixed legacy+fclaim MAX_ACTIVE_CLAIMS cap", ev, H0 + 10); }
-// 13. deny ladder (each canonically observable): not-open, taker-bound, token-want, E>effExpiry, E<epochOf(h), double-hold
+// 13. deny ladder. resolve.ts declares TEN deny legs before the grant; this scenario asserts SEVEN of them.
+//     The other three are covered elsewhere and deliberately not duplicated here: unknown-offer by
+//     scenario 4, anti-squat by scenario 10, and the MAX_ACTIVE_CLAIMS cap by scenario 12. All ten are
+//     individually mutation-proven (see the per-leg map in the B0a batch record).
+//     Each leg is probed non-vacuously: the deny must be canonically observable, i.e. the offer's
+//     claimedBy/claimTxid must NOT move.
+//     REBIND B0a: this section previously advertised six legs and asserted three, and its `filled`
+//     fixture was built and never referenced. The fixture was also WRONG: it called grant(B, oid)
+//     twice, once into the array and once inside the jsState() used to read claimTxid, and grant()
+//     mints a fresh id per call, so the fill attested a txid that was not in the sequence and the
+//     offer stayed `open`. Hoisted into gF below and probed before it is relied on.
+//     The unknown-offer leg is deliberately NOT re-asserted here: scenario 4 already covers it.
 { const oid = nid(), o = mkOffer(oid, H0 + 2), tOID = nid(), to = mkOffer(tOID, H0 + 2, { taker: B });
-  const filled = [...roots, o, grant(B, oid), AE(jsState([...roots, o, grant(B, oid)], H0 + 5).offers[oid].claimTxid ?? oid, B, H0 + 5, payFor([...roots, o], oid, "500000000"))];
+  // (a) not-open: grant, fill, then fclaim the now-FILLED offer.
+  //     The re-claim must be by a DIFFERENT address and AFTER the hold plus cooldown has elapsed, or the
+  //     deny is masked by the double-hold leg (B's hold is still live at H0+7) or by the cooldown leg,
+  //     and the scenario passes while testing nothing. Caught by the B0a mutation run: removing the
+  //     not-open leg from the Python oracle left canonical state identical because a later leg fired.
+  const gF = grant(B, oid), baseF = [...roots, o, gF];
+  const filled = [...baseF, AE(gF.id, B, H0 + 5, payFor(baseF, oid, "500000000"))];
+  probe("s13 not-open fixture is genuinely filled", jsState(filled, H0 + 10).offers[oid].status === "filled");
+  const noH = (E + 1) * EPOCH_LEN + CLAIM_COOLDOWN_BLOCKS + 1;   // hold over, cooldown over, and C != B anyway
+  const notOpen = [...filled, grant(C, oid, { height: noH, e: epochOf(noH) + 2 })];
+  both("deny: not-open (filled) offer", notOpen, noH + 50);
+  probe("s13 not-open deny (hold stays B's, not C's)", (() => { const x = jsState(notOpen, noH + 50).offers[oid]; return x.status === "filled" && x.claimTxid === gF.id && x.claimedBy === B.toLowerCase(); })());
+  // (b) taker-bound
   both("deny: taker-bound offer", [...roots, to, grant(C, tOID)], H0 + 10);
   probe("s13 taker deny", jsState([...roots, to, grant(C, tOID)], H0 + 10).offers[tOID].claimedBy === undefined);
+  // (c) token-want: claims are for CSD-priced offers only (needs a second real ticker; give !== want)
+  const DEP2 = PE(deploy({ ticker: "BBB", decimals: 0, supply: "100000", mint: "issuer" }), 40002, A, 9e9, 0, { [T]: String(DEPLOY_FEE) }, nid());
+  const twOID = nid(), twOff = PE(offer({ give: { ticker: "AAA", amount: "10" }, want: { ticker: "BBB", amount: "5" } }), H0 + 2, A, 9e9, 0, {}, twOID);
+  const twEv = [...roots, DEP2, twOff, grant(B, twOID)];
+  both("deny: token-want offer (claims are CSD-priced only)", twEv, H0 + 10);
+  probe("s13 token-want deny (offer exists and is unheld)", (() => { const x = jsState(twEv, H0 + 10).offers[twOID]; return x !== undefined && x.claimedBy === undefined; })());
+  // (d) E > effExpiry (the hold would outlive the offer)
   const shortOID = nid(), shortOff = PE(offer({ give: { ticker: "AAA", amount: "1" }, want: { value: "1", payto: A } }), H0 + 2, A, epochOf(H0 + 2), 0, {}, shortOID);
-  both("deny: E > effExpiry (hold outlives the offer)", [...roots, shortOff, grant(B, shortOID, { e: epochOf(H0 + 2) + 1 })], H0 + 10);
-  const g1 = grant(B, oid), g2b = grant(C, oid, { pos: 1 });   // second fclaim during a LIVE hold -> denied (anti-double-hold)
+  const shortEv = [...roots, shortOff, grant(B, shortOID, { e: epochOf(H0 + 2) + 1 })];
+  both("deny: E > effExpiry (hold outlives the offer)", shortEv, H0 + 10);
+  probe("s13 effExpiry deny", jsState(shortEv, H0 + 10).offers[shortOID].claimedBy === undefined);
+  // (e) epochOf(h) > E: the requested expiry is already in the past
+  const pastE = epochOf(H0 + 3) - 1, pastEv = [...roots, o, grant(B, oid, { e: pastE })];
+  both("deny: E already in the past (epochOf(h) > E)", pastEv, H0 + 10);
+  probe("s13 past-expiry deny", jsState(pastEv, H0 + 10).offers[oid].claimedBy === undefined);
+  // (f) double-hold: a second fclaim during a LIVE hold
+  const g1 = grant(B, oid), g2b = grant(C, oid, { pos: 1 });
   both("deny: double-hold (second fclaim during a live hold)", [...roots, o, g1, g2b], H0 + 10);
-  probe("s13 double-hold denied (claimTxid stays B's)", jsState([...roots, o, g1, g2b], H0 + 10).offers[oid].claimTxid === g1.id); }
+  probe("s13 double-hold denied (claimTxid stays B's)", jsState([...roots, o, g1, g2b], H0 + 10).offers[oid].claimTxid === g1.id);
+  // (g) cooldown: the SAME address re-claims after its own hold ended but inside CLAIM_COOLDOWN_BLOCKS.
+  //     The positive control at +CLAIM_COOLDOWN_BLOCKS is what proves this is the cooldown leg and not
+  //     the double-hold leg firing again.
+  const cUntil = (E + 1) * EPOCH_LEN;                       // claimUntilHeight; fclaim holds carry 0 grace
+  const cdEv = [...roots, o, g1, grant(B, oid, { height: cUntil, e: epochOf(cUntil) + 2 })];
+  both("deny: claim cooldown (same address, hold just ended)", cdEv, cUntil + 50);
+  probe("s13 cooldown deny (hold stays the first grant's)", jsState(cdEv, cUntil + 50).offers[oid].claimTxid === g1.id);
+  const okH = cUntil + CLAIM_COOLDOWN_BLOCKS, okEv = [...roots, o, g1, grant(B, oid, { height: okH, e: epochOf(okH) + 2 })];
+  probe("s13 cooldown positive control (re-claim AT +COOLDOWN is granted)", jsState(okEv, okH + 50).offers[oid].claimTxid !== g1.id); }
 // 14. below-V28 fclaim inertness: an fclaim + a fill on its txid at ~46,600 both no-op (byte-identical either way)
 { const oid = nid(), o = mkOffer(oid, 46600), g = PE(fclaim({ offer: oid }), 46601, B, epochOf(46601) + 2, 0, {}, nid());
   both("below-V28 fclaim + fill are inert", [...roots, o, g, AE(g.id, B, 46605, { [A]: "500000000" })], 46700);

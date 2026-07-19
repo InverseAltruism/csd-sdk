@@ -7,6 +7,17 @@ import { spawnSync } from "node:child_process";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
 let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
+// REBIND B0a: v2.8 fclaim GENERATION-SIDE counters. These record what the generator INTENDED to emit; they
+// are NOT evidence that the resolver reached the branch. Denied fclaims are not canonically observable
+// (canonicalState omits the fclaims map, so a deny shows up only as the offer staying unheld), which is why
+// intent is all a counter can capture here.
+// They are printed under a `gen:` prefix and deliberately NOT used as behavioural assertions: a
+// generation-side counter that is asserted is a test that cannot fail, which is the exact defect class this
+// batch exists to remove. Behavioural coverage of the deny ladder and of resolve.ts:799 is carried by the
+// deterministic self-check at the bottom (which drives real sequences through resolve) and by the
+// state-derived cov.* counters. Caught at the B0a gate by Opus-B (B0a-R1/R2) after the first cut asserted
+// these; the PoC changed one token so the resolver never reached :799 while the counter still read 27.
+let gFclaimGrants = 0, gFclaimDenies = 0, gV28LegacyEmitted = 0;
 
 const N = Number(process.argv[2] || 3000);
 let SEED = Number(process.argv[3] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
@@ -185,6 +196,52 @@ function openFlow(h0) {
   return ev;
 }
 
+// v2.8 FCLAIM (§31): the V28 hold lane. buildRec never emitted an `fclaim` and the generic height band
+// topped out below V28, so before REBIND B0a this differential had ZERO coverage of the entire v2.8
+// grant/deny/fill-routing surface, measured over 20,000 generated sequences, heights DID exceed V28 (via
+// lapseFlow's far-future re-claims) but every one of those events was a `propose`, so not one attest ever
+// reached the gate. That made the fork guard on every later consensus change vacuous for V28.
+// This flow drives: grant, the fill routed through the fclaim txid, Correction 1 (an offer-txid fill during
+// a live hold must be rejected), the post-holdEnd lapse, and the legacy SCORE_CLAIM that resolve.ts:799
+// rejects outright from V28. Heights are forced around the gate.
+function fclaimFlow(h0) {
+  const ev = [];
+  const D = "0x" + "f0".repeat(20), B = "0x" + "fb".repeat(20), C = "0x" + "fc".repeat(20);
+  const T2 = "F" + ri(100, 999), val = pick(["100000000", "1", "500000000", "250000000"]);
+  const P = (b, who, pt, hh, ee) => ({ kind: "propose", id: nid(), proposer: who, uri: b.uri, payloadHash: b.payloadHash, height: hh, pos: ri(0, 3), expiresEpoch: ee ?? 9_000_000_000_000_000, paidTo: pt });
+  const dep = validOr(() => R.deploy({ ticker: T2, decimals: 0, supply: "1000000", mint: "issuer" })); if (!dep) return [];
+  const base = Math.max(h0, R.V28_HEIGHT + 1);
+  ev.push(P(dep, D, { [TREAS]: String(R.DEPLOY_FEE) }, base - 3));
+  ev.push(P(validOr(() => R.mint({ ticker: T2, amount: "1000000" })), D, {}, base - 2));
+  const off = validOr(() => R.offer({ give: { ticker: T2, amount: "10" }, want: { value: val } })); if (!off) return ev;  // OPEN: no taker, CSD-priced (fclaim requires both)
+  const offEv = P(off, D, {}, base - 1, Math.floor((base - 1) / R.EPOCH_LEN) + 99999);
+  const offerId = offEv.id; ev.push(offEv);
+  // A legacy SCORE_CLAIM at >=V28 is REJECTED outright (v2.8: claims are fclaim proposals now). Emitting it
+  // before the grant proves the rejection does not consume the offer or block the fclaim that follows.
+  const legacy = chance(0.35);
+  if (legacy) { ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: C, score: 50, confidence: 0, height: base, pos: 0, paidTo: {} }); gV28LegacyEmitted++; }
+  const gh = base + ri(0, 3);
+  const E = Math.floor(gh / R.EPOCH_LEN) + ri(0, R.FCLAIM_MAX_EPOCH_AHEAD + 1);   // sometimes one epoch too far -> anti-squat deny
+  const grantOk = E <= Math.floor(gh / R.EPOCH_LEN) + R.FCLAIM_MAX_EPOCH_AHEAD;
+  const g = P(validOr(() => R.fclaim({ offer: offerId })), B, {}, gh, E); if (!g.uri) return ev;
+  ev.push(g);
+  if (grantOk) gFclaimGrants++; else gFclaimDenies++;
+  const holdEnd = (E + 1) * R.EPOCH_LEN - 1;
+  const want = BigInt(val), fee = R.tradeFee(want, R.FEE_BPS_V16), reb = R.makerRebate(want);  // open lane >=V17 earns the maker rebate
+  const pt = { [D]: (want + reb).toString(), [TREAS]: fee.toString() };
+  if (chance(0.30)) {
+    // Correction 1: a fill attesting the OFFER txid while the hold is live must be rejected
+    ev.push({ kind: "attest", txid: nid(), proposalId: offerId, attester: B, score: 100, confidence: 0, height: gh + 1, pos: 1, paidTo: pt });
+  }
+  const late = chance(0.25);                                   // sometimes past holdEnd -> the fill lapses
+  const fh = late ? holdEnd + ri(1, 30) : gh + ri(1, Math.max(1, Math.min(40, holdEnd - gh)));
+  const filler = chance(0.85) ? B : C;                          // sometimes the wrong address
+  const underpay = chance(0.25);                                // sometimes drop the rebate -> resolver must REJECT
+  const ptf = underpay ? { [D]: want.toString(), [TREAS]: fee.toString() } : pt;
+  ev.push({ kind: "attest", txid: nid(), proposalId: g.id, attester: filler, score: 100, confidence: 0, height: fh, pos: ri(0, 2), paidTo: ptf });
+  return ev;
+}
+
 // v1.9 nprofile materialization (H1): register a name by its owner ABOVE the V19 gate, set a profile
 // (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear — exercising the
 // apply / last-write-wins / clear-on-transfer / tip-materialization branches the random fuzzer rarely hits.
@@ -243,15 +300,38 @@ function genSeq() {
   if (chance(0.10)) { const e = lapseFlow(ri(32100, 33000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 60000) }; }
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.13)) { const e = regFlow(ri(R.V25_HEIGHT - 20, R.V25_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
+  if (chance(0.16)) { const e = fclaimFlow(ri(R.V28_HEIGHT - 40, R.V28_HEIGHT + 2500)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 120) }; }
   const events = [];
   const len = ri(1, 16);
-  let h = ri(29810, R.V23_HEIGHT + 1000); // spans ACTIVATION-50 .. V23+1000 (all gates + boundaries, incl. the V23 nset-clear)
+  // REBIND B0a: the band used to be ri(29810, V23+1000), an arithmetic maximum of 59,400 once the
+  // per-step h += ri(1,400) is added, i.e. strictly below V28 = 60,000. Rather than move the whole band
+  // (which would thin out coverage of every gate below it), a quarter of sequences now seed at the V28
+  // boundary so the random path exercises the gate too, not only the dedicated flow.
+  let h = chance(0.25) ? ri(R.V28_HEIGHT - 200, R.V28_HEIGHT + 2500) : ri(29810, R.V23_HEIGHT + 1000);
   const offerIds = [];
   for (let i = 0; i < len; i++) {
     if (chance(0.25)) h += ri(0, 3); // sometimes same block (tests pos ordering / same-block fill+cancel)
     else h += ri(1, 400);
     const pos = ri(0, 6);
     const ee = pick(BIGEXP);
+    // REBIND B0a: an fclaim propose referencing a real-ish id, so the random path reaches the §31 handler
+    // at all. MEASURED REACH, so nobody reads more into this than it delivers (Opus-A, B0a-1): over 1500
+    // sequences this emits ~286 fclaims, ~75 at or above V28 (the rest exit at the `height < V28_HEIGHT`
+    // inertness check, which is itself worth covering), and of those ~75 only a handful target a real offer
+    // record and effectively none target a CSD-priced untaken one. So in practice this path exercises the
+    // below-gate inertness check and the `unknown offer` leg, NOT the rest of the deny ladder and NOT the
+    // grant path. The ladder is covered by v28-fclaim-crosslang.mjs scenario 13 and the grant/fill path by
+    // fclaimFlow above. Kept because those two legs are real coverage and it costs nothing.
+    if (offerIds.length && chance(0.10)) {
+      const fc = validOr(() => R.fclaim({ offer: pick(offerIds) }));
+      if (fc) {
+        const id = nid();
+        const eE = Math.floor(h / R.EPOCH_LEN) + ri(-1, R.FCLAIM_MAX_EPOCH_AHEAD + 2); // mixes valid / anti-squat / already-past
+        events.push({ kind: "propose", id, proposer: addr(), uri: fc.uri, payloadHash: fc.payloadHash, height: h, pos, expiresEpoch: eE, paidTo: randPaidTo() });
+        offerIds.push(id);
+        continue;
+      }
+    }
     if (chance(0.62)) {
       // a propose (valid record); occasionally adversarial-mutate the uri/hash
       const built = buildRec();
@@ -295,7 +375,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -312,6 +392,11 @@ for (let i = 0; i < N; i++) {
     if (st.names && Object.keys(st.names).some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) cov.numericNameInState++;
     if (st.names && Object.values(st.names).some((n) => n && n.profile !== undefined)) cov.nprofileSet++; // v1.9 nprofile materialized (H1)
     if (st.names && Object.values(st.names).some((n) => n && n.pending === true)) cov.pendingReg++;        // v2.5 sealed reservation materialized (>=V25)
+    // v2.8: claimTxid is set ONLY by an fclaim grant (a legacy SCORE_CLAIM sets claimedBy/claimUntilHeight
+    // but never claimTxid), so its presence in canonical state is an unambiguous grant signal.
+    if (js[i].includes('"claimTxid":')) cov.fclaimHeld++;
+    if (st.offers && Object.values(st.offers).some((o) => o.claimTxid && o.status === "filled")) cov.fclaimFilled++;
+    if (Number(st.tipHeight) >= R.V28_HEIGHT) cov.aboveV28++;
   } catch { /* JS state always parses */ }
   if (js[i] !== pj[i]) {
     diverged++;
@@ -325,7 +410,11 @@ for (let i = 0; i < N; i++) {
   }
 }
 console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw`);
+// cov.* are STATE-DERIVED (read back out of canonical state, so they are evidence the resolver reached the
+// branch). gen.* are GENERATION-SIDE intent only and are never asserted; see the note at the top.
 console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`);
+console.log(`gen (intent only, not evidence): ${JSON.stringify({ fclaimGrants: gFclaimGrants, fclaimDenies: gFclaimDenies, v28LegacyEmitted: gV28LegacyEmitted })}`);
+console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeight, ...s.events.map((e) => e.height)), 0)} (V28 = ${R.V28_HEIGHT})`);
 // HONEST-COUNTER guard: prove v23ClearFlow actually REACHES the clear branch (a paid+owned name cleared at
 // >=V23 -> addr undefined), so the gV23Clears counter cannot silently lie again (audit caught a flat under-fee
 // that left the name unowned, no-op'ing every clear). Deterministic, independent of the random seed.
@@ -361,5 +450,65 @@ console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`
   }
   if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0 — the fuzz never materialized a V25 reservation"); process.exit(1); }
   console.log(`✓ v25 finalize self-check: commit→payment-free reveal→nfinalize yields a normal owned name (fee once, not viaFill); fuzz materialized ${cov.pendingReg} pending reservation(s)`);
+}
+// V28 self-check (REBIND B0a). The headline defect this batch closes: before it, NOT ONE attest in 20,000
+// generated sequences ever reached V28, so every v2.8 branch, grant, the fclaim fill routing, Correction 1,
+// and the legacy-SCORE_CLAIM rejection at resolve.ts:799, was unfuzzed, while V28 is the gate this
+// differential exists to guard. Deterministic, seed-independent, and it asserts the branches are REACHED,
+// not merely that the counters moved.
+{
+  const D = "0x" + "f0".repeat(20), B = "0x" + "fb".repeat(20), NMT = "FCHK";
+  // Derive the hold epoch from the live cap rather than hardcoding +1, so a future gate that lowers
+  // FCLAIM_MAX_EPOCH_AHEAD cannot make this self-check fail while blaming resolve (Opus-A, B0a-3).
+  const base = R.V28_HEIGHT + 5, EE = Math.floor(base / R.EPOCH_LEN) + Math.min(1, R.FCLAIM_MAX_EPOCH_AHEAD), holdEnd = (EE + 1) * R.EPOCH_LEN - 1;
+  const P = (rec, who, hh, pt, ee) => ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: 0, expiresEpoch: ee ?? 9_000_000_000_000_000, paidTo: pt || {} });
+  const dep = P(R.deploy({ ticker: NMT, decimals: 0, supply: "1000000", mint: "issuer" }), D, base - 4, { [TREAS]: String(R.DEPLOY_FEE) });
+  const mnt = P(R.mint({ ticker: NMT, amount: "1000000" }), D, base - 3);
+  const off = P(R.offer({ give: { ticker: NMT, amount: "10" }, want: { value: "100000000" } }), D, base - 2, {}, Math.floor(base / R.EPOCH_LEN) + 99999);
+  const g = P(R.fclaim({ offer: off.id }), B, base, {}, EE);
+  const want = 100000000n, pt = { [D]: (want + R.makerRebate(want)).toString(), [TREAS]: R.tradeFee(want, R.FEE_BPS_V16).toString() };
+  const legacy = { kind: "attest", txid: nid(), proposalId: off.id, attester: B, score: 50, confidence: 0, height: base - 1, pos: 0, paidTo: {} };
+  const fill = { kind: "attest", txid: nid(), proposalId: g.id, attester: B, score: 100, confidence: 0, height: holdEnd - 1, pos: 0, paidTo: pt };
+  const held = resolve([dep, mnt, off, legacy, g], base + 5).offers[off.id];
+  if (held.claimTxid !== g.id || held.claimedBy !== B.toLowerCase()) { console.error(`✗ v28 self-check FAILED, fclaim did not grant the hold (claimTxid=${held.claimTxid})`); process.exit(1); }
+  // resolve.ts:799 rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
+  // the gate" would also pass if the attest were simply malformed or aimed at nothing, so pair it with a
+  // BELOW-gate control built the same way: the identical claim must be GRANTED there. The pair is what makes
+  // the gate the cause. (Opus-B, B0a-R2: an assertion that passes on absence is not an assertion.)
+  const legOnly = resolve([dep, mnt, off, legacy], base + 5).offers[off.id];
+  if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; resolve.ts:799 should reject it"); process.exit(1); }
+  {
+    const lb = R.V28_HEIGHT - 60;   // comfortably below the gate, well above V17 where the claim lane opened
+    const depL = P(R.deploy({ ticker: "FCHL", decimals: 0, supply: "1000000", mint: "issuer" }), D, lb - 4, { [TREAS]: String(R.DEPLOY_FEE) });
+    const mntL = P(R.mint({ ticker: "FCHL", amount: "1000000" }), D, lb - 3);
+    const offL = P(R.offer({ give: { ticker: "FCHL", amount: "10" }, want: { value: "100000000" } }), D, lb - 2, {}, Math.floor(lb / R.EPOCH_LEN) + 99999);
+    const legL = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: lb, pos: 0, paidTo: {} };
+    const belowGate = resolve([depL, mntL, offL, legL], lb + 5).offers[offL.id];
+    if (belowGate.claimedBy !== B.toLowerCase()) { console.error(`✗ v28 self-check FAILED, the below-gate control did not grant a legacy claim (claimedBy=${belowGate.claimedBy}); the above-gate rejection proves nothing without it`); process.exit(1); }
+    // Third leg: the SAME below-gate offer, claimed from ABOVE the gate. The two legs above move the offer
+    // and the claim together, so they establish "height matters" but cannot attribute the gate to the
+    // CLAIM's own height. Without this, a resolver keyed on `o.height` instead of `ev.height` passes both
+    // and silently honours every legacy claim against a pre-gate offer, defeating the v2.8 sunset. That is
+    // the grant-height keying class this ecosystem already had to correct once (SEAM-V28).
+    // Found at the B0a re-gate by Opus-B (M4).
+    const legAcross = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT + 40, pos: 0, paidTo: {} };
+    const across = resolve([depL, mntL, offL, legAcross], R.V28_HEIGHT + 60).offers[offL.id];
+    if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); resolve.ts:799 must key on the CLAIM's height, not the offer's`); process.exit(1); }
+    // Exact-boundary pin: nothing else in the suite probes height === V28_HEIGHT itself, so a `>` for `>=`
+    // slip is invisible. The gate is inclusive, so a claim AT the gate must already be rejected (Opus-B, M3).
+    const legAt = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT, pos: 0, paidTo: {} };
+    const atGate = resolve([depL, mntL, offL, legAt], R.V28_HEIGHT + 20).offers[offL.id];
+    if (atGate.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim AT exactly V28_HEIGHT was honoured (claimedBy=${atGate.claimedBy}); the gate is inclusive (>=), not exclusive`); process.exit(1); }
+  }
+  const done = resolve([dep, mnt, off, legacy, g, fill], holdEnd + 5).offers[off.id];
+  if (done.status !== "filled" || done.claimTxid !== g.id) { console.error(`✗ v28 self-check FAILED, the fclaim-routed fill did not deliver (status=${done.status})`); process.exit(1); }
+  const c1 = resolve([dep, mnt, off, g, { ...fill, proposalId: off.id, height: base + 1 }], holdEnd + 5).offers[off.id];
+  if (c1.status !== "open") { console.error(`✗ v28 self-check FAILED, Correction 1: an offer-txid fill during a live hold was accepted (status=${c1.status})`); process.exit(1); }
+  // Only STATE-DERIVED counters are asserted. Each is read back out of canonical state, so it cannot be
+  // satisfied by the generator merely intending to emit something.
+  if (!cov.aboveV28) { console.error("✗ aboveV28 coverage is 0, no sequence resolved at or above the V28 gate"); process.exit(1); }
+  if (!cov.fclaimHeld) { console.error("✗ fclaimHeld coverage is 0, the fuzz never granted a v2.8 hold"); process.exit(1); }
+  if (!cov.fclaimFilled) { console.error("✗ fclaimFilled coverage is 0, the fuzz never routed a fill through an fclaim txid"); process.exit(1); }
+  console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (resolve.ts:799), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
 }
 process.exit(diverged ? 1 : 0);
