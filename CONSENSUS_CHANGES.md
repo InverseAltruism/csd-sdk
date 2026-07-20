@@ -336,6 +336,11 @@ mechanical refresh. In order:
 2. Vectors + conformance: extend `packages/cairnx/test/preflight.test.ts` (gate +/- margin grid),
    add the crosslang case if the change affects canonical state, re-pin replay hashes if (and
    only if) resolve() behavior changed.
+2b. Run `node conformance/proven-terms-classification.mjs` (also in `test:crosslang`). If the gate
+   added ANY field to a served offer, this fails until the field is classified as BOUND or
+   DELIBERATELY_UNBOUND_WITH_REASON - classify it in the SAME change. This is the executable
+   tripwire against the 2026-07-19 theme (a served field nothing binds and nobody decided about:
+   the W1/W2/W3/W7/W10 class).
 3. Bump `packages/cairnx` version, `pnpm -r build`, `pnpm publish` (publish-guard enforces pnpm).
 4. Re-pin the npm consumers: cairnx svc + cairn-cli package.json, `node scripts/check-consumer-pins.mjs`,
    reinstall, restart cairnx.service off-peak (never during a gate crossing).

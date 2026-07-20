@@ -178,6 +178,17 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
 { const oid = nid(), o = mkOffer(oid, 46600), g = PE(fclaim({ offer: oid }), 46601, B, epochOf(46601) + 2, 0, {}, nid());
   both("below-V28 fclaim + fill are inert", [...roots, o, g, AE(g.id, B, 46605, { [A]: "500000000" })], 46700);
   probe("s14 no hold below gate", jsState([...roots, o, g], 46700).offers[oid].claimedBy === undefined); }
+// 14b. B0a deferred F-2: the EXACT-BOUNDARY cross-language differential. The M3/M4 boundary pins are
+//      JS-only assertions, so a Python-side >= vs > slip at the gate was caught only probabilistically by
+//      fuzz; these two both() legs make it deterministic: an fclaim mined AT V28_HEIGHT is LIVE in both
+//      impls, one block below it is INERT in both.
+{ const oid = nid(), o = mkOffer(oid, H0 - 2);
+  const gAt = PE(fclaim({ offer: oid }), H0, B, epochOf(H0) + 2, 0, {}, nid());
+  both("F-2: fclaim AT exactly V28_HEIGHT is live", [...roots, o, gAt], H0 + 10);
+  probe("s14b at-gate granted", jsState([...roots, o, gAt], H0 + 10).offers[oid].claimTxid === gAt.id);
+  const gBelow = PE(fclaim({ offer: oid }), H0 - 1, B, epochOf(H0 - 1) + 2, 0, {}, nid());
+  both("F-2: fclaim ONE block below V28_HEIGHT is inert", [...roots, o, gBelow], H0 + 10);
+  probe("s14b below-gate inert", jsState([...roots, o, gBelow], H0 + 10).offers[oid].claimedBy === undefined); }
 // 15. partial fclaim fill: a min-bearing CSD-priced token offer, fclaim, PARTIAL fill (hold persists), then completion
 { const oid = nid(), o = mkOffer(oid, H0 + 2, { amount: "10", value: "1000000000", min: "100000000" });  // 10 CSD, min 1
   const g = grant(B, oid);
