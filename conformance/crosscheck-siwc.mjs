@@ -71,7 +71,7 @@ for (const [name, f] of denyCases) {
   const pd = spawnSync("python3", [new URL("./siwc_ref.py", import.meta.url).pathname], { input: JSON.stringify({ cases: [f] }), encoding: "utf8" });
   const pyRefused = pd.status !== 0;
   if (jsRefused && pyRefused) console.log(`  ✅ deny ${name}: BOTH refuse`);
-  else { fail++; console.error(`  ❌ deny ${name}: JS ${jsRefused ? "refuses" : "BUILDS"}, Python ${pyRefused ? "refuses" : "BUILDS"} — zero-length divergence`); }
+  else { fail++; console.error(`  ❌ deny ${name}: JS ${jsRefused ? "refuses" : "BUILDS"}, Python ${pyRefused ? "refuses" : "BUILDS"} - zero-length divergence`); }
 }
 
 if (fail) { console.error(`SIWC crosscheck FAILED: ${fail}`); process.exit(1); }
