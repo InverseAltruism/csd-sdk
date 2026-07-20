@@ -42,12 +42,23 @@ step("settled-tree check (check-lockstep: dist fresh, workspace pins)");
 }
 
 // ── 2. the pinned corpus itself must not have moved ────────────────────────────────────────────────
-step(`vector-corpus non-movement vs ${BASELINE_REF} (cases.json / replay-hashes.json / wa-parity)`);
+// SCOPED to the B6-era pinned files ONLY (not the whole directory): B9 added packages/cairnx/test/vectors/
+// cases-v29.json, a NEW V29-gate golden set that this seal deliberately does NOT diff (its cases exercise the
+// V29 relaxation, so old-vs-new DIVERGES by design). The B6-era pins below MUST still be byte-frozen - a moved
+// pin is a moved goalpost. If a future batch adds another vectors/*.json, list it in the DIFF_PINS below only
+// after confirming it is a new gate's file and not a mutation of these.
+const B6_ERA_PINS = [
+  "packages/cairnx/test/vectors/cases.json",
+  "packages/cairnx/test/vectors/replay-hashes.json",
+  "packages/cairnx/test/vectors/wa-parity-corpus.json",
+  "packages/cairnx/test/vectors/VECTORS.md",
+];
+step(`vector-corpus non-movement vs ${BASELINE_REF} (B6-era pins: ${B6_ERA_PINS.map((p) => p.split("/").pop()).join(" / ")})`);
 {
-  const r = sh("git", ["diff", "--stat", `${BASELINE_REF}..HEAD`, "--", "packages/cairnx/test/vectors/"]);
+  const r = sh("git", ["diff", "--stat", `${BASELINE_REF}..HEAD`, "--", ...B6_ERA_PINS]);
   if (r.status !== 0) die(`git diff against ${BASELINE_REF} failed: ${r.stderr}`);
-  if (r.stdout.trim() !== "") die(`the pinned vector corpus moved since the baseline:\n${r.stdout}\n(a moved pin is a moved goalpost; B6 must not touch it)`);
-  console.log("  vectors unchanged since baseline (the differential below runs on the SAME pins)");
+  if (r.stdout.trim() !== "") die(`a B6-era pinned vector file moved since the baseline:\n${r.stdout}\n(a moved pin is a moved goalpost; B6/B9 must not touch these)`);
+  console.log("  B6-era vector pins unchanged since baseline (the V29 cases-v29.json is a separate, deliberately-diverging gate set)");
 }
 
 // ── 3. build the baseline dist in a throwaway worktree ─────────────────────────────────────────────

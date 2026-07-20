@@ -146,6 +146,15 @@ V27_HEIGHT = 46520
 # bumped 2026-07-13 (55,000 -> 60,000) for deploy runway. Set far above the live tip (~53.1k) so all current data
 # + every pre-V28 vector stays byte-identical. MUST match types.ts.
 V28_HEIGHT = 60000
+# v2.9 (§32): TWO resolve()-side corrections that both move canonical state, so both ride ONE height gate
+# (REBIND audit M4 + M5). Below V29 byte-identical to v2.8. Operator height 88,000 (set 2026-07-20). Derived
+# INDEPENDENTLY from the finding text (not transliterated from resolve.ts) so the JS<->Python differential still
+# catches a C1-class fork:
+#   * M5 (RELAXATION): the per-address concurrent-hold cap must count only OPEN holds when the counting event is
+#     at height >= V29 (a FILLED offer keeps its never-cleared claim fields but is no longer a live reservation).
+#   * M4 (reject-more): a duplicated event (same propose-id / attest-txid) at height >= V29 is dropped before apply
+#     so it cannot double-credit paid/delivered.
+V29_HEIGHT = 88000
 FCLAIM_MAX_EPOCH_AHEAD = 2   # a grant may request an expiry at most this many epochs ahead (anti-squat; hold <= 89 blocks)
 FILL_TIP_MARGIN = 4          # client policy (NOT consensus): refuse to broadcast a fill within this many blocks of holdEnd (widened 2->4, Plan 70 R2 L1)
 RESERVED_NAMES = {"csd", "treasury", "admin", "official", "root", "www", "support"}
@@ -384,6 +393,20 @@ def resolve(events, tip_height):
         ident = e["id"] if e["kind"] == "propose" else e["txid"]
         return (e["height"], 1 if e["kind"] == "attest" else 0, e["pos"], u16key(ident))
     ordered = sorted(events, key=sort_key)
+    # v2.9 (§32 / M4): a transaction has ONE identity (a propose's id, an attest's txid); a duplicated feed is
+    # the same identity twice. At an event's own height >= V29 keep the first in consensus order and drop the
+    # rest, so a double-fed event can no longer double-credit paid/delivered. Below V29 drop nothing (pre-V29
+    # byte-identical). Written from the finding, not copied from resolve.ts (the JS<->Python fork detector needs
+    # two independent derivations).
+    def event_id(e): return e["id"] if e["kind"] == "propose" else e["txid"]
+    seen_ids, applied = set(), []
+    for e in ordered:
+        if e["height"] >= V29_HEIGHT:
+            k = event_id(e)
+            if k in seen_ids: continue
+            seen_ids.add(k)
+        applied.append(e)
+    ordered = applied
 
     tokens = {}      # ticker -> {meta, minted, supply, mintLimit}
     balances = {}    # ticker -> addr -> {available, locked}
@@ -789,7 +812,10 @@ def resolve(events, tip_height):
                 if claim_held(target, ev["height"]): deny(); continue
                 # cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
                 if target.get("claimedBy") == who and target.get("claimUntilHeight") is not None and ev["height"] < target["claimUntilHeight"] + claim_grace(target) + CLAIM_COOLDOWN_BLOCKS: deny(); continue
-                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]))
+                # v2.9 (§32 / M5): count only OPEN holds when the counting event is at height >= V29 (a filled offer
+                # keeps its never-cleared claim fields but is not a live reservation). Below V29 count all live holds
+                # (pre-V29 byte-identical). Independently derived from the finding, not copied from resolve.ts.
+                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]) and (ev["height"] < V29_HEIGHT or x["status"] == "open"))
                 if liveN >= MAX_ACTIVE_CLAIMS: deny(); continue
                 # grant: last-write-wins on all three fields (claimTxid never left stale, never cleared)
                 target["claimedBy"] = who; target["claimUntilHeight"] = (E + 1) * EPOCH_LEN; target["claimTxid"] = ev["id"]
@@ -927,7 +953,9 @@ def resolve(events, tip_height):
                 # claimer, so a 2nd-address intervening claim resets it (A→B→A recycle). Bounded by
                 # MAX_ACTIVE_CLAIMS + payment-free claims → single-offer griefing, never value loss.
                 if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + claim_grace(o) + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle (from hold end)
-                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]))
+                # v2.9 (§32 / M5): same open-holds-only correction; INERT on this legacy-claim path (a SCORE_CLAIM at
+                # height >= V28 is already rejected above and V29 > V28), kept symmetric with the fclaim cap loop.
+                liveN = sum(1 for x in offers.values() if x.get("claimedBy") == who and claim_held(x, ev["height"]) and (ev["height"] < V29_HEIGHT or x["status"] == "open"))
                 if liveN >= MAX_ACTIVE_CLAIMS: continue
                 o["claimedBy"] = who; o["claimUntilHeight"] = ev["height"] + claim_window_at(ev["height"])
 
@@ -1051,7 +1079,7 @@ def main():
             "V14_HEIGHT": V14_HEIGHT, "V15_HEIGHT": V15_HEIGHT, "V16_HEIGHT": V16_HEIGHT,
             "V17_HEIGHT": V17_HEIGHT, "V18_HEIGHT": V18_HEIGHT, "V19_HEIGHT": V19_HEIGHT, "V20_HEIGHT": V20_HEIGHT,
             "V21_HEIGHT": V21_HEIGHT, "V22_HEIGHT": V22_HEIGHT, "V23_HEIGHT": V23_HEIGHT, "V24_HEIGHT": V24_HEIGHT,
-            "V25_HEIGHT": V25_HEIGHT, "V26_HEIGHT": V26_HEIGHT, "V27_HEIGHT": V27_HEIGHT, "V28_HEIGHT": V28_HEIGHT,
+            "V25_HEIGHT": V25_HEIGHT, "V26_HEIGHT": V26_HEIGHT, "V27_HEIGHT": V27_HEIGHT, "V28_HEIGHT": V28_HEIGHT, "V29_HEIGHT": V29_HEIGHT,
             "FCLAIM_MAX_EPOCH_AHEAD": FCLAIM_MAX_EPOCH_AHEAD, "FILL_TIP_MARGIN": FILL_TIP_MARGIN,
             "CLAIM_WINDOW_BLOCKS": CLAIM_WINDOW_BLOCKS, "CLAIM_WINDOW_BLOCKS_V20": CLAIM_WINDOW_BLOCKS_V20, "CLAIM_FILL_GRACE_BLOCKS": CLAIM_FILL_GRACE_BLOCKS,
             "COMMIT_MAX_BLOCKS": COMMIT_MAX_BLOCKS, "REG_COMMIT_MAX_BLOCKS": REG_COMMIT_MAX_BLOCKS,
