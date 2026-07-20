@@ -295,6 +295,30 @@ export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same c
 // down and clarvis is upgraded when convenient. This height is legally BUMP-able (a coordinated same-day re-pin of
 // every verifier); the CWS field wallet may lag (D2 covers stale wallets) and the BN node fix rides the node canary.
 export const V28_HEIGHT = 60_000;
+// v2.9 (§32, V29+): TWO resolve()-side corrections that both move canonical state, so both ride ONE height gate
+// (REBIND audit M4 + M5). Below V29 the core is BYTE-IDENTICAL to v2.8 (every pre-V29 canonical hash + pinned
+// vector unchanged; a mixed-version fleet does NOT fork below the gate). Set to 88,000 by operator decision on
+// 2026-07-20 (the audit's absolute floor for a confirmed-adoption schedule).
+//   • M5 (RELAXATION): the per-address concurrent-hold cap counts an address's LIVE holds; a filled offer keeps
+//     its last-write-wins claimedBy/claimUntilHeight/claimTxid (never cleared, by the §31 invariant), so 3
+//     completed fclaim buys wrongly consume all MAX_ACTIVE_CLAIMS slots until their hold windows lapse, denying
+//     a 4th honest claim. At an event height >= V29 the cap counts only OPEN holds. This GRANTS a claim a stale
+//     replayer still DENIES, so it hurts STALE replayers (they reject what the chain accepts) -> HARD ADOPTION
+//     GATE, both directions: EVERY replayer (cairnx svc, clarvis, the vendored site + wallet bundles, cairn-sdk,
+//     cairn-cli, csd-indexer, the Python oracle) MUST run the v2.9 core AND be confirmed LIVE before the tip
+//     crosses V29, never "publish and hope".
+//   • M4 (reject-more, but still moves canonical state): the consensus ordering step sorts but never de-dupes,
+//     so a duplicated event (an overlapping scanner page) applies twice and double-credits o.paid/o.delivered on
+//     the partial-fill path. At an event height >= V29 a duplicate (same propose-id / attest-txid) is dropped
+//     before apply. Gentler class than M5 but it rides the SAME gate because it moves canonical state. (The
+//     cairnx-SERVICE-side de-dup on the attestation pull is a separate, un-gated defensive change; only the
+//     resolve() half is gated here.)
+// Non-retroactive + emit-gated -> pre-V29 byte-identical. MUST match cairnx_ref.py (independently derived from
+// the spec) + helpers.js + the vendored UI/wallet bundles + cli. Height-pure -> deterministic for every resolver.
+// DEPLOY DISCIPLINE (same shape as V22/V27 relaxations, sharper because M5 is a fund-flow relaxation): the
+// replay-hash RE-PIN (replay-hashes.json) is a POST-CROSSING runbook step (see CONSENSUS_CHANGES.md) that needs
+// the live-indexer generator reachable into the V29 region; do NOT re-pin from a guessed hash.
+export const V29_HEIGHT = 88_000;
 
 export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 

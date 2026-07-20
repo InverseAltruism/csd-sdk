@@ -11,7 +11,7 @@ import { nameCommit, parseAmount, parseRecord } from "./records.js";
 import {
   ACTIVATION_HEIGHT, AMOUNT_RE, CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, DEPLOY_FEE, FEE_BPS, FEE_BPS_V16,
   MAX_ACTIVE_CLAIMS, MAX_PENDING_REG, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, SCORE_CANCEL, SCORE_CLAIM,
-  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, V28_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
+  SCORE_FILL, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V22_HEIGHT, V23_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, V28_HEIGHT, V29_HEIGHT, ZERO_ADDR, MAX_OFFER_EPOCHS,
   EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, claimGraceOf, claimWindowAt, epochOf, expiredClaimFee, isNameGive, isTokenWant, makerRebate, nameRegFee,
   tradeFee,
   type AppliedEvent, type BalanceState, type BidState, type CairnXState, type ChainEvent,
@@ -47,6 +47,22 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       b.kind === "propose" ? (b as ProposeEvent).id : (b as ChainEvent & { txid: string }).txid,
     ),
   );
+  // v2.9 (§32, V29 / REBIND M4): drop a DUPLICATED event before apply. The ordering step above sorts but never
+  // de-dupes, so a double-fed transaction (an overlapping scanner page: cairnx/src/scan.ts pushes pages verbatim)
+  // applies twice and double-credits o.paid / o.delivered on the partial-fill path. A transaction has ONE identity
+  // (a propose's id / an attest's txid), so a duplicate is the SAME id/txid appearing twice; the first in consensus
+  // order is kept, the rest dropped. GATED on the event's OWN height (>= V29): below the gate NOTHING is dropped, so
+  // every pre-V29 replay (incl. every pinned vector and the live tip) is byte-identical, and a duplicate pair shares
+  // one txid == one block, so both copies always land on the SAME side of the gate. Still moves canonical state (a
+  // duplicated feed no longer double-applies), so it rides the SAME gate as M5. The cairnx-service-side de-dup on
+  // the attestation pull (scan.ts) is a separate, un-gated defensive change; only this resolve() half is gated.
+  const eid = (e: ChainEvent): string => e.kind === "propose" ? (e as ProposeEvent).id : (e as ChainEvent & { txid: string }).txid;
+  const seenIds = new Set<string>();
+  const applied: ChainEvent[] = [];
+  for (const e of ordered) {
+    if (e.height >= V29_HEIGHT) { const k = eid(e); if (seenIds.has(k)) continue; seenIds.add(k); }
+    applied.push(e);
+  }
 
   const tokens = new Map<string, Tok>();
   const balances = new Map<string, Map<string, Bal>>();       // ticker → addr → bal
@@ -198,7 +214,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     offerLock.delete(o.id);
   };
 
-  for (const ev of ordered) {
+  for (const ev of applied) {
     if (ev.height < ACTIVATION_HEIGHT) continue;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
     sweepExpired(ev.height);
@@ -608,7 +624,13 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (claimHeld(target, ev.height)) { deny("offer already claimed (hold live)"); continue; }
         // cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
         if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("claim cooldown (you just held this offer)"); continue; }
-        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height)) liveN++;
+        // v2.9 (§32, V29 / REBIND M5): the per-address concurrent-hold cap counts an address's LIVE holds. A FILLED
+        // offer keeps its claimedBy/claimUntilHeight/claimTxid (never cleared, §31 last-write-wins invariant), so
+        // pre-V29 a completed fclaim buy still counts against the cap until its hold window lapses -> 3 completed
+        // buys deny a 4th honest claim. At the counting event's height >= V29 only OPEN holds count (a filled offer
+        // has SETTLED; its residual claim fields are a record, not a live reservation). GATED on ev.height so pre-V29
+        // is byte-identical; this GRANTS a claim a stale replayer denies (a RELAXATION), hence the hard adoption gate.
+        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height) && (ev.height < V29_HEIGHT || x.status === "open")) liveN++;
         if (liveN >= MAX_ACTIVE_CLAIMS) { deny(`max ${MAX_ACTIVE_CLAIMS} live claims per address`); continue; }
         target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
         fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
@@ -816,7 +838,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         }
         // per-address concurrent-claim cap (anti-squat): count offers this attester still HOLDS (window+grace),
         // so the V20 grace can't expand an address's effective concurrent reach past the cap.
-        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height)) liveN++;
+        // v2.9 (§32, V29 / REBIND M5): the SAME open-holds-only correction as the fclaim cap loop above, kept
+        // symmetric so the two identical loops stay identical. NOTE it is INERT on this legacy-claim path: a
+        // SCORE_CLAIM at ev.height >= V28 is already rejected above (the §31 sunset), and V29 > V28, so `ev.height
+        // >= V29_HEIGHT` can NEVER be true here -> the added clause always reduces to the pre-V29 count. Kept for
+        // symmetry + defense-in-depth (a future un-sunset of legacy claims would inherit the fix, not the bug).
+        let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height) && (ev.height < V29_HEIGHT || x.status === "open")) liveN++;
         if (liveN >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); continue; }
         // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
         // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
