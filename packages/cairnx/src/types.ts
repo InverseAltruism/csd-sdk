@@ -306,11 +306,30 @@ export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 // The exclusivity window a claim placed at `height` is granted (V20+ is wider). claimUntilHeight = grant + this.
 export const claimWindowAt = (height: number): number =>
   height >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
+// v2.8 (B6c / REBIND M6): the MINIMUM span `claimUntilHeight - grantHeight` an fclaim hold can carry when
+// requested via fclaimEpochFor (the only client grant path). An fclaim's claimUntilHeight = (E+1)*EPOCH_LEN
+// is EPOCH-QUANTIZED, not grant+window, so no era inverse can recover the exact grant height from it. With
+// E = epochOf(g+45): span = 75 - ((g+15) mod 30), i.e. 46..75. Symbolically, min span = (45) + 1 where
+// 45 = CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOCKS (the legacy hold fclaimEpochFor approximates).
+export const FCLAIM_WINDOW_MIN = CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOCKS + 1;
 // Inverse for a STORED claimUntilHeight: a V20 claim has claimUntilHeight ≥ V20+40, and the
 // [V20+15, V20+40) range is unreachable, so this recovers the window baked into an existing claim
 // unambiguously. (Mirrors the resolver's era inverse — see resolve.ts claimGrace.)
-export const claimWindowOf = (claimUntilHeight: number): number =>
-  (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
+//
+// v2.8 (B6c / REBIND M6, fclaim-aware IN PLACE — mirrors claimGraceOf's claimTxid parameter): for an fclaim
+// hold (claimTxid set) the legacy 40-block inverse UNDER-derives the grant by 6..35 blocks, so a claim-depth
+// consumer (grantHeight = claimUntilHeight - window; depth = tip - grantHeight) under-counts burial and shows
+// a false "not ready" on the flagship name-buy flow. Pass the offer's claimTxid to get FCLAIM_WINDOW_MIN
+// (46), the SAFE bound: the true span is 46..75, so the derived grant is never EARLIER than the real grant
+// and depth is never over-stated (a fill can never fire before the true burial) while refusals strictly
+// shrink vs the legacy 40. Residual: up to 29 blocks of extra wait on late-in-epoch grants (fail-safe), and
+// an expiry-capped fclaim (E clamped to the offer's expiry) can carry a smaller true span - unchanged risk
+// shape vs the legacy constant, and such holds end AT offer expiry, where fill-before-expiry gates already
+// refuse. A one-argument call is byte-identical to the pre-B6 inverse (claimTxid undefined = legacy claim).
+export const claimWindowOf = (claimUntilHeight: number, claimTxid?: string): number => {
+  if (claimTxid !== undefined) return FCLAIM_WINDOW_MIN; // MUTATE_M6_FCLAIM_WINDOW
+  return (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;
+};
 // The fill GRACE baked into a stored claim (V20+ only = CLAIM_FILL_GRACE_BLOCKS, else 0), recovered from
 // its era by the same unambiguous inverse. resolve()'s claimGrace(offer) is this applied to claimUntilHeight.
 // v2.8: an fclaim hold (claimTxid set, V28+) has grace 0; its L0 deadline IS holdEnd = (E+1)*EPOCH_LEN-1, so
