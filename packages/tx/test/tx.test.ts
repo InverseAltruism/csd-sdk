@@ -158,7 +158,7 @@ console.log("\n— F9-C: buildProposeVerified / buildAttestVerified (money-out b
   ok("buildAttestVerified honors the CONF_TOKEN_FILL marker confidence=1_000_000", (await buildAttestVerified({ proposalId: PID, score: 100, confidence: 1_000_000, fee: 5_000_000, utxos: [u(1e8)], priv: PRIV, verify: async () => ({ ok: true, total: 1e8 }) })).ok === true);
 }
 
-console.log("\n— B8-sdklow (REBIND): node-enforced caps the builders must refuse at BUILD time —");
+console.log("\n- B8-sdklow (REBIND): node-enforced caps the builders must refuse at BUILD time -");
 // The node rejects these at the mempool boundary (params/mod.rs: MAX_TX_OUTPUTS=512,
 // MAX_DOMAIN_BYTES=128, MAX_URI_BYTES=512); a builder that signs them anyway produces a silent
 // build-success/broadcast-failure. Reject-more only: everything the node accepts still builds.

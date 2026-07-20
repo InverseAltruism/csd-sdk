@@ -316,7 +316,7 @@ export const FCLAIM_WINDOW_MIN = CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOC
 // [V20+15, V20+40) range is unreachable, so this recovers the window baked into an existing claim
 // unambiguously. (Mirrors the resolver's era inverse — see resolve.ts claimGrace.)
 //
-// v2.8 (B6c / REBIND M6, fclaim-aware IN PLACE — mirrors claimGraceOf's claimTxid parameter): for an fclaim
+// v2.8 (B6c / REBIND M6, fclaim-aware IN PLACE - mirrors claimGraceOf's claimTxid parameter): for an fclaim
 // hold (claimTxid set) the legacy 40-block inverse UNDER-derives the grant by 6..35 blocks, so a claim-depth
 // consumer (grantHeight = claimUntilHeight - window; depth = tip - grantHeight) under-counts burial and shows
 // a false "not ready" on the flagship name-buy flow. Pass the offer's claimTxid to get FCLAIM_WINDOW_MIN

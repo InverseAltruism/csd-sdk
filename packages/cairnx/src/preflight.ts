@@ -103,7 +103,7 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
  *  cross-repo lock. This is now the only place it lives; test/preflight.test.ts pins it against the
  *  real resolver (outputs accepted; any single-unit per-address underpayment refused).
  *
- *  DOC CORRECTION (B6b / REBIND M1) — the `[]` vs `null` asymmetry is a live hazard, not a convenience:
+ *  DOC CORRECTION (B6b / REBIND M1) - the `[]` vs `null` asymmetry is a live hazard, not a convenience:
  *  `[]` (token want) means "no CSD outputs are required", it does NOT mean "this fill is checked". Every
  *  caller whose safety loop is `for (const o of outs) ...` iterates ZERO times on a token fill and passes
  *  silently, while the undeliverable-CSD case (`null`) is explicitly refused. That asymmetry is the
@@ -206,7 +206,7 @@ export function fillTargetId(offer: OfferState, tip: number): string {
  *  Closes C2/C3/C4: status open, deliverability >= 1 token, live-claim holdership for the open-CSD lane,
  *  and taker match. Returns the preview so the caller can size outputs.
  *
- *  DOC CORRECTION (B6b / REBIND W10) — the historical claim that `safe:true` means "the fill is guaranteed
+ *  DOC CORRECTION (B6b / REBIND W10) - the historical claim that `safe:true` means "the fill is guaranteed
  *  to be accepted by the deterministic gates a payer can verify at signing time" OVER-STATES this predicate
  *  on two counts, both live:
  *    1. For a TOKEN-priced want it returns `safe:true` unconditionally ("deliverability is the buyer's

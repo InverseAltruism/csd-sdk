@@ -75,4 +75,4 @@ for (const [name, f] of denyCases) {
 }
 
 if (fail) { console.error(`SIWC crosscheck FAILED: ${fail}`); process.exit(1); }
-console.log(`SIWC crosscheck OK: ${cases.length} build cases + ${denyCases.length} deny legs — JS ⇄ Python byte-identical${vectors ? " ⇄ pinned vectors" : ""}`);
+console.log(`SIWC crosscheck OK: ${cases.length} build cases + ${denyCases.length} deny legs - JS ⇄ Python byte-identical${vectors ? " ⇄ pinned vectors" : ""}`);
