@@ -20,7 +20,7 @@ import {
 } from "./types.js";
 import { resolve } from "./resolve.js";
 import { requiredClaimDepth } from "./client.js";
-import { hasLiveClaim, previewFill } from "./preflight.js";
+import { hasLiveClaim, previewFill, requiredFillOutputs } from "./preflight.js";
 import { parseRecord } from "./records.js";
 
 // ── GAP_NEEDED: the clean-start SPV scan bound (FUND-SAFETY, not latency) ──────────────────────────────
@@ -133,13 +133,23 @@ export interface FillVerdict { safe: boolean; reason: string }
  * replay cannot see the buyer's other-offer holds, and MAX_ACTIVE_CLAIMS is the one grant clause counted
  * across offers, so without this the surface would false-accept a cap-denied fclaim. `opts.pay` overrides the
  * payment (base units to want.payto) for a PARTIAL tail-fill; defaults to the offer's full want.value.
+ *
+ * `opts.sums` (OPT-IN, B6a / REBIND W3; default OFF = byte-identical verdicts for existing callers) binds the
+ * caller's PLANNED per-address CSD payment sums to the PROVEN offer state: requiredFillOutputs is re-run over
+ * the merkle-proven, replayed offer (so `paid`/`delivered` are the chain's, not a served lie) and the caller's
+ * map must match it EXACTLY, address for address. This closes the W3 overpay: a resolver serving `paid:"0"`
+ * for a 90%-filled partial made callers size the FULL want while the chain credits only the remainder - the
+ * difference was permanently overpaid. Pass the SAME per-address sums you will build (the wallet's need-map
+ * shape: payto + treasury fee + maker rebate, MERGED per address - `payto === seller` merges the rebate leg).
+ * DELIBERATELY NOT the scalar `dp.pay !== pay` form: that refuses honest fills on both live callers (the
+ * wallet's per-address sum includes the maker rebate when payto === seller; the site passes no pay at all).
  */
 export async function verifyFillSpv(
   offerId: string,
   fclaimTxid: string,
   me: string,
   io: FillSpvIo,
-  opts: { myLiveHoldsAtGrant: number; pay?: bigint | string | number },
+  opts: { myLiveHoldsAtGrant: number; pay?: bigint | string | number; sums?: Record<string, bigint | string | number> },
 ): Promise<FillVerdict> {
   const no = (reason: string): FillVerdict => ({ safe: false, reason });
 
@@ -230,6 +240,24 @@ export async function verifyFillSpv(
   const dp = previewFill({ ...r.offer, status: "open" } as OfferState, pay);
   if (!dp.deliverable || dp.got < 1n) return no("this fill would deliver 0 units - refusing (the CSD would be lost)");
 
+  // 6b. OPT-IN PAYMENT BIND (B6a / REBIND W3, default OFF): bind the caller's planned per-address CSD sums to
+  //     the PROVEN fill progress. requiredFillOutputs over the replayed (merkle-proven) offer is the chain's
+  //     own answer for what THIS pay must carry (partial clamp on the REAL `paid`, fee on the clamp, rebate
+  //     merged per address); any divergence means the caller sized its payment from a lie (or would mis-route
+  //     an output) and the surplus/misroute burns after resolve() clamps to truth. EXACT match, both ways: a
+  //     missing/low leg is a doomed underpay, an extra/high leg is the W3 overpay or a smuggled output (N26).
+  if (opts.sums !== undefined) {
+    const req = requiredFillOutputs({ ...r.offer, status: "open" } as OfferState, pay);
+    if (req === null) return no("the proven offer state cannot size this payment - refusing");
+    const proven = new Map<string, bigint>(req.map((o) => [o.to, o.value]));   // keys already lower-cased
+    const planned = new Map<string, bigint>();
+    try {
+      for (const [a, v] of Object.entries(opts.sums)) { const k = String(a).toLowerCase(); planned.set(k, (planned.get(k) ?? 0n) + BigInt(v)); }
+    } catch { return no("invalid sums (amounts must be base-unit integers)"); }
+    const sumsKeys = new Set([...proven.keys(), ...planned.keys()]);
+    for (const k of sumsKeys) if ((proven.get(k) ?? 0n) !== (planned.get(k) ?? 0n)) return no(`payment does not match the proven fill progress (${k}: planned ${(planned.get(k) ?? 0n).toString()}, proven state requires ${(proven.get(k) ?? 0n).toString()}) - refusing (an overpay past the real remainder is unrecoverable)`); // MUTATE_GUARD_SUMS
+  }
+
   // 7. DEADLINE (client policy; never a fund risk, always fail-safe): refuse within FILL_TIP_MARGIN of
   //    holdEnd so the payment cannot strand as an L0-unminable no-op past the hold. Computed from the
   //    fclaim's ACTUAL confirmed expiry epoch, NOT epochOf(tip+45).
@@ -258,7 +286,32 @@ export async function verifyFillSpv(
 // fill), NOT in the record and NOT merkle-provable, so they are deliberately ABSENT here (binding them would
 // false-refuse every partially-filled offer). previewFill pivots partial-vs-whole SOLELY on `offer.min !==
 // undefined`, so binding `min` pins the caller to the exact branch resolve() takes (F2 partial-fill leg).
-export interface ProvenOfferTerms { height: number; feeBps: number; value?: string; taker?: string; bid?: string; min?: string }
+//
+// B6a (REBIND W2/W7) ADDITIVE fields, populated by provenOfferTerms and IGNORED by a 2-arg bindOfferTerms
+// call (verdicts stay byte-identical for every pre-B6 caller; they participate ONLY under the opt-in legs):
+//   giveTicker/giveAmount/giveName - the offer's give, copied VERBATIM as strings (resolve.ts copies the
+//     record's give verbatim at creation and tracks `delivered` separately, so a string compare against the
+//     RECORD is exact and partial-fill-safe; a deep object compare against a served OfferState is NOT, and
+//     must never be written here).
+//   wantType - "token" iff the proven want is token-priced (want.ticker), else "csd". The type pivot every
+//     payment path branches on; serving the opposite type re-routes the whole fill machinery (W1/W7 class).
+export interface ProvenOfferTerms {
+  height: number; feeBps: number; value?: string; taker?: string; bid?: string; min?: string;
+  giveTicker?: string; giveAmount?: string; giveName?: string; wantType?: "csd" | "token";
+}
+
+// ── the ProvenOfferTerms BRAND (B6a rider, LTS amendment: the G6 "different-file hand copy" cure) ──────
+// A type-level brand minted ONLY by provenOfferTerms (the sole in-module cast). The audit found FOUR
+// hand-built ProvenOfferTerms producers and three interface re-declarations; B4 routed all of them through
+// provenOfferTerms, and this brand makes a FIFTH hand copy a compile error wherever minted terms are
+// required (the opt-in 3-arg bindOfferTerms below). Type-level only: the symbol never exists at runtime,
+// no byte of output changes, and every existing STRUCTURAL use of ProvenOfferTerms keeps compiling
+// (the 2-arg bindOfferTerms overload still accepts a plain ProvenOfferTerms).
+declare const PROVEN_TERMS_MINT: unique symbol;
+export type MintedProvenOfferTerms = ProvenOfferTerms & { readonly [PROVEN_TERMS_MINT]: "cairnx-core/provenOfferTerms" };
+/** UNSAFE escape hatch, TESTS ONLY: brand a hand-built terms object. Production code must never call this -
+ *  hand-built terms are exactly the W2 defect class the brand exists to make unrepresentable. */
+export const unsafeMintProvenOfferTerms = (t: ProvenOfferTerms): MintedProvenOfferTerms => t as MintedProvenOfferTerms;
 
 // The treasury fee rate the resolver STAMPS on an offer at its creation height (resolve.ts: v11 ? (v16 ?
 // FEE_BPS_V16 : FEE_BPS) : 0). requiredFillOutputs sizes the treasury fee from offer.feeBps, so binding a
@@ -270,8 +323,12 @@ export const feeBpsAt = (height: number): number =>
 // Build the normalized ProvenOfferTerms from a MERKLE-PROVEN offer record + its proven creation height. The
 // value/taker/bid/min are copied from the record (lower-cased for addr-like fields, string-coerced), feeBps is
 // derived from the height. A caller feeds this the record it already merkle-bound (bindRecord / verifyTxInclusion).
-export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): ProvenOfferTerms {
-  const w = offerRec.want as { value?: string };
+// B6a: also carries the give legs + wantType (verbatim strings; see the interface note) and returns the
+// BRANDED type - this function is the brand's sole minter. The pre-B6 fields are emitted bit-identically, so
+// a 2-arg bindOfferTerms over this output returns the same verdict it always did.
+export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): MintedProvenOfferTerms {
+  const w = offerRec.want as { value?: string; ticker?: string };
+  const g = offerRec.give as { ticker?: string; amount?: string; name?: string };
   return {
     height: Number(provenHeight),
     feeBps: feeBpsAt(Number(provenHeight)),
@@ -279,7 +336,11 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): P
     taker: offerRec.taker !== undefined ? String(offerRec.taker).toLowerCase() : undefined,
     bid: offerRec.bid !== undefined ? String(offerRec.bid).toLowerCase() : undefined,
     min: offerRec.min !== undefined ? String(offerRec.min) : undefined,
-  };
+    giveTicker: g.ticker !== undefined ? String(g.ticker) : undefined,
+    giveAmount: g.amount !== undefined ? String(g.amount) : undefined,
+    giveName: g.name !== undefined ? String(g.name) : undefined,
+    wantType: isTokenWant(offerRec.want) ? "token" : "csd",
+  } as MintedProvenOfferTerms;
 }
 
 /**
@@ -296,9 +357,24 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): P
  *               both mismatch. EXPLICIT presence (a served min="" must not slip past a proven-absent min).
  * `value` is bound only when `t.value` is defined so a token<->token offer (no CSD value) is not spuriously
  * refused; a caller that binds want.value separately (the site does) may still pass it here (redundant-safe).
+ *
+ * B6a (REBIND W2 legs + W7) OPT-IN legs, via the third argument (default OFF: a 2-arg call is byte-identical
+ * to the pre-B6 predicate on every input). The 3-arg overload requires MINTED terms (the brand), so a caller
+ * adopting the new legs cannot feed them a hand-built terms object that leaves the new fields undefined -
+ * that shape would false-refuse every honest fill (the W2 trap this file documents).
+ *   opts.give     - bind give.ticker / give.amount / give.name: EXPLICIT PRESENCE (a served give growing or
+ *                   losing a field mismatches) AND verbatim string equality. Closes the W7 shortchange (a
+ *                   genuine offer served with give.amount inflated a millionfold passes every legacy leg).
+ *   opts.wantType - the SYMMETRIC want-type refusal: the served offer's want type (token iff want.ticker is
+ *                   a string, the isTokenWant pivot) must equal the proven type. The legacy value leg already
+ *                   catches proven-CSD-served-as-token (String(undefined) mismatches t.value); this closes
+ *                   the reverse, proven-token-served-as-CSD, which today only wallet.ts catches one-sidedly.
  */
-export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boolean {
-  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown }; taker?: unknown; bid?: unknown; min?: unknown };
+export interface BindTermsOpts { give?: boolean; wantType?: boolean }
+export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boolean;
+export function bindOfferTerms(servedOffer: unknown, t: MintedProvenOfferTerms, opts: BindTermsOpts): boolean;
+export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?: BindTermsOpts): boolean {
+  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
   const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v).toLowerCase());
   if (Number(o?.height) !== t.height) return true;
   if (Number(o?.feeBps) !== t.feeBps) return true;
@@ -308,6 +384,18 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boole
   const om = o?.min;
   if ((om !== undefined && om !== null) !== (t.min !== undefined)) return true;
   if (t.min !== undefined && String(om) !== t.min) return true;
+  if (opts?.wantType) {
+    // terms minted before B6 carry no wantType; under the opt-in that is a mismatch (fail closed), never a pass.
+    if (t.wantType === undefined || (typeof o?.want?.ticker === "string") !== (t.wantType === "token")) return true; // MUTATE_LEG_WANTTYPE
+  }
+  if (opts?.give) {
+    const g = o?.give;
+    // per-field EXPLICIT presence + verbatim string equality (never a deep object compare: resolve.ts copies
+    // the record's give verbatim and partial fills track `delivered` separately - the RECORD is the truth).
+    if ((g?.ticker !== undefined && g?.ticker !== null) !== (t.giveTicker !== undefined) || (t.giveTicker !== undefined && String(g?.ticker) !== t.giveTicker)) return true; // MUTATE_LEG_GIVETICKER
+    if ((g?.amount !== undefined && g?.amount !== null) !== (t.giveAmount !== undefined) || (t.giveAmount !== undefined && String(g?.amount) !== t.giveAmount)) return true; // MUTATE_LEG_GIVEAMOUNT
+    if ((g?.name !== undefined && g?.name !== null) !== (t.giveName !== undefined) || (t.giveName !== undefined && String(g?.name) !== t.giveName)) return true; // MUTATE_LEG_GIVENAME
+  }
   return false;
 }
 
@@ -316,7 +404,7 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boole
 // `payto` = the record's explicit want.payto (merkle-committed) or, absent, the seller; `terms` = the
 // normalized ProvenOfferTerms. Returns null (fail closed) if the event does not bind to an offer record. The
 // caller binds the resolver-served payto/seller to these and calls bindOfferTerms(servedOffer, result.terms).
-export function bindProvenOffer(offerEv: ProvenPropose): { payto: string; seller: string; terms: ProvenOfferTerms } | null {
+export function bindProvenOffer(offerEv: ProvenPropose): { payto: string; seller: string; terms: MintedProvenOfferTerms } | null {
   const rec = bindRecord(offerEv);
   if (!rec || rec.t !== "offer") return null;
   const seller = String(offerEv.proposer).toLowerCase();

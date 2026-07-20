@@ -13,7 +13,7 @@ import path from "node:path";
 import {
   deploy, mint, offer, fclaim, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
-  bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt,
+  bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, FILL_TIP_MARGIN, MAX_ACTIVE_CLAIMS,
   V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
   TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
@@ -23,7 +23,7 @@ import type { ChainEvent, OfferState, ProvenEvent, ProvenPropose, FillSpvIo } fr
 let pass = 0;
 const ok = (cond: boolean, name: string) => { assert.ok(cond, name); pass++; };
 // wrapper that injects the (required) cap count; the honest scenarios have 0 other live holds.
-const vfs = (oid: string, fc: string, me: string, io: FillSpvIo, opts: { myLiveHoldsAtGrant?: number; pay?: bigint | string | number } = {}) =>
+const vfs = (oid: string, fc: string, me: string, io: FillSpvIo, opts: { myLiveHoldsAtGrant?: number; pay?: bigint | string | number; sums?: Record<string, bigint | string | number> } = {}) =>
   verifyFillSpv(oid, fc, me, io, { myLiveHoldsAtGrant: 0, ...opts });
 
 const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), C = "0x" + "c3".repeat(20);
@@ -297,6 +297,99 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   ok(boPL !== null && boPL.payto === A, "bindProvenOffer: payto-less record defaults payto to the proven author");
   const notOffer = { kind: "propose", id: OID, proposer: A, ...fclaim({ offer: OID }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
   ok(bindProvenOffer(notOffer) === null, "bindProvenOffer: a non-offer record fails closed (null)");
+}
+
+// ── 13. B6a (REBIND W3): the OPT-IN `sums` payment bind vs proven fill progress ──
+// The W3 PoC: a partial offer is 80% filled ON CHAIN; a lying resolver serves it with paid:"0", so the
+// caller sizes the FULL want. resolve() clamps the credit to the real remainder and the difference is
+// permanently overpaid. The sums seam re-runs requiredFillOutputs over the PROVEN state and refuses.
+{
+  const POID = id("0d");
+  const pOffer = PE(POID, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A }, min: "100000000" }), H0 + 2, A, 9e9);
+  const pBase: ChainEvent[] = [base[0], base[1], pOffer];
+  const Ep = epochOf(H0 + 3) + 2;
+  const pFc = id("f7");
+  const pGrant = PE(pFc, fclaim({ offer: POID }), H0 + 3, B, Ep);
+  const st0 = resolve([...pBase, pGrant], H0 + 5).offers[POID];
+  const firstOuts = Object.fromEntries(requiredFillOutputs(st0, "400000000")!.map((o) => [o.to, String(o.value)]));
+  const priorFill = AE(id("4f"), pFc, B, H0 + 6, firstOuts, SCORE_FILL);   // 80% filled on chain
+  const evs: ChainEvent[] = [...pBase, pGrant, priorFill];
+  const tip = fclaimHoldEnd(Ep) - 5;
+  const provenNow = resolve(evs, tip).offers[POID];
+  ok(provenNow.paid === "400000000", "sanity: the chain's paid is 400000000 (80% of the want)");
+  const io = makeIo(evs, tip);
+  // the SERVED-lie sizing: paid:"0" makes the caller plan the FULL want + fee on the full want
+  const liePlanned = Object.fromEntries(requiredFillOutputs({ ...provenNow, paid: "0", delivered: "0" }, "500000000")!.map((o) => [o.to, String(o.value)]));
+  const vLie = await vfs(POID, pFc, B, io, { pay: "500000000", sums: liePlanned });
+  ok(vLie.safe === false && /proven fill progress/.test(vLie.reason), `W3 PoC: full-want sums vs 80%-filled proven state is REFUSED (${vLie.reason})`);
+  // DEFAULT OFF: the identical lie WITHOUT sums keeps the pre-B6 verdict (safe - the seam is opt-in, so the
+  // publish changes nothing for existing callers; the bind arms per-consumer in B7).
+  const vOff = await vfs(POID, pFc, B, io, { pay: "500000000" });
+  ok(vOff.safe === true, `default OFF: the same call without sums keeps the pre-B6 verdict (${vOff.reason})`);
+  // honest tail fill sized from the PROVEN state: accepted (no false refusal on the money path)
+  const honestPlanned = Object.fromEntries(requiredFillOutputs(provenNow, "100000000")!.map((o) => [o.to, String(o.value)]));
+  const vHonest = await vfs(POID, pFc, B, io, { pay: "100000000", sums: honestPlanned });
+  ok(vHonest.safe === true, `honest proven-sized tail fill with sums is ACCEPTED (${vHonest.reason})`);
+  // a smuggled extra output address is refused (the N26 lesson: never let an unchecked leg ride along)
+  const vSmuggle = await vfs(POID, pFc, B, io, { pay: "100000000", sums: { ...honestPlanned, [C]: "1" } });
+  ok(vSmuggle.safe === false && /proven fill progress/.test(vSmuggle.reason), `a smuggled extra output leg is REFUSED (${vSmuggle.reason})`);
+  // MUTATION: guard removed -> the W3 forgery passes (the sums guard is the sole rejecter of it)
+  const mutSums = await withGuardRemoved("MUTATE_GUARD_SUMS", async (mod) =>
+    mod.verifyFillSpv(POID, pFc, B, io, { myLiveHoldsAtGrant: 0, pay: "500000000", sums: liePlanned }));
+  ok(mutSums.safe === true, `MUTATION[sums guard removed]: the W3 overpay forgery now PASSES -> the guard is the sole rejecter`);
+}
+
+// ── 14. B6a (REBIND W2 legs + W7): the OPT-IN give legs + symmetric want-type refusal, and the W3-adjacent
+// maker-rebate no-false-refusal pin on the whole-fill open lane (payto === seller merges the rebate leg). ──
+{
+  // rebate merge pin: the open-lane whole fill's per-address sum INCLUDES the maker rebate; the sums seam
+  // must accept it (this is the exact shape the audit's scalar `dp.pay !== pay` form would false-refuse).
+  const tip = holdEnd - 5;
+  const provenO = resolve([...base, grant], tip).offers[OID];
+  const wholeOuts = requiredFillOutputs(provenO, "500000000")!;
+  const merged = Object.fromEntries(wholeOuts.map((o) => [o.to, String(o.value)]));
+  ok(wholeOuts.length === 2 && BigInt(merged[A]) > 500000000n, "sanity: payto===seller merges pay+rebate into ONE leg above the bare want");
+  const vWhole = await vfs(OID, fcTx, B, makeIo([...base, grant], tip), { sums: merged });
+  ok(vWhole.safe === true, `whole open-lane fill with the MERGED pay+rebate sums is ACCEPTED (${vWhole.reason})`);
+
+  // give legs on minted terms (the producer is the sole minter; presence + verbatim string equality)
+  const H = H0 + 2;
+  const tTok = provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A } } as never, H);
+  ok(tTok.giveTicker === "AAA" && tTok.giveAmount === "10" && tTok.giveName === undefined && tTok.wantType === "csd",
+    "provenOfferTerms mints the give legs + wantType (token give, CSD want)");
+  const servedTok = { height: H, feeBps: 150, want: { value: "500000000" }, give: { ticker: "AAA", amount: "10" } };
+  ok(bindOfferTerms(servedTok, tTok, { give: true }) === false, "give legs: honest served give -> no mismatch");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { give: true }) === true, "give legs: inflated give.amount (the W7 millionfold shortchange) -> mismatch");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "BBB", amount: "10" } }, tTok, { give: true }) === true, "give legs: swapped give.ticker -> mismatch");
+  ok(bindOfferTerms({ ...servedTok, give: { name: "gem" } }, tTok, { give: true }) === true, "give legs: token give served as a name give (presence flip) -> mismatch");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok) === false, "DEFAULT OFF: the same inflated give passes the 2-arg call (byte-identical pre-B6 verdict - the leg arms in B7)");
+  const tName = provenOfferTerms({ v: 1, t: "offer", give: { name: "gemname" }, want: { value: "500000000", payto: A } } as never, H);
+  ok(tName.giveName === "gemname" && tName.giveTicker === undefined, "provenOfferTerms mints giveName for a name give");
+  ok(bindOfferTerms({ ...servedTok, give: { name: "gemname" } }, tName, { give: true }) === false, "give legs: honest name give -> no mismatch");
+  ok(bindOfferTerms({ ...servedTok, give: { name: "stolen" } }, tName, { give: true }) === true, "give legs: swapped give.name -> mismatch");
+
+  // symmetric want-type refusal: proven TOKEN want served as CSD (the direction nothing in the SDK caught)
+  const tTokWant = provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { ticker: "BBB", amount: "5" } } as never, H);
+  ok(tTokWant.wantType === "token" && tTokWant.value === undefined, "provenOfferTerms mints wantType=token for a token want");
+  const servedAsCsd = { height: H, feeBps: 150, want: { value: "500000000" }, give: { ticker: "AAA", amount: "10" } };
+  ok(bindOfferTerms(servedAsCsd, tTokWant) === false, "documented hole: 2-arg call cannot see a proven-token want served as CSD");
+  ok(bindOfferTerms(servedAsCsd, tTokWant, { wantType: true }) === true, "wantType leg: proven-token served-as-CSD -> mismatch (the symmetric refusal)");
+  const servedAsTok = { height: H, feeBps: 150, want: { ticker: "BBB", amount: "5" }, give: { ticker: "AAA", amount: "10" } };
+  ok(bindOfferTerms(servedAsTok, tTokWant, { wantType: true }) === false, "wantType leg: honest token-want service -> no mismatch");
+  ok(bindOfferTerms(servedTok, tTok, { wantType: true }) === false, "wantType leg: honest CSD-want service -> no mismatch");
+  // a pre-B6 hand-built terms object (no wantType) FAILS CLOSED under the opt-in (never a silent pass)
+  const preB6 = unsafeMintProvenOfferTerms({ height: H, feeBps: 150, value: "500000000" });
+  ok(bindOfferTerms(servedTok, preB6, { wantType: true }) === true, "wantType leg: terms minted without wantType fail CLOSED under the opt-in");
+
+  // MUTATIONS: each new leg removed -> its lie passes (each leg is the sole rejecter of its lie)
+  ok(await withGuardRemoved("MUTATE_LEG_GIVEAMOUNT", async (m) => m.bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { give: true })) === false,
+    "MUTATION[give.amount leg removed]: the W7 inflation now PASSES -> the leg is the sole rejecter");
+  ok(await withGuardRemoved("MUTATE_LEG_GIVETICKER", async (m) => m.bindOfferTerms({ ...servedTok, give: { ticker: "BBB", amount: "10" } }, tTok, { give: true })) === false,
+    "MUTATION[give.ticker leg removed]: the ticker swap now PASSES -> the leg is the sole rejecter");
+  ok(await withGuardRemoved("MUTATE_LEG_GIVENAME", async (m) => m.bindOfferTerms({ ...servedTok, give: { name: "stolen" } }, tName, { give: true })) === false,
+    "MUTATION[give.name leg removed]: the name swap now PASSES -> the leg is the sole rejecter");
+  ok(await withGuardRemoved("MUTATE_LEG_WANTTYPE", async (m) => m.bindOfferTerms(servedAsCsd, tTokWant, { wantType: true })) === false,
+    "MUTATION[wantType leg removed]: proven-token served-as-CSD now PASSES -> the leg is the sole rejecter");
 }
 
 console.log(`cairnx-core verifyfill B4 (fill-SPV fund boundary): ${pass} passed`);
