@@ -146,21 +146,30 @@ export function merkleRoot(txidsHex: string[]): string {
 /**
  * Verify a merkle inclusion proof (Electrum format): fold `txid` up the branch and assert it
  * equals `merkleRootHex`. `pos` is the tx index in the block; its bits select sibling side.
+ *
+ * B8-sdklow (REBIND, audit LOW): declared boolean and now BEHAVES boolean - malformed proof material
+ * (non-hex / odd-length txid, sibling, or root) returns false instead of throwing. A verifier that
+ * crashes on hostile input is an availability hole at a trust boundary, and every refusal path here is
+ * fail-closed either way (false and throw both refuse; nothing formerly rejected is now accepted).
  */
 export function verifyMerkleProof(txidHex: string, pos: number, branchHex: string[], merkleRootHex: string): boolean {
-  let cur = hb(txidHex);
-  let idx = pos;
-  for (const sibHex of branchHex) {
-    const sib = hb(sibHex);
-    const buf = new Uint8Array(64);
-    if (idx & 1) { buf.set(sib, 0); buf.set(cur, 32); } else { buf.set(cur, 0); buf.set(sib, 32); }
-    cur = sha256d(buf);
-    idx >>= 1;
+  try {
+    let cur = hb(txidHex);
+    let idx = pos;
+    for (const sibHex of branchHex) {
+      const sib = hb(sibHex);
+      const buf = new Uint8Array(64);
+      if (idx & 1) { buf.set(sib, 0); buf.set(cur, 32); } else { buf.set(cur, 0); buf.set(sib, 32); }
+      cur = sha256d(buf);
+      idx >>= 1;
+    }
+    // Normalize the expected root through hb→hx so the check is insensitive to a `0x` prefix or
+    // case. Without this, a correctly-valued but unprefixed root makes a VALID proof verify as
+    // false — a dangerous asymmetry for a verifier (good data looks rejected).
+    return hx(cur) === hx(hb(merkleRootHex));
+  } catch {
+    return false;   // malformed input IS a failed verification, never a crash
   }
-  // Normalize the expected root through hb→hx so the check is insensitive to a `0x` prefix or
-  // case. Without this, a correctly-valued but unprefixed root makes a VALID proof verify as
-  // false — a dangerous asymmetry for a verifier (good data looks rejected).
-  return hx(cur) === hx(hb(merkleRootHex));
 }
 
 /** Build the merkle branch for tx at index `pos` from the full ordered txid list. */

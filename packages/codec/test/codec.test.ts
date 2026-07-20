@@ -64,6 +64,13 @@ let allProofs = true;
 leaves.forEach((leaf, i) => { if (!verifyMerkleProof(leaf, i, merkleBranch(leaves, i), root)) allProofs = false; });
 eq("merkleBranch+verify round-trips for all 5 leaves (odd-row dup)", allProofs, true);
 eq("a wrong position fails verification", verifyMerkleProof(leaves[0]!, 1, merkleBranch(leaves, 0), root), false);
+// B8-sdklow (REBIND, audit LOW): the function DECLARES boolean but used to THROW on a malformed
+// sibling/txid/root (non-hex, odd length). A verifier that crashes on hostile input instead of refusing
+// is an availability hole at a trust boundary; malformed proof material is a FAILED verification.
+eq("malformed sibling hex -> false, not a throw", verifyMerkleProof(leaves[0]!, 0, ["not-hex!"], root), false);
+eq("malformed txid hex -> false, not a throw", verifyMerkleProof("0xzz", 0, merkleBranch(leaves, 0), root), false);
+eq("malformed root hex -> false, not a throw", verifyMerkleProof(leaves[0]!, 0, merkleBranch(leaves, 0), "junk!"), false);
+eq("odd-length sibling hex -> false, not a throw", verifyMerkleProof(leaves[0]!, 0, ["0xabc"], root), false);
 
 console.log("\n— content addressing —");
 eq("canonicalJson sorts keys + is compact", canonicalJson({ b: 1, a: [2, { d: 4, c: 3 }] }), '{"a":[2,{"c":3,"d":4}],"b":1}');

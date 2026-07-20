@@ -18,23 +18,43 @@ def tagged_hash(tag: str, msg: bytes) -> bytes:
 def siwc_digest(message: str) -> str:
     return "0x" + sha256d(tagged_hash(SIWC_TAG, message.encode("utf-8"))).hex()
 
+def _req(f: dict, k: str) -> str:
+    # Spec (csd-siwc SiwcFields): a required field is a NON-EMPTY string. An empty value is not a
+    # degenerate message, it is UNBUILDABLE (B8-sdklow: the zero-length rule the JS impl enforces).
+    v = f.get(k)
+    if not isinstance(v, str) or len(v) == 0:
+        raise ValueError(f"siwc_ref: {k} required (non-empty string)")
+    return v
+
+def _opt(f: dict, k: str):
+    # Spec: an optional field, WHEN PRESENT, must also be non-empty ("Request ID: " with nothing after
+    # it is not a buildable artifact). Only `statement` documents "" as equivalent to omitted.
+    v = f.get(k)
+    if v is None:
+        return None
+    if not isinstance(v, str) or len(v) == 0:
+        raise ValueError(f"siwc_ref: {k} must be non-empty when present")
+    return v
+
 def build(f: dict) -> str:
-    lines = [f["domain"] + HEADER_SUFFIX, f["account"], ""]
+    lines = [_req(f, "domain") + HEADER_SUFFIX, _req(f, "account"), ""]
     stmt = f.get("statement")
     if stmt is not None and stmt != "":
         lines.append(stmt)
     lines.append("")
-    lines.append("URI: " + f["uri"])
-    lines.append("Version: " + f["version"])
-    lines.append("Chain ID: " + f["chainId"])
-    lines.append("Nonce: " + f["nonce"])
-    lines.append("Issued At: " + f["issuedAt"])
-    if f.get("expirationTime") is not None: lines.append("Expiration Time: " + f["expirationTime"])
-    if f.get("notBefore") is not None: lines.append("Not Before: " + f["notBefore"])
-    if f.get("requestId") is not None: lines.append("Request ID: " + f["requestId"])
+    lines.append("URI: " + _req(f, "uri"))
+    lines.append("Version: " + _req(f, "version"))
+    lines.append("Chain ID: " + _req(f, "chainId"))
+    lines.append("Nonce: " + _req(f, "nonce"))
+    lines.append("Issued At: " + _req(f, "issuedAt"))
+    if _opt(f, "expirationTime") is not None: lines.append("Expiration Time: " + f["expirationTime"])
+    if _opt(f, "notBefore") is not None: lines.append("Not Before: " + f["notBefore"])
+    if _opt(f, "requestId") is not None: lines.append("Request ID: " + f["requestId"])
     if f.get("resources") is not None:
         lines.append("Resources:")
         for r in f["resources"]:
+            if not isinstance(r, str) or len(r) == 0:
+                raise ValueError("siwc_ref: resource entries must be non-empty")
             lines.append("- " + r)
     return "\n".join(lines)
 

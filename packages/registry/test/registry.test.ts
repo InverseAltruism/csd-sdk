@@ -209,6 +209,23 @@ test("resolveName: 200 with a JSON null body is null (not-found as a value, inde
   assert.equal(await resolveName(src, "ghost"), null);
 });
 
+// ── B8-sdklow (REBIND, audit LOW): reverseName must URL-encode the address exactly like its sibling
+// resolveName encodes the handle (index.ts interpolated the raw address into the path, so a hostile
+// or malformed "address" containing / ? # traversed into a different endpoint). ──
+test("B8-sdklow: reverseName URL-encodes the address path segment (sibling parity with resolveName)", async () => {
+  const { resolveName, reverseName } = await import("../src/index.js");
+  const seen: string[] = [];
+  const src = {
+    baseUrl: "http://fixture",
+    fetch: (async (url: string) => { seen.push(String(url)); return { ok: false, status: 404, json: async () => null }; }) as unknown as typeof fetch,
+  };
+  await reverseName(src, "0xabc/../identity?x=1#f");
+  assert.equal(seen[0], "http://fixture/address/0xabc%2F..%2Fidentity%3Fx%3D1%23f/identity",
+    "every path-hostile character in the address must be percent-encoded (no traversal, no query smuggling)");
+  await resolveName(src, "a/b");
+  assert.equal(seen[1], "http://fixture/identity/a%2Fb", "sibling behavior pinned: resolveName already encodes");
+});
+
 // ── M2 (deep-review 2026-07-03): a malformed `pub`/`sig` must be SKIPPED, not crash the resolve ──
 // `addrFromPub`/`verifyDigest` call hexToBytes, which THROWS on non-hex/odd-length input. These verifiers
 // run inside resolve's `.filter()`, so before the fix one cheap malformed record (with expiresEpoch=0, which

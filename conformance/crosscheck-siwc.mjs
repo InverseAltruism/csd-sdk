@@ -15,6 +15,26 @@ const cases = [
   { domain: "app.example:8443", account: A, statement: "Welcome 🦄 — sign in", uri: "https://app.example:8443/", version: "1", chainId: CHAIN, nonce: "Zx9Qw8Rt7Yu6", issuedAt: "2026-06-17T00:00:00Z", expirationTime: "2026-06-17T00:05:00Z", notBefore: "2026-06-17T00:00:00Z", requestId: "req-42", resources: ["https://app.example/a", "https://app.example/b"] },
   // astral codepoint + U+FFFF boundary inside the statement (UTF-8 hashing must agree across langs)
   { domain: "x.example", account: A, statement: "𝕊ign ￿ edge", uri: "https://x.example/", version: "1", chainId: CHAIN, nonce: "nonce1234", issuedAt: "2026-06-17T01:02:03Z", expirationTime: "2026-06-17T01:12:03Z" },
+  // B8-sdklow: statement "" is DOCUMENTED as "empty == omitted" - both impls must emit the no-statement layout
+  { domain: "x.example", account: A, statement: "", uri: "https://x.example/", version: "1", chainId: CHAIN, nonce: "nonce1234", issuedAt: "2026-06-17T01:02:03Z", expirationTime: "2026-06-17T01:12:03Z" },
+];
+
+// ── B8-sdklow (REBIND, audit LOW: the SIWC zero-length-field divergence) ────────────────────────────────
+// The spec (SiwcFields) requires every present field to be NON-EMPTY (statement excepted: "" == omitted).
+// The JS builder throws on `requestId:""` etc., but the Python reference happily emitted `Request ID: `
+// for the same input - a cross-language divergence the valid-case differential above can never see
+// (two honest implementations disagreeing on whether an artifact is buildable at all). These deny legs
+// require BOTH implementations to REFUSE. (The wallet-builder half of the audit LOW lives in cairn-wallet
+// and rides its own batch; this closes the csd-sdk half.)
+const base5 = { domain: "x.example", account: A, uri: "https://x.example/", version: "1", chainId: CHAIN, nonce: "nonce1234", issuedAt: "2026-06-17T01:02:03Z", expirationTime: "2026-06-17T01:12:03Z" };
+const denyCases = [
+  ["requestId empty", { ...base5, requestId: "" }],
+  ["expirationTime empty", { ...base5, expirationTime: "" }],
+  ["notBefore empty", { ...base5, notBefore: "" }],
+  ["resource entry empty", { ...base5, resources: ["https://x.example/a", ""] }],
+  ["domain empty", { ...base5, domain: "" }],
+  ["uri empty", { ...base5, uri: "" }],
+  ["issuedAt empty", { ...base5, issuedAt: "" }],
 ];
 
 const jsResults = cases.map((f) => { const m = buildSiwcMessage(f); return { message: m, digest: siwcDigest(m) }; });
@@ -43,5 +63,16 @@ for (let i = 0; i < cases.length; i++) {
     if (!okJsPy) console.error(`     JS ${j.digest}\n     PY ${p.digest}`);
   } else console.log(`  ✅ case ${i}: JS == Python${v ? " == pinned" : ""}  (${j.digest.slice(0, 14)}…)`);
 }
-if (fail) { console.error(`SIWC crosscheck FAILED: ${fail}/${cases.length}`); process.exit(1); }
-console.log(`SIWC crosscheck OK: ${cases.length} cases — JS ⇄ Python byte-identical${vectors ? " ⇄ pinned vectors" : ""}`);
+// deny legs: each case must be REFUSED by the JS builder (throw) AND by the Python reference (nonzero
+// exit on a single-case job). A side that builds what the other refuses is the divergence under test.
+for (const [name, f] of denyCases) {
+  let jsRefused = false;
+  try { buildSiwcMessage(f); } catch { jsRefused = true; }
+  const pd = spawnSync("python3", [new URL("./siwc_ref.py", import.meta.url).pathname], { input: JSON.stringify({ cases: [f] }), encoding: "utf8" });
+  const pyRefused = pd.status !== 0;
+  if (jsRefused && pyRefused) console.log(`  ✅ deny ${name}: BOTH refuse`);
+  else { fail++; console.error(`  ❌ deny ${name}: JS ${jsRefused ? "refuses" : "BUILDS"}, Python ${pyRefused ? "refuses" : "BUILDS"} — zero-length divergence`); }
+}
+
+if (fail) { console.error(`SIWC crosscheck FAILED: ${fail}`); process.exit(1); }
+console.log(`SIWC crosscheck OK: ${cases.length} build cases + ${denyCases.length} deny legs — JS ⇄ Python byte-identical${vectors ? " ⇄ pinned vectors" : ""}`);

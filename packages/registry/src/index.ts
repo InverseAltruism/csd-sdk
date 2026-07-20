@@ -78,7 +78,9 @@ export async function resolveName(src: IndexerSource, handle: string): Promise<R
   return getJsonOr404Null<ResolvedIdentity>(src, `/identity/${encodeURIComponent(handle)}`);
 }
 export async function reverseName(src: IndexerSource, address: string): Promise<ResolvedIdentity | null> {
-  return getJsonOr404Null<ResolvedIdentity>(src, `/address/${address}/identity`);
+  // B8-sdklow: encode exactly like the sibling resolveName encodes the handle - a raw interpolation lets
+  // a path-hostile "address" (/, ?, #) traverse into a different endpoint or smuggle a query string.
+  return getJsonOr404Null<ResolvedIdentity>(src, `/address/${encodeURIComponent(address)}/identity`);
 }
 
 // ── trust-minimized: compute the same answers client-side from raw records ──

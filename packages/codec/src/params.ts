@@ -38,6 +38,11 @@ export const MIN_FEE_ATTEST = 5_000_000; // 0.05 CSD
 export const MAX_TX_BYTES = 100_000; // 100 KB (node params: MAX_TX_BYTES)
 export const MAX_TX_INPUTS = 512;
 export const MAX_TX_OUTPUTS = 512;
+// App-payload byte caps the node enforces (node params/mod.rs: MAX_DOMAIN_BYTES / MAX_URI_BYTES; UTF-8
+// byte lengths, not code points). B8-sdklow: exported so builders can refuse at build time what the node
+// would reject at submit time (reject-more; a build-success/broadcast-failure is a silent trap).
+export const MAX_DOMAIN_BYTES = 128;
+export const MAX_URI_BYTES = 512;
 
 /** Largest u128 — the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
 export const MAX_U128 = (1n << 128n) - 1n;

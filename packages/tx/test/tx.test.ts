@@ -1,6 +1,6 @@
 // @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
 import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson } from "../src/index.js";
-import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
+import { txid, sighash, MIN_FEE_PROPOSE, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 
 let pass = 0, fail = 0;
@@ -156,6 +156,38 @@ console.log("\n— F9-C: buildProposeVerified / buildAttestVerified (money-out b
   ok("buildAttestVerified FAILS CLOSED when verify !ok (signs nothing)", af.ok === false && af.txid === undefined && !af.nodeJson);
   ok("buildAttestVerified rejects sub-minimum fee (fee-floor twin)", (await buildAttestVerified({ proposalId: PID, score: 1, confidence: 1, fee: 1, utxos: [u(1e9)], priv: PRIV, verify: async () => ({ ok: true, total: 1e9 }) })).ok === false);
   ok("buildAttestVerified honors the CONF_TOKEN_FILL marker confidence=1_000_000", (await buildAttestVerified({ proposalId: PID, score: 100, confidence: 1_000_000, fee: 5_000_000, utxos: [u(1e8)], priv: PRIV, verify: async () => ({ ok: true, total: 1e8 }) })).ok === true);
+}
+
+console.log("\n— B8-sdklow (REBIND): node-enforced caps the builders must refuse at BUILD time —");
+// The node rejects these at the mempool boundary (params/mod.rs: MAX_TX_OUTPUTS=512,
+// MAX_DOMAIN_BYTES=128, MAX_URI_BYTES=512); a builder that signs them anyway produces a silent
+// build-success/broadcast-failure. Reject-more only: everything the node accepts still builds.
+{
+  const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });
+  const PH = "0x" + "ab".repeat(32);
+  const RCPT = "0x" + "12".repeat(20);
+  // outputs cap: 512 recipients + a change output = 513 total -> refuse, naming the cap
+  const many = Array.from({ length: MAX_TX_OUTPUTS }, () => ({ to: RCPT, value: 1 }));
+  const over = buildSend({ outputs: many, fee: 1_000_000, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("outputs cap: 512 recipients + change (513 outputs) -> refused, cap named", over.ok === false && /MAX_TX_OUTPUTS/.test(String(over.error)));
+  // boundary accepted: 511 recipients + change = 512 exactly
+  const at = buildSend({ outputs: many.slice(0, MAX_TX_OUTPUTS - 1), fee: 1_000_000, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("outputs cap boundary: 511 recipients + change (512 outputs) still builds", at.ok === true && at.tx!.outputs.length === MAX_TX_OUTPUTS);
+  // domain cap (UTF-8 BYTES, not code points: a 2-byte char at the boundary must count as 2)
+  const dOver = buildPropose({ domain: "d".repeat(MAX_DOMAIN_BYTES + 1), payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("domain cap: 129 bytes -> refused, cap named", dOver.ok === false && /MAX_DOMAIN_BYTES/.test(String(dOver.error)));
+  const dUtf8 = buildPropose({ domain: "d".repeat(MAX_DOMAIN_BYTES - 1) + "é", payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("domain cap counts UTF-8 BYTES: 127 ascii + 1 two-byte char (129 bytes) -> refused", dUtf8.ok === false && /MAX_DOMAIN_BYTES/.test(String(dUtf8.error)));
+  const dAt = buildPropose({ domain: "d".repeat(MAX_DOMAIN_BYTES), payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("domain cap boundary: exactly 128 bytes still builds", dAt.ok === true);
+  // uri cap
+  const uOver = buildPropose({ domain: "d", payloadHash: PH, uri: "u".repeat(MAX_URI_BYTES + 1), expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("uri cap: 513 bytes -> refused, cap named", uOver.ok === false && /MAX_URI_BYTES/.test(String(uOver.error)));
+  const uAt = buildPropose({ domain: "d", payloadHash: PH, uri: "u".repeat(MAX_URI_BYTES), expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV });
+  ok("uri cap boundary: exactly 512 bytes still builds", uAt.ok === true);
+  // the verified builder inherits the same caps (single validation home)
+  const pvOver = await buildProposeVerified({ domain: "d".repeat(MAX_DOMAIN_BYTES + 1), payloadHash: PH, uri: "u", expiresEpoch: 1, fee: MIN_FEE_PROPOSE, utxos: [u(5_000_000_000)], priv: PRIV, verify: async () => ({ ok: true, total: 5_000_000_000 }) });
+  ok("buildProposeVerified inherits the domain cap", pvOver.ok === false && /MAX_DOMAIN_BYTES/.test(String(pvOver.error)));
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

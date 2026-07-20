@@ -1,7 +1,7 @@
 // @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
-import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
+import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
 import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@inversealtruism/csd-crypto";
 
 export interface Utxo { txid: string; vout: number; value: number; confirmations?: number; coinbase?: boolean }
@@ -153,6 +153,9 @@ function assemble(sel: Selection, total: number, outs: TxOutput[], sumOut: numbe
   }
   const outputs: TxOutput[] = [...outs];
   if (change > 0) outputs.push({ value: change, scriptPubkey: addr });
+  // B8-sdklow: the node's mempool boundary rejects > MAX_TX_OUTPUTS (change INCLUDED) - signing such a tx
+  // is a silent build-success/broadcast-failure. Reject-more only: everything the node accepts still builds.
+  if (outputs.length > MAX_TX_OUTPUTS) return { ok: false, error: `too many outputs (${outputs.length} > MAX_TX_OUTPUTS=${MAX_TX_OUTPUTS}, change included) - the node rejects this tx at the mempool boundary` };
   const tx: Tx = { version: 1, locktime: 0, app, inputs: sel.inputs.map((i) => ({ prevTxid: i.txid, vout: i.vout, scriptSig: "0x" })), outputs };
   const signed = signTx(tx, priv);
   // Node mempool rule (net/mempool.rs): feerate_ppm = fee*1e6/bytes must be ≥ MIN_FEERATE_PPM (=1),
@@ -228,9 +231,24 @@ const valueOuts = (outputs?: { to: string; value: number }[]): TxOutput[] | { er
   return outs;
 };
 
+// B8-sdklow: the node caps a Propose's app-payload strings by UTF-8 BYTE length (params/mod.rs:
+// MAX_DOMAIN_BYTES=128, MAX_URI_BYTES=512) and rejects the tx at the mempool boundary. Refuse at BUILD
+// time (reject-more; a signed-but-unbroadcastable tx is a silent trap). Shared by buildPropose and
+// buildProposeVerified so the two lanes cannot drift.
+const utf8Len = (s: string): number => new TextEncoder().encode(s).length;
+const proposeCapError = (domain: string, uri: string): string | null => {
+  const d = utf8Len(domain);
+  if (d > MAX_DOMAIN_BYTES) return `domain is ${d} UTF-8 bytes (> MAX_DOMAIN_BYTES=${MAX_DOMAIN_BYTES}) - the node rejects this tx`;
+  const u = utf8Len(uri);
+  if (u > MAX_URI_BYTES) return `uri is ${u} UTF-8 bytes (> MAX_URI_BYTES=${MAX_URI_BYTES}) - the node rejects this tx`;
+  return null;
+};
+
 /** Build + sign a Propose. Optional `outputs` ride in the SAME tx (atomic payment + record). `maxFee` overrides the backstop. */
 export function buildPropose(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; outputs?: { to: string; value: number }[]; maxFee?: number }): BuildResult {
   if (p.fee < MIN_FEE_PROPOSE) return { ok: false, error: `propose fee must be ≥ ${MIN_FEE_PROPOSE} (0.25 CSD)` };
+  const capErr = proposeCapError(p.domain, p.uri);
+  if (capErr) return { ok: false, error: capErr };
   const outs = valueOuts(p.outputs);
   if ("error" in outs) return { ok: false, error: outs.error };
   return selectAndAssemble(p.utxos, outs, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv, p.maxFee);
@@ -268,6 +286,8 @@ export function buildAttest(p: { proposalId: string; score: number; confidence: 
  */
 export async function buildProposeVerified(p: { domain: string; payloadHash: string; uri: string; expiresEpoch: number; fee: number; utxos: Utxo[]; priv: string; verify: InputVerifier; outputs?: { to: string; value: number }[]; maxFee?: number }): Promise<BuildResult> {
   if (p.fee < MIN_FEE_PROPOSE) return { ok: false, error: `propose fee must be ≥ ${MIN_FEE_PROPOSE} (0.25 CSD)` };
+  const capErr = proposeCapError(p.domain, p.uri);
+  if (capErr) return { ok: false, error: capErr };
   const outs = valueOuts(p.outputs);
   if ("error" in outs) return { ok: false, error: outs.error };
   const v = validateOuts(outs, p.fee, p.maxFee);
