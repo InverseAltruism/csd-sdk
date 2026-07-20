@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/vectors.test.ts && tsx test/name-decoy.test.ts && tsx test/client-helpers.test.ts && tsx test/paidto.test.ts && tsx test/preflight.test.ts && tsx test/primary.test.ts && tsx test/fclaim.test.ts && tsx test/fclaim-v28.test.ts && tsx test/verifyfill.test.ts && tsx test/wa-parity.test.ts",
+    "test": "node test/run.mjs",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
