@@ -3,9 +3,13 @@
 // property (deep-review 2026-07-03 §5): previewFill's delivered `got` equals the resolver's own delivered
 // amount at and around the C3 zero-delivery boundary — the case prior suites never constructed.
 import assert from "node:assert/strict";
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import path from "node:path";
 import {
   resolve, offer, deploy, mint, previewFill, fillIsSafe, finalizeWinnerCheck,
   requiredFillOutputs, buildFeeHeight, FEE_GATE_MARGIN_BLOCKS,
+  fillEndorsement, fillOutputPlan, fillTargetId, CONF_TOKEN_FILL, V28_HEIGHT,
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN, epochOf,
@@ -287,6 +291,77 @@ console.log("\nbuildFeeHeight — margin behavior at every name-fee gate:");
     ok(`gate ${g}: at the gate builds at tip (tier already live)`, buildFeeHeight(g) === g);
     ok(`gate ${g}: past the gate builds at tip`, buildFeeHeight(g + 1) === g + 1);
   }
+}
+
+// ── B6b (REBIND W10/M1): fillEndorsement + fillOutputPlan (discriminated successors; the deprecated
+// predicates stay FROZEN and their historical verdicts are pinned here so nobody "hardens" them in place) ──
+console.log("\nB6b fillEndorsement (W10) + fillOutputPlan (M1):");
+{
+  const HB = V28_HEIGHT + 100;
+  const FCTX = "0x" + "f9".repeat(32);
+  // a live fclaim hold held by B: the chain routes the fill to the FCLAIM txid at >= V28 (Correction 1)
+  const held: OfferState = {
+    id: nid(), seller: A, give: { ticker: "AAA", amount: "10" } as OfferState["give"],
+    want: { value: "500000000", payto: A } as OfferState["want"], status: "open",
+    expiresEpoch: 9e15, height: HB - 50, feeBps: FEE_BPS_V16,
+    claimedBy: B, claimUntilHeight: HB + 20, claimTxid: FCTX,
+  };
+  ok("sanity: fillTargetId routes to the fclaim txid during the hold", fillTargetId(held, HB) === FCTX);
+  // FROZEN deprecated behavior (W10 defect 2, pinned): fillIsSafe endorses the doomed offer-txid fill
+  ok("PINNED deprecated: fillIsSafe says safe:true during a live fclaim hold (cannot see the target)", fillIsSafe(held, B, "500000000", HB).safe === true);
+  // the successor closes it
+  const eWrong = fillEndorsement(held, B, "500000000", HB, { fillTargetId: held.id });
+  ok("fillEndorsement REFUSES an offer-txid fill during a live hold", eWrong.verdict === "refused" && /fclaim txid/.test(eWrong.reason));
+  const eRight = fillEndorsement(held, B, "500000000", HB, { fillTargetId: FCTX });
+  ok("fillEndorsement ENDORSES the fclaim-txid fill", eRight.verdict === "endorsed");
+  const eNone = fillEndorsement(held, B, "500000000", HB);
+  ok("fillEndorsement fails CLOSED when the target is unstated during a hold", eNone.verdict === "refused" && /fillTargetId/.test(eNone.reason));
+  // below V28 / no hold: the offer id is the target and stating it is fine
+  const plain: OfferState = { ...held, claimedBy: undefined, claimUntilHeight: undefined, claimTxid: undefined, taker: B };
+  ok("no hold: offer-id target endorses (taker-bound, no claim lane)", fillEndorsement(plain, B, "500000000", HB, { fillTargetId: plain.id }).verdict === "endorsed");
+  ok("no hold, no target passed: endorses (nothing re-routes)", fillEndorsement(plain, B, "500000000", HB).verdict === "endorsed");
+  ok("wrong taker refused", fillEndorsement(plain, C, "500000000", HB).verdict === "refused");
+  ok("cancelled refused", fillEndorsement({ ...plain, status: "cancelled" }, B, "500000000", HB).verdict === "refused");
+
+  // token want (W10 defect 1): the deprecated boolean endorses; the successor is honestly NON-endorsing
+  const tokenWant: OfferState = { ...plain, want: { ticker: "OTH", amount: "5", payto: A } as unknown as OfferState["want"] };
+  ok("PINNED deprecated: fillIsSafe says safe:true for a token want", fillIsSafe(tokenWant, B, 1n, HB).safe === true);
+  const eTok = fillEndorsement(tokenWant, B, 1n, HB);
+  ok("fillEndorsement returns the DISTINCT not-endorsable verdict for a token want (never 'refused' - the B7f trap)", eTok.verdict === "not-endorsable" && /NOT a refusal/.test(eTok.reason));
+
+  // fillOutputPlan (M1): three kinds instead of [] | null
+  const pCsd = fillOutputPlan(plain, "500000000");
+  ok("plan: CSD deliverable -> kind csd-outputs, same math as requiredFillOutputs", pCsd.kind === "csd-outputs" && JSON.stringify(pCsd.outputs.map((o) => [o.to, String(o.value)])) === JSON.stringify(requiredFillOutputs(plain, "500000000")!.map((o) => [o.to, String(o.value)])));
+  const pTok = fillOutputPlan(tokenWant, 1n);
+  ok("plan: token want -> kind token-settled with the CONF_TOKEN_FILL marker (NOT a silent [])", pTok.kind === "token-settled" && pTok.outputs.length === 0 && pTok.confidence === CONF_TOKEN_FILL);
+  ok("PINNED deprecated: requiredFillOutputs still returns [] for the same token want (frozen, load-bearing)", requiredFillOutputs(tokenWant, 1n)?.length === 0);
+  const pLow = fillOutputPlan(plain, "1");
+  ok("plan: below-min -> kind undeliverable with reason below-min", pLow.kind === "undeliverable" && pLow.reason === "below-min");
+  ok("PINNED deprecated: requiredFillOutputs still returns null for the same underpay (frozen)", requiredFillOutputs(plain, "1") === null);
+  const pTokClosed = fillOutputPlan({ ...tokenWant, status: "cancelled" }, 1n);
+  ok("plan: token want on a NON-open offer -> undeliverable not-open (the deprecated [] hid this too)", pTokClosed.kind === "undeliverable" && pTokClosed.reason === "not-open");
+
+  // MUTATIONS (red-first, executable forever): remove each new guard line from the SOURCE and prove the
+  // detector flips - each guard is the sole rejecter of its doomed case.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const PSRC = path.join(here, "..", "src", "preflight.ts");
+  const withLineRemoved = async <T,>(marker: string, run: (mod: typeof import("../src/preflight.js")) => T): Promise<T> => {
+    const src = readFileSync(PSRC, "utf8");
+    const lines = src.split("\n");
+    const kept = lines.filter((l) => !l.includes(marker));
+    assert.equal(kept.length, lines.length - 1, `mutation marker ${marker} must match exactly one line`);
+    const tmp = path.join(here, "..", "src", `__mutant_${marker}_${Date.now()}.ts`);
+    writeFileSync(tmp, kept.join("\n"));
+    try { return run(await import(pathToFileURL(tmp).href) as typeof import("../src/preflight.js")); }
+    finally { unlinkSync(tmp); }
+  };
+  ok("MUTATION[target check removed]: the doomed offer-txid fill is now endorsed -> the check is the sole rejecter",
+    (await withLineRemoved("MUTATE_END_TARGET_MISMATCH", (m) => m.fillEndorsement(held, B, "500000000", HB, { fillTargetId: held.id }))).verdict === "endorsed");
+  ok("MUTATION[unstated-target fail-close removed]: the target-less hold fill is now endorsed -> the fail-close is the sole rejecter",
+    (await withLineRemoved("MUTATE_END_TARGET_REQUIRED", (m) => m.fillEndorsement(held, B, "500000000", HB))).verdict === "endorsed");
+  ok("MUTATION[undeliverable branch removed]: below-min degrades to zero-delivery -> the branch is what names the refusal",
+    (await withLineRemoved("MUTATE_PLAN_UNDELIVERABLE", (m) => m.fillOutputPlan(plain, "1"))).kind === "undeliverable"
+    && (await withLineRemoved("MUTATE_PLAN_UNDELIVERABLE", (m) => m.fillOutputPlan(plain, "1")) as { reason?: string }).reason === "zero-delivery");
 }
 
 console.log(`\npreflight: ${pass} passed, ${fail} failed`);

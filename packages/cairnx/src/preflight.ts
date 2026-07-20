@@ -27,6 +27,7 @@
 import {
   V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, V28_HEIGHT, TREASURY_ADDR,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN,
+  CONF_TOKEN_FILL,
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
 } from "./types.js";
@@ -100,7 +101,19 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
  *  claims/takers. Until 2026-07-06 this map was hand-mirrored in the wallet's fillOffer, the cairnx
  *  service txbuild, and TWICE in the cairn trade UI — four copies of fund-loss-class math with no
  *  cross-repo lock. This is now the only place it lives; test/preflight.test.ts pins it against the
- *  real resolver (outputs accepted; any single-unit per-address underpayment refused). */
+ *  real resolver (outputs accepted; any single-unit per-address underpayment refused).
+ *
+ *  DOC CORRECTION (B6b / REBIND M1) — the `[]` vs `null` asymmetry is a live hazard, not a convenience:
+ *  `[]` (token want) means "no CSD outputs are required", it does NOT mean "this fill is checked". Every
+ *  caller whose safety loop is `for (const o of outs) ...` iterates ZERO times on a token fill and passes
+ *  silently, while the undeliverable-CSD case (`null`) is explicitly refused. That asymmetry is the
+ *  mechanical reason the token-fill hole (W1) propagated to every consumer. The token side of a fill is
+ *  settled from the ATTESTER's token balance and carries the CONF_TOKEN_FILL confidence marker; nothing
+ *  in this return value verifies any of that.
+ *  @deprecated Use `fillOutputPlan` - it returns the same math behind a DISCRIMINATED result, so the
+ *  token-want case cannot be silently conflated with "nothing to check". This function's behavior is
+ *  FROZEN (published npm API; `[]` is load-bearing in downstream builders and tests) and it will keep
+ *  working; new callers should not add to the need-map-loop hazard. */
 export function requiredFillOutputs(
   offer: OfferState,
   payRaw: bigint | string | number,
@@ -114,6 +127,36 @@ export function requiredFillOutputs(
   add(TREASURY_ADDR, p.fee);
   add(offer.seller, p.rebate);
   return [...need].map(([to, value]) => ({ to, value }));
+}
+
+/** B6b (REBIND M1): the DISCRIMINATED successor to requiredFillOutputs. Same math (it calls
+ *  requiredFillOutputs - the addr->sum map still lives in exactly one place); the difference is that the
+ *  three outcomes a caller must treat differently are now three distinct kinds instead of `[] | null`:
+ *    "csd-outputs"   - build EXACTLY these CSD outputs (payto + treasury fee + maker rebate, merged per
+ *                      address). The normal CSD-priced case.
+ *    "token-settled" - a token-priced offer: there are NO CSD outputs to build, and that is NOT the same
+ *                      as "checked". The fill debits the ATTESTER's want-token balance and the attest MUST
+ *                      carry `confidence` (= CONF_TOKEN_FILL, resolve.ts requires the explicit marker).
+ *                      Verify your token balance and terms yourself before signing.
+ *    "undeliverable" - the resolver would reject this payment AFTER the CSD moved; do not sign.
+ *  ADDITIVE and default-safe: requiredFillOutputs is unchanged in behavior (its `[]` is load-bearing in
+ *  published consumers); this wrapper only makes the pivot impossible to fall through silently. */
+export type FillOutputPlan =
+  | { kind: "csd-outputs"; outputs: { to: string; value: bigint }[]; preview: FillPreview }
+  | { kind: "token-settled"; outputs: []; confidence: number; preview: FillPreview }
+  | { kind: "undeliverable"; reason: "not-open" | "not-csd-priced" | "below-min" | "zero-delivery"; preview: FillPreview };
+export function fillOutputPlan(offer: OfferState, payRaw: bigint | string | number): FillOutputPlan {
+  const preview = previewFill(offer, payRaw);
+  if (isTokenWant(offer.want)) {
+    // token-priced: previewFill deliberately reports not-csd-priced; the offer being non-open is still a
+    // hard refusal (an attest on a closed offer delivers nothing), so surface that before the token verdict.
+    if (offer.status !== "open") return { kind: "undeliverable", reason: "not-open", preview };
+    return { kind: "token-settled", outputs: [], confidence: CONF_TOKEN_FILL, preview };
+  }
+  if (!preview.deliverable) return { kind: "undeliverable", reason: preview.reason === "not-open" || preview.reason === "below-min" ? preview.reason : "zero-delivery", preview }; // MUTATE_PLAN_UNDELIVERABLE
+  const outputs = requiredFillOutputs(offer, payRaw);
+  if (outputs === null) return { kind: "undeliverable", reason: "zero-delivery", preview };   // defensive; same math as preview
+  return { kind: "csd-outputs", outputs, preview };
 }
 
 /** Name-fee build heuristic (app-side, NOT a resolver rule): a name-fee OUTPUT built just below a fee
@@ -161,9 +204,21 @@ export function fillTargetId(offer: OfferState, tip: number): string {
 
 /** The union verdict a client must clear BEFORE signing a fill of `offer` paying `pay`, as `me`, at `tip`.
  *  Closes C2/C3/C4: status open, deliverability >= 1 token, live-claim holdership for the open-CSD lane,
- *  and taker match. `safe:true` ⇒ the fill is guaranteed to be accepted by the deterministic gates a
- *  payer can verify at signing time (the irreducible timing residual — CLAIM_FILL_GRACE_BLOCKS late mine
- *  — is documented, not closable by a preflight). Returns the preview so the caller can size outputs. */
+ *  and taker match. Returns the preview so the caller can size outputs.
+ *
+ *  DOC CORRECTION (B6b / REBIND W10) — the historical claim that `safe:true` means "the fill is guaranteed
+ *  to be accepted by the deterministic gates a payer can verify at signing time" OVER-STATES this predicate
+ *  on two counts, both live:
+ *    1. For a TOKEN-priced want it returns `safe:true` unconditionally ("deliverability is the buyer's
+ *       balance"). That is an honest statement of what it cannot see, but as a boolean it reads as an
+ *       ENDORSEMENT of the un-verifiable path - the never-over-claim rule this codebase holds elsewhere.
+ *    2. It never receives the FILL TARGET id, so it cannot implement the v2.8 Correction-1 clause: during
+ *       a live fclaim hold the chain rejects an attest on the OFFER txid (the payment must attest the
+ *       FCLAIM txid), and this predicate says `safe:true` for exactly that doomed fill.
+ *  @deprecated Use `fillEndorsement` - a discriminated verdict ("endorsed" / "refused" / "not-endorsable")
+ *  plus the `fillTargetId` parameter that closes both gaps. This function's verdicts are FROZEN (published
+ *  npm API; flipping them could hard-refuse honest fills in unknowable third-party dApps) and it keeps
+ *  working; it must not be "hardened" in place. */
 export interface FillSafety { safe: boolean; reason: string; preview: FillPreview }
 export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string | number, tip: number): FillSafety {
   const preview = previewFill(offer, pay);
@@ -179,6 +234,57 @@ export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string |
     return { safe: false, reason: "this payment would deliver 0 tokens — refusing (the CSD would be lost)", preview };
   }
   return { safe: true, reason: "ok", preview };
+}
+
+/** B6b (REBIND W10): the DISCRIMINATED successor to fillIsSafe. Three verdicts, and consuming them
+ *  correctly is part of the contract:
+ *    "endorsed"       - every deterministic gate a payer can verify at signing time passes (status, taker,
+ *                       open-lane holdership, deliverability, and - NEW - the v2.8 fill-target routing).
+ *    "refused"        - the chain WILL reject this fill after the payment moved. Do not sign.
+ *    "not-endorsable" - a TOKEN-priced want: deliverability is the attester's token balance, which this
+ *                       pure predicate cannot see. This is HONEST NON-ENDORSEMENT, not refusal: proceed
+ *                       with your own token-balance and proven-terms checks (a consumer that treats this
+ *                       as "refuse" hard-blocks every honest token fill - the named B7f trap).
+ *
+ *  `opts.fillTargetId` is the proposal txid your attest will actually target. Pass it whenever you have
+ *  it (= `fillTargetId(offer, tip)` for an honest builder). The v2.8 Correction-1 clause (resolve.ts
+ *  openFillReject): during a live fclaim hold an attest on the OFFER txid is rejected while the payment
+ *  still moves - the exact doomed fill the deprecated fillIsSafe endorses. If the offer carries a live
+ *  fclaim-hold routing and no target is supplied, the endorsement fails CLOSED with instructions rather
+ *  than guessing what your builder will attest. */
+export type FillEndorsement =
+  | { verdict: "endorsed"; reason: "ok"; preview: FillPreview }
+  | { verdict: "refused"; reason: string; preview: FillPreview }
+  | { verdict: "not-endorsable"; reason: string; preview: FillPreview };
+export function fillEndorsement(
+  offer: OfferState,
+  me: string,
+  pay: bigint | string | number,
+  tip: number,
+  opts?: { fillTargetId?: string },
+): FillEndorsement {
+  const preview = previewFill(offer, pay);
+  const refuse = (reason: string): FillEndorsement => ({ verdict: "refused", reason, preview });
+  if (offer.status !== "open") return refuse(`offer is ${offer.status}`);
+  if (offer.taker !== undefined && offer.taker.toLowerCase() !== me.toLowerCase())
+    return refuse("taker-bound offer - not bound to you");
+  if (isOpenClaimLane(offer, tip) && !hasLiveClaim(offer, me, tip))
+    return refuse("open CSD offer - claim it first and fill while your claim is live");
+  // v2.8 Correction-1 (the W10 gap): the attested target must be what the chain routes at `tip`.
+  const expected = fillTargetId(offer, tip);
+  const holdRouted = expected.toLowerCase() !== offer.id.toLowerCase();     // a live fclaim hold re-routes the target
+  if (opts?.fillTargetId !== undefined) {
+    if (String(opts.fillTargetId).toLowerCase() !== expected.toLowerCase()) return refuse(holdRouted ? "v2.8: a live fclaim hold routes this fill - the attest must target the fclaim txid, not the offer id (an offer-txid fill is chain-rejected after the payment moved)" : "the attested fill target does not match this offer's routing (attest the offer id)"); // MUTATE_END_TARGET_MISMATCH
+  } else if (holdRouted) {
+    return refuse("v2.8: a live fclaim hold routes this fill - pass opts.fillTargetId (use fillTargetId(offer, tip)) so the endorsement can verify what your attest targets"); // MUTATE_END_TARGET_REQUIRED
+  }
+  if (isTokenWant(offer.want))
+    return { verdict: "not-endorsable", reason: "token-priced want - deliverability is the attester's token balance, which a pure record predicate cannot see; NOT an endorsement and NOT a refusal (verify your token balance + proven terms, then proceed)", preview };
+  if (!preview.deliverable) {
+    if (preview.reason === "below-min") return refuse("payment is below the offer minimum");
+    return refuse("this payment would deliver 0 tokens - refusing (the CSD would be lost)");
+  }
+  return { verdict: "endorsed", reason: "ok", preview };
 }
 
 /** C1: may `me` safely sign the fee-bearing registration `nfinalize` for `nameState` committed at
