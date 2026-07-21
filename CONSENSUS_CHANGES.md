@@ -56,6 +56,59 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.1.40 (2026-07-21, PENDING bump + publish + activation) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
+
+**Consensus change (gated, non-retroactive): `V29_HEIGHT` = 88,000** (set 2026-07-20 by operator decision;
+tip was ~58.3k). Two resolve()-side corrections that both move canonical state, so both ride the ONE gate,
+each keyed on the EVENT's OWN height (`>= V29_HEIGHT`), never the tip (non-retroactive, fork-safe; a
+mixed-version fleet does not fork below the gate). Version note: 0.1.39 (tag `cairnx-core-0.1.39`) is the B6
+CLIENT-additive surface (opt-in `bindOfferTerms` give/want-type legs + the `MintedProvenOfferTerms` brand,
+`fillEndorsement`/`fillOutputPlan`, fclaim-aware `claimWindowOf`, the M13 publish-guard test gate) and made
+NO consensus change: the B6-SEAL differential (`scripts/seal-differential.mjs`) proved canonical state
+byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gate.
+
+- **M4 (event de-dup; reject-more, but it moves canonical state):** resolve()'s consensus ordering step sorts
+  but never de-duplicated, so a double-fed transaction (an overlapping scanner page) applied twice and
+  double-credited `o.paid`/`o.delivered` on the partial-fill path. At an event height >= V29 a duplicate
+  (same propose `id` / attest `txid`) is dropped before apply; the first in consensus order is kept
+  (`resolve.ts` `eid`/`seenIds`). The identity is the L1 tx hash (sha256d), not attacker-choosable, and a
+  duplicate pair shares one txid == one block, so both copies always land on the SAME side of the gate. The
+  cairnx-SERVICE-side de-dup on the attestation pull (its `scan.ts`) is a separate, un-gated defensive
+  change; only the resolve() half is gated here.
+- **M5 (concurrent-hold status filter; RELAXATION):** `claimHeld` is status-independent and the last-write-wins
+  claim fields (`claimedBy`/`claimUntilHeight`/`claimTxid`, never cleared by the section-31 invariant) survive a
+  fill, so a FILLED offer kept consuming one of the holder's `MAX_ACTIVE_CLAIMS` slots until its hold window
+  lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
+  counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
+  The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
+  deny. The same clause on the legacy SCORE_CLAIM path (resolve.ts ~:846) is inert by design (SCORE_CLAIM at
+  height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
+
+**Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state
+byte-identical to the B6 tree for EVERY event/tip < 88,000, with named coverage floors across
+offers/grants/fills/partials/legacy claims/duplicates); golden vectors 76/76 (72 B6-era + 4 new v29); the
+fork-lens fixture (`packages/cairnx/test/fork-lens-v29.test.ts`) pins the divergence height at exactly 88,000
+for BOTH M4 and M5; crosslang straddle 13/13 (heights 87,997..88,002, JS == Python, the oracle independently
+derived from the spec).
+
+**Adoption discipline (HARD gate, sharper than V28 because M5 is a relaxation):** a stale replayer DENIES a
+claim the chain GRANTS (view divergence; no fund loss, the stale side strands rather than burns). EVERY
+replayer (the cairnx svc, clarvis, the vendored site + wallet bundles, cairn-sdk, cairn-cli, csd-indexer, the
+Python oracle) MUST run the v2.9 core and be confirmed RUNNING by live query before the tip crosses 88,000,
+never "publish and hope". The demonstrated weak link is the CWS field wallet (store review queue no one here
+controls): the height stays movable UNTIL 0.1.40 publishes (a pre-publish go/no-go), with a mid-rollout
+checkpoint at ~tip 80,000 and a 0.1.41 re-pin escape hatch if adoption lags.
+
+**Rollout checklist deltas for this gate (on top of the V28+ checklist at the bottom of this file):**
+1. **Replay-hash RE-PIN is a POST-CROSSING step.** The `replay-hashes.json` V29 entry can only be generated
+   once the tip is past 88,000 (the generator needs the live indexer reachable into the V29 region). NEVER
+   re-pin from a guessed hash; in-tree the re-pin is stubbed, not faked (the assertion SKIPs unchanged until
+   the corpus exists). Stop rule: regenerating the EXISTING pinned heights must reproduce them byte-identical
+   FIRST; any divergence there is an incident (stop, page the operator), never a reason to edit a pin.
+2. CONVENTION.md still reads v2.8: the normative v2.9 section-32 write-up is pending; until it lands, the
+   section-32 semantics live in the `types.ts`/`resolve.ts` comments and `conformance/cairnx_ref.py`
+   (flagged in the 2026-07-21 docs-truth pass; close it with the 0.1.40 release docs).
+
 ## cairnx-core 0.1.38 + csd-tx 0.1.17 (2026-07-17, Plan 70 R2) - fill-boundary consolidation + L1 cushion + verified builders (CLIENT reject-more; resolve() byte-identical)
 
 NOT a canonicalState change: `resolve.ts` and `replay-hashes.json` are byte-identical to 0.1.37 (72/72 golden vectors + crosslang + 1000-seq fuzz unchanged; the WA-PARITY 3-seam corpus proves the fill-boundary behavior is preserved). This is CLIENT-side reject-more + additive, non-retroactive, needs NO height gate: a stale verifier keeps the old (still fund-safe) behavior, no fork.

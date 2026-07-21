@@ -22,7 +22,7 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 | csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport only. |
 | csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted). |
 | csd-vectors | Golden conformance vectors from the node's frozen golden_vectors.rs + real on-chain data. Zero deps. |
-| cairnx-core (packages/cairnx) | THE crown jewel: `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). resolve.ts, types.ts (ALL gate heights + fee constants + regexes + RESERVED_NAMES), records.ts (parseRecord/onlyKeys), preflight.ts (previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck), primary.ts (pickPrimaryName). Ships the normative CONVENTION.md (v2.7) + portable vectors + replay-hashes. |
+| cairnx-core (packages/cairnx) | THE crown jewel: `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). resolve.ts, types.ts (ALL gate heights + fee constants + regexes + RESERVED_NAMES + the pure client selectors incl. claimWindowOf), records.ts (parseRecord/onlyKeys), preflight.ts (previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck, fillEndorsement, fillOutputPlan), verifyfill.ts (verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary), primary.ts (pickPrimaryName). Ships the normative CONVENTION.md (v2.8; the v2.9 section-32 normative write-up is pending, semantics in code + oracle comments) + portable vectors + replay-hashes. |
 | csd-registry | L3 registries: peer/gateway/identity discovery; deterministic resolvers + commit-reveal identity; integer fixed-point decay. |
 | csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
 | csd-indexwire | csd-indexer REST wire contract as types + runtime guards. Published; no consumer pins it yet. |
@@ -31,7 +31,7 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 
 ## Consensus gates (all in packages/cairnx/src/types.ts; height-pure, non-retroactive)
 
-V16 = 33,600 (fee 1% -> 1.5% + maker rebate) | V17 = 34,000 (claim-to-fill) | V19 = 36,700 (nprofile) | V20 = 38,400 (late-fill fund-loss fix, claim window 15 -> 40 + 5 grace) | V18 = 40,000 (2-tier name fee) | V21 = 40,100 (offer duration cap 168 epochs) | V22 = 41,300 (cap removed for offers >= V22) | V24 = 46,400 (4-tier name fee 15/10/5/3 CSD) | V25 = 46,440 (sealed reservation: payment-free reveal, winner-only nfinalize) | V26 = 46,480 (sealed recapture) | V27 = 46,520 (young-name sale embargo 240 -> 8 blocks). All ACTIVE. V23 = 52,000 (nset-clear to zero addr) is the ONLY pending gate; tip crosses ~2026-07-11/12.
+V16 = 33,600 (fee 1% -> 1.5% + maker rebate) | V17 = 34,000 (claim-to-fill) | V19 = 36,700 (nprofile) | V20 = 38,400 (late-fill fund-loss fix, claim window 15 -> 40 + 5 grace) | V18 = 40,000 (2-tier name fee) | V21 = 40,100 (offer duration cap 168 epochs) | V22 = 41,300 (cap removed for offers >= V22) | V24 = 46,400 (4-tier name fee 15/10/5/3 CSD) | V25 = 46,440 (sealed reservation: payment-free reveal, winner-only nfinalize) | V26 = 46,480 (sealed recapture) | V27 = 46,520 (young-name sale embargo 240 -> 8 blocks) | V23 = 52,000 (nset-clear to zero addr; crossed ~2026-07-11). All ACTIVE. V28 = 60,000 (fclaim open-lane settlement atomicity, section 31) is AT THE CROSSING (tip ~58.3k on 2026-07-21, crosses ~07-22/23; every primary replayer runs the v2.8 core). V29 = 88,000 (M4 event de-dup + M5 concurrent-hold status filter, v2.9) is the only GATED-pending height, adoption-gated on the cairnx-core 0.1.40 fan-out; see CONSENSUS_CHANGES.md for both.
 
 RESERVED_NAMES (csd, treasury, admin, official, root, www, support) is CONSENSUS and lives here: defined in packages/cairnx/src/types.ts, enforced by records.ts isName, mirrored in conformance/cairnx_ref.py. It is the chain's ONLY name blocklist (no profanity filter exists anywhere); changing it is a fork, same rules as a gate.
 
@@ -47,6 +47,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 - Consumers must pin exact versions; never let a lockfile resolve two different csd-codec copies (sign with one encoding, verify with another).
 - The Python oracle is independent by design, written from the spec, never transliterated from the JS. It exists to catch exactly the C1 class.
 - Numeric-key trap (CONVENTION 5.1 A2): canonicalJson sorts keys pure code-unit ("10" before "2") but canonicalState inherits JSON.stringify enumeration (integer keys ascending-numeric FIRST). Both must be reproduced; pinned by vector.
+- claimWindowOf is a depth HINT, never a sole fund gate (published npm surface; FU-8). For an fclaim hold (claimTxid passed) it returns FCLAIM_WINDOW_MIN = 46, the MINIMUM span an fclaimEpochFor-requested hold can carry, so the derived grant is normally never earlier than the true grant and depth is UNDER-stated (fail-safe). But an EXPIRY-CAPPED hold (E clamped to the offer's expiry) can carry a true span < 46; there the derived grant is EARLIER than the true grant and claimWindowOf-derived depth OVER-states burial by (46 - true span) blocks, early in the hold (vs the legacy 40-block inverse this adds at most 6 blocks of over-statement; spans < 40 over-stated under the legacy constant too). Consumers MUST gate funds on verifyFillSpv's independently computed merkle burial (verifyfill.ts derives depth from the proven events and never imports claimWindowOf), exactly as the site swapguard and wallet do.
 - npm tokens are NEVER stored: a maintainer supplies a one-time token per publish (temp gitignored .npmrc, deleted/revoked immediately; redact npm_* in any output).
 - Do not republish for docs alone (the 0.1.36 stale-docs republish was DECLINED; it rides the next real release).
 
@@ -87,9 +88,9 @@ Gotchas: pnpm blocks esbuild postinstall unless onlyBuiltDependencies (already s
 
 Consensus-touching checklist (CONSENSUS_CHANGES.md): (1) land with golden vectors, (2) bump only changed packages, (3) add a CONSENSUS_CHANGES entry describing exactly what bytes/math changed, (4) full suite against a live node, then `pnpm publish` per package (one-time maintainer token). For a new gate/fee tier follow the V28+ rollout checklist. Vendored consumers (cairn website bundle, wallet SPV bundle) carry PROVENANCE.json regenerated by their own check-vendor-fresh.mjs --write; their CI is red between a core merge here and their re-vendor commit, so land re-vendors promptly.
 
-## Consumer footprint (who pins what, verified 2026-07-09)
+## Consumer footprint (who pins what, verified 2026-07-21 in the sibling checkouts)
 
-npm-pinning consumers (verifiable in their public repos / npm): cairn-cli 0.3.19 pins cairnx-core 0.1.35, csd-codec 0.1.15, csd-registry 0.1.16. cairn-sdk 0.2.1 pins cairnx-core 0.1.34 + csd-tx 0.1.15 (STALE; re-pin is an open LOW for cairn-sdk 0.2.2). csd-indexer 0.2.6 pins csd-codec/csd-crypto 0.1.15, csd-registry 0.1.16. The cairnx trading service and the bridge relayer also pin exact versions; scripts/check-consumer-pins.mjs asserts pin coherence across whatever sibling checkouts it finds.
+npm-pinning consumers: cairn-cli 0.3.22 pins cairnx-core 0.1.38, csd-codec/csd-crypto 0.1.15, csd-registry 0.1.16. cairn-sdk 0.3.2 (branch rebind/b4b, 0.4.0-to-be) pins cairnx-core 0.1.38 + csd-tx 0.1.17 + csd-light 0.1.18 + csd-client/codec/crypto 0.1.15 + csd-registry 0.1.16. csd-indexer 0.2.9 pins csd-codec/csd-crypto 0.1.15, csd-light 0.1.17, csd-registry 0.1.16. cairnx 0.4.20 (0.4.21-to-be) pins cairnx-core 0.1.38 + csd-tx 0.1.16. The bridge relayer also pins exact versions (testnet-only). ALL cairnx-core consumers re-pin to 0.1.40 at its publish (runbook step; never pin an unpublished version); scripts/check-consumer-pins.mjs asserts pin coherence across whatever sibling checkouts it finds.
 
 Vendored consumers: the cairn website serves the packages server-side and ships PROVENANCE-pinned browser vendor bundles; cairn-wallet ships its own vendored SPV bundle whose PROVENANCE pins an exact csd-sdk version + commit, kept honest by each repo's check-vendor-fresh gate and the shared golden vectors. clarvis (the second-source resolver) runs cairnx-core and must ride every gate bump.
 
@@ -104,20 +105,25 @@ Vendored consumers: the cairn website serves the packages server-side and ships 
 - CI pnpm/action-setup reads the version from packageManager; do NOT also pass version:.
 - Activation-height re-pins are legal but coordinated-only (the 2026-07-03 V24-V27 pull-in required same-day re-pin of every verifier).
 
-## State snapshot (2026-07-09; ephemeral facts live HERE; verify with git/npm before trusting)
+## State snapshot (2026-07-21, REBIND S-06; ephemeral facts live HERE; verify with git/npm before trusting)
 
-Snapshot updated 2026-07-10 (csd-light 0.1.16 LWMA memo). Root csd-sdk 0.1.10 (private, never published). In-tree versions == npm for all packages EXCEPT csd-light (0.1.16 in-tree, publish pending maintainer say-so):
+Branch rebind/b6 (the REBIND B6 + B9 stack; the 0.1.40 bump commit, --ff-only merge to master, tag `cairnx-core-0.1.40` and publish are close-out/runbook steps). Root csd-sdk 0.1.10 (private, never published). Published npm state:
 
-| Package | Version |
+| Package | npm version |
 |---|---|
-| cairnx-core | 0.1.35 |
-| csd-tx | 0.1.16 |
+| cairnx-core | 0.1.38 |
+| csd-tx | 0.1.17 |
+| csd-light | 0.1.18 |
 | csd-registry | 0.1.16 |
-| csd-light | 0.1.16 (in-tree; npm at 0.1.15 until the next publish — LWMA memo, perf-only, see CONSENSUS_CHANGES) |
 | csd-client, csd-codec, csd-crypto, csd-siwc, csd-vectors | 0.1.15 |
 | csd-indexwire | 0.1.0 |
 
-Published sibling consumers at snapshot time: cairn-cli 0.3.19, cairn-sdk 0.2.1, csd-indexer 0.2.6. Known doc wart: the npm tarball for cairnx-core 0.1.35 ships a stale pre-re-pin CONVENTION/README (heights corrected in-tree by 6cccfd1); per the no-docs-only-republish rule the fix rides the next real release.
+In-tree package.json numbers still read the published versions, but the TREE IS AHEAD of npm on this branch (version bumps are deliberately deferred to close-out, per the R3 rule: bump BEFORE the downstream re-vendors regenerate PROVENANCE so csdSdkVersion pins the real number):
+
+- cairnx-core 0.1.40-to-be = the B6 CLIENT-additive surface (opt-in bindOfferTerms give/want-type legs + the MintedProvenOfferTerms brand, fillEndorsement/fillOutputPlan, fclaim-aware claimWindowOf, the M13 publish-guard test gate; SEAL-proven canonical-state byte-identical to 0.1.38 with every opt-in off; tag point for 0.1.39) + the B9 V29 consensus gate @ 88,000 (M4 event de-dup + M5 concurrent-hold status filter; see CONSENSUS_CHANGES.md).
+- codec/tx/registry carry the B8-sdklow leaf hardening (verifyMerkleProof boolean-not-throw, node byte caps in builders via MAX_DOMAIN_BYTES/MAX_URI_BYTES, registry URL-encode) riding the same release train.
+
+Gate state: V28 = 60,000 is CROSSING ~2026-07-22/23 (every primary replayer on the v2.8 core). V29 = 88,000 is GATED-pending; the replay-hash V28 baseline re-pin (B8-hash) and the V29 re-pin are post-crossing runbook steps (see the 0.1.40 CONSENSUS_CHANGES entry).
 
 ## Cross-repo map
 

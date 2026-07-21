@@ -346,10 +346,17 @@ export const FCLAIM_WINDOW_MIN = CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOC
 // a false "not ready" on the flagship name-buy flow. Pass the offer's claimTxid to get FCLAIM_WINDOW_MIN
 // (46), the SAFE bound: the true span is 46..75, so the derived grant is never EARLIER than the real grant
 // and depth is never over-stated (a fill can never fire before the true burial) while refusals strictly
-// shrink vs the legacy 40. Residual: up to 29 blocks of extra wait on late-in-epoch grants (fail-safe), and
-// an expiry-capped fclaim (E clamped to the offer's expiry) can carry a smaller true span - unchanged risk
-// shape vs the legacy constant, and such holds end AT offer expiry, where fill-before-expiry gates already
-// refuse. A one-argument call is byte-identical to the pre-B6 inverse (claimTxid undefined = legacy claim).
+// shrink vs the legacy 40. Residual: up to 29 blocks of extra wait on late-in-epoch grants (fail-safe).
+//
+// CONSUMER WARNING (FU-8, G10 carry-forward; the fail-DANGEROUS corner): the never-over-stated guarantee
+// above holds for NON-capped holds only. An EXPIRY-CAPPED fclaim (E clamped to the offer's expiry) can
+// carry a true span < 46; there the derived grant is EARLIER than the true grant and claimWindowOf-derived
+// depth OVER-states burial by (46 - true span) blocks, EARLY in the hold (vs the legacy 40 inverse this
+// adds at most 6 blocks; spans < 40 were over-stated under the legacy constant too). So claimWindowOf is a
+// preflight/display depth HINT, NEVER a sole fund gate: gate funds on verifyFillSpv, which derives burial
+// independently from the proven events and never imports this inverse (the site swapguard and the wallet
+// both do exactly that). A one-argument call is byte-identical to the pre-B6 inverse (claimTxid undefined
+// = legacy claim).
 export const claimWindowOf = (claimUntilHeight: number, claimTxid?: string): number => {
   if (claimTxid !== undefined) return FCLAIM_WINDOW_MIN; // MUTATE_M6_FCLAIM_WINDOW
   return (claimUntilHeight - CLAIM_WINDOW_BLOCKS_V20) >= V20_HEIGHT ? CLAIM_WINDOW_BLOCKS_V20 : CLAIM_WINDOW_BLOCKS;

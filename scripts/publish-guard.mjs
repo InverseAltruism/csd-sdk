@@ -32,7 +32,8 @@ if (r.status !== 0) {
 }
 
 // ── B6d (REBIND M13): the publish gate runs the tests ──────────────────────────────────────────────
-if (process.env.CSD_PUBLISH_SKIP_TESTS === "1") {
+const skippedTests = process.env.CSD_PUBLISH_SKIP_TESTS === "1";
+if (skippedTests) {
   console.error("publish-guard: ##########################################################");
   console.error("publish-guard: ##  TESTS SKIPPED - CSD_PUBLISH_SKIP_TESTS=1 is set.    ##");
   console.error("publish-guard: ##  You are publishing WITHOUT this package's suite     ##");
@@ -58,4 +59,6 @@ if (process.env.CSD_PUBLISH_SKIP_TESTS === "1") {
   }
 }
 
-console.log("publish-guard: pnpm client + lockstep + test gate OK");
+// B8-docs (REBIND): the success line must not claim a test gate that did not run (output-over-claim).
+if (skippedTests) console.log("publish-guard: pnpm client + lockstep OK; tests SKIPPED (CSD_PUBLISH_SKIP_TESTS=1) - NO test gate ran");
+else console.log("publish-guard: pnpm client + lockstep + test gate OK");
