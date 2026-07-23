@@ -9,7 +9,7 @@
 // What it does, in order:
 //   1. settled-tree check: scripts/check-lockstep.mjs (dist not older than src);
 //   2. pins non-movement of the vector corpus itself: git diff <baseline>..HEAD over
-//      packages/cairnx/test/vectors/ (cases.json + replay-hashes.json + wa-parity) must be EMPTY;
+//      packages/cairnx/test/vectors/ B6-era pins (cases.json + wa-parity + VECTORS.md) must be EMPTY;
 //   3. builds the BASELINE dist from the 0.1.38 release commit in a throwaway git worktree
 //      (pnpm install --frozen-lockfile, build codec + cairnx);
 //   4. corpus differential: canonicalState(resolve(events, tip)) old vs new, byte for byte, over

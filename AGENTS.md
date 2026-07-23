@@ -105,25 +105,22 @@ Vendored consumers: the cairn website serves the packages server-side and ships 
 - CI pnpm/action-setup reads the version from packageManager; do NOT also pass version:.
 - Activation-height re-pins are legal but coordinated-only (the 2026-07-03 V24-V27 pull-in required same-day re-pin of every verifier).
 
-## State snapshot (2026-07-21, REBIND S-06; ephemeral facts live HERE; verify with git/npm before trusting)
+## State snapshot (2026-07-23, post-REBIND LTS baseline; ephemeral facts live HERE; verify with git/npm before trusting)
 
-Branch rebind/b6 (the REBIND B6 + B9 stack; the 0.1.40 bump commit, --ff-only merge to master, tag `cairnx-core-0.1.40` and publish are close-out/runbook steps). Root csd-sdk 0.1.10 (private, never published). Published npm state:
+Branch master (rebind/b6 merged; tags `cairnx-core-0.1.39` = the git-only SEAL marker and `cairnx-core-0.1.40` = the published release). Root csd-sdk 0.1.10 (private, never published). Published npm state:
 
 | Package | npm version |
 |---|---|
-| cairnx-core | 0.1.38 |
+| cairnx-core | 0.1.40 |
 | csd-tx | 0.1.17 |
 | csd-light | 0.1.18 |
 | csd-registry | 0.1.16 |
 | csd-client, csd-codec, csd-crypto, csd-siwc, csd-vectors | 0.1.15 |
 | csd-indexwire | 0.1.0 |
 
-In-tree package.json numbers still read the published versions, but the TREE IS AHEAD of npm on this branch (version bumps are deliberately deferred to close-out, per the R3 rule: bump BEFORE the downstream re-vendors regenerate PROVENANCE so csdSdkVersion pins the real number):
+cairnx-core 0.1.40 (published 2026-07-21) = the B6 CLIENT-additive surface (opt-in bindOfferTerms give/want-type legs + the MintedProvenOfferTerms brand, fillEndorsement/fillOutputPlan, fclaim-aware claimWindowOf, the M13 publish-guard test gate; SEAL-proven canonical-state byte-identical to 0.1.38 with every opt-in off) + the B9 V29 consensus gate @ 88,000 (M4 event de-dup + M5 concurrent-hold status filter; see CONSENSUS_CHANGES.md and CONVENTION.md section 32, the normative v2.9 spec). Known deliberate skew (FU-A, decided 2026-07-21): codec/tx/registry SOURCE carries the B8-sdklow leaf hardening (verifyMerkleProof boolean-not-throw, builder byte caps, registry URL-encode) but those leaf packages were NOT version-bumped, so published cairnx-core 0.1.40 pins codec 0.1.15 without them; all non-consensus reject-more, riding the next non-freeze leaf release, no cascade.
 
-- cairnx-core 0.1.40-to-be = the B6 CLIENT-additive surface (opt-in bindOfferTerms give/want-type legs + the MintedProvenOfferTerms brand, fillEndorsement/fillOutputPlan, fclaim-aware claimWindowOf, the M13 publish-guard test gate; SEAL-proven canonical-state byte-identical to 0.1.38 with every opt-in off; tag point for 0.1.39) + the B9 V29 consensus gate @ 88,000 (M4 event de-dup + M5 concurrent-hold status filter; see CONSENSUS_CHANGES.md).
-- codec/tx/registry carry the B8-sdklow leaf hardening (verifyMerkleProof boolean-not-throw, node byte caps in builders via MAX_DOMAIN_BYTES/MAX_URI_BYTES, registry URL-encode) riding the same release train.
-
-Gate state: V28 = 60,000 is CROSSING ~2026-07-22/23 (every primary replayer on the v2.8 core). V29 = 88,000 is GATED-pending; the replay-hash V28 baseline re-pin (B8-hash) and the V29 re-pin are post-crossing runbook steps (see the 0.1.40 CONSENSUS_CHANGES entry).
+Gate state: V28 = 60,000 CROSSED 2026-07-23 (every primary replayer was live on the v2.8 core first). The B8-hash V28-inclusive replay-hash baseline is pinned and load-bearing in-tree (replay-corpus.json + vectors.test.ts, stop-rule verified 2026-07-23). V29 = 88,000 is the only pending gate: the V29 replay-hash re-pin, the ~tip-80,000 adoption checkpoint (0.1.41 height-move escape if CWS field adoption lags) and CERTIFY-B are the remaining post-crossing steps.
 
 ## Cross-repo map
 
