@@ -47,9 +47,14 @@ step("settled-tree check (check-lockstep: dist fresh, workspace pins)");
 // V29 relaxation, so old-vs-new DIVERGES by design). The B6-era pins below MUST still be byte-frozen - a moved
 // pin is a moved goalpost. If a future batch adds another vectors/*.json, list it in the DIFF_PINS below only
 // after confirming it is a new gate's file and not a mutation of these.
+// B8-hash (2026-07-23, per docs/Plans/71-B8-HASH-SPEC.md in the cairn repo): replay-hashes.json is EXEMPTED
+// from this list by the same narrowing pattern B9 established. It is the deliberate B8-hash deliverable
+// (the V28-inclusive baseline re-pin, stop-rule verified: every pre-existing 45,959-era height reproduced
+// byte-identically before the V24..V28 entries were ADDED) and, together with the new replay-corpus.json,
+// it is independently guarded by the load-bearing vectors.test.ts recompute-and-assert (mutation-proven).
+// The narrowing drops nothing pre-existing: the B6-era byte-identity proof is unaffected.
 const B6_ERA_PINS = [
   "packages/cairnx/test/vectors/cases.json",
-  "packages/cairnx/test/vectors/replay-hashes.json",
   "packages/cairnx/test/vectors/wa-parity-corpus.json",
   "packages/cairnx/test/vectors/VECTORS.md",
 ];
