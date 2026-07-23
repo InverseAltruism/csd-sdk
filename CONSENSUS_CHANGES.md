@@ -102,12 +102,15 @@ checkpoint at ~tip 80,000 and a 0.1.41 re-pin escape hatch if adoption lags.
 **Rollout checklist deltas for this gate (on top of the V28+ checklist at the bottom of this file):**
 1. **Replay-hash RE-PIN is a POST-CROSSING step.** The `replay-hashes.json` V29 entry can only be generated
    once the tip is past 88,000 (the generator needs the live indexer reachable into the V29 region). NEVER
-   re-pin from a guessed hash; in-tree the re-pin is stubbed, not faked (the assertion SKIPs unchanged until
-   the corpus exists). Stop rule: regenerating the EXISTING pinned heights must reproduce them byte-identical
-   FIRST; any divergence there is an incident (stop, page the operator), never a reason to edit a pin.
-2. CONVENTION.md still reads v2.8: the normative v2.9 section-32 write-up is pending; until it lands, the
-   section-32 semantics live in the `types.ts`/`resolve.ts` comments and `conformance/cairnx_ref.py`
-   (flagged in the 2026-07-21 docs-truth pass; close it with the 0.1.40 release docs).
+   re-pin from a guessed hash. (B8-hash, executed 2026-07-23 at the V28 crossing, made the artifact
+   load-bearing early: replay-corpus.json + the V28-inclusive baseline are committed and vectors.test.ts
+   asserts them; the B9 step ADDS the V29 entry to that same corpus + pin set post-crossing.) Stop rule:
+   regenerating the EXISTING pinned heights must reproduce them byte-identical FIRST; any divergence there
+   is an incident (stop, page the operator), never a reason to edit a pin.
+2. ~~CONVENTION.md still reads v2.8~~ CLOSED 2026-07-23: CONVENTION.md section 32 is the normative v2.9
+   write-up (M4 duplicate-event drop + M5 open-holds cap count, both keyed on the event's own height
+   `>= V29_HEIGHT`), drafted from `types.ts`/`resolve.ts` and cross-checked against the independent
+   `conformance/cairnx_ref.py`; the header/status ladder now reads v2.9 pending activation at 88,000.
 
 ## cairnx-core 0.1.38 + csd-tx 0.1.17 (2026-07-17, Plan 70 R2) - fill-boundary consolidation + L1 cushion + verified builders (CLIENT reject-more; resolve() byte-identical)
 

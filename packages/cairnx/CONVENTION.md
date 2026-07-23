@@ -1,13 +1,13 @@
 # CairnX Convention v1
 
-**Status:** v2.8 (normative; v2.8 pending activation at `V28_HEIGHT`, see §31; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 pending activation at `V29_HEIGHT`, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive — below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
 v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24) ·
 v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 46 480 (§29) · v2.7 @ 46 520 (§30) ·
-v2.3 @ 52 000 (§26) · v2.8 @ `V28_HEIGHT` (§31, PENDING activation).
-Sections §19–§31 are the normative semantics for v1.6–v2.8; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32, PENDING activation).
+Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -1119,3 +1119,45 @@ never false-accept a denied fclaim.
   no-ops) AND a tightening (a stale core still grants legacy claims a fresh core rejects). Every replayer,
   resolver, and client bundle MUST run the v2.8 core before the tip crosses `V28_HEIGHT`. Below the gate every
   rule above is inert and all replay is byte-identical.
+
+## 32. v2.9: replay-feed de-duplication and the open-holds concurrent-claim count
+
+Two `resolve()`-side corrections that both move canonical state, so both ride ONE height gate,
+`V29_HEIGHT` = 88 000 (set 2026-07-20 by operator decision; the REBIND audit's M4 + M5). Each rule keys on
+the triggering EVENT's OWN height (`>= V29_HEIGHT`), never on the tip: non-retroactive, so every pre-V29
+event replays byte-identically forever and a mixed-version fleet cannot fork below the gate.
+
+**M4: duplicate-event drop (reject-more).** The §3 consensus ordering sorts events but never de-duplicates,
+so a double-fed transaction (an overlapping scanner page delivered verbatim) applies twice; on the §12
+partial-fill path that double-credits `paid` / `delivered`. A transaction has ONE identity: a `Propose`'s
+`id`, an `Attest`'s `txid`. At an event height `>= V29_HEIGHT` the FIRST occurrence in consensus order
+(§3: height, propose-before-attest, pos, ordinal id/txid) is kept and every later occurrence of the same
+identity is dropped BEFORE apply. Below the gate nothing is dropped. A duplicate pair shares one txid and
+therefore one mined block, so both copies always land on the same side of the gate; there is no straddle
+case. (The cairnx service also de-duplicates its attestation pull at scan time; that is a transport-side
+defensive measure, deliberately NOT part of this convention. Only the `resolve()` drop is normative.)
+
+**M5: the concurrent-hold cap counts only OPEN holds (relaxation).** §20/§31 cap an address at
+`MAX_ACTIVE_CLAIMS` (= 3) live holds, counted as `claimedBy === who && claimHeld(o, h)`. A FILLED offer
+keeps its last-write-wins `claimedBy` / `claimUntilHeight` / `claimTxid` (§31 fund-safety: never cleared),
+so a completed buy kept consuming a cap slot until its hold window lapsed: three completed fclaim buys
+wrongly denied a fourth honest claim. At a counting event's height `>= V29_HEIGHT` the count admits only
+holds whose offer is still `open`: `claimedBy === who && claimHeld(o, h) && (h < V29_HEIGHT ||
+o.status === "open")`. A filled offer has SETTLED; its residual claim fields are a record, not a live
+reservation. The post-V29 count is a strict SUBSET of the pre-V29 count, so the rule can only GRANT a
+claim, never newly deny one. Normatively the same clause applies to BOTH counting sites (the §31 fclaim
+grant ladder and the §20 legacy `SCORE_CLAIM` handler); in the legacy handler it is provably unreachable
+(`SCORE_CLAIM` at height `>= V28_HEIGHT` is rejected by §31, and `V29 > V28`), and is kept for symmetry.
+
+**Canonical surface.** No new fields. Both rules change only WHICH events apply, so pre-V29 canonical
+hashes (every pinned vector and the whole live-chain replay below 88 000) are byte-identical; the v2.9
+divergence height is pinned by the fork-lens vector set (`cases-v29.json`).
+
+- **Adoption note (HARD adoption gate, sharper than §31):** M5 GRANTS holds a stale replayer still
+  DENIES, so a stale replayer forks the moment the chain crosses `V29_HEIGHT` with a post-gate grant in
+  flight: it rejects claims (and the fills routed through them) that the canonical chain accepts. Every
+  replayer, resolver, and client bundle (cairnx service, clarvis, the vendored site and wallet bundles,
+  cairn-sdk, cairn-cli, csd-indexer, the Python oracle) MUST run the v2.9 core and be CONFIRMED live
+  before the tip crosses 88 000, never "publish and hope". The `replay-hashes.json` V29 entry is pinned
+  only POST-crossing from the live chain (see CONSENSUS_CHANGES.md); a pre-crossing V29 hash would be an
+  invented pin and is forbidden.
