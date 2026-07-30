@@ -12,6 +12,15 @@ import { verifyPeer, verifyGateway, verifyIdentitySig, commitHash } from "./veri
 
 export const epochOf = (height: number): number => Math.floor(height / EPOCH_LEN);
 
+// Fail-closed boundary for the resolver entry points, mirroring verify.ts safe(): an unexpected throw
+// over a hostile record set must degrade to "nothing resolved", never crash the caller (indexer and
+// server run these on untrusted rows). The reduce in lastActiveEpoch removes the one proven throw
+// (MF-04); this wrap is documented defense-in-depth for any future hostile-input throw, and preserves
+// each resolver's own empty result shape.
+function safeResolve<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch { return fallback; }
+}
+
 // ── deterministic recency decay (audit RES-H4) ──────────────────────────────────────────────
 // The decay factor is the CONVENTION constant 0.97/epoch. Computing it as `Math.pow(0.97, age)`
 // is a CROSS-LANGUAGE DETERMINISM FORK: IEEE-754 `pow` is not correctly-rounded, so a Rust/Go/Py
@@ -29,8 +38,12 @@ function decayPowFixed(age: number): bigint {
   if (v === undefined) { v = (DECAY_NUM ** BigInt(a) * DECAY_SCALE) / (DECAY_DEN ** BigInt(a)); _powCache.set(a, v); }
   return v;
 }
+// MF-04: attestation signatures are never verified, so `attestations` is fully attacker-fabricated.
+// `Math.max(...spread)` RangeErrors on a large argument count (a record padded with ~200k attestations
+// crashed resolvePeers/Gateways/Identity/reverseIdentity, a one-record DoS the indexer and server run
+// live). `reduce` has no argument-count limit and yields the identical value for real (small) sets.
 const lastActiveEpoch = (r: ChainRecord): number =>
-  Math.max(epochOf(r.height), ...r.attestations.map((a) => epochOf(a.height)), 0);
+  r.attestations.reduce((m, a) => Math.max(m, epochOf(a.height)), Math.max(epochOf(r.height), 0));
 // Coerce a fee to a non-negative SAFE INTEGER. Records come from an untrusted indexer; a non-integer
 // `fee` made `BigInt(baseWeight(r))` THROW and crash the resolver over a hostile row (audit L12). An
 // honest fee is always an integer-sat, so this is a no-op for real data and deterministic for junk (→0).
@@ -68,32 +81,36 @@ function dedupeBest(recs: ChainRecord[], key: (r: ChainRecord) => string, nowEpo
 
 // ── csd:peers — durable, sybil-priced bootstrap list (peers aren't unique names) ──
 export function resolvePeers(records: ChainRecord[], opts: ResolveOpts): RankedPeer[] {
-  const { nowEpoch, topK = 25 } = opts;   // decayPerEpoch is a FIXED consensus convention (0.97), not a knob — see L11/types.ts
-  const cand = records.filter(
-    (r) => (r.domain === DOMAINS.peers || r.domain === DOMAINS.peersLegacy) && notExpired(r, nowEpoch) && verifyPeer(r),
-  );
-  return dedupeBest(cand, (r) => (r.content as PeerContent).peer_id, nowEpoch)
-    .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
-    .slice(0, topK)
-    .map((r) => {
-      const c = r.content as PeerContent;
-      return { peer_id: c.peer_id, multiaddrs: c.multiaddrs ?? [], caps: c.caps ?? [], address: r.proposer, weight: decayedWeight(r, nowEpoch), proposalId: r.proposalId, height: r.height };
-    });
+  return safeResolve(() => {
+    const { nowEpoch, topK = 25 } = opts;   // decayPerEpoch is a FIXED consensus convention (0.97), not a knob (see L11/types.ts)
+    const cand = records.filter(
+      (r) => (r.domain === DOMAINS.peers || r.domain === DOMAINS.peersLegacy) && notExpired(r, nowEpoch) && verifyPeer(r),
+    );
+    return dedupeBest(cand, (r) => (r.content as PeerContent).peer_id, nowEpoch)
+      .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
+      .slice(0, topK)
+      .map((r) => {
+        const c = r.content as PeerContent;
+        return { peer_id: c.peer_id, multiaddrs: c.multiaddrs ?? [], caps: c.caps ?? [], address: r.proposer, weight: decayedWeight(r, nowEpoch), proposalId: r.proposalId, height: r.height };
+      });
+  }, []);
 }
 
 // ── csd:gateways — uptime-attested content gateways; stale ones drop out ──
 export function resolveGateways(records: ChainRecord[], opts: ResolveOpts): RankedGateway[] {
-  const { nowEpoch, topK = 25, freshWithin = 24 } = opts;   // decayPerEpoch fixed at 0.97 (consensus convention) — L11
-  const cand = records.filter(
-    (r) => r.domain === DOMAINS.gateways && notExpired(r, nowEpoch) && verifyGateway(r) && nowEpoch - lastActiveEpoch(r) <= freshWithin,
-  );
-  return dedupeBest(cand, (r) => (r.content as GatewayContent).url, nowEpoch)
-    .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
-    .slice(0, topK)
-    .map((r) => {
-      const c = r.content as GatewayContent;
-      return { url: c.url, kind: c.kind, address: r.proposer, weight: decayedWeight(r, nowEpoch), proposalId: r.proposalId, height: r.height, lastActiveEpoch: lastActiveEpoch(r) };
-    });
+  return safeResolve(() => {
+    const { nowEpoch, topK = 25, freshWithin = 24 } = opts;   // decayPerEpoch fixed at 0.97 (consensus convention, L11)
+    const cand = records.filter(
+      (r) => r.domain === DOMAINS.gateways && notExpired(r, nowEpoch) && verifyGateway(r) && nowEpoch - lastActiveEpoch(r) <= freshWithin,
+    );
+    return dedupeBest(cand, (r) => (r.content as GatewayContent).url, nowEpoch)
+      .sort((a, b) => cmpWeightDesc(a, b, nowEpoch) || (a.proposalId < b.proposalId ? -1 : a.proposalId > b.proposalId ? 1 : 0))
+      .slice(0, topK)
+      .map((r) => {
+        const c = r.content as GatewayContent;
+        return { url: c.url, kind: c.kind, address: r.proposer, weight: decayedWeight(r, nowEpoch), proposalId: r.proposalId, height: r.height, lastActiveEpoch: lastActiveEpoch(r) };
+      });
+  }, []);
 }
 
 // a reveal is valid only if a matching commit by the SAME address was anchored in an
@@ -133,30 +150,39 @@ const toIdentity = (winner: ChainRecord, nowEpoch: number): ResolvedIdentity => 
 
 /** name → address. First-anchored VERIFIED claim wins; weight only breaks same-epoch ties. */
 export function resolveIdentity(records: ChainRecord[], handle: string, opts: ResolveOpts): ResolvedIdentity | null {
-  const winner = winningClaim(records, handle, opts);
-  return winner ? toIdentity(winner, opts.nowEpoch) : null;
+  return safeResolve(() => {
+    const winner = winningClaim(records, handle, opts);
+    return winner ? toIdentity(winner, opts.nowEpoch) : null;
+  }, null);
 }
 
 /** address → primary name (ENSIP-3 reverse): the highest-weight handle this address legitimately owns. */
 export function reverseIdentity(records: ChainRecord[], address: string, opts: ResolveOpts): ResolvedIdentity | null {
-  const addr = address.toLowerCase();
-  const handles = new Set<string>();
-  for (const r of records) {
-    const c = r.content as IdentityRevealContent | null;
-    if (r.domain === DOMAINS.identity && c?.t === "identity-reveal" && c.address.toLowerCase() === addr) handles.add(c.handle);
-  }
-  // Rank by the EXACT integer weight the forward path uses (decayWeightFixed of the SAME winner record
-  // resolveIdentity chose) — NOT the lossy float `decayedWeight`, whose IEEE-754 near-tie could pick a
-  // different primary name in a Rust/Py/Go port (audit M3). Operating on the winner RECORD (not a
-  // re-`find` by proposalId) also keeps the result feed-order-independent even if a hostile indexer
-  // fabricates a duplicate proposalId. Ties → proposalId asc (a unique on-chain txid).
-  let best: ChainRecord | null = null;
-  let bestW = -1n;
-  for (const h of handles) {
-    const winner = winningClaim(records, h, opts);
-    if (!winner || (winner.content as IdentityRevealContent).address.toLowerCase() !== addr) continue;
-    const w = decayWeightFixed(winner, opts.nowEpoch);
-    if (!best || w > bestW || (w === bestW && winner.proposalId < best.proposalId)) { best = winner; bestW = w; }
-  }
-  return best ? toIdentity(best, opts.nowEpoch) : null;
+  return safeResolve(() => {
+    const addr = address.toLowerCase();
+    const handles = new Set<string>();
+    for (const r of records) {
+      const c = r.content as IdentityRevealContent | null;
+      // MF-05: this harvest loop runs on UNVERIFIED content (the per-handle winningClaim below does the
+      // signature check). Guard the field type before toLowerCase so one hostile record whose `address`
+      // is not a string cannot brick reverse resolution for the whole address space. The safeResolve
+      // wrap on this entry point is the belt for anything else (documented DiD, not separately tested).
+      if (r.domain === DOMAINS.identity && c?.t === "identity-reveal" &&
+          typeof c.address === "string" && c.address.toLowerCase() === addr) handles.add(c.handle);
+    }
+    // Rank by the EXACT integer weight the forward path uses (decayWeightFixed of the SAME winner record
+    // resolveIdentity chose), NOT the lossy float `decayedWeight`, whose IEEE-754 near-tie could pick a
+    // different primary name in a Rust/Py/Go port (audit M3). Operating on the winner RECORD (not a
+    // re-`find` by proposalId) also keeps the result feed-order-independent even if a hostile indexer
+    // fabricates a duplicate proposalId. Ties → proposalId asc (a unique on-chain txid).
+    let best: ChainRecord | null = null;
+    let bestW = -1n;
+    for (const h of handles) {
+      const winner = winningClaim(records, h, opts);
+      if (!winner || (winner.content as IdentityRevealContent).address.toLowerCase() !== addr) continue;
+      const w = decayWeightFixed(winner, opts.nowEpoch);
+      if (!best || w > bestW || (w === bestW && winner.proposalId < best.proposalId)) { best = winner; bestW = w; }
+    }
+    return best ? toIdentity(best, opts.nowEpoch) : null;
+  }, null);
 }

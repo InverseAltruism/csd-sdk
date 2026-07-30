@@ -23,7 +23,7 @@
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import {
-  resolve, canonicalState, TREASURY_ADDR, DEPLOY_FEE, V16_HEIGHT, V25_HEIGHT, V26_HEIGHT, COMMIT_MAX_BLOCKS,
+  resolve, canonicalState, TREASURY_ADDR, DEPLOY_FEE, V16_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, COMMIT_MAX_BLOCKS,
   nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer,
   deploy, mint, offer, offerCancelAll, tradeFee, FEE_BPS_V16,
 } from "../packages/cairnx/dist/index.js";
@@ -176,8 +176,9 @@ function listThenTransfer(_h) {
 }
 
 const GENS = [registerRace, blindCommitDisplace, offerFillRace, listThenTransfer, staleWalletCrossesGate];
-// height bands: below V25 (burns reachable), above V25/V26 (sealed — should be closed)
-const bands = () => chance(0.55) ? ri(34000, V25_HEIGHT - 50) : ri(V26_HEIGHT + 50, V26_HEIGHT + 8000);
+// height bands: below V25 (burns reachable); above V25/V26 THROUGH past V28 (sealed + fclaim regime,
+// both should be closed). The upper leg spans the V28 crossing so scenarios land in the live regime.
+const bands = () => chance(0.55) ? ri(34000, V25_HEIGHT - 50) : ri(V26_HEIGHT + 50, V28_HEIGHT + 8000);
 
 // ── check one scenario, return {violations[], jsState} ────────────────────────────────────────────────
 function check(s) {

@@ -247,6 +247,59 @@ test("M2: a malformed pub does not crash resolvePeers — the record is skipped,
   assert.ok(out!.every((p) => p.peer_id !== "12D3KooWPOISON"), "the malformed peer is skipped, not counted");
 });
 
+// MF-04 (Plan 75): attestation arrays are attacker-fabricated (their signatures are NEVER verified).
+// `lastActiveEpoch` used `Math.max(epochOf(r.height), ...atts.map(...), 0)`, and `Math.max(...spread)`
+// RangeErrors ("Maximum call stack size exceeded") once the argument count is large (~200k). One
+// legitimately-signed record padded with a huge attestations array therefore crashed resolvePeers /
+// resolveGateways / resolveIdentity / reverseIdentity, a one-record DoS the indexer and server run on
+// untrusted rows. The reduce-based lastActiveEpoch has NO argument-count limit and yields the identical
+// value for real (small) sets. The load-bearing pin is that the HONEST record still resolves (length 1):
+// under the spread-revert mutation the internal RangeError is caught by the entry-point safeResolve wrap
+// and resolvePeers returns [], so the honest record silently drops (length 0), which is the RED signal.
+test("MF-04: an oversized fabricated attestations array does not crash resolvePeers; honest record survives", () => {
+  const k = keygen();
+  const atts: AttRecord[] = [];
+  for (let i = 0; i < 200_000; i++) atts.push({ attester: k.addr, fee: 1, score: 0, confidence: 0, height: i });
+  const big = rec(buildPeerRecord({ priv: k.priv, peer_id: "PDoS", multiaddrs: ["/ip4/1.1.1.1/tcp/1"], address: k.addr }), k.addr, 100_000_000, 3 * E, { atts });
+  let out: ReturnType<typeof resolvePeers> | null = null;
+  assert.doesNotThrow(() => { out = resolvePeers([big], { nowEpoch: 10 }); }, "200k fabricated attestations must not RangeError out of resolve");
+  assert.equal(out!.length, 1, "the honest signed record still resolves (RED under the Math.max-spread revert: caught → [])");
+  assert.equal(out![0]!.peer_id, "PDoS", "and to the right peer_id");
+  // PAIRED HAPPY-PATH: the SAME signed record with a NORMAL attestation array resolves to exactly one peer.
+  const small = rec(buildPeerRecord({ priv: k.priv, peer_id: "PDoS", multiaddrs: ["/ip4/1.1.1.1/tcp/1"], address: k.addr }), k.addr, 100_000_000, 3 * E, { atts: [{ attester: k.addr, fee: 1, score: 0, confidence: 0, height: 1 }] });
+  const outSmall = resolvePeers([small], { nowEpoch: 10 });
+  assert.equal(outSmall.length, 1, "honest small-attestation record resolves to exactly one ranked peer");
+  assert.equal(outSmall[0]!.peer_id, "PDoS");
+});
+
+// MF-05 (Plan 75): reverseIdentity's harvest loop reads content.address on UNVERIFIED records (the
+// per-handle winningClaim below is what runs the signature check). `c.address.toLowerCase()` threw
+// `TypeError: c.address.toLowerCase is not a function` on one anchored record whose `address` is not a
+// string, bricking address→name resolution for the WHOLE address space. The typeof guard skips it. The
+// red-capable pin is the mixed honest+hostile set: under the typeof-conjunct removal the hostile record's
+// TypeError (caught by the entry-point safeResolve wrap) makes the whole call return null, so the honest
+// reveal no longer reverse-resolves, so `back!.handle` then throws on null. The bare `[hostile]` -> null
+// assertion below is fail-closed documentation, NOT the discriminator (the wrap keeps it null either way).
+test("MF-05: a non-string identity address does not crash reverseIdentity; an honest reveal beside it survives", () => {
+  const hostile: ChainRecord = {
+    domain: DOMAINS.identity, proposalId: txid(), proposer: "0x" + "55".repeat(20), payloadHash: "0x" + "66".repeat(32),
+    fee: 100_000_000, height: 3 * E, expiresEpoch: 0,
+    content: { v: 1, t: "identity-reveal", handle: "evil", salt: "z", address: 12345, pub: "0xODD", sig: "xyz" } as any,
+    attestations: [],
+  };
+  let out: ReturnType<typeof reverseIdentity> | undefined;
+  assert.doesNotThrow(() => { out = reverseIdentity([hostile], "0x" + "55".repeat(20), { nowEpoch: 5 }); }, "a non-string address must not throw out of reverseIdentity");
+  assert.equal(out, null, "the hostile record is skipped; nothing reverse-resolves (fail-closed)");
+  // PAIRED HAPPY-PATH (the RED pin): an honest commit+reveal still reverse-resolves to its handle even with
+  // the hostile non-string-address record in the same feed. Under the typeof-removal mutation this goes RED.
+  const owner = keygen();
+  const salt = "p";
+  const commit = rec(buildIdentityCommit({ handle: "honest", salt, address: owner.addr }), owner.addr, 25e6, 1 * E);
+  const reveal = rec(buildIdentityReveal({ priv: owner.priv, handle: "honest", salt, address: owner.addr }), owner.addr, 25e6, 2 * E);
+  const back = reverseIdentity([commit, reveal, hostile], owner.addr, { nowEpoch: 6 });
+  assert.equal(back!.handle, "honest", "the honest reveal reverse-resolves; the hostile non-string-address record is skipped, not fatal");
+});
+
 test("M2: a malformed pub does not crash resolveGateways or resolveIdentity either", () => {
   const good = keygen();
   const gw = rec(buildGatewayRecord({ priv: good.priv, url: "https://gw.example/{hash}", address: good.addr }), good.addr, 100_000_000, 100, { expiresEpoch: 0 });

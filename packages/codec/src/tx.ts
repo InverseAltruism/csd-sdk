@@ -80,8 +80,10 @@ class Reader {
   vec(): Uint8Array { return this.take(Number(this.u64())); }
   fixedHex(n: number): string { return hx(this.take(n)); }
   // fatal:true REJECTS invalid UTF-8 in domain/uri exactly as the Rust node's bincode read_string and
-  // the Python reference do — restoring the byte round-trip and refusing bytes consensus rejects (NEW-2/L10).
-  str(): string { return new TextDecoder("utf-8", { fatal: true }).decode(this.vec()); }
+  // the Python reference do. ignoreBOM:true is LOAD-BEARING: without it TextDecoder strips a leading
+  // U+FEFF, so serialize(deserialize(x)) != x and the re-derived txid/sighash diverge from the node
+  // (MF-16). With ignoreBOM the BOM is preserved as content, restoring the byte round-trip (NEW-2/L10).
+  str(): string { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(this.vec()); }
   get offset(): number { return this.o; }
   get length(): number { return this.b.length; }
 }

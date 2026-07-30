@@ -41,8 +41,12 @@ export function expectedBitsFromWindow(window: BlockHeader[], height: number): n
   if (!parent) throw new Error(`expectedBits: empty window for height ${height}`);
   if (height < 2) return parent.bits;
 
-  // n = min(LWMA_WINDOW, height); take the last n of the supplied window (chronological).
-  const n = Math.min(LWMA_WINDOW, height, window.length);
+  // n = min(LWMA_WINDOW, height), EXACTLY as pow.rs expected_bits_strict (no window.length term).
+  // A window shorter than n is NOT degraded to a smaller n (that silently derives a different
+  // difficulty and forks the node, MF-17); it fails loudly. Callers supply a full window on every
+  // healthy path (genesis sync, checkpoint forward-sync, the expectedBits() wrapper).
+  const n = Math.min(LWMA_WINDOW, height);
+  if (window.length < n) throw new Error(`expectedBits: short window at height ${height} (have ${window.length}, need ${n})`);
   if (n < 2) return parent.bits;
   const w = window.slice(window.length - n); // chronological, length n, last = parent
 

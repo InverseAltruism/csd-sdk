@@ -4,7 +4,7 @@
 // rejection) was UNTESTED in CI. Real headers are used so PoW/LWMA are genuine, not synthetic.
 import { LightClient, expectedBitsFromWindow, type HeaderProvider } from "../src/index.js";
 import { LWMA_WINDOW, verifyMerkleProof, merkleBranch, headerHash, headerHashBytes, powOk,
-  POW_LIMIT_BITS, type BlockHeader } from "@inversealtruism/csd-codec";
+  POW_LIMIT_BITS, GENESIS_HASH, type BlockHeader } from "@inversealtruism/csd-codec";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -13,6 +13,18 @@ const FX = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)),
   from: number; tip: number;
   headers: { height: number; hash: string; header: BlockHeader; txids: string[] }[];
 };
+// Genesis-rooted fixture (REAL mainnet headers 0..50, genesis hash == GENESIS_HASH) for the P75
+// snapshot-restore hardening (MF-01 untyped baseHeight, MF-02 genesis trusted-skip, MF-17 short window).
+const GFX = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures-genesis.json"), "utf8")) as {
+  from: number; tip: number;
+  headers: { height: number; hash: string; header: BlockHeader; txids: string[] }[];
+};
+const gByH = new Map(GFX.headers.map((h) => [h.height, h]));
+// Build a genesis-rooted ChainSnapshot header run [from..to] straight from the fixture (trusted flag
+// as given). Mirrors the shape toSnapshot() emits (chainwork is recomputed on restore, so "0" is fine).
+const genHeaders = (from: number, to: number, trusted = false) =>
+  Array.from({ length: to - from + 1 }, (_, k) => { const r = gByH.get(from + k)!; return { height: from + k, hash: r.hash, header: r.header, chainwork: "0", trusted }; });
+
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { if (c) { pass++; console.log("  ✅ " + n); } else { fail++; console.log("  ❌ " + n); } };
 const byH = new Map(FX.headers.map((h) => [h.height, h]));
@@ -316,6 +328,97 @@ if (inclBlock) {
   let threwT = false, msgT = "";
   try { LightClient.fromSnapshot(tampered); } catch (e: any) { threwT = true; msgT = e?.message ?? String(e); }
   ok("H3 on restore: a snapshot header with time <= parent.time is REJECTED on the timestamp rule", threwT && /time/.test(msgT));
+}
+
+// 11) MF-01: fromSnapshot must NORMALISE the untyped baseHeight/height fields. A snapshot whose
+//     baseHeight is null/false numeric-coerces to 0 for arithmetic yet fails BOTH the `> 0`
+//     containment guard AND the `=== 0` genesis anchor, so pre-fix a FOREIGN (non-genesis) first
+//     header restored as a verified chain. RED-first: reverting the Number() normalisation flips
+//     each throw below back to a clean restore (PoC-confirmed against the live node, headers 500..502).
+{
+  console.log("\nMF-01: untyped baseHeight/height normalisation");
+  // three REAL consecutive fixture headers relabelled to heights 0,1,2 with trusted:true; the first
+  // hash is NOT the genesis hash, so a correct genesis-rooted restore MUST reject them.
+  const foreign = [20, 21, 22].map((h, i) => { const r = gByH.get(h)!; return { height: i, hash: r.hash, header: r.header, chainwork: "0", trusted: true }; });
+  ok("MF-01 setup: the relocated first header is NOT the genesis hash", foreign[0]!.hash.toLowerCase() !== GENESIS_HASH.toLowerCase());
+  for (const bh of [null, false]) {
+    let threw = false, msg = "";
+    try { LightClient.fromSnapshot({ v: 1, baseHeight: bh, headers: foreign } as any); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
+    ok(`MF-01: baseHeight=${String(bh)} foreign-genesis snapshot is REJECTED (normalised, not silently restored)`, threw && /genesis|baseHeight/.test(msg));
+  }
+  // the normalisation guard itself: a non-safe-integer baseHeight fails loudly with a bad-baseHeight
+  // message (pre-fix it fell through to a misleading "not contiguous" error instead).
+  let threwBig = false, msgBig = "";
+  try { LightClient.fromSnapshot({ v: 1, baseHeight: 2 ** 60, headers: genHeaders(0, 44) } as any); } catch (e: any) { threwBig = true; msgBig = e?.message ?? String(e); }
+  ok("MF-01: a non-safe-integer baseHeight (2**60) is REJECTED with a bad-baseHeight error", threwBig && /bad baseHeight/.test(msgBig));
+}
+
+// 12) MF-02: a genesis-rooted snapshot (baseHeight 0) carries NO genuine trusted seed prefix, so a
+//     trusted:true header inside the first LWMA window must STILL be LWMA re-derived. Pre-fix the
+//     `fullWindowAvailable` predicate omitted the `baseHeight === 0` leg, so a forged min-difficulty
+//     header at height 44 flagged trusted:true RESTORED (PoC-confirmed). RED-first: dropping the
+//     `baseHeight === 0 ||` leg flips the /bad bits/ throw back to a clean restore.
+{
+  console.log("\nMF-02: genesis-rooted trusted-skip closed");
+  const raw = genHeaders(0, 44); // trusted:false real headers 0..44
+  const h43 = gByH.get(43)!, h44 = gByH.get(44)!;
+  // forged min-difficulty child at height 44 (ground OFFLINE; see test/_regrind-genesis-poison.mjs).
+  // time = parent + 120 so the H3 time rules PASS and the failure lands specifically on bits, not time.
+  const POISON_NONCE_44 = 9039078;
+  const forged = { version: 1, prev: h43.hash, merkle: h44.header.merkle, time: h43.header.time + 120, bits: POW_LIMIT_BITS, nonce: POISON_NONCE_44 } as BlockHeader;
+  ok("MF-02: the baked min-difficulty poison header at 44 passes PoW (else: regrind the vector)", powOk(headerHashBytes(forged), POW_LIMIT_BITS));
+  const honestExp44 = expectedBitsFromWindow(raw.slice(0, 44).map((e) => e.header), 44);
+  ok("MF-02: the forged min-difficulty bits differ from the honest LWMA expectation at 44", POW_LIMIT_BITS !== honestExp44);
+  const malicious = { v: 1, baseHeight: 0, headers: [...raw.slice(0, 44), { height: 44, hash: headerHash(forged), header: forged, chainwork: "0", trusted: true }] };
+  let threw = false, msg = "";
+  try { LightClient.fromSnapshot(malicious); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
+  ok("MF-02: a genesis-rooted snapshot with a forged trusted:true min-difficulty header at 44 is REJECTED on bits", threw && /bad bits/.test(msg));
+  // PAIRED HAPPY PATH: the honest genesis-rooted snapshot (0..44, all trusted:false) restores cleanly.
+  let restored44 = false;
+  try { restored44 = LightClient.fromSnapshot({ v: 1, baseHeight: 0, headers: raw }).tip!.height === 44; } catch { restored44 = false; }
+  ok("MF-02 happy path: the honest genesis-rooted snapshot (0..44) restores to tip 44", restored44);
+  // PAIRED HAPPY PATH: the full genesis fixture (0..50, all trusted:false) restores to tip 50.
+  let restored50 = false;
+  try { restored50 = LightClient.fromSnapshot({ v: 1, baseHeight: 0, headers: genHeaders(0, 50) }).tip!.height === 50; } catch { restored50 = false; }
+  ok("MF-02 happy path: the honest genesis fixture (0..50) restores to tip 50", restored50);
+}
+
+// 12b) MF-02, the CONTAINMENT half. The other MF-02 leg (above) covers `fullWindowAvailable`. This one
+//      covers deleting `&& s.baseHeight > 0` from the containment guard itself, which the leg above does
+//      NOT exercise: every test there passes no checkpoints, so containment is skipped entirely.
+//      RED-first: re-add `&& baseHeight > 0` and the first assertion flips from a rejection to a restore,
+//      because containment is then skipped for baseHeight 0. Both assertions use a checkpoint-CONFIGURED
+//      client, which is the only shape in which the guard runs at all.
+//      Containment for a genesis-rooted 0..50 file demands a configured cp in [LWMA_WINDOW-1 .. 50] = [44..50].
+{
+  console.log("\nMF-02 containment half: a genesis-rooted file is NOT exempt");
+  const g = genHeaders(0, 50);
+  // cp 29960 (the wallet's real checkpoint) lies OUTSIDE the span, so containment cannot be satisfied.
+  let threwOut = false, msgOut = "";
+  try { LightClient.fromSnapshot({ v: 1, baseHeight: 0, headers: g }, { checkpoints: { 29960: gByH.get(50)!.hash } }); }
+  catch (e: any) { threwOut = true; msgOut = e?.message ?? String(e); }
+  ok("MF-02 containment: a genesis-rooted snapshot spanning NO configured checkpoint is REJECTED", threwOut && /anchored/.test(msgOut));
+  // PAIRED HAPPY PATH: a checkpoint INSIDE the span (cp 50, its real fixture hash) satisfies containment,
+  // so the same honest file still restores. This is what proves the guard refuses geometry, not genesis.
+  let restoredIn = false;
+  try { restoredIn = LightClient.fromSnapshot({ v: 1, baseHeight: 0, headers: g }, { checkpoints: { 50: gByH.get(50)!.hash } }).tip!.height === 50; }
+  catch { restoredIn = false; }
+  ok("MF-02 containment happy path: a genesis-rooted snapshot that DOES span a configured checkpoint restores", restoredIn);
+}
+
+// 13) MF-17: expectedBitsFromWindow must derive n = min(LWMA_WINDOW, height) EXACTLY like the node
+//     (pow.rs expected_bits_strict), never n = min(..., window.length). A window shorter than n
+//     silently derived a DIFFERENT difficulty (a fork), so it now throws. RED-first: restoring the
+//     `, window.length` term + deleting the throw flips the short-window assertion from a throw to a
+//     returned value 0x1d24ecef that differs from the full-window difficulty.
+{
+  console.log("\nMF-17: short LWMA window fails loudly");
+  const fullWindow = genHeaders(0, 43).map((e) => e.header); // heights 0..43, the 44-header window preceding 44
+  const bFull = expectedBitsFromWindow(fullWindow, 44);
+  ok("MF-17 happy path: a FULL 44-header window derives the honest difficulty 0x1d449880 (no throw)", bFull === 0x1d449880);
+  let threwShort = false, msgShort = "";
+  try { expectedBitsFromWindow(fullWindow.slice(-10), 44); } catch (e: any) { threwShort = true; msgShort = e?.message ?? String(e); }
+  ok("MF-17: a SHORT 10-of-44 window at height 44 is REJECTED (short window), not silently re-derived", threwShort && /short window/.test(msgShort));
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
