@@ -293,6 +293,13 @@ console.log("\nbuildFeeHeight — margin behavior at every name-fee gate:");
   }
 }
 
+console.log("\nbuildFeeHeight MF-19 fail-closed tip guard:");
+for (const bad of [Number.NaN, Infinity, -1, 1.5]) {
+  let threw = false; try { buildFeeHeight(bad); } catch { threw = true; }
+  ok(`buildFeeHeight(${String(bad)}) throws (fail-closed on a garbage tip)`, threw);
+}
+ok("buildFeeHeight(0) === 0 (P75-9 site pin: display pricing before the first health poll must not throw)", buildFeeHeight(0) === 0);
+
 // ── B6b (REBIND W10/M1): fillEndorsement + fillOutputPlan (discriminated successors; the deprecated
 // predicates stay FROZEN and their historical verdicts are pinned here so nobody "hardens" them in place) ──
 console.log("\nB6b fillEndorsement (W10) + fillOutputPlan (M1):");

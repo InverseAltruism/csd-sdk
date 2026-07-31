@@ -45,6 +45,13 @@ const c1Corpus = [
   ["ticker trailing \\n", { v: 1, t: "transfer", ticker: "GOLD\n", to: TO20, amount: "100" }, false],
   ["amount trailing \\n", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100\n" }, false],
   ["to-addr trailing \\n", { v: 1, t: "transfer", ticker: "GOLD", to: TO20 + "\n", amount: "100" }, false],
+  ["v is boolean true (Python True==1 trap)", { v: true, t: "transfer", ticker: "GOLD", to: TO20, amount: "100" }, false],
+  ["transfer ts 2^53 (unsafe int)", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100", ts: 2 ** 53 }, false],
+  ["transfer ts safe", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100", ts: 1781387000 }, true],
+  ["offer ts 2^53 (unsafe int)", { v: 1, t: "offer", give: { ticker: "GOLD", amount: "10" }, want: { value: "100" }, ts: 2 ** 53 }, false],
+  ["offer ts safe", { v: 1, t: "offer", give: { ticker: "GOLD", amount: "10" }, want: { value: "100" }, ts: 1781387000 }, true],
+  ["bid ts 2^53 (unsafe int)", { v: 1, t: "bid", want: { ticker: "GOLD", amount: "10" }, give: { value: "100" }, ts: 2 ** 53 }, false],
+  ["bid ts safe", { v: 1, t: "bid", want: { ticker: "GOLD", amount: "10" }, give: { value: "100" }, ts: 1781387000 }, true],
 ];
 
 // ── JS reference outputs ──

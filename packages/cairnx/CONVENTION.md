@@ -146,6 +146,8 @@ CairnX meaning for deploys. The **deployer** is the anchoring proposer.
   chain itself rejects fill attempts (C5), and the resolver releases the lock. Offers SHOULD
   use short windows (e.g. tip-epoch + 24 ≈ 1 day).
 - An offer is identified by its **proposal id (txid)**.
+- `memo` (64 UTF-16 units max) and `ts` are optional free fields with the same rules as
+  `transfer` (4.3); `ts` MUST be a JS-safe integer (A8).
 
 ### 4.5 `fill` — atomic delivery-versus-payment (an Attest, not a Propose)
 
@@ -290,6 +292,16 @@ once a replay hash is pinned over data that exercises them, so they are stated h
   `isWellFormedDeep` gate (records.ts), which runs immediately after the A5 round-trip. Implementers
   MUST reproduce it (e.g. JS `String.prototype.isWellFormed`, Rust `str` is already well-formed so a
   `serde_json` parse that surfaces the escape and re-encodes will reject — assert it explicitly).
+- **A8. The closed record schema and the `ts` bound.** Every record type's key set is CLOSED
+  (records.ts `onlyKeys` exact-key allowlists, mirrored by `_only_keys` in the Python reference):
+  an unknown key anywhere in a record makes it an invalid no-op, never a tolerated extra. The
+  optional free field `ts` (on `transfer`, `offer` and `bid`) MUST be a JSON integer number with
+  absolute value at most 2^53 - 1 (a JS-safe integer; a boolean is NOT an integer). A `ts` of 2^53
+  or above round-trips byte-identically through a bignum/decimal parser but exceeds the IEEE-754
+  exact range, so a JS resolver and a bignum porter would disagree on ONE mined transfer and fork
+  sha256(canonicalState). Out-of-range, fractional, boolean or non-number `ts` is an invalid no-op.
+  Reference: the three `Number.isSafeInteger(r.ts)` gates in records.ts and `is_safe_int` in
+  cairnx_ref.py. Pinned by the `ts` rows of the parse-gate differential (conformance/crosscheck.mjs).
 
 The conformance suite **now includes** the A1–A4/A7 vectors (`determinism-nonascii-name-value-pinned`
 covers a non-ASCII token name, an emoji/non-BMP name, and CJK; `determinism-lone-surrogate-rejected`
@@ -503,6 +515,8 @@ of the book is instead built from **bids**, on-chain discovery records:
 - "I will pay `give.value` CSD (>0) for `want`" — `want` is a token amount or `{name}`.
   The **bidder** = proposer. `expires_epoch` = the bid's validity window. Cancel = Attest
   `score=0` by the bidder. **Non-binding**: nothing is locked; honoring it is reputational.
+- `memo` (64 UTF-16 units max) and `ts` are optional free fields, same rules as 4.3; `ts` MUST
+  be a JS-safe integer (A8).
 - **Fulfillment** is the two-step RFQ: the asset owner anchors a **taker-bound offer**
   (`taker = bidder`, price ≤ bid) optionally tagged `"bid":"<bidId>"`; the bidder's client
   detects the responding offer and fills it atomically. Two anchors + one fill — the
