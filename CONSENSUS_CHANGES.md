@@ -56,6 +56,67 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
+
+The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(expiresEpoch)` guard its
+sibling offer and bid Propose branches already carry (`resolve.ts` :490 offer, :546 bid). MF-20 adds
+it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard line is byte-identical to the
+offer branch except the kind string:
+
+    if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "fclaim", false, "expiresEpoch out of safe-integer range"); continue; }
+
+Python mirror, inserted after the fclaim V28 gate and before `target = offers.get(rec["offer"])`
+(`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
+
+    if not is_safe_int(ev.get("expiresEpoch")): continue
+
+**UNGATED, for three reasons:**
+1. It is reject-MORE only for values an honest node cannot produce. `expires_epoch` is a u64 decoded
+   from chain JSON; the 2^53-and-above range is grant-UNREACHABLE via the later `E > effExpiry` leg
+   (a stored offer's own `expiresEpoch` is safe-integer-gated at creation), and a non-finite `E`
+   (NaN/Infinity) is unrepresentable in JSON, so it never reaches the resolver from the chain. On every
+   chain-derivable stream the guard denies nothing new; it only removes the branch's dependence on a
+   later leg's coincidental bound (the disconnected-defenses class), restoring three-way parity with the
+   offer/bid guards and the Python oracle.
+2. Replay identity is PROVEN, not argued. The frozen B6-era replay corpus carries ZERO fclaim, so its
+   zero-movement says nothing about this branch. The proof is a live [pins..tip] differential: the
+   pre-MF-20 baseline dist vs the guarded dist, run over the SAME real indexer-scanned event stream
+   including the FIRST granted on-chain fclaim `0x43e9c34f...51c6d2c6` (mined 65,507, offer
+   `0xa11cb429...9de9547a`). `canonicalState` is sha256-identical at all 20 pinned heights AND at tip
+   (both `86300aabcef1e09db4ea...`), the granted fclaim entry serializes identically on both builds, and
+   every pinned height reproduces `replay-hashes.json` exactly (the anchor proving the live scan IS the
+   canonical stream). Archived: `/opt/cairn_substrate/.p75/evidence/mf20-live-differential.txt`.
+3. A height gate would add a LIVE consensus branch carrying fleet-wide adoption-coordination cost for
+   zero behavioral delta on any real stream. Reject-more for chain-impossible values needs no gate.
+
+**The golden pin does NOT live in the frozen corpus.** Seal policy (`scripts/seal-differential.mjs`
+steps 2 and 2b) forbids touching `cases.json` / `replay-corpus.json` / `replay-hashes.json`, and those
+carry no fclaim anyway. The behavior is pinned by `packages/cairnx/test/fclaim-v28.test.ts` case 11 (a
+NaN `E` grants nothing; an unsafe-int `E` grants nothing; the rejection is cut AT the guard leg, not a
+later ladder leg) plus the archived live differential. JS/Python parity is pinned by the full fclaim
+crosslang suite (v28-fclaim, v28-namegive-fclaim, v29-mux), which exercises the guarded branch against
+the mirrored oracle.
+
+**JS-API-only hazard it closes:** pre-guard, a direct `resolve()` consumer feeding a `propose` fclaim
+with `expiresEpoch: NaN` slid past every comparison leg (NaN compares false everywhere) and GRANTED a
+hold with `claimUntilHeight` NaN, which `canonicalState` serializes as `null`. JSON cannot carry NaN so
+the chain cannot produce it, but any JS-API caller could; the guard closes it. Measured pre-guard:
+`claimedBy` set, `"claimUntilHeight":null` in canonicalState (`evidence/before-MF20-red.txt`).
+
+**Proof artifacts:** red-first `evidence/before-MF20-red.txt`; live differential
+`evidence/mf20-live-differential.txt`; per-leg branch sweep `evidence/mf20-per-leg-sweep.txt` (14 legs of
+the grant ladder, each with >= 1 executed red on the fclaim substrates: vectors/cases + fclaim-v28 +
+fork-lens-v29 + the three fclaim crosslang runs, NEVER scored against the fclaim-free replay corpus).
+Known survivor, declared in advance: the PYTHON mirror guard has NO state-observable red under any
+substrate, because an unsafe `E` is grant-unreachable on both sides (the `eff_expiry` bound over a
+safe-int offer expiry) and denied entries never serialize; its presence is enforced by review plus the
+PARITY comment, and its miss cost is zero for every stream the current ladder admits.
+
+**Release:** not published on this branch (no version bump, per plan discipline); rides the next
+sanctioned cairnx-core release. `pnpm run audit:all` green on the settled post-MF-20 tree
+(fclaim/partialFill/v28plus coverage counters all > 0); full package suite + `test:crosslang` green;
+the five pinned vector artifacts byte-identical throughout.
+
 ## cairnx-core 0.1.40 (2026-07-21, PENDING bump + publish + activation) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
 
 **Consensus change (gated, non-retroactive): `V29_HEIGHT` = 88,000** (set 2026-07-20 by operator decision;

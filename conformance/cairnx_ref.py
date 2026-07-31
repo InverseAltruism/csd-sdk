@@ -803,6 +803,7 @@ def resolve(events, tip_height):
             elif t == "fclaim":
                 # v2.8 (§31) open-lane claim GRANT. Below V28 inert. Grant ladder (order-independent ANDs):
                 if ev["height"] < V28_HEIGHT: continue
+                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 target = offers.get(rec["offer"])
                 E = ev["expiresEpoch"]
                 def deny(rec=rec, who=who, E=E, ev=ev):
