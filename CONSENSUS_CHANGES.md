@@ -73,13 +73,20 @@ Python mirror, inserted after the fclaim V28 gate and before `target = offers.ge
 **UNGATED, for three reasons:**
 1. It is reject-MORE only for values an honest node cannot produce. `expires_epoch` is a u64 decoded
    from chain JSON; the 2^53-and-above range is grant-UNREACHABLE via the later `E > effExpiry` leg
-   (a stored offer's own `expiresEpoch` is safe-integer-gated at creation), and a non-finite `E`
-   (NaN/Infinity) is unrepresentable in JSON, so it never reaches the resolver from the chain. On every
+   (a stored offer's own `expiresEpoch` is safe-integer-gated at creation). A 19-value boundary
+   differential (pre-guard vs guarded, canonicalState hashed) measured EXACTLY three shapes whose
+   verdict moves, and none is chain-derivable: `NaN`, a MISSING field, and a STRING-typed
+   `"2184"`. Note `Infinity` is NOT among them (it is denied on both sides), and the live wire
+   confirms the premise: over the whole indexer scan, string-typed `expires_epoch` = 0 and
+   non-safe-after-`Number()` = 0. For every safe-integer `expiresEpoch` the guard is a pure
+   pass-through, so canonical state is byte-identical for every safe-integer input. On every
    chain-derivable stream the guard denies nothing new; it only removes the branch's dependence on a
    later leg's coincidental bound (the disconnected-defenses class), restoring three-way parity with the
    offer/bid guards and the Python oracle.
-2. Replay identity is PROVEN, not argued. The frozen B6-era replay corpus carries ZERO fclaim, so its
-   zero-movement says nothing about this branch. The proof is a live [pins..tip] differential: the
+2. Replay identity is PROVEN, not argued. `replay-corpus.json` carries ZERO fclaim, so ITS
+   zero-movement says nothing about this branch (`cases.json` is different: it carries six fclaim
+   vectors, two of them grant-positive, and those ARE pinned and unmoved, so the pinned vector surface
+   does exercise the guarded branch). The proof is a live [pins..tip] differential: the
    pre-MF-20 baseline dist vs the guarded dist, run over the SAME real indexer-scanned event stream
    including the FIRST granted on-chain fclaim `0x43e9c34f...51c6d2c6` (mined 65,507, offer
    `0xa11cb429...9de9547a`). `canonicalState` is sha256-identical at all 20 pinned heights AND at tip
@@ -107,10 +114,14 @@ the chain cannot produce it, but any JS-API caller could; the guard closes it. M
 `evidence/mf20-live-differential.txt`; per-leg branch sweep `evidence/mf20-per-leg-sweep.txt` (14 legs of
 the grant ladder, each with >= 1 executed red on the fclaim substrates: vectors/cases + fclaim-v28 +
 fork-lens-v29 + the three fclaim crosslang runs, NEVER scored against the fclaim-free replay corpus).
-Known survivor, declared in advance: the PYTHON mirror guard has NO state-observable red under any
-substrate, because an unsafe `E` is grant-unreachable on both sides (the `eff_expiry` bound over a
-safe-int offer expiry) and denied entries never serialize; its presence is enforced by review plus the
-PARITY comment, and its miss cost is zero for every stream the current ladder admits.
+CORRECTION, from the gate's independent review: the Python mirror was declared a "known survivor" with
+no state-observable red. THAT CLAIM IS FALSE. A purpose-built crosslang differential over the same
+boundary matrix, with ONLY the fclaim mirror removed, diverges JS against Python on three wire shapes
+(a MISSING field, `null`, and a STRING), because `is_safe_int(None) == False` mirrors
+`Number.isSafeInteger(undefined) === false` and that is a real, checkable parity. The mirror is
+LOAD-BEARING and IS killable by a mutation; the batch simply shipped no test that kills it, so it is
+currently enforced by review rather than gated. Recorded here rather than quietly dropped, and a
+crosslang row covering one of those three shapes should be added on the next vehicle.
 
 **Release:** not published on this branch (no version bump, per plan discipline); rides the next
 sanctioned cairnx-core release. `pnpm run audit:all` green on the settled post-MF-20 tree
