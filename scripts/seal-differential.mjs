@@ -10,6 +10,8 @@
 //   1. settled-tree check: scripts/check-lockstep.mjs (dist not older than src);
 //   2. pins non-movement of the vector corpus itself: git diff <baseline>..HEAD over
 //      packages/cairnx/test/vectors/ B6-era pins (cases.json + wa-parity + VECTORS.md) must be EMPTY;
+//   2b. content-pins the B8-hash replay baseline (replay-corpus.json + replay-hashes.json): sha256
+//      + event-count floor + height-span floor, so a narrowed corpus can no longer self-certify;
 //   3. builds the BASELINE dist from the 0.1.38 release commit in a throwaway git worktree
 //      (pnpm install --frozen-lockfile, build codec + cairnx);
 //   4. corpus differential: canonicalState(resolve(events, tip)) old vs new, byte for byte, over
@@ -19,7 +21,8 @@
 //      previewFill / requiredFillOutputs / fillIsSafe / claimWindowOf(1-arg) / claimGraceOf /
 //      hasLiveClaim / fillTargetId / feeBpsAt over adversarial grids - equal verdicts everywhere;
 //   6. pnpm test:crosslang (the real fork gate, incl. the repaired V28 legs) - exit 0 required
-//      (set SEAL_SKIP_CROSSLANG=1 only for iterative authoring, never at the gate).
+//      (SEAL_SKIP_CROSSLANG=1 runs steps 1-5 then exits 3 SEAL INCOMPLETE: authoring iteration
+//      only; it can never produce a SEAL PASS).
 //
 // Usage: node scripts/seal-differential.mjs [baselineRef]     (default: the 0.1.38 release commit)
 import { spawnSync } from "node:child_process";
@@ -53,6 +56,8 @@ step("settled-tree check (check-lockstep: dist fresh, workspace pins)");
 // byte-identically before the V24..V28 entries were ADDED) and, together with the new replay-corpus.json,
 // it is independently guarded by the load-bearing vectors.test.ts recompute-and-assert (mutation-proven).
 // The narrowing drops nothing pre-existing: the B6-era byte-identity proof is unaffected.
+// P75-8a: the exemption from THIS git pin stands (both files legitimately postdate BASELINE_REF),
+// but they are no longer unpinned: step 2b below content-pins them (sha256 + floors).
 const B6_ERA_PINS = [
   "packages/cairnx/test/vectors/cases.json",
   "packages/cairnx/test/vectors/wa-parity-corpus.json",
@@ -64,6 +69,67 @@ step(`vector-corpus non-movement vs ${BASELINE_REF} (B6-era pins: ${B6_ERA_PINS.
   if (r.status !== 0) die(`git diff against ${BASELINE_REF} failed: ${r.stderr}`);
   if (r.stdout.trim() !== "") die(`a B6-era pinned vector file moved since the baseline:\n${r.stdout}\n(a moved pin is a moved goalpost; B6/B9 must not touch these)`);
   console.log("  B6-era vector pins unchanged since baseline (the V29 cases-v29.json is a separate, deliberately-diverging gate set)");
+}
+
+// ── 2b. the replay-hash baseline corpus is CONTENT-pinned ──────────────────────────────────────────
+// replay-corpus.json + replay-hashes.json CANNOT ride the B6_ERA_PINS git diff above: they postdate
+// the 0.1.38 baseline ref by design (B8-hash, 2026-07-23), so a diff against BASELINE_REF is never
+// empty for them. Without a pin of their own the pair is SELF-CERTIFYING: vectors.test.ts recomputes
+// hashes FROM the corpus and compares them to hashes derived FROM the same corpus, so a gutted
+// corpus regenerates its own green. This step pins the committed CONTENT instead.
+//
+// B9 UPDATE POINT (P75-8b, ~2026-08-30): REPLAY_CORPUS_PIN below is the ONE place a sanctioned
+// corpus extension touches, in the SAME commit as the new corpus. Recompute both sha256s over the
+// new committed files and restate the floors from the new corpus's exact facts. Floors only ever
+// RISE (minEvents up, heightSpan wider or equal, tipHeight up, minPinnedHeights up): the sha256
+// lines prove the files did not move outside a sanctioned re-pin, the floor lines prove a
+// sanctioned re-pin did not quietly narrow what the corpus exercises.
+// ★RESIDUAL, stated so "content-pinned" is never misread as "regime-covering": this corpus contains
+// ZERO events at or above 60,000 and ZERO fclaim records (heightSpan.hi below is 58,390, visibly under
+// the V28 gate). This pin proves the corpus was NOT NARROWED. It does NOT give the stop rule any
+// coverage of the live V28 fclaim regime. That arrives only with the B9 extension, at which point
+// heightSpan.hi must rise past 60,000 so the new fclaim events themselves become non-narrowable.
+const REPLAY_CORPUS_PIN = {
+  corpusFile: "packages/cairnx/test/vectors/replay-corpus.json",
+  corpusSha256: "b9cc703b676f327cc516c53197be1f8a9f84c67abf7bdf7818fd9e98f0173d4f",
+  hashesFile: "packages/cairnx/test/vectors/replay-hashes.json",
+  hashesSha256: "871fbf7140b42f7e8d50906acac99b6b1c9294c84922f9b2067dd31557674c2d",
+  format: 1,
+  tipHeight: 60_425,
+  minEvents: 389,                          // event-count floor: B9 ADDS events, never removes
+  minPinnedHeights: 20,                    // floor on the replay-hashes.json pin set
+  heightSpan: { lo: 29_865, hi: 58_390 },  // coverage floor: events must still span this range
+};
+step("replay-corpus content pin (sha256 + event-count floor + height-span floor)");
+{
+  const { createHash } = await import("node:crypto");
+  const sha256hex = (buf) => createHash("sha256").update(buf).digest("hex");
+  const P = REPLAY_CORPUS_PIN;
+  const corpusRaw = readFileSync(join(ROOT, ...P.corpusFile.split("/")));
+  const hashesRaw = readFileSync(join(ROOT, ...P.hashesFile.split("/")));
+  const bad = [];
+  const gotC = sha256hex(corpusRaw);
+  if (gotC !== P.corpusSha256) bad.push(`replay-corpus.json content moved: sha256 ${gotC} != pinned ${P.corpusSha256}`);
+  const gotH = sha256hex(hashesRaw);
+  if (gotH !== P.hashesSha256) bad.push(`replay-hashes.json content moved: sha256 ${gotH} != pinned ${P.hashesSha256}`);
+  let corpus, pinned;
+  try { corpus = JSON.parse(corpusRaw.toString("utf8")); pinned = JSON.parse(hashesRaw.toString("utf8")); }
+  catch (e) { die(`replay corpus/hashes unparseable: ${e.message}`); }
+  if (corpus.format !== P.format) bad.push(`replay-corpus format ${corpus.format} != pinned ${P.format}`);
+  if (corpus.tipHeight !== P.tipHeight) bad.push(`replay-corpus tipHeight ${corpus.tipHeight} != pinned ${P.tipHeight}`);
+  const evs = Array.isArray(corpus.events) ? corpus.events : [];
+  if (evs.length < P.minEvents) bad.push(`replay-corpus narrowed: ${evs.length} events < floor ${P.minEvents} (a thin corpus proves nothing)`);
+  const hts = evs.map((e) => e.height).filter((h) => Number.isFinite(h));
+  const lo = hts.length ? Math.min(...hts) : Infinity, hi = hts.length ? Math.max(...hts) : -Infinity;
+  if (!(lo <= P.heightSpan.lo && hi >= P.heightSpan.hi)) bad.push(`replay-corpus height span [${lo}, ${hi}] no longer covers the pinned floor [${P.heightSpan.lo}, ${P.heightSpan.hi}]`);
+  const nPins = Object.keys(pinned.hashes ?? {}).length;
+  if (nPins < P.minPinnedHeights) bad.push(`replay-hashes narrowed: ${nPins} pinned heights < floor ${P.minPinnedHeights}`);
+  if (pinned.tipHeight !== corpus.tipHeight) bad.push(`replay-hashes tipHeight ${pinned.tipHeight} != corpus tipHeight ${corpus.tipHeight}`);
+  if (bad.length) {
+    for (const m of bad) console.error(`  PIN VIOLATION: ${m}`);
+    die(`${bad.length} replay-corpus pin violation(s): corpus changes are P75-8b/B9 re-pin business ONLY (update REPLAY_CORPUS_PIN in the SAME commit as a sanctioned corpus change, never to silence this)`);
+  }
+  console.log(`  replay corpus content-pinned: ${evs.length} events, span [${lo}, ${hi}], tip ${corpus.tipHeight}, ${nPins} pinned heights, both sha256 ok`);
 }
 
 // ── 3. build the baseline dist in a throwaway worktree ─────────────────────────────────────────────
@@ -222,8 +288,11 @@ console.log("\nSEAL: corpus + legacy surface BYTE-IDENTICAL to the 0.1.38 baseli
 // ── 6. the real fork gate ──────────────────────────────────────────────────────────────────────────
 if (process.env.SEAL_SKIP_CROSSLANG === "1") {
   console.log("SEAL: test:crosslang SKIPPED (SEAL_SKIP_CROSSLANG=1 - authoring iteration only, NEVER at the gate)");
-} else {
-  step("pnpm test:crosslang (incl. the repaired V28 legs + the new tripwires)");
+  console.error("\nSEAL INCOMPLETE: steps 1-5 ran, but the crosslang fork gate did NOT. This run seals nothing; re-run without SEAL_SKIP_CROSSLANG before any bump/publish.");
+  process.exit(3);
+}
+step("pnpm test:crosslang (incl. the repaired V28 legs + the new tripwires)");
+{
   const r = sh("pnpm", ["run", "test:crosslang"], { stdio: "inherit" });
   if (r.status !== 0) die("test:crosslang failed");
 }

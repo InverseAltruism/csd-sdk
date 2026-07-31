@@ -256,7 +256,12 @@ def parse_record(uri, payload_hash_hex):
     except Exception:
         return None
     if not is_wellformed_deep(obj): return None
-    if obj.get("v") != 1 or not isinstance(obj.get("t"), str): return None
+    v = obj.get("v")
+    # PARITY (MF-23): Python True == 1, so a bare `v != 1` ACCEPTS {"v": true} for every record type
+    # where JS records.ts `r.v !== 1` rejects it. Same bool-exclusion idiom as is_safe_int and
+    # _json_scalar above: bool is excluded BEFORE the int comparison.
+    if not isinstance(v, int) or isinstance(v, bool) or v != 1: return None
+    if not isinstance(obj.get("t"), str): return None
     t = obj["t"]
     r = obj
 
@@ -798,6 +803,7 @@ def resolve(events, tip_height):
             elif t == "fclaim":
                 # v2.8 (§31) open-lane claim GRANT. Below V28 inert. Grant ladder (order-independent ANDs):
                 if ev["height"] < V28_HEIGHT: continue
+                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 target = offers.get(rec["offer"])
                 E = ev["expiresEpoch"]
                 def deny(rec=rec, who=who, E=E, ev=ev):

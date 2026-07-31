@@ -13,6 +13,7 @@
 //
 //   digest  = sha256d( tagged_hash("CSD-SIWC-v1", utf8(message)) )      // disjoint from tx + legacy login
 //   verify  = parse(canonical) → domain/chain/nonce/time checks → verifyDigest → hash160(pub)==account
+//             and the RETURNED identity is that hash160(pub), lowercase, never the message's account line
 //
 // IMPORTANT: this library is stateless. SINGLE-USE NONCE is the relying party's responsibility:
 // issue a fresh nonce per attempt, store it bound to the browser session, and DELETE it atomically
@@ -57,9 +58,19 @@ const NONCE_RE = /^[A-Za-z0-9]{8,}$/;
 // The build→parse canonical round-trip already guards message STRUCTURE; this guards field VALUES.
 const hasLF = (s: string) => /[\n\r\u2028\u2029\u0085\u000b\u000c]/.test(s);
 
+// Reject ill-formed UTF-16 (an unpaired surrogate) in every field value. utf8ToBytes() maps a lone
+// surrogate to U+FFFD, so two DIFFERENT messages hash to ONE digest (siwcDigest is non-injective over
+// arbitrary strings); the Python reference cannot encode one at all, which is the C1 cross-language
+// class. No honest client makes one: a lone surrogate has no UTF-8 encoding and only survives a JSON
+// "\ud800" escape. Valid pairs are stripped first, so real astral text (emoji) is untouched. No
+// lookbehind: this module ships to MV3 and to browsers.
+const hasLoneSurrogate = (s: string): boolean =>
+  /[\uD800-\uDFFF]/.test(s) && /[\uD800-\uDFFF]/.test(s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""));
+
 function assertField(name: string, v: string): void {
   if (typeof v !== "string" || v.length === 0) throw new Error(`siwc: ${name} required`);
   if (hasLF(v)) throw new Error(`siwc: ${name} must not contain a newline`);
+  if (hasLoneSurrogate(v)) throw new Error(`siwc: ${name} must not contain an unpaired surrogate`);
 }
 
 // Parse an RFC3339 timestamp that MUST carry an explicit timezone (Z or ±hh:mm). `Date.parse` of a
@@ -78,7 +89,9 @@ export function buildSiwcMessage(f: SiwcFields): string {
   if (!NONCE_RE.test(f.nonce)) throw new Error("siwc: nonce must be >=8 alphanumeric chars");
   assertField("issuedAt", f.issuedAt);
   const stmt = f.statement != null && f.statement !== "" ? f.statement : undefined;
-  if (stmt !== undefined && hasLF(stmt)) throw new Error("siwc: statement must not contain a newline");
+  // Same guard set as every other field (stmt is non-empty here, so the required-check cannot fire).
+  // One call site, so a future field rule can never apply to the other fields but skip the statement.
+  if (stmt !== undefined) assertField("statement", stmt);
   for (const opt of ["expirationTime", "notBefore", "requestId"] as const) {
     const v = f[opt]; if (v !== undefined) assertField(opt, v);
   }
@@ -148,6 +161,11 @@ export function parseSiwcMessage(message: string): SiwcFields | null {
 
 /** The SIWC auth digest (0x-hex). Domain-separated from tx sighash + legacy login digest. */
 export function siwcDigest(message: string): string {
+  // Defined only over well-formed UTF-16. utf8ToBytes() maps a lone surrogate to U+FFFD, so without
+  // this refusal two distinct messages share one digest and a signature over one verifies the other.
+  // buildSiwcMessage and parseSiwcMessage already refuse such a message, so verifySiwc returns
+  // "malformed-message" and never reaches this throw (pinned by test); this guards a DIRECT caller.
+  if (hasLoneSurrogate(message)) throw new Error("siwc: message must not contain an unpaired surrogate");
   return "0x" + bytesToHex(sha256d(taggedHash(SIWC_TAG, utf8ToBytes(message))));
 }
 
@@ -173,8 +191,11 @@ export interface VerifyExpected {
 const DEFAULT_FUTURE_SKEW_MS = 120_000;
 export type VerifyResult = { ok: true; account: string; fields: SiwcFields } | { ok: false; reason: string };
 
-/** Verify a SIWC sign-in, server-side, fail-closed. Ordered checks; identity is derived ONLY from
- *  the recovered key (never from a client-supplied address field). Returns the proven account. */
+/** Verify a SIWC sign-in, server-side, fail-closed. Ordered checks. The returned `account` is derived
+ *  ONLY from the recovered key: lowercase 0x-hex hash160(pub33), one string per key. The message's own
+ *  account line is compared case-insensitively and then discarded. `fields` stays the VERBATIM parse of
+ *  the signed message, so `fields.account` keeps the client's casing: key a user record on `account`,
+ *  never on `fields.account`. Returns "bad-clock" if the caller's now/skewMs/futureSkewMs is not finite. */
 export function verifySiwc(input: { message: string; sig64: string; pub33: string }, expected: VerifyExpected): VerifyResult {
   const f = parseSiwcMessage(input.message);
   if (!f) return { ok: false, reason: "malformed-message" };
@@ -186,6 +207,12 @@ export function verifySiwc(input: { message: string; sig64: string; pub33: strin
   const now = expected.now ?? Date.now();
   const skew = expected.skewMs ?? 0;
   const futureSkew = expected.futureSkewMs ?? Math.max(skew, DEFAULT_FUTURE_SKEW_MS);
+  // `??` passes NaN through (it only catches null/undefined), and every bound below is a `>`/`>=`
+  // comparison, which is FALSE against NaN. One non-finite input therefore disables all of them at once
+  // and a years-expired sign-in returns ok:true. Infinity has the same effect on the skew bounds, and a
+  // JS caller passing a numeric STRING breaks the future bound by concatenation. A non-finite bound is
+  // an RP configuration error, never a user action, so failing closed here declines nothing legitimate.
+  if (!Number.isFinite(now) || !Number.isFinite(skew) || !Number.isFinite(futureSkew)) return { ok: false, reason: "bad-clock" };
   const iat = parseTime(f.issuedAt); if (Number.isNaN(iat)) return { ok: false, reason: "bad-issued-at" };
   // Bound issuedAt against the clock (audit SIWC-IAT): reject a message issued in the future (beyond the
   // DOCUMENTED futureSkew — default 120s, replacing the old HIDDEN +5min added atop skewMs, audit L3) or
@@ -200,8 +227,13 @@ export function verifySiwc(input: { message: string; sig64: string; pub33: strin
     if (now + skew < nbf) return { ok: false, reason: "not-yet-valid" };
   }
   if (!verifyDigest(input.sig64, input.pub33, siwcDigest(input.message))) return { ok: false, reason: "bad-signature" };
-  if (addrFromPub(input.pub33).toLowerCase() !== f.account.toLowerCase()) return { ok: false, reason: "account-mismatch" };
-  return { ok: true, account: f.account, fields: f };
+  // Identity = hash160(recovered key). The client-supplied f.account is only ever COMPARED (case-
+  // insensitively, so a mixed-case address still signs in) and then discarded; returning it gave a
+  // relying party one identity string per hex-letter casing of the same key. addrFromPub emits
+  // lowercase 0x-hex, and the returned FORM is pinned by test rather than re-normalized here.
+  const derived = addrFromPub(input.pub33);
+  if (derived.toLowerCase() !== f.account.toLowerCase()) return { ok: false, reason: "account-mismatch" };
+  return { ok: true, account: derived, fields: f };
 }
 
 /** A fresh single-use nonce (128-bit, alphanumeric hex). The RP issues + stores + consumes it. */

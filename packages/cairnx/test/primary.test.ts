@@ -1,7 +1,8 @@
 // primary.test.ts — pins the promoted reverse/primary-name selector (src/primary.ts). Two layers:
 // (1) INLINE core cases so this package's CI pins the contract with no sibling checkouts;
-// (2) the canonical golden vectors from the cairnx service repo (sibling checkout), the SAME file
-//     that pins the service shim and the cairn UI adapter — when present, every case must agree.
+// (2) the canonical golden vectors, VENDORED at test/fixtures/primary-vectors.json (REQUIRED: a missing
+//     fixture is a hard fail, never a skip); the sibling cairnx service checkout, when present, is a
+//     byte-parity tripwire so the vendored copy cannot silently drift from the canonical source.
 // The promoted selector lowercases the QUERY address (record fields are canonical lowercase on
 // chain); the uppercase-query case below pins that, killing the old copies' documented nuance.
 import assert from "node:assert/strict";
@@ -53,20 +54,24 @@ t("primaryRankBefore: the exported comparator matches the selection order", () =
   assert.equal(primaryRankBefore(n({ name: "x", claimId: "0xbb" }), n({ name: "y", claimId: "0xaa" })), false);
 });
 
-// ── canonical golden vectors (sibling cairnx service repo) — the cross-consumer lock ──
-const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "../../../../cairnx/test/fixtures/primary-vectors.json");
-if (!existsSync(fixturePath)) {
-  console.warn("  ! sibling cairnx checkout absent - canonical primary-vectors cross-check SKIPPED (inline cases still pinned)");
-} else {
-  const fx = JSON.parse(readFileSync(fixturePath, "utf8"));
-  assert.ok(Array.isArray(fx.cases) && fx.cases.length >= 11, `fixture truncated (${fx.cases?.length ?? 0} cases)`);
-  const addr = (x: string | null | undefined) => (x == null ? undefined : (fx.addresses[x] ?? x));
-  for (const c of fx.cases) {
-    t(`vector: ${c.desc}`, () => {
-      const names = c.names.map((v: Record<string, unknown>) => ({ ...v, owner: addr(v.owner as string), addr: addr(v.addr as string) }) as NameState);
-      assert.equal(pickPrimaryName(names, addr(c.addr)!), c.expected);
-    });
-  }
+// ── canonical golden vectors: vendored copy REQUIRED, sibling checkout is a byte-parity tripwire ──
+const here = dirname(fileURLToPath(import.meta.url));
+const vendoredPath = join(here, "fixtures/primary-vectors.json");
+if (!existsSync(vendoredPath)) {
+  throw new Error(`canonical primary-vectors fixture MISSING at ${vendoredPath}: the golden vectors are load-bearing (12 of 20 assertions); a missing fixture is a hard fail, never a skip`);
+}
+const siblingPath = join(here, "../../../../cairnx/test/fixtures/primary-vectors.json");
+if (existsSync(siblingPath) && readFileSync(vendoredPath, "utf8") !== readFileSync(siblingPath, "utf8")) {
+  throw new Error(`primary-vectors DRIFT: ${vendoredPath} differs from canonical ${siblingPath}; byte-copy the canonical file over the vendored one in the same change as the upstream edit`);
+}
+const fx = JSON.parse(readFileSync(vendoredPath, "utf8"));
+assert.ok(Array.isArray(fx.cases) && fx.cases.length >= 11, `fixture truncated (${fx.cases?.length ?? 0} cases)`);
+const addr = (x: string | null | undefined) => (x == null ? undefined : (fx.addresses[x] ?? x));
+for (const c of fx.cases) {
+  t(`vector: ${c.desc}`, () => {
+    const names = c.names.map((v: Record<string, unknown>) => ({ ...v, owner: addr(v.owner as string), addr: addr(v.addr as string) }) as NameState);
+    assert.equal(pickPrimaryName(names, addr(c.addr)!), c.expected);
+  });
 }
 
 console.log(`\nprimary: ${pass} passed`);

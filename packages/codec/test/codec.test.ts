@@ -141,5 +141,31 @@ eq("maxSupplyBase matches the live indexer max_supply", maxSupplyBase() === 10_5
 eq("emittedSupplyBase saturates at maxSupplyBase past the last era", emittedSupplyBase(HALVING_INTERVAL * 64 + 12_345) === maxSupplyBase(), true);
 eq("emittedSupplyBase: negative/NaN heights emit 0n", emittedSupplyBase(-5) === 0n && emittedSupplyBase(NaN) === 0n, true);
 
+console.log("\nMF-16: leading BOM (U+FEFF) preserved on decode (byte round-trip + txid stability)");
+{
+  // A Propose whose domain LEGITIMATELY begins with U+FEFF: the Rust node's bincode read_string stores
+  // the bytes verbatim, so the SDK decoder must too. Pre-fix TextDecoder stripped the leading BOM, so
+  // serialize(deserialize(x)) != x and the re-derived txid diverged from the node. RED-first: removing
+  // `ignoreBOM: true` flips all three assertions (round-trip unequal, domain length 6, txid unequal).
+  const mkBom = (domain: string): Parameters<typeof serialize>[0] => ({
+    version: 1, locktime: 0,
+    inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }],
+    outputs: [{ value: 1, scriptPubkey: "0x" + "cd".repeat(20) }],
+    app: { type: "Propose", domain, payloadHash: "0x" + "11".repeat(32), uri: "u", expiresEpoch: 0 },
+  });
+  const bomTx = mkBom("﻿domain");
+  const back = deserialize(serialize(bomTx));
+  const backDomain = back.app.type === "Propose" ? back.app.domain : "";
+  eq("MF-16: serialize(deserialize(serialize(tx))) is byte-identical (BOM preserved)", hxOf(serialize(back)), hxOf(serialize(bomTx)));
+  eq("MF-16: decoded domain keeps the leading U+FEFF as content", backDomain.charCodeAt(0), 0xfeff);
+  eq("MF-16: decoded domain length preserved (BOM not dropped)", backDomain.length, 7);
+  eq("MF-16: txid is stable across a decode round-trip (no silent BOM drop)", txid(back), txid(bomTx));
+  // PAIRED HAPPY PATH: a normal-string domain round-trips byte-identical and txid is stable (unchanged).
+  const plainTx = mkBom("plain");
+  const plainBack = deserialize(serialize(plainTx));
+  eq("MF-16 happy path: a normal-string tx round-trips byte-identical", hxOf(serialize(plainBack)), hxOf(serialize(plainTx)));
+  eq("MF-16 happy path: txid is stable for a normal-string tx", txid(plainBack), txid(plainTx));
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

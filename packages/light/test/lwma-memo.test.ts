@@ -79,13 +79,18 @@ const heightOf = (i: number) => FX.headers[i]!.height;
 
 console.log("— lwma memo identity (memoized impl vs raw-codec reference) —");
 
-// 1) every real fixture window, TWICE (cold cache pass, then warm cache pass)
+// 1) every real FULL LWMA sliding window, TWICE (cold cache pass, then warm cache pass). MF-17 makes
+//    expectedBitsFromWindow reject a window shorter than n = min(LWMA_WINDOW, height), and this
+//    checkpoint fixture starts at height 27541 (n is always 45), so a genuine window here is always
+//    45 headers; feeding it full exercises the conversion memo without tripping the short-window guard
+//    (that guard itself is covered by the MF-17 case in light-offline.test.ts). For a full window
+//    refExpectedBits' n = min(LWMA_WINDOW, height, window.length) collapses to min(LWMA_WINDOW, height),
+//    so the independent reference stays a faithful mirror with no edit.
 for (const label of ["cold", "warm"]) {
   let all = true;
   let checked = 0;
-  for (let i = 2; i < headers.length; i++) {
-    const n = Math.min(LWMA_WINDOW, heightOf(i), i);
-    const window = headers.slice(i - n, i);
+  for (let i = LWMA_WINDOW; i < headers.length; i++) {
+    const window = headers.slice(i - LWMA_WINDOW, i);
     if (!agree(window, heightOf(i))) { all = false; break; }
     checked++;
   }
@@ -110,17 +115,21 @@ for (const label of ["cold", "warm"]) {
   ];
   let all = true;
   for (const eb of EDGE_BITS) {
-    // the edge bits as a mid-window member (conversion path) with valid neighbors
+    // the edge bits as a mid-window member (conversion path) with valid neighbors. Call at height ==
+    // window.length so n = min(LWMA_WINDOW, height) == the window length: the window is FULL, the
+    // conversion memo is genuinely exercised, and MF-17's short-window guard stays out of the way.
     const window = [mk(INITIAL_BITS, 1000), mk(eb, 1120), mk(INITIAL_BITS, 1240)];
-    if (!agree(window, 1000)) { all = false; console.log(`    mismatch at bits 0x${eb.toString(16)}`); }
+    if (!agree(window, window.length)) { all = false; console.log(`    mismatch at bits 0x${eb.toString(16)}`); }
   }
   ok(`edge compact encodings agree with the reference (incl. throw-for-throw on invalid)`, all);
 
-  // invalid bits still throw AFTER the cache is fully warm (the 0n-cached path)
+  // invalid bits still throw AFTER the cache is fully warm (the 0n-cached path). Height 2 keeps the
+  // 2-header window FULL (n = min(LWMA_WINDOW, 2) = 2), so the throw is the INVALID-BITS throw we mean
+  // to pin, not the MF-17 short-window guard.
   const bad = [mk(INITIAL_BITS, 1000), mk(0x03800000, 1120)];
   let threw1 = false, threw2 = false;
-  try { expectedBitsFromWindow(bad, 1000); } catch { threw1 = true; }
-  try { expectedBitsFromWindow(bad, 1000); } catch { threw2 = true; }
+  try { expectedBitsFromWindow(bad, 2); } catch { threw1 = true; }
+  try { expectedBitsFromWindow(bad, 2); } catch { threw2 = true; }
   ok("invalid bits throw on first sight AND on the cached-0n second sight", threw1 && threw2);
 }
 
@@ -132,9 +141,11 @@ for (const label of ["cold", "warm"]) {
   const probeHeight = heightOf(LWMA_WINDOW);
   const before = expectedBitsFromWindow(probeWindow, probeHeight);
   for (let i = 0; i < 5000; i++) {
-    // exp 0x1c, mantissa walks 0x010000..: every value valid, every value distinct
+    // exp 0x1c, mantissa walks 0x010000..: every value valid, every value distinct. Height 2 keeps the
+    // 2-header probe window FULL (n = min(LWMA_WINDOW, 2) = 2) so the conversion runs without tripping
+    // MF-17's short-window guard; the return value is unused (this only forces memo insertions/eviction).
     const bits = (0x1c << 24) | (0x010000 + i);
-    expectedBitsFromWindow([mk(bits, 1000), mk(bits, 1120)], 1000);
+    expectedBitsFromWindow([mk(bits, 1000), mk(bits, 1120)], 2);
   }
   const after = expectedBitsFromWindow(probeWindow, probeHeight);
   ok("results identical across a forced cap eviction (5000 distinct bits > 4096 cap)", before === after && after === refExpectedBits(probeWindow, probeHeight));

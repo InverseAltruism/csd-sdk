@@ -20,7 +20,7 @@
 // Report-only. Wraps the compiled resolver; changes nothing. Exit 1 ONLY on --selftest if an invariant fails
 // to fire (the checker is broken) — a real-corpus violation is a finding printed for triage, not a build break.
 
-import { resolve, TREASURY_ADDR, V15_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16 } from "../packages/cairnx/dist/index.js";
+import { resolve, TREASURY_ADDR, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
 import { pathToFileURL } from "node:url";
 
 const T = TREASURY_ADDR;
@@ -65,15 +65,16 @@ export function invMintWithinCap(st) {
 }
 
 // INV4 locks exactly back open offers: for each (token, seller), locked balance == sum of that seller's OPEN
-// token-give offers of that token. Catches a leaked lock (offer closed but tokens still locked) or a phantom
-// lock (locked without an open offer) or an under-lock (open offer without the tokens reserved).
+// token-give offers' UNDELIVERED give (give.amount - delivered; delivered exists only on partial-fill offers
+// and the resolver unlocks each delivered slice at fill time). Catches a leaked lock (offer closed but tokens
+// still locked), a phantom lock (locked without an open offer), or an under-lock (give not reserved).
 export function invLockIntegrity(st) {
   const v = [];
   const exp = new Map();
   for (const o of Object.values(st.offers || {})) {
     if (o.status !== "open") continue;
     const g = o.give;
-    if (g && g.ticker !== undefined && g.amount !== undefined) { const k = `${g.ticker}|${o.seller}`; exp.set(k, (exp.get(k) || 0n) + (bi(g.amount) || 0n)); }
+    if (g && g.ticker !== undefined && g.amount !== undefined) { const k = `${g.ticker}|${o.seller}`; exp.set(k, (exp.get(k) || 0n) + (bi(g.amount) || 0n) - (bi(o.delivered) || 0n)); }
   }
   const act = new Map();
   for (const [t, holders] of Object.entries(st.balances || {}))
@@ -154,7 +155,7 @@ const AT = (ev, who, pid, h, paid = {}, score = 100, conf = 0) => { ev.push({ ki
 function genScenario() {
   const ev = [];
   const [A, B, C] = [pick(AC), pick(AC), pick(AC)];
-  const flow = pick(["token", "token", "name", "name", "swap", "sealed", "lapse", "noise"]);
+  const flow = pick(["token", "token", "name", "name", "swap", "sealed", "lapse", "partial", "fclaim", "noise"]);
   let tip;
   if (flow === "token") {
     const tk = "T" + ri(10, 999); let h = ri(30000, V26_HEIGHT + 2000);
@@ -205,6 +206,36 @@ function genScenario() {
     const nm = "l" + ri(100, 9999); const h = ri(30000, 33000);
     P(ev, A, vo(() => nameClaim({ name: nm })), h, { [T]: nameRegFee(nm, h).toString() });
     tip = h + ri(300000, 400000);   // far future → lease lapsed (INV5 expired shape)
+  } else if (flow === "partial") {
+    // v1.2 min partial fill, taker-bound (no claim machinery): pro-rata delivery unlocks the give in slices.
+    // Leaves the offer OPEN part-delivered ~40% of the time, the exact state the corrected INV4 must accept.
+    const tk = "P" + ri(10, 999); let h = ri(V16_HEIGHT, V26_HEIGHT + 2000);
+    P(ev, A, vo(() => deploy({ ticker: tk, decimals: 0, supply: "1000000", mint: "issuer" })), h, { [T]: DEPLOY_FEE.toString() }); h += ri(1, 3);
+    P(ev, A, vo(() => mint({ ticker: tk, amount: "100" })), h); h += ri(1, 3);
+    const off = P(ev, A, vo(() => offer({ give: { ticker: tk, amount: "100" }, want: { value: "100000000" }, min: "10000000", taker: B })), h, {}); h += ri(1, 4);
+    if (off) {
+      const x1 = BigInt(pick(["10000000", "30000000", "60000000"]));
+      AT(ev, B, off.id, h, { [A]: x1.toString(), [T]: tradeFee(x1, FEE_BPS_V16).toString() }); h += ri(1, 4);
+      if (chance(0.6)) { const x2 = 100000000n - x1; AT(ev, B, off.id, h, { [A]: x2.toString(), [T]: tradeFee(x2, FEE_BPS_V16).toString() }); }
+    }
+    tip = h + ri(0, 40);
+  } else if (flow === "fclaim") {
+    // v2.8 (§31) open-lane flow at V28+: fclaim Propose grants the hold, the fill attests the FCLAIM txid.
+    // ~30% of runs leave the hold unfilled (open offer carrying claimTxid, lock still live -> INV4/INV6).
+    const tk = "F" + ri(10, 999); let h = ri(V28_HEIGHT + 5, V28_HEIGHT + 4000);
+    const val = "100000000";
+    P(ev, A, vo(() => deploy({ ticker: tk, decimals: 0, supply: "1000000", mint: "issuer" })), h, { [T]: DEPLOY_FEE.toString() }); h += ri(1, 3);
+    P(ev, A, vo(() => mint({ ticker: tk, amount: "100" })), h); h += ri(1, 3);
+    const off = P(ev, A, vo(() => offer({ give: { ticker: tk, amount: "10" }, want: { value: val } })), h, {}); h += ri(1, 4);
+    const fc = off ? P(ev, C, vo(() => fclaim({ offer: off.id })), h) : null;
+    if (fc) fc.expiresEpoch = fclaimEpochFor(h, 9e15);   // hold-end epoch from the SHARED selector, never re-derived
+    if (fc && chance(0.7)) {
+      const fh = h + ri(1, 10);
+      const fee = tradeFee(BigInt(val), FEE_BPS_V16), reb = makerRebate(BigInt(val));   // open ask >= V17: rebate required
+      AT(ev, C, fc.id, fh, { [A]: (BigInt(val) + reb).toString(), [T]: fee.toString() });
+      h = fh;
+    }
+    tip = h + ri(0, 20);
   } else {
     const n = ri(1, 8); let h = ri(29900, V26_HEIGHT + 1000);
     for (let i = 0; i < n; i++) { const b = vo(() => buildNoise()); if (b) P(ev, pick(AC), b, h, chance(0.5) ? { [T]: pick(["1", "100000000", "300000000"]) } : {}); h += ri(0, 300); }
@@ -237,6 +268,8 @@ function selftest() {
   ok("INV3 fires on minted > supply", invMintWithinCap({ tokens: { TK: { minted: "2000", supply: "1000" } } }).length > 0);
   ok("INV4 fires on a leaked/orphan lock", invLockIntegrity({ offers: {}, balances: { TK: { [A]: { available: "0", locked: "10" } } } }).length > 0);
   ok("INV4 fires on an under-locked open offer", invLockIntegrity({ offers: { o: { status: "open", seller: A, give: { ticker: "TK", amount: "10" } } }, balances: {} }).length > 0);
+  ok("INV4 fires when a partial-fill offer still locks the FULL give (stale full-amount formula)", invLockIntegrity({ offers: { o: { status: "open", seller: A, give: { ticker: "TK", amount: "10" }, min: "1", paid: "40", delivered: "4" } }, balances: { TK: { [A]: { available: "4", locked: "10" } } } }).length > 0);
+  ok("INV4 silent on a legitimate partial fill (locked == give.amount - delivered)", invLockIntegrity({ offers: { o: { status: "open", seller: A, give: { ticker: "TK", amount: "10" }, min: "1", paid: "40", delivered: "4" } }, balances: { TK: { [A]: { available: "4", locked: "6" } } } }).length === 0);
   ok("INV5 fires on a bricked name (bad owner)", invNameWellFormed({ tipHeight: 50000, names: { bad: { owner: "not-hex", height: 1, effectiveHeight: 1, locked: false } } }).length > 0);
   ok("INV5 fires on effHeight > height", invNameWellFormed({ tipHeight: 50000, names: { n: { owner: A, height: 1, effectiveHeight: 2, locked: false } } }).length > 0);
   ok("INV5 fires on a stale pending reservation", invNameWellFormed({ tipHeight: 99999, names: { n: { owner: A, height: 1, effectiveHeight: 1, locked: false, pending: true, finalizeBy: 10 } } }).length > 0);
@@ -255,7 +288,7 @@ function selftest() {
 
 function runCorpus(N, seed) {
   SEED = seed >>> 0;
-  const cov = { tokens: 0, openLock: 0, filled: 0, swapOpen: 0, swapFilled: 0, pendingName: 0, lapsedName: 0, nameLocked: 0 };
+  const cov = { tokens: 0, openLock: 0, filled: 0, swapOpen: 0, swapFilled: 0, pendingName: 0, lapsedName: 0, nameLocked: 0, fclaim: 0, partialFill: 0, v28plus: 0 };
   const hits = new Map(); let scenariosWithViol = 0;
   const scen = [];
   for (let i = 0; i < N; i++) scen.push(genScenario());
@@ -266,8 +299,11 @@ function runCorpus(N, seed) {
       if (o.status === "open" && o.give?.ticker) cov.openLock++;
       if (o.status === "filled") cov.filled++;
       if (o.want?.ticker !== undefined) { if (o.status === "open") cov.swapOpen++; if (o.status === "filled") cov.swapFilled++; } // token->token
+      if (o.claimTxid !== undefined) cov.fclaim++;                              // v2.8 hold reached resolved state
+      if (o.delivered !== undefined && o.delivered !== "0") cov.partialFill++;  // a partial fill actually delivered
     }
     for (const n of Object.values(st.names || {})) { if (n.pending) cov.pendingName++; if (n.expired) cov.lapsedName++; if (n.locked) cov.nameLocked++; }
+    if ((st.events || []).some((l) => l.ok && l.height >= V28_HEIGHT)) cov.v28plus++;   // an APPLIED event in the live V28 regime
     if (violations.length) { scenariosWithViol++; for (const vln of violations) { const key = vln.split(":")[0]; hits.set(key, (hits.get(key) || 0) + 1); if ((hits.get("__samples_" + key) || []).length === undefined) hits.set("__samples_" + key, []); const sm = hits.get("__samples_" + key); if (sm.length < 3) sm.push({ vln, seed: SEED }); } }
   }
   console.log(`LEDGER-SOUNDNESS INVARIANTS — ${N} random scenarios (seed ${seed >>> 0})  [report-only]\n`);

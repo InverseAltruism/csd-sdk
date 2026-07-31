@@ -1,16 +1,24 @@
 {
   "name": "@inversealtruism/csd-light",
-  "version": "0.1.18",
-  "engines": { "node": ">=18" },
-  "description": "Compute Substrate light client \u2014 headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
+  "version": "0.1.19",
+  "engines": {
+    "node": ">=18"
+  },
+  "description": "Compute Substrate light client — headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [

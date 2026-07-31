@@ -91,4 +91,16 @@ const squatFc = id("f8");
 const squat = resolve([...base, PE(squatFc, fclaim({ offer: OID }), H0 + 3, B, epochOf(H0 + 3) + FCLAIM_MAX_EPOCH_AHEAD + 1)], H0 + 10);
 ok(squat.offers[OID].claimedBy === undefined && squat.fclaims[squatFc] === undefined, "anti-squat: an over-far expiry is denied");
 
+// ── 11. MF-20: a non-safe-integer expiresEpoch can never grant, and is cut at the guard leg ──
+const nanFc = id("f6");
+const nanSt = resolve([...base, PE(nanFc, fclaim({ offer: OID }), H0 + 3, B, Number.NaN)], H0 + 10);
+ok(nanSt.offers[OID].claimedBy === undefined && nanSt.fclaims[nanFc] === undefined,
+  "MF-20: a NaN expiresEpoch grants nothing (pre-guard it granted with claimUntilHeight NaN -> canonical null)");
+const hugeFc = id("f7");
+const hugeSt = resolve([...base, PE(hugeFc, fclaim({ offer: OID }), H0 + 3, B, 2 ** 53)], H0 + 10);
+ok(hugeSt.offers[OID].claimedBy === undefined && hugeSt.fclaims[hugeFc] === undefined,
+  "MF-20: an unsafe-int expiresEpoch grants nothing");
+ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && /out of safe-integer range/.test(e.note ?? "")),
+  "MF-20: the rejection happens AT the safe-integer guard leg, not at a later ladder leg");
+
 console.log(`cairnx-core fclaim B2 behavior: ${pass} passed`);

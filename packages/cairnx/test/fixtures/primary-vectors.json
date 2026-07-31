@@ -1,0 +1,113 @@
+{
+  "note": "Canonical golden vectors for the reverse/primary-name selector. The SAME cases pin two hand-written copies that MUST agree or the wallet union (Granus vs clarvis / UI) false-disagrees on reverse resolution: cairnx pickPrimaryName (src/primary.ts, consensus repo) and cairn primaryNameOf (public/trade/state.js, UI). This file is the single source of truth; cairn/test/primary-name.test.mjs reads it from the sibling checkout. addr/owner use the placeholders A, B, C, C_UPPER (resolved by each loader); a name with no addr field models a V23-cleared record (resolver set n.addr = undefined). expected is the primary .csd name for the query addr, or null. Selector contract: among names where owner === addr AND addr === self, not expired, not locked, pick lowest effectiveHeight then lowest (code-unit) claimId. As of the 2026-07-06 promotion the canonical selector is @inversealtruism/cairnx-core pickPrimaryName (csd-sdk packages/cairnx/src/primary.ts); the cairnx service src/primary.ts and cairn UI primaryNameOf are thin adapters over it. It lowercases the QUERY address defensively (records are canonical-lowercase on chain), so the earlier per-copy case nuance is gone and all consumers now agree by construction. All fixture STORED addrs (record owner/addr) are lowercase (production-realistic); C_UPPER is the same account as C written mixed-case, used ONLY as a query to pin that defensive lowercase.",
+  "addresses": {
+    "A": "0x1111111111111111111111111111111111111111",
+    "B": "0x2222222222222222222222222222222222222222",
+    "C": "0x3333cafe3333cafe3333cafe3333cafe3333cafe",
+    "C_UPPER": "0x3333CaFe3333CAFE3333cAfE3333CaFe3333CAFE"
+  },
+  "cases": [
+    {
+      "desc": "no names at all -> null",
+      "addr": "A",
+      "names": [],
+      "expected": null
+    },
+    {
+      "desc": "owns it but points elsewhere (owner A, addr B) -> not primary",
+      "addr": "A",
+      "names": [
+        { "name": "elsewhere", "owner": "A", "addr": "B", "effectiveHeight": 100, "claimId": "0xaa" }
+      ],
+      "expected": null
+    },
+    {
+      "desc": "points at A but A is not the owner (owner B, addr A) -> no reverse-map spoofing",
+      "addr": "A",
+      "names": [
+        { "name": "spoof", "owner": "B", "addr": "A", "effectiveHeight": 100, "claimId": "0xaa" }
+      ],
+      "expected": null
+    },
+    {
+      "desc": "oldest self-pointing wins regardless of alpha/insertion order",
+      "addr": "A",
+      "names": [
+        { "name": "aaa", "owner": "A", "addr": "A", "effectiveHeight": 300, "claimId": "0xcc" },
+        { "name": "zzz", "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xbb" },
+        { "name": "mmm", "owner": "A", "addr": "A", "effectiveHeight": 200, "claimId": "0xaa" }
+      ],
+      "expected": "zzz"
+    },
+    {
+      "desc": "effectiveHeight tie -> lower (code-unit) claimId wins",
+      "addr": "A",
+      "names": [
+        { "name": "bee", "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xbbbbbbbb" },
+        { "name": "ay",  "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xaaaaaaaa" }
+      ],
+      "expected": "ay"
+    },
+    {
+      "desc": "expired/lapsed self-pointing is excluded; the live one wins",
+      "addr": "A",
+      "names": [
+        { "name": "lapsed", "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xaa", "expired": true },
+        { "name": "live",   "owner": "A", "addr": "A", "effectiveHeight": 200, "claimId": "0xbb" }
+      ],
+      "expected": "live"
+    },
+    {
+      "desc": "offer-locked self-pointing is excluded; the unlocked one wins",
+      "addr": "A",
+      "names": [
+        { "name": "onsale",  "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xaa", "locked": true },
+        { "name": "settled", "owner": "A", "addr": "A", "effectiveHeight": 200, "claimId": "0xbb" }
+      ],
+      "expected": "settled"
+    },
+    {
+      "desc": "V23 BEFORE clear: oldest self-pointing is primary",
+      "addr": "A",
+      "names": [
+        { "name": "first",  "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xaa" },
+        { "name": "second", "owner": "A", "addr": "A", "effectiveHeight": 200, "claimId": "0xbb" }
+      ],
+      "expected": "first"
+    },
+    {
+      "desc": "V23 AFTER clear: the old primary's addr is cleared (no addr field) -> next-oldest promotes",
+      "addr": "A",
+      "names": [
+        { "name": "first",  "owner": "A", "effectiveHeight": 100, "claimId": "0xaa" },
+        { "name": "second", "owner": "A", "addr": "A", "effectiveHeight": 200, "claimId": "0xbb" }
+      ],
+      "expected": "second"
+    },
+    {
+      "desc": "all self-pointing names cleared (no addr) -> null",
+      "addr": "A",
+      "names": [
+        { "name": "first",  "owner": "A", "effectiveHeight": 100, "claimId": "0xaa" },
+        { "name": "second", "owner": "A", "effectiveHeight": 200, "claimId": "0xbb" }
+      ],
+      "expected": null
+    },
+    {
+      "desc": "addr stored lowercased, query lowercased -> matches (case-folding invariant)",
+      "addr": "A",
+      "names": [
+        { "name": "lower", "owner": "A", "addr": "A", "effectiveHeight": 100, "claimId": "0xaa" }
+      ],
+      "expected": "lower"
+    },
+    {
+      "desc": "uppercase/mixed-case QUERY against lowercase-stored records -> query lowercased defensively, matches",
+      "addr": "C_UPPER",
+      "names": [
+        { "name": "shouty", "owner": "C", "addr": "C", "effectiveHeight": 100, "claimId": "0xaa" }
+      ],
+      "expected": "shouty"
+    }
+  ]
+}

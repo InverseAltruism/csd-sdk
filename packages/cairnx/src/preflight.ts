@@ -8,10 +8,14 @@
 // the official website was protected. These pure functions are the ONE place that math lives, so every
 // value-bearing builder inherits loss-safety by calling a helper instead of re-deriving a guard.
 //
-// EVERY function here is a deterministic function of the offer/name record fields (never of a resolver
-// boolean), so even a resolver that returns a wrong `status`/`owner` to induce a loss cannot walk a caller
-// into one — the caller recomputes the verdict from the record itself. They add NO new canonical state and
-// change NO serialization, so replay is byte-identical (additive exports; no gate, no re-pin).
+// EVERY function here is a pure, deterministic function of the OFFER OBJECT YOU HAND IT. That input
+// is usually a resolver-SERVED OfferState: previewFill / requiredFillOutputs / fillEndorsement
+// consume its feeBps, status, min, paid and taker verbatim, so a lying resolver CAN walk an unbound
+// caller into a mis-sized fill. These helpers are the shared math, not the trust boundary. The
+// boundary is the caller's bind step: verify the served offer against the merkle-proven terms
+// (bindOfferTerms / provenOfferTerms, verifyfill.ts) BEFORE sizing outputs, exactly as the wallet
+// and the site swapguard do. What IS true unconditionally: these helpers add NO new canonical state
+// and change NO serialization, so replay stays byte-identical (additive exports; no gate, no re-pin).
 //
 // The math mirrors resolve.ts EXACTLY (the partial-fill pro-rata floor at resolve.ts:640-668, the whole-fill
 // value gate at :672-728, the open-CSD claim gate `openFillReject` at :166-171, and the freeze arithmetic
@@ -170,6 +174,15 @@ export const FEE_GATE_MARGIN_BLOCKS = 5;
 const NAME_FEE_GATES = [V18_HEIGHT, V24_HEIGHT];   // ascending name-fee activation heights
 export const buildFeeHeight = (tip: number): number => {
   const t = Number(tip);
+  // MF-19 fail-CLOSED: a non-canonical tip (NaN from a failed RPC read, a negative, a fraction)
+  // used to fall through the gate scan and price the fee at the raw value, which nameRegFee reads
+  // as the pre-V18 tier: a 2.00 CSD treasury output signed where the live tier requires 10.00, so
+  // the record is rejected after the money moved and the fee burns. An honest caller always holds
+  // a real chain height. tip 0 stays VALID and returns 0: the cairn site half (P75-9) prices
+  // display copy through buildFeeHeight(0) before its first health poll and keeps deploys
+  // order-safe under a stale Cloudflare edge in both directions; its tip-0 refusal lives at the
+  // fee-bearing entry points in actions.js, never here. Do not turn 0 into a throw.
+  if (!Number.isSafeInteger(t) || t < 0) throw new RangeError(`buildFeeHeight: tip must be a non-negative safe integer, got ${String(tip)}`);
   for (const g of NAME_FEE_GATES) if (t < g && t >= g - FEE_GATE_MARGIN_BLOCKS) return g;
   return t;
 };

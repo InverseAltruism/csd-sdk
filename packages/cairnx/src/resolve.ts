@@ -611,9 +611,24 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         // hold deadline. On grant, claimedBy/claimUntilHeight/claimTxid are set LAST-WRITE-WINS (a later grant on
         // the same offer re-assigns all three; claimTxid is never left stale and never cleared). ──
         if (ev.height < V28_HEIGHT) { note(ev, ev.id, "fclaim", false, "fclaim needs v2.8"); continue; }
+        // PARITY with the sibling offer/bid Propose guards (same guard, same phrasing): expiresEpoch
+        // is an unbounded on-chain u64; at or above 2^53 it has no exact JS representation (the
+        // offer-branch rationale applies verbatim). For every chain-derivable stream this is
+        // replay-identical: an unsafe E can never reach the grant, because E > effExpiry below always
+        // denies it (a stored offer's own expiresEpoch is safe-integer-gated at creation). It also
+        // closes a JS-API-only hazard: a non-finite E (unrepresentable in JSON, so never from the
+        // chain) previously slid past every comparison leg and GRANTED a hold with claimUntilHeight
+        // NaN, which canonicalState serializes as null. Reject-more, ungated.
         const target = offers.get(rec.offer);
         const E = ev.expiresEpoch;
         const deny = (why: string) => { fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: false }); note(ev, ev.id, "fclaim", false, why); };
+        // P75-4 REG-1: this MUST use deny(), not a bare note()+continue. Every other rung of this ladder
+        // records a DENIED fclaim in the map, and :667 reads fclaims.has(proposalId) to flag a paid
+        // SCORE_FILL on a denied fclaim as a pay-without-delivery burn for money-safety.mjs. An
+        // expires_epoch at or above 2^53 is a MINEABLE u64, so unlike NaN that class is on-chain
+        // reachable: skipping the map entry would silence the burn note for the one shape that can
+        // actually happen. Canonical cost is zero, because fclaimsOut below filters on `granted`.
+        if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); continue; }
         if (!target) { deny("unknown offer"); continue; }
         if (target.status !== "open") { deny(`offer ${target.status}`); continue; }
         if (target.taker) { deny("taker-bound offer needs no claim"); continue; }
