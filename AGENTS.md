@@ -67,7 +67,7 @@ pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import siblin
 pnpm -r test                     # per-package suites
 pnpm test:e2e                    # oracle/edge/security (oracle needs CSD_RPC, else skips)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
-pnpm run audit:all               # invariants + money-safety + race harness (report-only)
+pnpm run audit:all               # check-consensus-citations (hard) + invariants + money-safety + race harness
 node scripts/check-lockstep.mjs
 node scripts/check-consumer-pins.mjs   # cross-repo pin coherence; expects sibling consumer
                                        # checkouts under the same parent dir, skips absent ones

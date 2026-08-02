@@ -45,7 +45,7 @@ Before releasing any change to `cairnx-core` resolver behavior (`packages/cairnx
 consensus gate, run the money-safety audit tooling in addition to `test:crosslang`:
 
 ```
-pnpm run audit:all     # ledger-soundness invariants + money-safety + adversarial races
+pnpm run audit:all     # record citations + ledger-soundness invariants + money-safety + adversarial races
 ```
 
 `test:crosslang` proves JS and Python agree byte-for-byte, but two implementations can AGREE and both
@@ -58,7 +58,7 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
-The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(expiresEpoch)` guard its
+The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
 sibling offer and bid Propose branches already carry (`resolve.ts` :490 offer, :546 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
@@ -67,7 +67,7 @@ shipped at `resolve.ts` :631:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); continue; }
 
-Python mirror, `conformance/cairnx_ref.py` :821, the first rung of the same ladder and calling the same
+Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladder and calling the same
 `deny()` for the same reason (`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
 
     if not is_safe_int(E): deny(); continue
@@ -156,7 +156,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The same clause on the legacy SCORE_CLAIM path (resolve.ts ~:846) is inert by design (SCORE_CLAIM at
+  deny. The same clause on the legacy SCORE_CLAIM path (`resolve.ts` :861) is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state
