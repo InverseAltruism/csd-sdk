@@ -810,7 +810,14 @@ def resolve(events, tip_height):
                 # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined)).
                 # deny(), not a bare continue: every other rung of this ladder records the DENIED fclaim, and an
                 # expires_epoch at or above 2^53 is a mineable u64, so this rung is on-chain reachable. Mirrors
-                # resolve.ts:631. Canonical cost is zero either way (the granted subset alone is materialized).
+                # resolve.ts:631. This is NOT canonically free (the earlier note that it was is FALSE, measured):
+                # below V29 the id de-dup at :411 does not run, so two fclaim events can carry the SAME id, and
+                # deny() OVERWRITES an earlier granted:True entry with granted:False. The fill router at :854
+                # reads fc["granted"], so a paid SCORE_FILL attesting that id routes to the linked offer under a
+                # bare continue and does not under deny(): offer.status, balances and feesPaid all move. Gated by
+                # v28-fclaim-crosslang.mjs scenario 17, which goes RED if this rung is reverted to a bare continue.
+                # The map is otherwise internal HERE: resolve() at :1027 returns no fclaims key at all, where the
+                # JS materializes the granted subset as a diagnostic surface that canonicalState then excludes.
                 # KNOWN TYPE-AXIS DIVERGENCE, stated rather than left implied (ASDK-7): is_safe_int demands a
                 # Python int, so an integral FLOAT rejects here where JS Number.isSafeInteger(3.0) accepts. It is
                 # unreachable on any canonical stream: a canonical event carries integer heights and epochs, the

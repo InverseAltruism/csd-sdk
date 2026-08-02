@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import * as R from "../packages/cairnx/dist/index.js";
 const { resolve, canonicalState, canonicalJson, payloadHash, requiredFillOutputs,
         deploy, mint, offer, offerCancelAll, fclaim, nameCommit, nameRegFee, nameFinalize,
-        V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS,
+        V28_HEIGHT, V29_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS,
         CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS, REG_COMMIT_MAX_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS,
         DEPLOY_FEE, FEE_BPS_V16, SCORE_FILL, SCORE_CANCEL, SCORE_CLAIM, tradeFee } = R;
 const T = R.TREASURY_ADDR;
@@ -210,6 +210,34 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
 //     the freeze predicate in void_open_name_offers can only ever short-circuit on claimTxid===undefined. The
 //     freeze is kept as defense-in-depth (harmless, V28-gated, identical in both impls) against a FUTURE relaxation
 //     of the v1.5 guard. Neither the buyer-burn nor the recapturer-loss earlier drafts feared is reachable today.
+// 17. C0 leg 4: the safe-int rung must deny(), not skip, and the cost of skipping is NOT zero. Below V29 the M4
+//     event de-dup does not run, so two fclaim events can carry the SAME id. A bare `continue` on the safe-int
+//     rung leaves the FIRST event's granted record standing; deny() overwrites it with a DENIED record. The
+//     fclaim fill router reads that flag, so a paid SCORE_FILL attesting the id routes to the linked offer under
+//     a bare continue and does not under deny(). That is a JS<->Python fork on the money path: the give is
+//     released and balances and feesPaid move on one side only. Revert cairnx_ref.py's rung to a bare continue
+//     and the dup leg below goes RED (Python "filled" vs JS "open"); the happy-path leg stays green either way.
+//     The JS side is symmetric and measured the same way (a scratch copy of the shipped dist with resolve.ts:631
+//     reverted to note()+continue gives JS "filled" vs Python "open"), so this leg guards BOTH implementations.
+{ const oid = nid(), o = mkOffer(oid, H0 + 2);
+  const FID = "0x" + "cc".repeat(32);                                             // ONE id, carried by BOTH fclaims
+  const g1 = PE(fclaim({ offer: oid }), H0 + 3, B, E, 0, {}, FID);                // honest, GRANTS
+  const g2 = PE(fclaim({ offer: oid }), H0 + 4, B, 9007199254740993, 0, {}, FID); // 2^53+1, a mineable u64
+  if (H0 + 4 >= V29_HEIGHT) throw new Error(`s17 misconfig: the dup pair must sit below V29=${V29_HEIGHT}`);
+  const pay = payFor([...roots, o], oid, "500000000");
+  // PAIRED HAPPY-PATH, production's exact call shape: the same id, the same fill, WITHOUT the unsafe twin.
+  // It is also the dup leg's control: the two sequences differ by exactly one event, so a green happy path
+  // proves the fill is well formed, paid in full and inside the hold, and that only g2 changes the outcome.
+  const honest = [...roots, o, g1, AE(FID, B, holdEnd, pay)];
+  probe("s17 happy-path grant materialized", (() => { const s = jsState([...roots, o, g1], H0 + 4); return s.offers[oid].claimTxid === FID && s.fclaims[FID] !== undefined; })());
+  probe("s17 happy-path fill delivered", jsState(honest, holdEnd + 5).offers[oid].status === "filled");
+  both("s17 happy-path: honest single fclaim grants and fills", honest, holdEnd + 5);
+  // the dup leg: the grant must be STANDING when the unsafe twin lands, the twin must actually deny it, and the
+  // fill must reach a status, or the comparison is dead-green.
+  const dup = [...roots, o, g1, g2, AE(FID, B, holdEnd, pay)];
+  probe("s17 unsafe twin denies the standing grant", jsState([...roots, o, g1, g2], H0 + 10).fclaims[FID] === undefined);
+  probe("s17 dup leg reached its status (fill delivered nothing, offer stays open and held)", (() => { const x = jsState(dup, holdEnd + 5).offers[oid]; return x.status === "open" && x.claimTxid === FID && x.paid === undefined; })());
+  both("C0 leg 4: duplicate-id fclaim, unsafe twin denies the standing grant", dup, holdEnd + 5); }
 
 console.log(`\nv28 fclaim crosslang: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
