@@ -287,6 +287,29 @@ function corpus() {
       [depEv, mintEv, offEv, denied, att(C, denied.id, h0 + 5, { [A]: val.toString(), [T]: fee.toString() })], h0 + 60, "a client that skipped grant replay: the denied fclaim mines and the payment burns");
   }
 
+  // 8b. REG-1 REGRESSION PIN (P75-4). An fclaim GRANT whose expiresEpoch is 2^53 is a MINEABLE on-chain u64
+  //     with no exact JS representation, so the safe-integer rung at resolve.ts denies it. That rung MUST use
+  //     deny(), which records the DENIED fclaim in the fclaims map; the map is what the fill lane reads to flag
+  //     the buyer's subsequent PAID SCORE_FILL as a pay-without-delivery burn. Regress that one rung to the
+  //     pre-REG-1 shape (a bare note() + continue) and the map entry never exists, the paid fill goes silent,
+  //     this scenario reads "clean", and --selftest exits 1. Two things make it non-vacuous: E is set
+  //     EXPLICITLY (the prop() helper default 9e15 is just under 2^53 and is safe, so no other scenario
+  //     exercises this rung), and the buyer's paid fill is present (without a paid fill nothing anchors a
+  //     treasury output, the burn table cannot move, and the scenario would prove nothing). The payment shape
+  //     is byte-for-byte the one the honest open-lane fclaim buy above sends.
+  {
+    const h0 = V28_HEIGHT + 300;
+    const depEv = prop(A, deploy({ ticker: "REGO", decimals: 0, supply: "1000000", mint: "issuer" }), h0, { [T]: DEPLOY_FEE.toString() });
+    const mintEv = prop(A, mint({ ticker: "REGO", amount: "1000000" }), h0 + 1);
+    const offEv = prop(A, offer({ give: { ticker: "REGO", amount: "10" }, want: { value: "100000000", payto: A } }), h0 + 2);
+    const val = 100000000n, fee = tradeFee(val, FEE_BPS_V16), reb = makerRebate(val);
+    const pay = { [A]: (val + reb).toString(), [T]: fee.toString() };
+    const unsafeGrant = { ...prop(B, fclaim({ offer: offEv.id }), h0 + 3), expiresEpoch: 2 ** 53 };
+    push("REG-1 unsafe-integer fclaim expiry (denied grant, buyer's paid fill burns)", "burn",
+      [depEv, mintEv, offEv, unsafeGrant, att(B, unsafeGrant.id, h0 + 5, pay)], h0 + 60,
+      "pins P75-4: the safe-integer rung must deny() into the fclaims map, never note()+continue");
+  }
+
   return out;
 }
 
