@@ -803,11 +803,22 @@ def resolve(events, tip_height):
             elif t == "fclaim":
                 # v2.8 (§31) open-lane claim GRANT. Below V28 inert. Grant ladder (order-independent ANDs):
                 if ev["height"] < V28_HEIGHT: continue
-                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 target = offers.get(rec["offer"])
-                E = ev["expiresEpoch"]
+                E = ev.get("expiresEpoch")  # .get(), not [], so a MISSING field reaches the safe-int rung instead of raising
                 def deny(rec=rec, who=who, E=E, ev=ev):
                     fclaims[ev["id"]] = {"offer": rec["offer"], "proposer": who, "expiresEpoch": E, "height": ev["height"], "granted": False}
+                # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined)).
+                # deny(), not a bare continue: every other rung of this ladder records the DENIED fclaim, and an
+                # expires_epoch at or above 2^53 is a mineable u64, so this rung is on-chain reachable. Mirrors
+                # resolve.ts:631. Canonical cost is zero either way (the granted subset alone is materialized).
+                # KNOWN TYPE-AXIS DIVERGENCE, stated rather than left implied (ASDK-7): is_safe_int demands a
+                # Python int, so an integral FLOAT rejects here where JS Number.isSafeInteger(3.0) accepts. It is
+                # unreachable on any canonical stream: a canonical event carries integer heights and epochs, the
+                # chain's expires_epoch is a u64, and no canonical decode yields a float, so the two impls can
+                # only be fed a float by a hand-built JSON fixture. The validator is deliberately NOT loosened;
+                # admitting an input canonical decode cannot produce would be a behavior change with no reachable
+                # upside and a new float-arithmetic divergence risk in the reference.
+                if not is_safe_int(E): deny(); continue
                 if target is None: deny(); continue
                 if target["status"] != "open": deny(); continue
                 if target.get("taker"): deny(); continue
