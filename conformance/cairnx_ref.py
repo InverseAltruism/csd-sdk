@@ -803,11 +803,29 @@ def resolve(events, tip_height):
             elif t == "fclaim":
                 # v2.8 (§31) open-lane claim GRANT. Below V28 inert. Grant ladder (order-independent ANDs):
                 if ev["height"] < V28_HEIGHT: continue
-                if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 target = offers.get(rec["offer"])
-                E = ev["expiresEpoch"]
+                E = ev.get("expiresEpoch")  # .get(), not [], so a MISSING field reaches the safe-int rung instead of raising
                 def deny(rec=rec, who=who, E=E, ev=ev):
                     fclaims[ev["id"]] = {"offer": rec["offer"], "proposer": who, "expiresEpoch": E, "height": ev["height"], "granted": False}
+                # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined)).
+                # deny(), not a bare continue: every other rung of this ladder records the DENIED fclaim, and an
+                # expires_epoch at or above 2^53 is a mineable u64, so this rung is on-chain reachable. Mirrors
+                # resolve.ts:631. This is NOT canonically free (the earlier note that it was is FALSE, measured):
+                # below V29 the id de-dup at :411 does not run, so two fclaim events can carry the SAME id, and
+                # deny() OVERWRITES an earlier granted:True entry with granted:False. The fill router at :854
+                # reads fc["granted"], so a paid SCORE_FILL attesting that id routes to the linked offer under a
+                # bare continue and does not under deny(): offer.status, balances and feesPaid all move. Gated by
+                # v28-fclaim-crosslang.mjs scenario 17, which goes RED if this rung is reverted to a bare continue.
+                # The map is otherwise internal HERE: resolve() at :1027 returns no fclaims key at all, where the
+                # JS materializes the granted subset as a diagnostic surface that canonicalState then excludes.
+                # KNOWN TYPE-AXIS DIVERGENCE, stated rather than left implied (ASDK-7): is_safe_int demands a
+                # Python int, so an integral FLOAT rejects here where JS Number.isSafeInteger(3.0) accepts. It is
+                # unreachable on any canonical stream: a canonical event carries integer heights and epochs, the
+                # chain's expires_epoch is a u64, and no canonical decode yields a float, so the two impls can
+                # only be fed a float by a hand-built JSON fixture. The validator is deliberately NOT loosened;
+                # admitting an input canonical decode cannot produce would be a behavior change with no reachable
+                # upside and a new float-arithmetic divergence risk in the reference.
+                if not is_safe_int(E): deny(); continue
                 if target is None: deny(); continue
                 if target["status"] != "open": deny(); continue
                 if target.get("taker"): deny(); continue

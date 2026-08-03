@@ -45,7 +45,7 @@ Before releasing any change to `cairnx-core` resolver behavior (`packages/cairnx
 consensus gate, run the money-safety audit tooling in addition to `test:crosslang`:
 
 ```
-pnpm run audit:all     # ledger-soundness invariants + money-safety + adversarial races
+pnpm run audit:all     # record citations + ledger-soundness invariants + money-safety + adversarial races
 ```
 
 `test:crosslang` proves JS and Python agree byte-for-byte, but two implementations can AGREE and both
@@ -58,17 +58,19 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
-The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(expiresEpoch)` guard its
+The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
 sibling offer and bid Propose branches already carry (`resolve.ts` :490 offer, :546 bid). MF-20 adds
-it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard line is byte-identical to the
-offer branch except the kind string:
+it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
+offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
+the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
+shipped at `resolve.ts` :631:
 
-    if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "fclaim", false, "expiresEpoch out of safe-integer range"); continue; }
+    if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); continue; }
 
-Python mirror, inserted after the fclaim V28 gate and before `target = offers.get(rec["offer"])`
-(`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
+Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladder and calling the same
+`deny()` for the same reason (`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
 
-    if not is_safe_int(ev.get("expiresEpoch")): continue
+    if not is_safe_int(E): deny(); continue
 
 **UNGATED, for three reasons:**
 1. It is reject-MORE only for values an honest node cannot produce. `expires_epoch` is a u64 decoded
@@ -123,12 +125,13 @@ LOAD-BEARING and IS killable by a mutation; the batch simply shipped no test tha
 currently enforced by review rather than gated. Recorded here rather than quietly dropped, and a
 crosslang row covering one of those three shapes should be added on the next vehicle.
 
-**Release:** not published on this branch (no version bump, per plan discipline); rides the next
-sanctioned cairnx-core release. `pnpm run audit:all` green on the settled post-MF-20 tree
+**Release:** SHIPPED as cairnx-core **0.1.41**, published to npm 2026-07-31 (git tag
+`cairnx-core-0.1.41`, release commit `2a07668`), alongside csd-codec 0.1.16, csd-light 0.1.19,
+csd-registry 0.1.17 and csd-siwc 0.1.16. `pnpm run audit:all` green on the settled post-MF-20 tree
 (fclaim/partialFill/v28plus coverage counters all > 0); full package suite + `test:crosslang` green;
 the five pinned vector artifacts byte-identical throughout.
 
-## cairnx-core 0.1.40 (2026-07-21, PENDING bump + publish + activation) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
+## cairnx-core 0.1.40 (2026-07-21, PUBLISHED; activation pending at V29 = 88,000) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
 
 **Consensus change (gated, non-retroactive): `V29_HEIGHT` = 88,000** (set 2026-07-20 by operator decision;
 tip was ~58.3k). Two resolve()-side corrections that both move canonical state, so both ride the ONE gate,
@@ -153,7 +156,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The same clause on the legacy SCORE_CLAIM path (resolve.ts ~:846) is inert by design (SCORE_CLAIM at
+  deny. The same clause on the legacy SCORE_CLAIM path (`resolve.ts` :861) is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state
@@ -193,7 +196,7 @@ NOT a canonicalState change: `resolve.ts` and `replay-hashes.json` are byte-iden
 
 Rollout: re-vendor the two bundles (done, PROVENANCE re-pinned), re-pin the npm consumers (cli/sdk/svc) to 0.1.38 at publish, grep the ecosystem for FILL_TIP_MARGIN literals (only vendored bundles + parity grids), CF-purge cairn `/vendor/cairnx-core.js`. Full sequencing in cairn/docs/handoffs/71.
 
-## cairnx-core 0.1.37 (2026-07-12, PENDING publish + activation) - V28 fclaim open-lane settlement atomicity (CONVENTION v2.8, §31)
+## cairnx-core 0.1.37 (2026-07-12, PUBLISHED 2026-07-13; V28 ACTIVATED at 60,000, crossed 2026-07-23) - V28 fclaim open-lane settlement atomicity (CONVENTION v2.8, §31)
 
 **Consensus change (gated, non-retroactive): `V28_HEIGHT` = 60,000.** (Set 55,000 on 2026-07-12; bumped to
 60,000 on 2026-07-13 for a ~9-10 day deploy runway; tip was ~53.1k at the bump.) The largest CairnX replay change since the
