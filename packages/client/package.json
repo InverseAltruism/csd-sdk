@@ -1,16 +1,24 @@
 {
   "name": "@inversealtruism/csd-client",
-  "version": "0.1.15",
-  "engines": { "node": ">=18" },
-  "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway) \u2014 tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
+  "version": "0.1.16",
+  "engines": {
+    "node": ">=18"
+  },
+  "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway) — tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
