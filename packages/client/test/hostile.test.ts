@@ -163,12 +163,18 @@ console.log("verifyInputValues badInput naming (M1):");
     const zeroId = idOf(zeroBody);
     ok("branch: non-positive value → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: zeroBody }) as never }, [{ txid: zeroId, vout: 0 }]), { txid: zeroId, vout: 0 }));
   }
-  // 7. total overflow: two coins each near 2^53 — the SECOND coin overflows the running total
+  // 7. total overflow: two DISTINCT coins each near 2^53 — the SECOND coin overflows the running
+  //    total and must be the one named (Fable QC: the first cut reused one outpoint twice, which a
+  //    real selection never contains, so the naming couldn't be distinguished).
   {
-    const bigBody = mkBody(Number.MAX_SAFE_INTEGER - 10);
-    const bigId = idOf(bigBody);
-    const r = await verifyInputValues({ tx: async () => ({ ok: true, tx: bigBody }) as never }, [{ txid: bigId, vout: 0 }, { txid: bigId, vout: 0 }]);
-    ok("branch: total overflow → names the offending (second) coin", names(r, { txid: bigId, vout: 0 }));
+    const bigBodyA = mkBody(Number.MAX_SAFE_INTEGER - 10);
+    const bigBodyB = mkBody(Number.MAX_SAFE_INTEGER - 20);
+    const idA = idOf(bigBodyA), idB = idOf(bigBodyB);
+    const r = await verifyInputValues(
+      { tx: async (id: string) => ({ ok: true, tx: id.toLowerCase() === idA.toLowerCase() ? bigBodyA : bigBodyB }) as never },
+      [{ txid: idA, vout: 0 }, { txid: idB, vout: 0 }],
+    );
+    ok("branch: total overflow → names the offending (second) coin", names(r, { txid: idB, vout: 0 }));
   }
 }
 
