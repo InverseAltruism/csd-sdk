@@ -195,7 +195,11 @@ async function selectAndVerify(
   const exclude = new Set<string>();
   for (let round = 0; ; round++) {
     const sel = selectInputs(utxos, need, exclude);          // selection by REPORTED values
-    if (!sel) return { error: "insufficient confirmed balance for outputs + fee" };
+    // M1 QC: after exclusions a short remainder must not report a bare "insufficient confirmed
+    // balance" — the user's displayed balance contradicts it. Name the excluded coins.
+    if (!sel) return { error: exclude.size > 0
+      ? `insufficient verifiable balance for outputs + fee — ${exclude.size} coin(s) could not be verified against the chain and were excluded`
+      : "insufficient confirmed balance for outputs + fee" };
     let verified: { ok: boolean; total: number; badInput?: { txid: string; vout: number } };
     try { verified = await verify(sel.inputs); } catch { return { error: "input-value verification threw (fail-closed)" }; }
     if (verified.ok) return { sel, total: verified.total };

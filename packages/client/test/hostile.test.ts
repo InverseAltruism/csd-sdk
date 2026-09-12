@@ -128,5 +128,49 @@ console.log("verifyInputValues fail-closed:");
   ok("unreachable source -> ok:false (never a guessed total)", r.ok === false && r.total === 0);
 }
 
+// M1: every failure branch NAMES the offending input (badInput) so buildSendVerified can exclude
+// exactly that coin and retry. Exercise all seven branches + the happy path. (Fable M1 QC nit.)
+console.log("verifyInputValues badInput naming (M1):");
+{
+  const { txid: codecTxid } = await import("@inversealtruism/csd-codec");
+  const { rpcTxToTx } = await import("../src/index.js");
+  const mkBody = (value: number | bigint) => ({ version: 1, inputs: [], outputs: [{ value, script_pubkey: "00".repeat(20) }], locktime: 0, app: { type: "None" } });
+  const idOf = (body: any) => "0x" + codecTxid(rpcTxToTx(body)).replace(/^0x/, "");
+  const goodBody = mkBody(5_000_000);
+  const goodId = idOf(goodBody);
+  const A = { txid: goodId, vout: 0 };                       // the honest coin
+  const BAD = { txid: "0x" + "9".repeat(64), vout: 0 };      // the coin that fails
+  const names = (r: any, want: { txid: string; vout: number }) =>
+    r.ok === false && r.badInput?.txid?.toLowerCase() === want.txid.toLowerCase() && r.badInput?.vout === want.vout;
+
+  // happy path anchor: two good coins verify, total sums, NO badInput
+  const happy = await verifyInputValues({ tx: async () => ({ ok: true, tx: goodBody }) as never }, [A, { txid: goodId, vout: 0 }]);
+  ok("happy path: ok + summed total + no badInput", happy.ok === true && happy.total === 10_000_000 && happy.badInput === undefined);
+  // 1. unreachable (client.tx throws)
+  ok("branch: tx() throws → names the coin", names(await verifyInputValues({ tx: async () => { throw new Error("down"); } }, [BAD]), BAD));
+  // 2. no usable body (the {ok:false} not-in-a-block state)
+  ok("branch: empty body → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: false }) as never }, [BAD]), BAD));
+  // 3. codec throw (a wrong-length scriptPubkey throws inside rpcTxToTx)
+  const badSpkBody = { version: 1, inputs: [], outputs: [{ value: 100, script_pubkey: "00" }], locktime: 0, app: { type: "None" } };
+  ok("branch: hostile body (codec throws) → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: badSpkBody }) as never }, [BAD]), BAD));
+  // 4. forged txid (recomputed ≠ requested)
+  ok("branch: forged source body → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: goodBody }) as never }, [BAD]), BAD));
+  // 5. missing vout
+  ok("branch: vout past the outputs → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: goodBody }) as never }, [{ txid: goodId, vout: 7 }]), { txid: goodId, vout: 7 }));
+  // 6. bad value: a ZERO output round-trips the codec (u64 accepts 0) then fails the v > 0 check
+  {
+    const zeroBody = mkBody(0);
+    const zeroId = idOf(zeroBody);
+    ok("branch: non-positive value → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: zeroBody }) as never }, [{ txid: zeroId, vout: 0 }]), { txid: zeroId, vout: 0 }));
+  }
+  // 7. total overflow: two coins each near 2^53 — the SECOND coin overflows the running total
+  {
+    const bigBody = mkBody(Number.MAX_SAFE_INTEGER - 10);
+    const bigId = idOf(bigBody);
+    const r = await verifyInputValues({ tx: async () => ({ ok: true, tx: bigBody }) as never }, [{ txid: bigId, vout: 0 }, { txid: bigId, vout: 0 }]);
+    ok("branch: total overflow → names the offending (second) coin", names(r, { txid: bigId, vout: 0 }));
+  }
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
