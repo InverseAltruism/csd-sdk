@@ -421,5 +421,37 @@ if (inclBlock) {
   ok("MF-17: a SHORT 10-of-44 window at height 44 is REJECTED (short window), not silently re-derived", threwShort && /short window/.test(msgShort));
 }
 
+// S5-a) the CHUNKED async restore (fromSnapshotAsync, register Phase 4): identical per-header
+//    verification (the shared restoreOne), but yields to the event loop every `chunk` headers so a
+//    long restore doesn't freeze the MV3 UI thread on slow hardware. The consumer view stays atomic
+//    (the wallet holds the PROMISE; only the resolved client is read). Checkpoint never bumped.
+{
+  const honest = new LightClient({ headerProvider: provider });
+  honest.seedTrusted(seed, cpHash);
+  await honest.sync(FX.tip);
+  const snap = honest.toSnapshot();
+  const syncTip = LightClient.fromSnapshot(snap).tip!;
+
+  // (1) the chunked restore lands on the SAME tip (height + hash) as the sync path
+  const asyncLc = await LightClient.fromSnapshotAsync(snap, {}, 50); // tiny chunk → many yields
+  ok("S5-a: the chunked async restore lands on the same tip (height + hash) as the sync path",
+    asyncLc.tip!.height === syncTip.height && asyncLc.tip!.hash === syncTip.hash);
+
+  // (2) it IS async (returns a Promise) and the resolved client carries the full chain
+  const p = LightClient.fromSnapshotAsync(snap, {}, 5000);
+  ok("S5-a: fromSnapshotAsync returns a Promise resolving to a complete client",
+    p instanceof Promise && (await p).chain.length === snap.headers.length);
+
+  // (3) a hostile snapshot (the baked min-difficulty poison header) is REJECTED WHOLE via the
+  //     chunked async path too — the LWMA gate is identical (the throw just lands at a later await)
+  const lastSnap = snap.headers[snap.headers.length - 1]!;
+  const poison = { ...lastSnap.header, bits: POW_LIMIT_BITS, nonce: 6926799 } as BlockHeader;
+  const pEntry = { ...lastSnap, header: poison, hash: headerHash(poison) };
+  const poisonedSnap = { ...snap, headers: [...snap.headers.slice(0, -1), pEntry] };
+  let threw = false, msg = "";
+  try { await LightClient.fromSnapshotAsync(poisonedSnap, {}, 50); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
+  ok("S5-a: a poisoned snapshot is REJECTED whole via the chunked async path (same LWMA gate)", threw && /bits/.test(msg));
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
