@@ -41,6 +41,12 @@ export interface ClientOptions {
    * path (audit M2). Default 16 MiB ≫ any real block; raise it for an unusually large block source.
    */
   maxResponseBytes?: number;
+  /**
+   * M1: optional JSON body parser (default `JSON.parse`). A verifier that must preserve u64 fields
+   * (e.g. a Propose's `expires_epoch`, unbounded on-chain) past 2^53 injects a source-preserving
+   * reviver here so the exact value survives to the txid recompute. The default is unchanged.
+   */
+  parseJson?: (text: string) => unknown;
 }
 
 export class CsdClient {
@@ -49,9 +55,11 @@ export class CsdClient {
   private readonly timeoutMs: number;
   private readonly retries: number;
   private readonly maxBytes: number;
+  private readonly parseJson: (text: string) => unknown;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
     this.maxBytes = Math.max(1, opts.maxResponseBytes ?? 16 * 1024 * 1024);
+    this.parseJson = opts.parseJson ?? JSON.parse;
     // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
     // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
     // `globalThis.fetch` and invoking it via `this.f` did exactly that, so any browser consumer that
@@ -105,7 +113,7 @@ export class CsdClient {
       // String.length in bytes, so a `t.length` check let a 16 MiB cap pass a ~48 MiB body.
       const byteLen = new TextEncoder().encode(t).length;
       if (byteLen > max) throw new Error(`GET ${path} → response too large (${byteLen} > ${max} bytes)`);
-      return JSON.parse(t);
+      return this.parseJson(t);
     }
     const reader = body.getReader();
     const chunks: Uint8Array[] = [];
@@ -122,7 +130,7 @@ export class CsdClient {
     const buf = new Uint8Array(total);
     let off = 0;
     for (const c of chunks) { buf.set(c, off); off += c.length; }
-    return JSON.parse(new TextDecoder().decode(buf));
+    return this.parseJson(new TextDecoder().decode(buf));
   }
 
   private get<T>(path: string): Promise<T> { return this.req<T>(path); }
