@@ -135,6 +135,29 @@ console.log("\n— H2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure) �
   ok("honest verify → ok, change from the (true) total", vh.ok === true && vh.change === 5_000_000_000 - 100 - 10_000_000);
 }
 
+console.log("\n— M1: buildSendVerified exclude-and-retry (a poison coin is excluded, not bricking the spend) —");
+{
+  const RCPT = "0x" + "cc".repeat(20);
+  // a poison coin (large; largest-first picks it first) + a good coin, distinct txids
+  const poison = { txid: "0x" + "aa".repeat(32), vout: 0, value: 5_000_000_000, confirmations: 6, coinbase: false };
+  const good = { txid: "0x" + "bb".repeat(32), vout: 0, value: 2_000_000_000, confirmations: 6, coinbase: false };
+  let calls = 0;
+  const verify = async (inputs: { txid: string; vout: number }[]) => {
+    calls++;
+    // the verifier names the poison coin as badInput while it's in the selection
+    if (inputs.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase())) return { ok: false, total: 0, badInput: { txid: poison.txid, vout: poison.vout } };
+    return { ok: true, total: inputs.reduce((a, i) => a + i.value, 0) };
+  };
+  const r = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, good], priv: PRIV, verify });
+  ok("a poison coin is EXCLUDED and the spend still builds (not bricked)", r.ok === true && calls >= 2);
+  ok("the good coin funded it (verified total excludes the poison)", r.ok === true && r.inTotal === 2_000_000_000);
+  // bounded: a verifier that names a NEW bad input every round eventually fails closed (no infinite loop)
+  let n = 0;
+  const alwaysBad = async (inputs: { txid: string; vout: number }[]) => ({ ok: false as const, total: 0, badInput: inputs[0] });
+  const rb = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, good], priv: PRIV, verify: async (inp) => { n++; return alwaysBad(inp); } });
+  ok("bounded: always-bad inputs fail closed after MAX_SELECT_ROUNDS (no infinite retry)", rb.ok === false && n <= 3);
+}
+
 console.log("\n— F9-C: buildProposeVerified / buildAttestVerified (money-out board-post builders fail-closed) —");
 {
   const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });

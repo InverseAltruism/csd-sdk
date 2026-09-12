@@ -236,25 +236,28 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
 export async function verifyInputValues(
   client: { tx(id: string): Promise<RpcTxInfo> },
   inputs: { txid: string; vout: number }[],
-): Promise<{ ok: boolean; total: number }> {
+): Promise<{ ok: boolean; total: number; badInput?: { txid: string; vout: number } }> {
   const norm = (s: string) => String(s).toLowerCase().replace(/^0x/, "");
   let total = 0;
   for (const i of inputs) {
-    let info: RpcTxInfo; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0 }; }
+    // M1: every failure names the offending input (`badInput`) so the caller (buildSendVerified) can
+    // exclude exactly that coin and retry, instead of the whole selection being bricked by one
+    // unreachable/forged/unrepresentable source.
+    let info: RpcTxInfo; try { info = await client.tx(i.txid); } catch { return { ok: false, total: 0, badInput: i }; }
     // accept both the {ok, tx:{…}} envelope and a bare tx body (two node response shapes)
     const body = (info?.tx ?? info) as RpcTxJson | undefined;
-    if (!body || !Array.isArray(body.outputs) || !Array.isArray(body.inputs)) return { ok: false, total: 0 };
+    if (!body || !Array.isArray(body.outputs) || !Array.isArray(body.inputs)) return { ok: false, total: 0, badInput: i };
     // codecTxid() must be INSIDE the try: a hostile source body (e.g. a wrong-length scriptPubkey) makes
     // it throw, and an uncaught throw here would crash the caller instead of failing closed (audit M2).
     let tx: Tx, idHex: string;
-    try { tx = rpcTxToTx(body); idHex = codecTxid(tx); } catch { return { ok: false, total: 0 }; }
-    if (norm(idHex) !== norm(i.txid)) return { ok: false, total: 0 }; // forged source body
+    try { tx = rpcTxToTx(body); idHex = codecTxid(tx); } catch { return { ok: false, total: 0, badInput: i }; }
+    if (norm(idHex) !== norm(i.txid)) return { ok: false, total: 0, badInput: i }; // forged source body
     const out = tx.outputs[i.vout];
-    if (!out) return { ok: false, total: 0 };
+    if (!out) return { ok: false, total: 0, badInput: i };
     const v = Number(out.value);
-    if (!Number.isSafeInteger(v) || v <= 0) return { ok: false, total: 0 };
+    if (!Number.isSafeInteger(v) || v <= 0) return { ok: false, total: 0, badInput: i };
     total += v;
-    if (!Number.isSafeInteger(total)) return { ok: false, total: 0 };
+    if (!Number.isSafeInteger(total)) return { ok: false, total: 0, badInput: i };
   }
   return { ok: true, total };
 }

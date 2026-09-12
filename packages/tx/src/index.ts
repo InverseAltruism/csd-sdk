@@ -178,7 +178,32 @@ function selectAndAssemble(utxos: Utxo[], outs: TxOutput[], fee: number, app: Ap
 }
 
 /** Callback that verifies the REAL value of each selected input against the chain (fail-closed). */
-export type InputVerifier = (inputs: { txid: string; vout: number }[]) => Promise<{ ok: boolean; total: number }>;
+// M1: the verifier may name an offending input (`badInput`) so the caller can exclude exactly that
+// coin and retry, instead of the whole selection being bricked by one unreachable/forged/
+// unrepresentable source.
+export type InputVerifier = (inputs: { txid: string; vout: number }[]) => Promise<{ ok: boolean; total: number; badInput?: { txid: string; vout: number } }>;
+
+/** Max exclude-and-retry rounds when the verifier names bad inputs (mirrors the wallet's node.ts). */
+const MAX_SELECT_ROUNDS = 3;
+
+/** Shared select + verify with exclude-and-retry. Returns the selection + VERIFIED total, or an error. */
+async function selectAndVerify(
+  utxos: Utxo[],
+  need: number,
+  verify: InputVerifier,
+): Promise<{ sel: Selection; total: number } | { error: string }> {
+  const exclude = new Set<string>();
+  for (let round = 0; ; round++) {
+    const sel = selectInputs(utxos, need, exclude);          // selection by REPORTED values
+    if (!sel) return { error: "insufficient confirmed balance for outputs + fee" };
+    let verified: { ok: boolean; total: number; badInput?: { txid: string; vout: number } };
+    try { verified = await verify(sel.inputs); } catch { return { error: "input-value verification threw (fail-closed)" }; }
+    if (verified.ok) return { sel, total: verified.total };
+    const bad = verified.badInput;
+    if (!bad || round >= MAX_SELECT_ROUNDS - 1) return { error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
+    exclude.add(`${String(bad.txid).toLowerCase()}:${Number(bad.vout)}`);
+  }
+}
 
 /**
  * H2 — the UTXO-VALUE-1-protected send. Selects by reported UTXO values, then VERIFIES the real value
@@ -196,12 +221,9 @@ export async function buildSendVerified(p: { outputs: { to: string; value: numbe
   const v = validateOuts(outs, p.fee, p.maxFee);
   if ("ok" in v) return v;
   const need = v.sumOut + p.fee;
-  const sel = selectInputs(p.utxos, need);          // selection by REPORTED values
-  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
-  let verified: { ok: boolean; total: number };
-  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
-  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
-  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "None" }, p.priv, addrFromPriv(p.priv), p.maxFee);
+  const sv = await selectAndVerify(p.utxos, need, p.verify);
+  if ("error" in sv) return { ok: false, error: sv.error };
+  return assemble(sv.sel, sv.total, outs, v.sumOut, p.fee, { type: "None" }, p.priv, addrFromPriv(p.priv), p.maxFee);
 }
 
 /**
@@ -292,12 +314,9 @@ export async function buildProposeVerified(p: { domain: string; payloadHash: str
   if ("error" in outs) return { ok: false, error: outs.error };
   const v = validateOuts(outs, p.fee, p.maxFee);
   if ("ok" in v) return v;
-  const sel = selectInputs(p.utxos, v.sumOut + p.fee);          // selection by REPORTED values
-  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
-  let verified: { ok: boolean; total: number };
-  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
-  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
-  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv, addrFromPriv(p.priv), p.maxFee);
+  const sv = await selectAndVerify(p.utxos, v.sumOut + p.fee, p.verify);
+  if ("error" in sv) return { ok: false, error: sv.error };
+  return assemble(sv.sel, sv.total, outs, v.sumOut, p.fee, { type: "Propose", domain: p.domain, payloadHash: p.payloadHash, uri: p.uri, expiresEpoch: p.expiresEpoch }, p.priv, addrFromPriv(p.priv), p.maxFee);
 }
 
 /**
@@ -315,12 +334,9 @@ export async function buildAttestVerified(p: { proposalId: string; score: number
   const maxFee = p.maxFee !== undefined ? p.maxFee : Math.max(p.fee, MAX_FEE_BACKSTOP);
   const v = validateOuts(outs, p.fee, maxFee);
   if ("ok" in v) return v;
-  const sel = selectInputs(p.utxos, v.sumOut + p.fee);          // selection by REPORTED values
-  if (!sel) return { ok: false, error: "insufficient confirmed balance for outputs + fee" };
-  let verified: { ok: boolean; total: number };
-  try { verified = await p.verify(sel.inputs); } catch { return { ok: false, error: "input-value verification threw (fail-closed)" }; }
-  if (!verified.ok) return { ok: false, error: "could not verify selected input values against the chain (fail-closed — refusing to risk a fee-burn)" };
-  return assemble(sel, verified.total, outs, v.sumOut, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv, addrFromPriv(p.priv), maxFee);
+  const sv = await selectAndVerify(p.utxos, v.sumOut + p.fee, p.verify);
+  if ("error" in sv) return { ok: false, error: sv.error };
+  return assemble(sv.sel, sv.total, outs, v.sumOut, p.fee, { type: "Attest", proposalId: p.proposalId, score: p.score, confidence: p.confidence }, p.priv, addrFromPriv(p.priv), maxFee);
 }
 
 export type { Tx, TxInput, TxOutput, App } from "@inversealtruism/csd-codec";
