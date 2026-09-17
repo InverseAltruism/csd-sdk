@@ -16,17 +16,17 @@
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
-  type BlockHeader, headerHash, headerHashBytes, powOk, workForBits,
+  type BlockHeader, headerHashBytes, hx,
   verifyMerkleProof, merkleBranch, txid as codecTxid, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
   MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
 import { CsdClient, rpcHeaderToHeader, rpcTxToTx, type RpcTxJson } from "@inversealtruism/csd-client";
-import { expectedBitsFromWindow } from "./lwma.js";
+import { expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 
-export { expectedBits, expectedBitsFromWindow } from "./lwma.js";
+export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 
 /** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
-const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBits(bits); return s > MAX_U128 ? MAX_U128 : s; };
+const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBitsMemo(bits); return s > MAX_U128 ? MAX_U128 : s; };
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
@@ -132,7 +132,8 @@ export class LightClient {
 
   /** Pure verification of one header against a window + parent (no mutation). */
   private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string): VerifiedHeader {
-    const hash = headerHash(header);
+    const hashBytes = headerHashBytes(header);
+    const hash = hx(hashBytes);
     if (claimedHash && claimedHash.toLowerCase() !== hash.toLowerCase()) throw new Error(`header hash mismatch at ${height}`);
     if (height === 0) {
       if (hash.toLowerCase() !== GENESIS_HASH.toLowerCase()) throw new Error(`foreign genesis: ${hash}`);
@@ -146,7 +147,7 @@ export class LightClient {
       const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
-    if (!powOk(headerHashBytes(header), header.bits)) throw new Error(`invalid PoW at ${height}`);
+    if (!powOkMemo(hashBytes, header.bits)) throw new Error(`invalid PoW at ${height}`);
     this.pinCheckpoint(height, hash);
     return { height, hash, header, chainwork: satAddWork(parent?.chainwork ?? 0n, header.bits) };
   }
@@ -192,11 +193,12 @@ export class LightClient {
     for (let i = 0; i < seed.length; i++) {
       const s = seed[i]!;
       if (s.height !== this.baseHeight + i) throw new Error("seed not contiguous");
-      const hash = headerHash(s.header);
+      const hashBytes = headerHashBytes(s.header);
+      const hash = hx(hashBytes);
       if (s.hash && s.hash.toLowerCase() !== hash.toLowerCase()) throw new Error(`seed header hash mismatch at ${s.height}`);
       if (prevHash && s.header.prev.toLowerCase() !== prevHash.toLowerCase()) throw new Error(`seed prev link broken at ${s.height}`);
       // seed bits are trusted, but PoW must still hold (cheap, catches a garbage seed)
-      if (!powOk(headerHashBytes(s.header), s.header.bits)) throw new Error(`seed PoW invalid at ${s.height}`);
+      if (!powOkMemo(hashBytes, s.header.bits)) throw new Error(`seed PoW invalid at ${s.height}`);
       this.pinCheckpoint(s.height, hash); // honour any pinned hash inside the seed window
       this.chain.push({ height: s.height, hash, header: s.header, chainwork: satAddWork(this.chain[i - 1]?.chainwork ?? 0n, s.header.bits), trusted: true });
       prevHash = hash;
@@ -418,7 +420,8 @@ export class LightClient {
     const height = Number(e.height); // MF-01: normalise the untyped per-header height once
     if (!Number.isSafeInteger(height) || height < 0) throw new Error(`snapshot bad height at index ${i}: ${height}`);
     if (height !== baseHeight + i) throw new Error(`snapshot not contiguous at ${height}`);
-    const hash = headerHash(e.header);
+    const hashBytes = headerHashBytes(e.header);
+    const hash = hx(hashBytes);
     if (hash.toLowerCase() !== e.hash.toLowerCase()) throw new Error(`snapshot hash mismatch at ${height}`);
     // A genesis-rooted snapshot MUST start at the real genesis (H4): otherwise a poisoned file could
     // present a fabricated low-difficulty "genesis" and a forged forward chain.
@@ -445,7 +448,7 @@ export class LightClient {
       const exp = expectedBitsFromWindow(window, height);
       if (e.header.bits !== exp) throw new Error(`snapshot bad bits at ${height}: ${e.header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
-    if (!powOk(headerHashBytes(e.header), e.header.bits)) throw new Error(`snapshot PoW invalid at ${height}`);
+    if (!powOkMemo(hashBytes, e.header.bits)) throw new Error(`snapshot PoW invalid at ${height}`);
     lc.pinCheckpoint(height, hash); // the baked checkpoint hash is the one true anchor
     work = satAddWork(work, e.header.bits);
     lc.chain.push({ height, hash, header: e.header, chainwork: work, ...(e.trusted ? { trusted: true } : {}) });

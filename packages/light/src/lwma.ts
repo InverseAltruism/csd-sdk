@@ -4,6 +4,7 @@
 import {
   type BlockHeader, bitsToTarget, targetToBigInt, bigIntToTarget, targetToBits,
   INITIAL_BITS, POW_LIMIT_BITS, LWMA_WINDOW, LWMA_SOLVETIME_MAX_FACTOR, TARGET_BLOCK_SECS,
+  MAX_U128,
 } from "@inversealtruism/csd-codec";
 
 // Memoized bits -> target as a BigInt. `targetToBigInt(bitsToTarget(bits))` is a pure function of
@@ -28,6 +29,38 @@ function bitsToTargetBigInt(bits: number): bigint {
 }
 
 const POW_LIMIT_TARGET = bitsToTargetBigInt(POW_LIMIT_BITS);
+
+/** Same cap / clear-at-cap policy as targetMemo — work is a pure function of bits. */
+const workMemo = new Map<number, bigint>();
+
+/**
+ * Observationally identical to codec `powOk`: header hash ≤ target(bits), and bits within the
+ * pow limit. Uses the memoized compact-bits decode so a restore that already converted `bits`
+ * for LWMA does not decode it again.
+ */
+export function powOkMemo(headerHashBE: Uint8Array, bits: number): boolean {
+  const target = bitsToTargetBigInt(bits);
+  if (target === 0n || target > POW_LIMIT_TARGET) return false;
+  return targetToBigInt(headerHashBE) <= target;
+}
+
+/**
+ * Observationally identical to codec `workForBits` (0n on invalid / easier-than-limit, u128
+ * clamp). Shares the memoized target and caches the work value under the same cap policy.
+ */
+export function workForBitsMemo(bits: number): bigint {
+  const hit = workMemo.get(bits);
+  if (hit !== undefined) return hit;
+  const target = bitsToTargetBigInt(bits);
+  let v = 0n;
+  if (target !== 0n && target <= POW_LIMIT_TARGET) {
+    const w = (1n << 256n) / (target + 1n);
+    v = w > MAX_U128 ? MAX_U128 : w;
+  }
+  if (workMemo.size >= TARGET_MEMO_CAP) workMemo.clear();
+  workMemo.set(bits, v);
+  return v;
+}
 
 /**
  * Expected `bits` for the block at `height`, given the CHRONOLOGICAL window of the (up to

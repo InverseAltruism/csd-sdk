@@ -6,10 +6,11 @@
 // used so the identity holds on genuine mainnet windows (131 headers, 131 DISTINCT bits values:
 // this chain retargets every block, so the memo's win is the 45x re-conversion of each header
 // across sliding windows, not cross-header repetition).
-import { expectedBitsFromWindow } from "../src/index.js";
+import { expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "../src/index.js";
 import {
   type BlockHeader, bitsToTarget, targetToBigInt, bigIntToTarget, targetToBits,
   INITIAL_BITS, POW_LIMIT_BITS, LWMA_WINDOW, LWMA_SOLVETIME_MAX_FACTOR, TARGET_BLOCK_SECS,
+  powOk, workForBits, headerHashBytes, hx, MAX_U128,
 } from "@inversealtruism/csd-codec";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -149,6 +150,76 @@ for (const label of ["cold", "warm"]) {
   }
   const after = expectedBitsFromWindow(probeWindow, probeHeight);
   ok("results identical across a forced cap eviction (5000 distinct bits > 4096 cap)", before === after && after === refExpectedBits(probeWindow, probeHeight));
+}
+
+// ── powOkMemo / workForBitsMemo: observationally identical to the raw codec, cold/warm/post-eviction ──
+// These fail if the memos are skipped (import) or if a cached target/work diverges from powOk/workForBits.
+console.log("— powOkMemo / workForBitsMemo identity (memo vs raw codec) —");
+
+const BEYOND_LIMIT_BITS = 0x1f00ffff; // node's easier-than-limit encoding (codec NEW-1)
+const CLAMP_BITS = 0x10000001;        // extreme low target → u128 clamp in workForBits
+const POW_EDGE_BITS = [
+  0x00000000, 0x00ffffff, 0x1c000000, 0x03800000, 0x21ffffff, 0x207fffff,
+  0x01000001, 0x03000001, POW_LIMIT_BITS, INITIAL_BITS, BEYOND_LIMIT_BITS, CLAMP_BITS,
+];
+const HASH_CASES: Uint8Array[] = [
+  new Uint8Array(32),
+  new Uint8Array(32).fill(0xff),
+  new Uint8Array(32).fill(0x80),
+  bitsToTarget(POW_LIMIT_BITS),
+];
+
+{
+  let hashesMatch = true;
+  let powMatch = true;
+  let workMatch = true;
+  for (const row of FX.headers) {
+    const hashBytes = headerHashBytes(row.header);
+    if (hx(hashBytes).toLowerCase() !== row.hash.toLowerCase()) hashesMatch = false;
+    if (powOkMemo(hashBytes, row.header.bits) !== powOk(hashBytes, row.header.bits)) powMatch = false;
+    if (workForBitsMemo(row.header.bits) !== workForBits(row.header.bits)) workMatch = false;
+  }
+  ok("hx(headerHashBytes(h)) matches every fixture hash (hash-once identity)", hashesMatch);
+  ok("powOkMemo == codec powOk on every fixture header (cold+warm over the run)", powMatch);
+  ok("workForBitsMemo == codec workForBits on every fixture bits", workMatch);
+}
+
+{
+  let powMatch = true;
+  let workMatch = true;
+  for (const label of ["cold", "warm"]) {
+    for (const bits of POW_EDGE_BITS) {
+      for (const hash of HASH_CASES) {
+        if (powOkMemo(hash, bits) !== powOk(hash, bits)) {
+          powMatch = false;
+          console.log(`    pow mismatch ${label} bits=0x${(bits >>> 0).toString(16)}`);
+        }
+      }
+      if (workForBitsMemo(bits) !== workForBits(bits)) {
+        workMatch = false;
+        console.log(`    work mismatch ${label} bits=0x${(bits >>> 0).toString(16)}`);
+      }
+    }
+  }
+  ok("powOkMemo == codec powOk on edge bits × probe hashes (cold and warm)", powMatch);
+  ok("workForBitsMemo == codec workForBits on edge bits (invalid, limit, beyond-limit, clamp)", workMatch);
+  ok("workForBitsMemo clamps extreme low-target to MAX_U128 like the codec", workForBitsMemo(CLAMP_BITS) === MAX_U128 && workForBits(CLAMP_BITS) === MAX_U128);
+  ok("workForBitsMemo yields 0n for easier-than-limit bits (NEW-1)", workForBitsMemo(BEYOND_LIMIT_BITS) === 0n);
+  ok("powOkMemo rejects easier-than-limit bits even for the all-zero hash (NEW-1)", powOkMemo(new Uint8Array(32), BEYOND_LIMIT_BITS) === false);
+}
+
+{
+  const probeBits = FX.headers[0]!.header.bits;
+  const probeHash = headerHashBytes(FX.headers[0]!.header);
+  const powBefore = powOkMemo(probeHash, probeBits);
+  const workBefore = workForBitsMemo(probeBits);
+  for (let i = 0; i < 5000; i++) {
+    const bits = (0x1c << 24) | (0x010000 + i);
+    workForBitsMemo(bits);
+    powOkMemo(new Uint8Array(32), bits);
+  }
+  ok("powOkMemo identical across a forced cap eviction", powOkMemo(probeHash, probeBits) === powBefore && powBefore === powOk(probeHash, probeBits));
+  ok("workForBitsMemo identical across a forced cap eviction", workForBitsMemo(probeBits) === workBefore && workBefore === workForBits(probeBits));
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
