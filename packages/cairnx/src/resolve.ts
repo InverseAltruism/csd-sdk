@@ -74,6 +74,24 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const offers = new Map<string, OfferState>();
   const offerLock = new Map<string, bigint>();                // token offers: id → locked amount
   const bids = new Map<string, BidState>();                   // v1.2 buy-side intents
+  // Private indexes for expiry work. Closed offers and bids stay in the maps (canonical history)
+  // but are not walked again on every event. Insertion order matches the maps, so a sweep still
+  // expires the same open rows in the same order.
+  const openOffers = new Set<string>();
+  const openBids = new Set<string>();
+  const pendingNames = new Set<string>();
+  const setOfferStatus = (o: OfferState, status: OfferState["status"]) => {
+    o.status = status;
+    if (status === "open") openOffers.add(o.id); else openOffers.delete(o.id);
+  };
+  const setBidStatus = (b: BidState, status: BidState["status"]) => {
+    b.status = status;
+    if (status === "open") openBids.add(b.id); else openBids.delete(b.id);
+  };
+  const putName = (nm: string, n: NameRec) => {
+    names.set(nm, n);
+    if (n.pending) pendingNames.add(nm); else pendingNames.delete(nm);
+  };
   // v2.8 fclaim (§31): fclaimTxid → the linked offer + grant outcome. Records BOTH granted and DENIED grants
   // (a denied fclaim is an L0-valid fill target, so the audit needs to see it). The GRANTED subset is
   // materialized into state.fclaims (diagnostic, excluded from canonicalState).
@@ -120,16 +138,24 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         : e.expiresEpoch;
   const sweepExpired = (height: number) => {
     const ep = epochOf(height);
-    for (const o of offers.values()) {
-      if (o.status === "open" && ep > effExpiry(o, height)) { releaseGive(o); o.status = "expired"; }
+    for (const id of [...openOffers]) {
+      const o = offers.get(id);
+      if (!o || o.status !== "open") { openOffers.delete(id); continue; }
+      if (ep > effExpiry(o, height)) { releaseGive(o); setOfferStatus(o, "expired"); }
     }
-    for (const b of bids.values()) {
-      if (b.status === "open" && ep > effExpiry(b, height)) b.status = "expired";
+    for (const id of [...openBids]) {
+      const b = bids.get(id);
+      if (!b || b.status !== "open") { openBids.delete(id); continue; }
+      if (ep > effExpiry(b, height)) setBidStatus(b, "expired");
     }
     // v2.5: an un-finalized reservation past its finalize window is abandoned — drop it so the name reopens and
     // canonical state does not accumulate dead reservations. Deterministic (keyed on the block height); below
     // V25 no name is ever `pending`, so this is a no-op and pre-V25 hashes are byte-identical.
-    for (const nm of [...names.keys()]) { const n = names.get(nm)!; if (n.pending && n.finalizeBy !== undefined && height > n.finalizeBy) names.delete(nm); }
+    for (const nm of [...pendingNames]) {
+      const n = names.get(nm);
+      if (!n || !n.pending) { pendingNames.delete(nm); continue; }
+      if (n.finalizeBy !== undefined && height > n.finalizeBy) { names.delete(nm); pendingNames.delete(nm); }
+    }
     // v2.6: drop expired recapture reservations (the lapsed record in `names` is UNTOUCHED, so the name simply
     // stays recapturable). Internal map -> no canonical-state effect; below V26 it is always empty (no-op).
     for (const nm of [...recaptures.keys()]) { const r = recaptures.get(nm)!; if (height > r.finalizeBy) recaptures.delete(nm); }
@@ -148,7 +174,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const markBidDone = (o: OfferState, buyer: string) => {
     if (!o.bid) return;
     const b = bids.get(o.bid);
-    if (b && b.status === "open" && b.bidder === buyer) b.status = "done";
+    if (b && b.status === "open" && b.bidder === buyer) setBidStatus(b, "done");
   };
   // void every open offer that lists `name` (a displacement/reclaim/reservation-takeover cancels the
   // wrongful holder's listings; releaseGive keeps lock-handling uniform with the cancel/expiry paths).
@@ -159,7 +185,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
       // lease-lapse-mid-hold safety: a lapsed name recaptured during a hold must not strand the buyer's
       // L0-minable fill). Same predicate as Correction 2, keyed on the voiding event's height.
       if (height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, height)) continue;
-      releaseGive(o); o.status = "cancelled";
+      releaseGive(o); setOfferStatus(o, "cancelled");
     }
   };
   // does anchor (effHeight, pos, id) STRICTLY precede an incumbent's (lowest wins)? The (effHeight, pos,
@@ -340,7 +366,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "name", false, "lapsed-name claim fee unpaid (decaying premium)"); continue; }
           voidOpenNameOffers(rec.name, ev.height);
-          names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
+          putName(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, viaFill: true, paidThroughEpoch: epClaim + NAME_TERM_EPOCHS });
           feesPaid += fee;
           note(ev, ev.id, "name", true, "lapsed lease re-claimed (premium)");
           continue;
@@ -362,7 +388,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           if (curActive) {
             voidOpenNameOffers(rec.name, ev.height);
           }
-          names.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, pending: true, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
+          putName(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false, pending: true, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
           note(ev, ev.id, "name", true, curActive ? "reserved (displaced prior reservation)" : "reserved (pending finalize)");
           continue;
         }
@@ -381,7 +407,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // releaseGive keeps lock-handling uniform with the cancel/expiry paths.)
           voidOpenNameOffers(rec.name, ev.height);
         }
-        names.set(rec.name, cand);
+        putName(rec.name, cand);
         feesPaid += nameRegFee(rec.name, ev.height);
         note(ev, ev.id, "name", true, curActive ? "displaced prior holder" : undefined);
 
@@ -406,6 +432,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // asymmetry at the source instead of relying on every reader testing truthiness.
           delete n.pending;
           delete n.finalizeBy;
+          pendingNames.delete(rec.name);
           n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
           feesPaid += nameRegFee(rec.name, ev.height);
           note(ev, ev.id, "nfinalize", true);
@@ -428,7 +455,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           const fee = expiredClaimFee(rec.name, ep - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
           if (feeToTreasury < fee) { note(ev, ev.id, "nfinalize", false, "recapture premium unpaid (decaying)"); continue; }
           voidOpenNameOffers(rec.name, ev.height);
-          names.set(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
+          putName(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
           recaptures.delete(rec.name);
           feesPaid += fee;
           note(ev, ev.id, "nfinalize", true, "recapture finalized (premium)");
@@ -537,6 +564,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, feeBps: v11 ? (v16 ? FEE_BPS_V16 : FEE_BPS) : 0,
         };
         offers.set(ev.id, o);
+        openOffers.add(ev.id);
         const linked = rec.bid !== undefined ? bids.get(rec.bid) : undefined;
         if (linked) linked.offers.push(ev.id);
         note(ev, ev.id, "offer", true);
@@ -551,6 +579,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           id: ev.id, bidder: who, want: rec.want, give: rec.give,
           status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, offers: [],
         });
+        openBids.add(ev.id);
         note(ev, ev.id, "bid", true);
 
       } else if (rec.t === "ocancel") {
@@ -573,12 +602,12 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
               // v2.8 Correction 2: freeze a live fclaim hold, keyed on the CANCEL's OWN block (ev.height) and
               // evaluated LIVE on the offer object (a same-block higher-pos grant mutated it after the snapshot).
               if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) continue;
-              if (o.status === "open") { releaseGive(o); o.status = "cancelled"; n++; }
+              if (o.status === "open") { releaseGive(o); setOfferStatus(o, "cancelled"); n++; }
             }
             note(ev, ev.id, "ocancel", true, `${n} cancelled (deferred past same-block fills)`);
           });
         } else {
-          for (const o of targets) { releaseGive(o); o.status = "cancelled"; }
+          for (const o of targets) { releaseGive(o); setOfferStatus(o, "cancelled"); }
           note(ev, ev.id, "ocancel", true, `${targets.length} cancelled`);
         }
 
@@ -679,7 +708,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (b && ev.score === SCORE_CANCEL) {
           if (who !== b.bidder) { note(ev, ev.txid, "bidcancel", false, "only bidder may cancel"); continue; }
           if (b.status !== "open") { note(ev, ev.txid, "bidcancel", false, `bid ${b.status}`); continue; }
-          b.status = "cancelled";
+          setBidStatus(b, "cancelled");
           note(ev, ev.txid, "bidcancel", true);
         }
         continue; // attest on a non-CairnX proposal — not our event
@@ -694,11 +723,11 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           pendingCancels.push(() => {
             // v2.8 Correction 2: freeze a live fclaim hold (keyed on the cancel's own ev.height, live-read on o).
             if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) { note(ev, ev.txid, "cancel", false, "v2.8: frozen (fclaim hold live)"); return; }
-            if (o.status === "open") { releaseGive(o); o.status = "cancelled"; note(ev, ev.txid, "cancel", true); }
+            if (o.status === "open") { releaseGive(o); setOfferStatus(o, "cancelled"); note(ev, ev.txid, "cancel", true); }
             else note(ev, ev.txid, "cancel", false, "superseded by same-block fill (v1.4)");
           });
         } else {
-          releaseGive(o); o.status = "cancelled";
+          releaseGive(o); setOfferStatus(o, "cancelled");
           note(ev, ev.txid, "cancel", true);
         }
 
@@ -725,7 +754,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         if (fee > 0n) bal(o.want.ticker, TREASURY_ADDR).available += fee;
         if (isNameGive(o.give)) deliverNameToBuyer(giveName!, who, ev);
         else releaseGiveLock(o, who, giveLock!);
-        o.status = "filled";
+        setOfferStatus(o, "filled");
         o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: amt.toString(), fee: fee.toString() };
         markBidDone(o, who);
         note(ev, ev.txid, "fill", true);
@@ -766,7 +795,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
         (o.fills ??= []).push(entry);
         feesPaid += fee;
         if (newPaid === want) {
-          o.status = "filled"; o.fill = entry; offerLock.delete(o.id);
+          setOfferStatus(o, "filled"); o.fill = entry; offerLock.delete(o.id);
           markBidDone(o, who);
         }
         note(ev, ev.txid, "fill", true, `partial ${x}/${want}`);
@@ -824,7 +853,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           releaseGiveLock(o, who, amt);
         }
         feesPaid += fee;
-        o.status = "filled";
+        setOfferStatus(o, "filled");
         o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: paid.toString(), fee: fee.toString() };
         markBidDone(o, who);
         note(ev, ev.txid, "fill", true);
