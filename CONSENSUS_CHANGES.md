@@ -56,14 +56,27 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.1.42 (2026-09-25, Plan 80 G3 / CX-17; UNGATED, replay byte-identical) - expiry without rescanning closed history
+
+`resolve()` keeps private indexes of open offers, open bids and pending name reservations, so the per-event
+expiry sweep walks only live rows instead of every offer, bid and name ever recorded (commit `4c94527`,
+test `packages/cairnx/test/expiry-index.test.ts`). Every status write goes through `setOfferStatus` /
+`setBidStatus`, every name write through `putName`, and new open offers and bids enter the index at
+creation; closed rows never reopen, so the sweep expires the same rows in the same order. No rule changes,
+no new gate height: canonical state is byte-identical to 0.1.41 at every height. Evidence at release:
+package suite, `test:crosslang` (JS against the Python oracle, incl. the resolve fuzz), `audit:all`, and the
+real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on the live chain) with the
+0.1.42 tarball installed. The cairn site already vendors this source (PROVENANCE `csdSdkCommit` 4c94527).
+
+
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
-sibling offer and bid Propose branches already carry (`resolve.ts` :490 offer, :546 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`resolve.ts` :517 offer, :574 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
-shipped at `resolve.ts` :631:
+shipped at `resolve.ts` :660:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); continue; }
 
@@ -156,7 +169,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The same clause on the legacy SCORE_CLAIM path (`resolve.ts` :861) is inert by design (SCORE_CLAIM at
+  deny. The same clause on the legacy SCORE_CLAIM path (`resolve.ts` :890) is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state
