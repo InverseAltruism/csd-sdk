@@ -9,12 +9,12 @@ release is not listed here, it did not touch consensus behavior.
 
 The packages are released on **independent cadence**: `@inversealtruism/cairnx-core` tracks consensus
 activation heights and bumps ahead of the stable `@inversealtruism/csd-*` primitives, which move on
-their own — they need **not** share a version. What guarantees coherence is that inter-package
-dependencies are published as **exact versions** (no `^`/`~` — `workspace:*` is converted to the
-publishing package's exact current version at publish time), so a consumer can never resolve a
-mismatched pair. CI enforces this `workspace:*` discipline + dist-freshness
-(`scripts/check-lockstep.mjs`); cross-package byte-identity is enforced separately by the conformance
-job (the REAL guard).
+their own; they need **not** share a version. Inter-package dependencies are published as **exact
+versions** (no `^`/`~`: `workspace:*` is converted to the dependency's exact current version when the
+dependent publishes). A dependent published BEFORE its dependency moved keeps the old pin, so a dependency
+bump must bump every workspace dependent too. CI enforces `workspace:*`, published pins equal to the
+current workspace versions, and dist-freshness (`scripts/check-lockstep.mjs`); cross-package
+byte-identity is enforced separately by the conformance job (the REAL guard).
 
 **If you build on these packages, pin exact versions and let your lockfile resolve the matching
 inter-deps.** A lockfile that
@@ -55,6 +55,25 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 `conformance/AUDIT.md`, "Standing practice"). A clean run with a thin coverage line is a weak signal.
 
 ## History
+
+## csd-crypto 0.1.16 + csd-tx 0.1.19 + csd-registry 0.1.18 + csd-siwc 0.1.17 (2026-10-09, Plan 83 W2; STAGED, not published; no consensus-surface change) - one csd-codec in the published graph
+
+Published `csd-crypto@0.1.15` pins `csd-codec@0.1.15`, while every other package pins `csd-codec@0.1.16`, so
+any consumer of crypto (directly or through `csd-tx@0.1.18`, `csd-registry@0.1.17`, `csd-siwc@0.1.16`, which
+pin `csd-crypto@0.1.15`) installs two codec copies. Cause: codec moved to 0.1.16 without a crypto bump, and
+`workspace:*` only fixes a dependent's pins when the dependent itself publishes. This release republishes the
+four packages with no source change: their built `dist/` is byte-identical to the currently published tarballs
+(diffed 2026-10-09); only the manifest pins move (crypto -> codec 0.1.16; tx/registry/siwc -> crypto 0.1.16).
+No bytes, math, gate or replay change. `scripts/check-lockstep.mjs` now fails when a package version already
+on npm pins a dependency version other than the current workspace one, which is the check that would have
+caught this.
+
+Publish order (pnpm only, from the repo root): (1) `csd-crypto` 0.1.16; then (2) `csd-tx` 0.1.19,
+`csd-registry` 0.1.18, `csd-siwc` 0.1.17 in any order. `csd-codec` 0.1.16 is already published. After
+publish, re-pin: cairnx (`csd-crypto` 0.1.16, `csd-tx` 0.1.19, `csd-client` 0.1.16), cairn-cli (`csd-crypto`
+0.1.16, `csd-registry` 0.1.18), cairn-sdk (`csd-crypto` 0.1.16, `csd-tx` 0.1.19, `csd-registry` 0.1.18,
+`csd-siwc` 0.1.17, then its own patch release), csd-indexer (`csd-crypto` 0.1.16, `csd-registry` 0.1.18,
+`csd-light` 0.1.21).
 
 ## cairnx-core 0.1.42 (2026-09-25, Plan 80 G3 / CX-17; UNGATED, replay byte-identical) - expiry without rescanning closed history
 
@@ -463,9 +482,9 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
 
 1. Land the change with updated/extended golden vectors in `csd-vectors` — never change
    behavior without a vector that pins it.
-2. Bump **only the package(s) you changed** (independent cadence) — typically just `cairnx-core` for a
-   consensus-height change; leave untouched packages at their current version. `workspace:*` keeps every
-   inter-dep pinned to the exact published version, so the set stays coherent without lockstep bumps.
+2. Bump the package(s) you changed and every workspace package that depends on them (independent cadence:
+   numbers need not match). A published version keeps the exact pins it shipped with, so an unbumped
+   dependent keeps the old dependency in the published graph; `scripts/check-lockstep.mjs` fails on that.
 3. Add an entry here describing exactly what bytes/math changed and why.
 4. Run the full suite against a live node (oracle + light full-range) before `pnpm -r publish`.
 
