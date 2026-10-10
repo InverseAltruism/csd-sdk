@@ -112,6 +112,15 @@ t("sunriseOrderCost: zero and negative sizes, and a flat curve", () => {
   assert.throws(() => sunriseOrderCost({ ...LIVE, kScaled: 11_000_000n }, 0n, 1n, 0), RangeError);
 });
 
+t("kScaled is bounded by the spot curve's exponent clamp, so spot and order cost agree up to q = E", () => {
+  assert.throws(() => sunriseOrderCost({ ...LIVE, kScaled: 2_200_001n }, 0n, 1n, 0), RangeError, "red-first: a k above the clamp is refused");
+  const steep = { ...LIVE, kScaled: 2_200_000n, capMult: 100 };
+  const q = E - TOKENS(1);
+  const spot = sunriseCurve({ ...steep, q, epochsElapsed: 0 });
+  const perToken = sunriseOrderCost(steep, q, U, 0);
+  assert.ok(Number(perToken > spot ? perToken - spot : spot - perToken) / Number(spot) < 2e-6, `paired: at the largest k the spot ${spot} and the one-token cost ${perToken} agree near q = E`);
+});
+
 const GRIDS: [string, SunriseOrderParams, number][] = [
   ["live", LIVE, 18],
   ["cap binds", LIVE, 2340],
