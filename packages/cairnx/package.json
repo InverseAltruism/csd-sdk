@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/cairnx-core",
-  "version": "0.1.42",
+  "version": "0.1.43",
   "engines": {
     "node": ">=18"
   },
@@ -19,6 +19,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./mm": {
+      "import": {
+        "types": "./dist/mm/index.d.ts",
+        "default": "./dist/mm/index.js"
+      },
+      "require": {
+        "types": "./dist/mm/index.d.cts",
+        "default": "./dist/mm/index.cjs"
+      }
     }
   },
   "files": [
@@ -30,7 +40,7 @@
     "test/vectors"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean && tsup src/mm/index.ts --format esm,cjs --dts --out-dir dist/mm",
     "test": "node test/run.mjs",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
