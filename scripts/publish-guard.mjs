@@ -3,8 +3,8 @@
 // incident where a raw `npm publish` shipped an artifact with unresolved workspace:* specifiers:
 //   1. the publish MUST run under pnpm (pnpm rewrites workspace:* to exact versions at pack time;
 //      npm does not and ships the broken protocol string verbatim).
-//   2. check-lockstep.mjs must pass (dist freshness M4 + workspace:* interdeps), so the bytes
-//      published come from current source.
+//   2. check-lockstep.mjs must pass (dist freshness M4 + workspace:* interdeps + published pins
+//      match the workspace), so the bytes published come from current source and one codec ships.
 //   3. (B6d / REBIND M13) the package's OWN test suite must pass, and for cairnx-core the root
 //      cross-language conformance gate (test:crosslang) must pass too - previously nothing between
 //      a red consensus suite and `pnpm publish`. Opt-out is EXPLICIT ONLY (CSD_PUBLISH_SKIP_TESTS=1,

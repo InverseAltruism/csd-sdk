@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Release invariant (see CONSENSUS_CHANGES.md): packages are versioned on INDEPENDENT cadence —
 // `cairnx-core` tracks consensus activation heights and bumps ahead of the stable `csd-*` primitives,
-// which move on their own. They need NOT share a version. Coherence is instead guaranteed by two
-// things, BOTH checked below: (1) every inter-package dependency is "workspace:*", which pnpm freezes
-// to the publishing package's EXACT current version at publish time (no ^/~ ranges can ship, so a
-// consumer can never resolve a mismatched pair); (2) the M4 dist-freshness check (published bytes come
+// which move on their own. They need NOT share a version. Coherence is checked below by: (1) every
+// inter-package dependency is "workspace:*", which pnpm freezes to the dependency's EXACT current
+// version when the dependent publishes; (2) the published graph: a package version already on npm
+// keeps the pins it shipped with, so those pins must equal the current workspace versions (bump the
+// dependent when its dependency moves); (3) the M4 dist-freshness check (published bytes come
 // from current source). Cross-package byte-identity is enforced separately by the conformance job —
 // CI's "REAL lockstep guard". Exits 1 with a report on violation.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
@@ -52,10 +53,25 @@ for (const p of pkgs) {
   }
 }
 
+// Published graph: csd-crypto@0.1.15 shipped pinning csd-codec@0.1.15; codec then moved to 0.1.16
+// without a crypto bump, so consumers resolved two codecs while every check above passed.
+const workspaceVersion = new Map(pkgs.map((p) => [p.name, p.version]));
+await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
+  const res = await fetch(`https://registry.npmjs.org/${p.name.replace("/", "%2f")}/${p.version}`);
+  if (res.status === 404) return; // not published yet: pnpm pins the current workspace versions at publish
+  if (!res.ok) { errors.push(`${p.name}@${p.version}: npm registry returned HTTP ${res.status}`); return; }
+  for (const [dep, pinned] of Object.entries((await res.json()).dependencies ?? {})) {
+    const current = workspaceVersion.get(dep);
+    if (current !== undefined && pinned !== current) {
+      errors.push(`${p.name}@${p.version} is published pinning ${dep}@${pinned}, workspace has ${current} (bump ${p.name})`);
+    }
+  }
+}));
+
 if (errors.length) {
   console.error("lockstep check FAILED:");
   for (const e of errors) console.error("  - " + e);
   process.exit(1);
 }
-console.log(`lockstep OK: ${pkgs.length} packages, inter-deps workspace:*, dist fresh (M4)`);
+console.log(`lockstep OK: ${pkgs.length} packages, inter-deps workspace:*, published pins match workspace, dist fresh (M4)`);
 console.log("  versions: " + pkgs.map((p) => `${p.name.replace("@inversealtruism/", "")}@${p.version}`).join(", "));
