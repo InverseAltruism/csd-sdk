@@ -8,7 +8,7 @@
 //
 // Cost is ceil((V(q+n) - V(q)) / D) for one integer-valued antiderivative V and a fixed D, so
 // two orders cost at least as much as the one order that spans them (test/mm-sunrise-price.test.ts).
-import { sunriseTimeMult, type SunriseCurveParams } from "./curve.js";
+import { MAX_EXP_ARG_SCALED, sunriseTimeMult, type SunriseCurveParams } from "./curve.js";
 import type { BigIntish } from "./size.js";
 
 /** The curve parameters plus the token's decimals (default 8). */
@@ -17,7 +17,9 @@ export interface SunriseOrderParams extends SunriseCurveParams { decimals?: numb
 const FIX = 10n ** 18n;
 const FIX30 = 10n ** 30n;
 const TIME_SCALE = 10n ** 12n;
-const MAX_K_SCALED = 10_000_000n;
+// k q / E reaches k at q = E, so a k above the spot curve's exponent clamp would price orders off a curve the
+// spot quote does not show.
+const MAX_K_SCALED = MAX_EXP_ARG_SCALED;
 const MAX_EXPM1_ARG = 20n * FIX;
 
 const ceilDiv = (a: bigint, b: bigint): bigint => (a + b - 1n) / b;
@@ -42,7 +44,7 @@ function checkedParams(params: SunriseOrderParams) {
   const decimals = params.decimals ?? 8;
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) throw new RangeError("sunrise: decimals must be an integer in [0, 18]");
   if (p0 < 0n || capMult < 0n || E < 0n) throw new RangeError("sunrise: p0, capMult and E must be non-negative");
-  if (kScaled < 0n || kScaled > MAX_K_SCALED) throw new RangeError("sunrise: kScaled must be in [0, 10_000_000]");
+  if (kScaled < 0n || kScaled > MAX_K_SCALED) throw new RangeError(`sunrise: kScaled must be in [0, ${MAX_K_SCALED}]`);
   return { p0, kScaled, E, capMult, rateBps: params.rateBps, U: 10n ** BigInt(decimals) };
 }
 

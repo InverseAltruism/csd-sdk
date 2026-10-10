@@ -4,7 +4,11 @@ import type { BigIntish } from "./size.js";
 /** The Sunrise curve's fixed parameters (all BigInt()-ed). */
 export interface SunriseCurveParams { p0: BigIntish; rateBps: BigIntish; kScaled: BigIntish; E: BigIntish; capMult: BigIntish }
 
-/** e^x at scale 1e6. 12+ Taylor terms; |x| is clamped to 2.2 so the series stays honest. */
+/** The largest exponent the spot curve evaluates (2.2 at scale 1e6); above it expScaled clamps, so a curve
+ *  whose k exceeds it would quote a spot price that disagrees with its own order cost. */
+export const MAX_EXP_ARG_SCALED = 2_200_000n;
+
+/** e^x at scale 1e6. 12+ Taylor terms; |x| is clamped to MAX_EXP_ARG_SCALED so the series stays honest. */
 export function expScaled(xScaled: BigIntish): bigint {
   const S = 1_000_000n;
   xScaled = BigInt(xScaled);
@@ -13,7 +17,7 @@ export function expScaled(xScaled: BigIntish): bigint {
     const p = expScaled(-xScaled);
     return p === 0n ? 0n : (S * S) / p;
   }
-  if (xScaled > 2_200_000n) xScaled = 2_200_000n;
+  if (xScaled > MAX_EXP_ARG_SCALED) xScaled = MAX_EXP_ARG_SCALED;
   const S2 = 1_000_000_000_000n;
   const x = xScaled * 1_000_000n;
   let sum = S2;
