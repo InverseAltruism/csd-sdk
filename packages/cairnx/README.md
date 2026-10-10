@@ -264,7 +264,9 @@ v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (4
 height-gated client selectors) · `src/client.ts` (reorg-safety helpers a payer applies) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
-`primaryRankBefore`, the one primary-name selection every host must agree on) · `CONVENTION.md`
+`primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
+`@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
+order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
 (normative spec, §1–§30) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
