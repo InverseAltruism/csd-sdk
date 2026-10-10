@@ -22,7 +22,7 @@ for (const [name, mod] of [["esm", esm], ["cjs", cjs]] as const) {
     sizeBid({ csdBase: 250_000_000n, decimals: 8, levels: ladder }), `${name} sizeBid`);
 }
 
-for (const name of ["sizeBid", "acceptBid", "tierFor", "tradeNotional", "sunriseCurve", "sunriseOrderCost", "rfqBuyAllIn"]) {
+for (const name of ["sizeBid", "acceptBid", "tierFor", "tradeNotional", "sunriseCurve", "sunriseOrderCost", "rfqBuyAllIn", "priorBuyers"]) {
   assert.equal(name in root, false, `${name} must not be in the root export`);
   assert.equal(name in esm, true, `${name} must be in ./mm`);
 }
