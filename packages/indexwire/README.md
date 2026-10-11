@@ -43,5 +43,5 @@ changelog entry. The indexer's `/health.version` field (0.2.5+) says what the pr
 
 ## Tests
 
-`pnpm test` — guard assertions over verbatim fixtures captured from the live Granus indexer
+`pnpm test` — guard assertions over verbatim fixtures captured from a live indexer
 (2026-07-03) plus adversarial structure/value cases pinning the posture above.

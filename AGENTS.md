@@ -14,7 +14,7 @@ This repo follows the maintainers' cross-repo engineering standard (a private do
 - TypeScript `strict` with `noUncheckedIndexedAccess`, no `@ts-ignore`, `any` only at a parse boundary. Money is integer base units (`bigint`), never floats. No empty `catch {}`; on money paths no catch-and-continue that hides a failure.
 - Tests check behaviour at boundaries. A fix ships with a test that fails without it, plus an assertion that the honest path still passes with the call shape production sends. A skipped test names its reason and when it un-skips. No test reads another repo's working tree.
 - Comments state constraints and non-obvious invariants, not history or audit IDs. Removing code needs the same evidence as adding it.
-- Docs: this file holds what stays true (no version tables, no status snapshots beyond the one dated block at the end). Dates are absolute, no em dashes.
+- Docs: this file holds what stays true (no version tables, no status snapshots; versions live in `package.json` and tags, live state comes from a live query). Dates are absolute, no em dashes.
 
 Known deviations (checked 2026-10-11, not exhaustive): the root has no `typecheck` or `lint` script (types are checked by the tsup dts build); `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/src/resolve.ts` is over 800 lines; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
 
@@ -121,6 +121,18 @@ Vendored consumers: the cairn website serves the packages server-side and ships 
 
 Upstream oracle: the official Rust node (`compute-substrate`). In-repo second implementation: conformance/cairnx_ref.py. Downstream npm and vendored consumers are listed under "The stack around it" and "Consumer footprint"; after a consensus bump re-pin or re-vendor them promptly and never let a live replayer cross a gate height on stale code. Deeper audit history and rollout runbooks are maintained privately by the maintainers.
 
-## State snapshot (2026-10-11; verify with `git log` and `npm view @inversealtruism/cairnx-core version`)
+## Docs
 
-`master` is at 160118b and carries cairnx-core 0.1.43, the version npm serves. The chain tip was 116,921, so every gate in the list above is crossed. Versions of all packages are in `packages/*/package.json`; this block is not updated per release.
+| Doc | Holds |
+|---|---|
+| `README.md` | what the packages are, install, quick start |
+| `CONSENSUS_CHANGES.md` | every height-gated change, with the V28+ rollout checklist at the bottom; cited by `scripts/check-consensus-citations.mjs` |
+| `packages/cairnx/CONVENTION.md` | the normative CairnX convention (ships in the npm package) |
+| `packages/cairnx/CHANGELOG.md` | cairnx-core release notes |
+| `packages/cairnx/MAKERS.md` | protocol-level market maker guide (ships in the npm package) |
+| `packages/cairnx/test/vectors/VECTORS.md` | the portable conformance artifacts |
+| `packages/*/README.md` | one readme per published package |
+| `conformance/README.md`, `conformance/AUDIT.md` | the cross-language differential and the report-only audit method |
+| `.githooks/README.md` | the secret-scan pre-commit hook |
+
+Gate heights are in `packages/cairnx/src/types.ts`. The cross-repo standard is a private document; the summary above is the part that binds a contributor here.
