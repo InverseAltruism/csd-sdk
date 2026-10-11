@@ -6,6 +6,18 @@ The L0 SDK monorepo for the CSD (Compute Substrate) chain: a pnpm + tsup TypeScr
 
 Since the 2026-06-24 shared-core deduplication the target architecture is "TWO implementations, period": this shipped TS core, imported or deterministically vendored by every consumer (wallet, website UI, cairnx service, cli, indexer, second-source resolvers), plus ONE independent Python oracle (`conformance/cairnx_ref.py`) used only for cross-language differential testing. Runtime deps are only @noble/curves + @noble/hashes; zero Buffer (MV3/browser-safe).
 
+## Cross-repo standard
+
+This repo follows the maintainers' cross-repo engineering standard (a private document). The rules that matter for a contributor here:
+
+- One home per concept: a rule, constant, type or encoder lives in one place and is imported everywhere else. Consensus code lives only in this repo; byte-exact golden vectors and the Python oracle cover every encoder and resolver rule; height-gated changes are recorded in `CONSENSUS_CHANGES.md`.
+- TypeScript `strict` with `noUncheckedIndexedAccess`, no `@ts-ignore`, `any` only at a parse boundary. Money is integer base units (`bigint`), never floats. No empty `catch {}`; on money paths no catch-and-continue that hides a failure.
+- Tests check behaviour at boundaries. A fix ships with a test that fails without it, plus an assertion that the honest path still passes with the call shape production sends. A skipped test names its reason and when it un-skips. No test reads another repo's working tree.
+- Comments state constraints and non-obvious invariants, not history or audit IDs. Removing code needs the same evidence as adding it.
+- Docs: this file holds what stays true (no version tables, no status snapshots beyond the one dated block at the end). Dates are absolute, no em dashes.
+
+Known deviations (checked 2026-10-11, not exhaustive): the root has no `typecheck` or `lint` script (types are checked by the tsup dts build); `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/src/resolve.ts` is over 800 lines; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
+
 ## The stack around it
 
 The chain is the only source of truth; every layer above is a deterministic replay. This repo IS the consensus mirror the whole app layer runs on: the cairn web front end (https://cairn-substrate.com) vendors its browser bundles, the cairnx trading service pins cairnx-core, the wallet vendors an SPV bundle, cairn-cli/cairn-sdk/csd-indexer pin packages, and clarvis runs a second-source resolver on the same core. The Rust node is the upstream oracle; the node never depends on the SDK.
@@ -22,7 +34,7 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 | csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport only. |
 | csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted). |
 | csd-vectors | Golden conformance vectors from the node's frozen golden_vectors.rs + real on-chain data. Zero deps. |
-| cairnx-core (packages/cairnx) | THE crown jewel: `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). resolve.ts, types.ts (ALL gate heights + fee constants + regexes + RESERVED_NAMES + the pure client selectors incl. claimWindowOf), records.ts (parseRecord/onlyKeys), preflight.ts (previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck, fillEndorsement, fillOutputPlan), verifyfill.ts (verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary), primary.ts (pickPrimaryName). Ships the normative CONVENTION.md (v2.9: section 32 is the M4/M5 normative write-up, pending activation at V29 = 88,000) + portable vectors + replay-hashes. |
+| cairnx-core (packages/cairnx) | THE crown jewel: `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). resolve.ts, types.ts (ALL gate heights + fee constants + regexes + RESERVED_NAMES + the pure client selectors incl. claimWindowOf), records.ts (parseRecord/onlyKeys), preflight.ts (previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck, fillEndorsement, fillOutputPlan), verifyfill.ts (verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary), primary.ts (pickPrimaryName). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 normative write-up, V29 = 88,000) + portable vectors + replay-hashes. |
 | csd-registry | L3 registries: peer/gateway/identity discovery; deterministic resolvers + commit-reveal identity; integer fixed-point decay. |
 | csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
 | csd-indexwire | csd-indexer REST wire contract as types + runtime guards. Published; no consumer pins it yet. |
@@ -31,7 +43,7 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 
 ## Consensus gates (all in packages/cairnx/src/types.ts; height-pure, non-retroactive)
 
-V16 = 33,600 (fee 1% -> 1.5% + maker rebate) | V17 = 34,000 (claim-to-fill) | V19 = 36,700 (nprofile) | V20 = 38,400 (late-fill fund-loss fix, claim window 15 -> 40 + 5 grace) | V18 = 40,000 (2-tier name fee) | V21 = 40,100 (offer duration cap 168 epochs) | V22 = 41,300 (cap removed for offers >= V22) | V24 = 46,400 (4-tier name fee 15/10/5/3 CSD) | V25 = 46,440 (sealed reservation: payment-free reveal, winner-only nfinalize) | V26 = 46,480 (sealed recapture) | V27 = 46,520 (young-name sale embargo 240 -> 8 blocks) | V23 = 52,000 (nset-clear to zero addr) | V28 = 60,000 (fclaim open-lane settlement atomicity, section 31) | V29 = 88,000 (M4 event de-dup + M5 concurrent-hold status filter, v2.9). All crossed; see CONSENSUS_CHANGES.md.
+V16 = 33,600 (fee 1% -> 1.5% + maker rebate) | V17 = 34,000 (claim-to-fill) | V19 = 36,700 (nprofile) | V20 = 38,400 (late-fill fund-loss fix, claim window 15 -> 40 + 5 grace) | V18 = 40,000 (2-tier name fee) | V21 = 40,100 (offer duration cap 168 epochs) | V22 = 41,300 (cap removed for offers >= V22) | V24 = 46,400 (4-tier name fee 15/10/5/3 CSD) | V25 = 46,440 (sealed reservation: payment-free reveal, winner-only nfinalize) | V26 = 46,480 (sealed recapture) | V27 = 46,520 (young-name sale embargo 240 -> 8 blocks) | V23 = 52,000 (nset-clear to zero addr) | V28 = 60,000 (fclaim open-lane settlement atomicity, section 31) | V29 = 88,000 (M4 event de-dup + M5 concurrent-hold status filter, v2.9). Whether a gate is crossed is a live fact: compare its height with the tip from https://cairn-substrate.com/api/rpc/tip (the `gates` field of /trade/api/cairnx/health lists V24 to V29). History and rollout notes: CONSENSUS_CHANGES.md.
 
 RESERVED_NAMES (csd, treasury, admin, official, root, www, support) is CONSENSUS and lives here: defined in packages/cairnx/src/types.ts, enforced by records.ts isName, mirrored in conformance/cairnx_ref.py. It is the chain's ONLY name blocklist (no profanity filter exists anywhere); changing it is a fork, same rules as a gate.
 
@@ -55,7 +67,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 
 1. Consumers of this repo run live services, so consensus changes are the most dangerous edits in the whole ecosystem: write up the design and get maintainer sign-off first, always.
 2. Security fixes must not regress UX (no hot-path latency/declines; warn over hard-block).
-3. No em dashes in READMEs/user-facing docs; grep for the character before committing, count must be zero.
+3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing.
 4. Run `pnpm run audit:all` before merging ANY change to packages/cairnx/src/* or a new gate. test:crosslang only proves the two impls AGREE; they can agree and both be unsound.
 5. Releases are maintainer-only: tags and `pnpm publish` happen on maintainer say-so, never speculatively.
 
@@ -79,8 +91,8 @@ Gotchas: pnpm blocks esbuild postinstall unless onlyBuiltDependencies (already s
 
 - Unit: `pnpm -r test`. cairnx runs vectors, name-decoy, client-helpers, paidto, preflight (gate +/- margin grid), primary.
 - Golden vectors: csd-vectors pins the node's golden_vectors.rs + real on-chain data; cairnx pins cases.json + replay-hashes.json (canonical-state sha256 at every activation height).
-- Root e2e (independent oracles, never self-grading): test/oracle.test.ts (47+ real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), edge.test.ts, security.test.ts (hostile RPC/counterparty).
-- Cross-language differential (CI fork gate): crosscheck.mjs + crosscheck-regex.mjs (2301-case raw regex differential, the C1 class) + crosscheck-resolve.mjs + crosscheck-siwc.mjs + nprofile-crosslang.mjs + fuzz-resolve.mjs 1500 + one straddle test per gate (v20-v27). Real-chain co-sign conformance lives downstream in the cairnx service repo.
+- Root e2e (independent oracles, never self-grading): test/oracle.test.ts (real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), edge.test.ts, security.test.ts (hostile RPC/counterparty).
+- Cross-language differential (CI fork gate): crosscheck.mjs + crosscheck-regex.mjs (raw regex differential, the C1 class) + crosscheck-resolve.mjs + crosscheck-siwc.mjs + nprofile-crosslang.mjs + fuzz-resolve.mjs 1500 + one straddle test per gate (v20-v27). Real-chain co-sign conformance (live co-sign and vendor-parity tests) lives downstream in the consumer repos.
 - Money-safety conformance (REPORT-ONLY, deliberately not a CI gate; standing directive is to run and GROW them): audit:invariants (read the COVERAGE line, not just violations; widen fuel before trusting a clean run), audit:money-safety (a burn = rejected resolve().events entry whose paidTo pays the treasury), audit:race (P1 treasury-burn / P2 displacement-burn / P3 payment-without-delivery / P4 byte-identity; run only on a SETTLED tree, mid-rebuild dist reads as fake divergence).
 - CI: install --frozen-lockfile, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang as its own independently enforced job.
 
@@ -107,4 +119,8 @@ Vendored consumers: the cairn website serves the packages server-side and ships 
 
 ## Cross-repo map
 
-Upstream oracle: the official Rust node (`compute-substrate`). In-repo second implementation: conformance/cairnx_ref.py. Downstream npm consumers: the cairnx trading service, cairn-cli, cairn-sdk, csd-indexer, the bridge relayer; after a consensus bump, re-pin them promptly and never let a live replayer cross a gate height on stale code. Downstream vendored consumers: the cairn website and cairn-wallet, each with its own vendor-build script + PROVENANCE freshness check. Real-chain conformance (live co-sign and vendor-parity tests) lives downstream in those repos. Deeper audit history and rollout runbooks are maintained privately by the maintainers.
+Upstream oracle: the official Rust node (`compute-substrate`). In-repo second implementation: conformance/cairnx_ref.py. Downstream npm and vendored consumers are listed under "The stack around it" and "Consumer footprint"; after a consensus bump re-pin or re-vendor them promptly and never let a live replayer cross a gate height on stale code. Deeper audit history and rollout runbooks are maintained privately by the maintainers.
+
+## State snapshot (2026-10-11; verify with `git log` and `npm view @inversealtruism/cairnx-core version`)
+
+`master` is at 160118b and carries cairnx-core 0.1.43, the version npm serves. The chain tip was 116,921, so every gate in the list above is crossed. Versions of all packages are in `packages/*/package.json`; this block is not updated per release.
