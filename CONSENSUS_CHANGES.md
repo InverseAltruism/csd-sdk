@@ -126,7 +126,7 @@ Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladd
    `0xa11cb429...9de9547a`). `canonicalState` is sha256-identical at all 20 pinned heights AND at tip
    (both `86300aabcef1e09db4ea...`), the granted fclaim entry serializes identically on both builds, and
    every pinned height reproduces `replay-hashes.json` exactly (the anchor proving the live scan IS the
-   canonical stream). Archived: `/opt/cairn_substrate/.p75/evidence/mf20-live-differential.txt`.
+   canonical stream). Archived in the private evidence folder (mf20-live-differential.txt).
 3. A height gate would add a LIVE consensus branch carrying fleet-wide adoption-coordination cost for
    zero behavioral delta on any real stream. Reject-more for chain-impossible values needs no gate.
 
@@ -163,7 +163,7 @@ csd-registry 0.1.17 and csd-siwc 0.1.16. `pnpm run audit:all` green on the settl
 (fclaim/partialFill/v28plus coverage counters all > 0); full package suite + `test:crosslang` green;
 the five pinned vector artifacts byte-identical throughout.
 
-## cairnx-core 0.1.40 (2026-07-21, PUBLISHED; activation pending at V29 = 88,000) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
+## cairnx-core 0.1.40 (2026-07-21, PUBLISHED; V29 ACTIVATED at 88,000, crossed 2026-08-31) - V29 event de-dup + concurrent-hold status filter (CONVENTION v2.9, REBIND B9)
 
 **Consensus change (gated, non-retroactive): `V29_HEIGHT` = 88,000** (set 2026-07-20 by operator decision;
 tip was ~58.3k). Two resolve()-side corrections that both move canonical state, so both ride the ONE gate,
@@ -386,7 +386,7 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
   `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS` to have passed, so every window-valid displacer's reveal
   deadline is closed by the time any sale can exist; displacement of a finalized name is arithmetically
   impossible). Below V27: byte-identical (the 240-block rule). This is a RELAXATION, so it is a HARD ADOPTION
-  GATE: every replayer (Granus, clarvis, the vendored UI/wallet bundles) MUST run 0.1.32 before the tip
+  GATE: every replayer (the reference resolver, clarvis, the vendored UI/wallet bundles) MUST run 0.1.32 before the tip
   crosses 52,500, else a stale one rejects an offer the chain accepts (view divergence, no fund loss). Set
   past V26 (51,200) and the unrelated V23 nset-clear gate (also 52,000) so no two activations share a block.
   Pinned by conformance/v27-sale-embargo-crosslang.mjs (straddle, both languages) + a money-safety
@@ -506,7 +506,7 @@ mechanical refresh. In order:
    the W1/W2/W3/W7/W10 class).
 3. Bump `packages/cairnx` version, `pnpm -r build`, `pnpm publish` (publish-guard enforces pnpm).
 4. Re-pin the npm consumers: cairnx svc + cairn-cli package.json, `node scripts/check-consumer-pins.mjs`,
-   reinstall, restart cairnx.service off-peak (never during a gate crossing).
+   reinstall, restart the cairnx service off-peak (never during a gate crossing).
 5. Re-vendor the bundled consumers: wallet `bash scripts/build-spv-vendor.sh` +
    `node scripts/check-vendor-fresh.mjs --write`; cairn `bash scripts/build-trade-vendor.sh` +
    `node scripts/check-vendor-fresh.mjs --write`. Land these promptly: both freshness gates diff

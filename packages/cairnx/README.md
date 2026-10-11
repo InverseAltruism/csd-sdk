@@ -38,7 +38,7 @@ the operator's resolver does, and disagreement is detectable.
 ┌───────────────┴───────────────────────────────────────────────┴──────────────┐
 │  cairnX OVERLAY  =  resolve(events, tip) → state   (THIS PACKAGE)               │
 │  every replayer runs the SAME pure function and gets the SAME bytes:            │
-│     wallet (SPV, in-browser)  ·  Granus resolver svc  ·  clarvis  ·  cli        │
+│     wallet (SPV, in-browser)  ·  reference resolver  ·  clarvis  ·  cli         │
 └───────────────▲────────────────────────────────────────────────────────────────┘
                 │ events (Propose/Attest) + block headers
 ┌───────────────┴────────────────────────────────────────────────────────────────┐
@@ -61,7 +61,7 @@ flowchart TD
   end
   CORE["cairnx-core<br/><b>resolve(events, tip) → state</b><br/>pure · deterministic · this package"]
   W["Cairn Wallet<br/>in-browser SPV replayer"]
-  G["Granus resolver svc :8794"]
+  G["reference resolver svc :8794"]
   CL["clarvis · 2nd source"]
   CLI["cairn-cli"]
   UIN["CNS UI /names"]
