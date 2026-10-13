@@ -96,7 +96,7 @@ console.log("- fromRecords -");
   ok("honest: a 46-record seed restores to the tip", !seed46.failed && seed46.client.tip!.hash === hashAt(FX.tip) && seed46.client.chain.length === FX.tip - FX.from + 1);
   ok("a yieldEvery of 0 is refused", /yieldEvery/.test(await thrown(() => LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS }, 0))));
   await nextTask();
-  ok("the MessageChannel is closed after a refused restore", mcPorts() === ports0);
+  ok("a refused restore opens no MessageChannel", mcPorts() === ports0);
 
   const [a, b] = await Promise.race([
     Promise.all([1, 3].map((every) => LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS }, every))),
