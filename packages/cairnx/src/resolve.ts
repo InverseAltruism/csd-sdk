@@ -24,7 +24,7 @@ import {
 // SAME AMOUNT_RE that record amounts already use, in BOTH impls: byte-identical for every canonical value
 // the scanner ever emits, and CONVERGES instead of value-vs-throw on any non-canonical input. Mirror in
 // conformance/cairnx_ref.py:_pt.)
-function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOUNT_RE.test(v) ? BigInt(v) : 0n; }
+export function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOUNT_RE.test(v) ? BigInt(v) : 0n; }
 
 interface Bal { available: bigint; locked: bigint }
 interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }

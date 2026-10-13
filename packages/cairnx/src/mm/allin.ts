@@ -3,9 +3,10 @@
 import { MIN_FEE_ATTEST, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { FEE_BPS_V16, makerRebate, tradeFee } from "../types.js";
 
-/** What the taker pays to fill an answer worth n: the value, the 1.5% fee, the maker fee and the fill attest. */
-export function rfqFillAllIn(n: bigint): bigint {
-  return n + tradeFee(n, FEE_BPS_V16) + makerRebate(n) + BigInt(MIN_FEE_ATTEST);
+/** What the taker pays to fill an answer worth n: the value, the treasury fee at `feeBps` (the offer's
+ *  `feeBps`; FEE_BPS_V16 when absent), the maker fee and the fill attest. */
+export function rfqFillAllIn(n: bigint, feeBps?: number | null): bigint {
+  return n + tradeFee(n, feeBps ?? FEE_BPS_V16) + makerRebate(n) + BigInt(MIN_FEE_ATTEST);
 }
 
 /** The buyer's total for a bid at value n: rfqFillAllIn(n) plus the propose that anchors the bid. */

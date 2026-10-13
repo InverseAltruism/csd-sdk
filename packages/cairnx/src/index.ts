@@ -13,7 +13,7 @@
 //   client   — reorg-safety helpers a client must apply before paying (requiredClaimDepth)
 export * from "./types.js";
 export * from "./records.js";
-export { resolve, canonicalState } from "./resolve.js";
+export { resolve, canonicalState, ptAmt } from "./resolve.js";
 export * from "./client.js";
 // preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
 // requiredFillOutputs / buildFeeHeight); mirrors the resolver's fill + claim + freeze math so every
@@ -25,7 +25,8 @@ export * from "./primary.js";
 // open-lane fclaim buy. Pure record re-derivation + mandatory grant REPLAY (replayLiveHold) + the offer/
 // fclaim/fill-basis depth gate (GAP_NEEDED) over an injected PoW-verified, merkle-proven FillSpvIo seam.
 export * from "./verifyfill.js";
-export { paidToFromOutputs } from "./paidto.js";
+export { paidToFromOutputs, burnedPayment } from "./paidto.js";
+export { myProvenFillClosedOffer } from "./fillclosed.js";
 // Re-export the csd-codec primitives the cairnx consumers need so the browser UI / wallet import a SINGLE
 // surface (cairnx-core) rather than re-typing canonicalJson or the reward/fee constants. (csd-codec stays
 // the canonical home; this is a convenience re-export, not a second copy.)

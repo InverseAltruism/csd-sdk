@@ -61,7 +61,8 @@ net = sum of rebates earned  -  sum of anchor (propose) fees spent
 ```
 
 Each filled answer reimburses its own 0.25 CSD posting cost; the 0.5% covers answers that do not fill. The all-in a
-buyer pays for a CSD value `n` is `rfqFillAllIn(n)` (value, 1.5% fee, rebate and the 0.05 CSD fill attest) and
+buyer pays for a CSD value `n` is `rfqFillAllIn(n, feeBps)` (value, the treasury fee at the offer's `feeBps`, 1.5% when
+omitted, rebate and the 0.05 CSD fill attest) and
 `rfqBuyAllIn(n)` (that plus the 0.25 CSD propose that anchors the bid); both are exported from `cairnx-core/mm`.
 A 2 CSD principal is 2.59 CSD all-in for the buyer.
 
