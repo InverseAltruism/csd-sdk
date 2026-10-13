@@ -211,7 +211,7 @@ console.log("\nInvalid UTF-8 in a string field is rejected on decode (the node's
   eq("the same tx with valid UTF-8 decodes to its own bytes", hxOf(serialize(deserialize(good))), hxOf(good));
 }
 
-console.log("— epochOf (the one epoch selector; EPOCH_LEN blocks per epoch) —");
+console.log("epochOf: the one epoch selector, EPOCH_LEN blocks per epoch");
 eq("EPOCH_LEN is 30", EPOCH_LEN, 30);
 eq("epochOf at and around the first boundaries", [0, 29, 30, 59, 60].map(epochOf), [0, 0, 1, 1, 2]);
 eq("epochOf(V29 = 88,000) floors to 2,933", epochOf(88_000), 2_933);
