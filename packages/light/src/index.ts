@@ -16,7 +16,7 @@
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
-  type BlockHeader, headerHashBytes, hx,
+  type BlockHeader, headerHashBytes, hx, hb, sha256d, serializeHeader, deserializeHeader, HEADER_BYTES,
   verifyMerkleProof, merkleBranch, txid as codecTxid, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
   MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
@@ -27,6 +27,76 @@ export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from
 
 /** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
 const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBitsMemo(bits); return s > MAX_U128 ? MAX_U128 : s; };
+
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.length !== b.length) return false;
+  for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+  return true;
+};
+const hash32 = (hex: string, what: string): Uint8Array => {
+  const b = hb(hex);
+  if (b.length !== 32) throw new Error(`${what} must be a 32-byte hash`);
+  return b;
+};
+const recordCount = (records: Uint8Array): number => {
+  if (!records.length || records.length % HEADER_BYTES !== 0) throw new Error(`records: ${records.length} bytes is not a whole number of ${HEADER_BYTES}-byte records`);
+  return records.length / HEADER_BYTES;
+};
+
+export interface LinkedRecordsEnds {
+  /** Height of the first record; used to name heights in errors. */
+  firstHeight: number;
+  /** Expected hash of the first record. */
+  firstHash?: string;
+  /** Expected `prev` of the first record (the hash of the block below the run). */
+  prevHash?: string;
+  /** Expected hash of the last record. */
+  lastHash: string;
+  /** Height of the last record; when given, the record count must be lastHeight - firstHeight + 1. */
+  lastHeight?: number;
+}
+
+/**
+ * Authenticates a run of serialized headers by hash links alone: sha256d of each record, each `prev`
+ * byte-compared to the record below, and both ends compared to the given hashes. At least one of
+ * `firstHash` or `prevHash` is required, so a run missing records at its start is refused rather than
+ * read at shifted heights (test/records.test.ts). Checks no PoW, time or LWMA rule. Throws with the failing height.
+ */
+export function verifyLinkedRecords(records: Uint8Array, ends: LinkedRecordsEnds): void {
+  const { firstHeight } = ends;
+  if (!Number.isSafeInteger(firstHeight) || firstHeight < 0) throw new Error(`records: bad firstHeight ${firstHeight}`);
+  const n = recordCount(records);
+  if (ends.lastHeight !== undefined && ends.lastHeight - firstHeight + 1 !== n) throw new Error(`records: ${n} records from ${firstHeight} do not end at lastHeight ${ends.lastHeight}`);
+  if (ends.firstHash === undefined && ends.prevHash === undefined) throw new Error("records: firstHash or prevHash is required to bind the first record");
+  const firstHash = ends.firstHash === undefined ? undefined : hash32(ends.firstHash, "firstHash");
+  const lastHash = hash32(ends.lastHash, "lastHash");
+  let prev = ends.prevHash === undefined ? undefined : hash32(ends.prevHash, "prevHash");
+  for (let i = 0; i < n; i++) {
+    const rec = records.subarray(i * HEADER_BYTES, (i + 1) * HEADER_BYTES);
+    if (prev && !sameBytes(rec.subarray(4, 36), prev)) throw new Error(`records: prev link broken at ${firstHeight + i}`);
+    prev = sha256d(rec);
+    if (i === 0 && firstHash && !sameBytes(prev, firstHash)) throw new Error(`records: first record at ${firstHeight} does not match firstHash`);
+  }
+  if (!sameBytes(prev!, lastHash)) throw new Error(`records: last record at ${firstHeight + n - 1} does not match lastHash`);
+}
+
+/** Result of `LightClient.fromRecords`: the client holds every record up to the last good one. */
+export interface RecordsRestore { client: LightClient; failed?: { height: number; reason: string } }
+
+/**
+ * A yield that queues a plain task behind the ones already pending (scheduler.yield runs ahead of them
+ * and starves the popup's message tasks). One channel per call, so concurrent callers do not share a
+ * wake slot; `close` releases the port, which otherwise keeps a Node process alive.
+ */
+function taskYielder(): { yieldTask: () => Promise<void>; close: () => void } {
+  const mc = new MessageChannel();
+  let wake: (() => void) | undefined;
+  mc.port1.onmessage = () => { const w = wake; wake = undefined; w?.(); };
+  return {
+    yieldTask: () => new Promise<void>((r) => { wake = r; mc.port2.postMessage(0); }),
+    close: () => { mc.port1.close(); mc.port2.close(); },
+  };
+}
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
@@ -351,6 +421,15 @@ export class LightClient {
     };
   }
 
+  /** Serialized records for heights [fromHeight .. tip], 84 bytes each; empty when fromHeight is above the tip. */
+  toRecords(fromHeight: number): Uint8Array {
+    if (!Number.isSafeInteger(fromHeight) || fromHeight < this.baseHeight) throw new Error(`toRecords: ${fromHeight} is below the held base ${this.baseHeight}`);
+    const rows = this.chain.slice(fromHeight - this.baseHeight);
+    const out = new Uint8Array(rows.length * HEADER_BYTES);
+    rows.forEach((r, i) => out.set(serializeHeader(r.header), i * HEADER_BYTES));
+    return out;
+  }
+
   /**
    * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, timestamp
    * rules, PoW on every header, AND `bits` re-derived from the LWMA window for every NON-trusted
@@ -437,7 +516,8 @@ export class LightClient {
     // seedTrusted legitimately trusts. Check order mirrors verifyOne (time BEFORE bits BEFORE
     // PoW, as the node does). The H3 time rules are deterministic for min-spacing/MTP and the
     // wall-clock future-drift bound only loosens as time passes, so an honestly-synced snapshot
-    // can never regress on restore.
+    // fails on restore only when the clock is set back more than MAX_FUTURE_DRIFT_SECS behind a stored
+    // header (test/records.test.ts); the caller then cold-starts.
     // MF-02: a genesis-rooted snapshot (baseHeight 0) carries NO genuine trusted seed prefix, so
     // every header must be LWMA re-derived regardless of the attacker-controllable `trusted` flag.
     const fullWindowAvailable = baseHeight === 0 || height - baseHeight >= LWMA_WINDOW;
@@ -480,6 +560,39 @@ export class LightClient {
       if (i % chunk === chunk - 1) await new Promise((res) => setTimeout(res, 0));
     }
     return lc;
+  }
+
+  /**
+   * Builds a client from stored records contiguous from `firstHeight`. Records up to `anchorHeight`
+   * (LWMA_WINDOW or LWMA_WINDOW + 1 of them, a full window for the first ingest) go through `seedTrusted` against `opts.checkpoints[anchorHeight]`,
+   * which must be configured; a seed failure throws. Records above go through `ingest` (the wall-clock
+   * drift bound included), and the first that fails stops the restore: the client keeps the records
+   * below it and `failed` names it.
+   */
+  static async fromRecords(records: Uint8Array, at: { firstHeight: number; anchorHeight: number }, opts: LightClientOptions = {}, yieldEvery = 512): Promise<RecordsRestore> {
+    const n = recordCount(records);
+    const { firstHeight, anchorHeight } = at;
+    const seedLen = anchorHeight - firstHeight + 1;
+    if (!Number.isSafeInteger(firstHeight) || firstHeight < 0 || !Number.isSafeInteger(anchorHeight) || seedLen > n || seedLen < LWMA_WINDOW || seedLen > LWMA_WINDOW + 1) {
+      throw new Error(`fromRecords: the seed from ${firstHeight} to anchor ${anchorHeight} must be ${LWMA_WINDOW} or ${LWMA_WINDOW + 1} of the ${n} records`);
+    }
+    if (!Number.isSafeInteger(yieldEvery) || yieldEvery < 1) throw new Error(`fromRecords: yieldEvery must be a positive integer, got ${yieldEvery}`);
+    const lc = new LightClient(opts);
+    const anchorHash = lc.checkpoints[anchorHeight];
+    if (!anchorHash) throw new Error(`fromRecords: no checkpoint configured at anchor ${anchorHeight}`);
+    const rec = (i: number) => deserializeHeader(records.subarray(i * HEADER_BYTES, (i + 1) * HEADER_BYTES));
+    lc.seedTrusted(Array.from({ length: seedLen }, (_, i) => ({ height: firstHeight + i, header: rec(i) })), anchorHash);
+    const { yieldTask, close } = taskYielder();
+    try {
+      for (let i = seedLen; i < n; i++) {
+        try { lc.ingest(firstHeight + i, rec(i)); }
+        catch (e) { return { client: lc, failed: { height: firstHeight + i, reason: e instanceof Error ? e.message : String(e) } }; }
+        if ((i - seedLen) % yieldEvery === yieldEvery - 1) await yieldTask();
+      }
+    } finally {
+      close();
+    }
+    return { client: lc };
   }
 }
 

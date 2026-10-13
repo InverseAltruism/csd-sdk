@@ -12,9 +12,12 @@ export interface BlockHeader {
   nonce: number;
 }
 
+/** Size of one serialized header record. */
+export const HEADER_BYTES = 84;
+
 /** Exact 84-byte LE header serialization. */
 export function serializeHeader(h: BlockHeader): Uint8Array {
-  const buf = new Uint8Array(84);
+  const buf = new Uint8Array(HEADER_BYTES);
   buf.set(u32(h.version), 0);
   buf.set(hbFixed(h.prev, 32), 4);
   buf.set(hbFixed(h.merkle, 32), 36);
@@ -22,6 +25,24 @@ export function serializeHeader(h: BlockHeader): Uint8Array {
   buf.set(u32(h.bits), 76);
   buf.set(u32(h.nonce), 80);
   return buf;
+}
+
+/**
+ * Inverse of `serializeHeader` for one 84-byte record. `time` comes back as a number when it is a safe
+ * integer and as a bigint above 2^53 - 1, so re-serializing reproduces the input bytes.
+ */
+export function deserializeHeader(rec: Uint8Array): BlockHeader {
+  if (rec.length !== HEADER_BYTES) throw new Error(`header record must be ${HEADER_BYTES} bytes, got ${rec.length}`);
+  const dv = new DataView(rec.buffer, rec.byteOffset, HEADER_BYTES);
+  const t = dv.getBigUint64(68, true);
+  return {
+    version: dv.getUint32(0, true),
+    prev: hx(rec.subarray(4, 36)),
+    merkle: hx(rec.subarray(36, 68)),
+    time: t <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(t) : t,
+    bits: dv.getUint32(76, true),
+    nonce: dv.getUint32(80, true),
+  };
 }
 
 /** Header hash = sha256d(serialize_header). Returned 0x-hex (big-endian byte order as hashed). */

@@ -2,7 +2,7 @@
 // This is the gate: if any byte diverges from canonical Rust, the build fails.
 import {
   serialize, deserialize, txid, sighash, strippedTx,
-  serializeHeader, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
+  serializeHeader, deserializeHeader, HEADER_BYTES, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
   payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128,
   COINBASE_TXID, COINBASE_VOUT, isCoinbaseInput,
   blockReward, blockRewardBase, emittedSupplyBase, maxSupplyBase, INITIAL_REWARD, HALVING_INTERVAL,
@@ -36,6 +36,21 @@ for (const v of HEADER_VECTORS) {
   eq("serializeHeader == expected 84-byte bytes", hxOf(serializeHeader(v.header)), v.expectedConsensusBytes);
   eq("serializeHeader length == 84", serializeHeader(v.header).length, 84);
   eq("headerHash == expected", headerHash(v.header), v.expectedHeaderHash);
+}
+
+console.log("\n- deserializeHeader: the inverse of serializeHeader -");
+for (const h of [...HEADER_VECTORS.map((v) => v.header), ...LIVE_BLOCKS.map((b) => b.header)]) {
+  const rec = serializeHeader(h);
+  eq("serializeHeader(deserializeHeader(rec)) == rec", hxOf(serializeHeader(deserializeHeader(rec))), hxOf(rec));
+  eq("deserializeHeader(rec) has the source fields", deserializeHeader(rec), { ...h, time: Number(h.time) });
+}
+{
+  const big = { ...GOLDEN_HEADER.header, time: 2n ** 60n + 1n };
+  const back = deserializeHeader(serializeHeader(big));
+  eq("a u64 time above 2^53 comes back as the exact bigint", typeof back.time === "bigint" && back.time === big.time, true);
+  const errOf = (b: Uint8Array) => { try { deserializeHeader(b); return ""; } catch (e) { return String(e); } };
+  eq("a record one byte short is refused", /84 bytes/.test(errOf(serializeHeader(GOLDEN_HEADER.header).subarray(1))), true);
+  eq("a record one byte long is refused", /84 bytes/.test(errOf(new Uint8Array(HEADER_BYTES + 1))), true);
 }
 
 console.log("\n— PoW target (compact bits) —");
