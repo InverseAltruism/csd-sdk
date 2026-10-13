@@ -250,8 +250,18 @@ Amounts named "base" are base units (CSD has 8 decimals). Defaults are those of 
 | `MM_EXCLUDE_ADDRS` | the CairnX treasury address | Comma list; excluded from the reference, from answers and from fills. |
 | `MM_BID_SPREAD_BPS`, `MM_BID_SIZE`, `MM_MAX_OPEN_BIDS` | `800`, `2000000000`, `2` | Thin bid side (Reservoir only). The bid reference is collared at the ask reference so the book cannot cross. `MM_MAX_OPEN_BIDS=0` stops new posts only, not fills of existing bids. |
 | `MM_BID_LEVELS` | `[]` | `[[spreadBps, sizeCsd],...]`; empty means a single `MM_BID_SPREAD_BPS` bid. |
-| `MM_FILL_BIDS` | `1` | `0` stops fills of answers to the maker's bids and new bid posts; cancels still run. Reservoir only: the Sunrise never posts bids or fills. Must be 0 or 1. |
-| `MM_DAY_BUY_CSD`, `MM_BID_EXPIRY` | `10000000000`, `24` | Daily bid-side CSD cap (100 CSD) and bid life in epochs. Bids are cancellable. |
+| `MM_FILL_BIDS` | `1` | `0` stops fills of answers to the maker's bids and new bid posts; cancels still run. The buy side runs only in the Reservoir: the Sunrise posts no bids. Must be 0 or 1. |
+| `MM_DAY_BUY_CSD`, `MM_BID_EXPIRY` | `10000000000`, `24` | An absolute ceiling on the day's bid-side CSD (100 CSD); the buy-back guards below set the working limit. Bid life in epochs; bids are cancellable. |
+| `MM_BUY_SALE_BPS` | `1000` | All-in buybacks over the trailing 7 days at most this share of the maker's 7-day sale proceeds. No recent sales, no buying. |
+| `MM_BUY_LIFE_BPS` | `500` | Buybacks since the start tip at most this share of the sale proceeds since then. |
+| `MM_BUY_SINCE_TIP` | `0` | Lifetime window start; a later Sunrise start recorded in state wins. Set it to the Sunrise start tip so a lost state file cannot widen the window. |
+| `MM_BUY_SELLER_BPS` | `2000` | One seller at most this share of the trailing day's buy budget (the day's buybacks plus the room left, capped by `MM_DAY_BUY_CSD`). A bid only one seller can answer must fit it, so with `MM_DAY_BUY_CSD` 100 CSD a 20 CSD bid (20.70 CSD all-in) is never posted. |
+| `MM_BUY_BID_CAP_BPS` | `8500` | A bid at most this share of the lower of the 7-day volume-weighted sale price and the graduated floor. |
+| `MM_BUY_RESALE_BPS` | `11000` | The ask at least this share of the 7-day all-in average buy cost. Below 10000 is refused. |
+| `MM_BUY_STOP_BPS` | `1000` | No buying past this share of the graduation inventory (the maker's available CAIRN at the graduation pass). |
+| `MM_BUY_PAUSE_BPS` | `7000` | Pause line, as a share of the graduated floor (see below). |
+| `MM_BUY_PAUSE_PARTIES`, `MM_BUY_PAUSE_MIN_CSD` | `3`, `2000000000` | The prints below the pause line must come from this many distinct addresses and sum to this much CSD. |
+| `MM_VERIFY_INCLUSION` | `0` | 1 checks each indexer transaction against the maker's own node. Records younger than 12 blocks are deferred to a later pass, so the maker sees new records about 12 blocks late; `MM_INFLIGHT_TTL` grows by 12 blocks so a held-back post is not signed again, an answer holds its quota and capacity until its last epoch is final (one that expired unfilled frees it 12 blocks after expiry), and a buyer's bid is answered only once it is final with 2 epochs left; a record the node cannot prove fails the pass. It binds each record's outputs, position, height and own fields (proposer, uri, payload hash, expiry and domain; attester, score, confidence and target proposal) to the node's raw transaction, and an indexer row that disagrees fails the pass. The proposer or attester is the key whose signature in the first input verifies over the transaction's sighash, and a body without one fails the pass; this costs about 2.2 ms per record, cached until a reorg clears the cache (cold scan of 2,000 records on the test harness). The node supplies the headers, the tip and the bodies, and the maker checks no PoW and holds no UTXO set, so it cannot check that the signing key owns input 0's coin (a lying node could re-sign input 0 with its own key); the indexer can still withhold or delay records. A record with an expiry past 2^53 is parsed exactly and rejected per record, as with the flag off. Before turning it on in production, run one read-only flag-on scan against the live indexer and node and expect 0 field mismatches. |
 | `MM_INV_LO` | `4000000000000` | Skip new sells when inventory is below this, in base units. Set it to 20% of `MM_SEED_INVENTORY` in base units (display units times 1e8 for an 8-decimal token): a 1M seed gives 200k, a 21M seed gives 4.2M. |
 | `MM_BOOTSTRAP_BID` | off | Post a floor-bootstrap bid when the tape is empty. |
 | `MM_STALE_BLOCKS`, `MM_INFLIGHT_TTL` | `2`, `24` | Indexer-lag skip threshold; blocks an unconfirmed post stays "covering". |
@@ -289,6 +299,23 @@ pay, so answers to bids that race each other are priced one after another; the s
 sold-only price, so an answer that expires unfilled does not raise it. In Sunrise the quote reference is the curve; the
 tape does not enter it. Empty windows hold the tape `lastRef` but not the executable ask, because Reservoir flow skew
 expires on its own. A day quota does not accrue.
+
+### Buy-back guards
+
+The buy side runs only once the quote mode is `reservoir`. Amounts are base units; shares are bps. The keys are in
+the configuration reference above (`MM_BUY_*`, `MM_VERIFY_INCLUSION`).
+
+`MM_DAY_BUY_CSD` stays as an absolute ceiling, and every window uses `MM_REF_WINDOW` (720 blocks) as its day.
+
+The pause: new maker bids stop while the filtered tape (the reference's `qualifyTrades` prints over one `MM_REF_WINDOW`,
+per-buyer capped median) is below 70% of the floor, and for one tape window after it last was. One burst of low prints
+stays in the window for a day and the pause runs a day past that, so up to about 2 days. It stops only new maker bids:
+bids already posted stay fillable and the sell side is untouched. Its floor is not sybil resistance: three addresses
+washing 20 CSD between themselves in two prints trigger it for about 1.4 CSD (two bids, two answers, two fill attests,
+and the 1.5% fee on 20 CSD).
+
+Each pass publishes these limits under `reservoir.buyBack` in the quotes file, including `boughtBack` with
+`retired: false` (bought-back CAIRN is held for resale).
 
 ### Sunrise pricing
 
