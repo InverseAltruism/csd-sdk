@@ -12,7 +12,8 @@ import type {
 } from "./types.js";
 
 export * from "./types.js";
-export { resolvePeers, resolveGateways, resolveIdentity, reverseIdentity, epochOf } from "./resolve.js";
+export { resolvePeers, resolveGateways, resolveIdentity, reverseIdentity } from "./resolve.js";
+export { epochOf } from "@inversealtruism/csd-codec";
 export { bindDigest, commitHash, signBinding, verifyPeer, verifyGateway, verifyIdentitySig } from "./verify.js";
 
 /** A built registry record ready to anchor: Propose{domain, payloadHash} + serve `content` via L1. */

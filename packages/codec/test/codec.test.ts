@@ -6,7 +6,7 @@ import {
   payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128,
   COINBASE_TXID, COINBASE_VOUT, isCoinbaseInput,
   blockReward, blockRewardBase, emittedSupplyBase, maxSupplyBase, INITIAL_REWARD, HALVING_INTERVAL,
-  CHAIN_ID, CHAIN_ID_HASH, GENESIS_TIME, GENESIS_HASH,
+  CHAIN_ID, CHAIN_ID_HASH, GENESIS_TIME, GENESIS_HASH, EPOCH_LEN, epochOf,
 } from "../src/index.js";
 import { sha256 } from "@noble/hashes/sha256";
 import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, GOLDEN_GENESIS, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
@@ -210,6 +210,11 @@ console.log("\nInvalid UTF-8 in a string field is rejected on decode (the node's
   eq("a Propose whose uri is invalid UTF-8 fails to decode", threw, true);
   eq("the same tx with valid UTF-8 decodes to its own bytes", hxOf(serialize(deserialize(good))), hxOf(good));
 }
+
+console.log("— epochOf (the one epoch selector; EPOCH_LEN blocks per epoch) —");
+eq("EPOCH_LEN is 30", EPOCH_LEN, 30);
+eq("epochOf at and around the first boundaries", [0, 29, 30, 59, 60].map(epochOf), [0, 0, 1, 1, 2]);
+eq("epochOf(V29 = 88,000) floors to 2,933", epochOf(88_000), 2_933);
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
