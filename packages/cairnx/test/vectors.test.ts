@@ -38,6 +38,15 @@ console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length}
   assert.ok(fclaims.some((e) => e.height >= V29_HEIGHT), "replay corpus must carry an fclaim at or above V29");
   assert.ok(evs.filter((e) => e.height >= V29_HEIGHT).length >= 700, "replay corpus must reach well past V29");
   for (const g of [V28_HEIGHT, V29_HEIGHT]) assert.ok(String(g) in pinned.hashes, `replay-hashes.json must pin the gate height ${g}`);
+  // The V27 sale-embargo relaxation (240 -> 8 blocks) never reached a name claimed before V25: at the
+  // V27 height every live name was already past the 240-block bar (the resolve.ts offer-branch comment).
+  {
+    const { V27_HEIGHT, COMMIT_MAX_BLOCKS } = await import("../src/index.js");
+    const atV27 = resolve(corpus.events.filter((e: { height: number }) => e.height <= V27_HEIGHT), V27_HEIGHT);
+    const youngest = Math.max(...Object.values(atV27.names).map((n) => n.effectiveHeight));
+    assert.equal(youngest, 46_062, "youngest name effective height at the V27 height");
+    assert.ok(V27_HEIGHT - youngest > COMMIT_MAX_BLOCKS, "every name at V27 had out-aged the pre-V27 sale embargo");
+  }
   const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
   let replayed = 0;
   for (const [H, want] of Object.entries(pinned.hashes)) {

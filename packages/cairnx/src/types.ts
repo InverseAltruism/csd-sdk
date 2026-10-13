@@ -1,7 +1,7 @@
 // CairnX shared types. The convention is CONVENTION.md; these mirror it 1:1.
 // v1   = tokens (deploy/mint/transfer) + offers/fills (atomic DvP).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
-import { EPOCH_LEN } from "@inversealtruism/csd-codec";
+import { EPOCH_LEN, MAX_URI_BYTES } from "@inversealtruism/csd-codec";
 
 export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
@@ -53,7 +53,7 @@ export function expiredClaimFee(name: string, epochsPastGraceEnd: number, height
   const mult = 1n + ((NAME_PREMIUM_START - 1n) * left) / BigInt(NAME_PREMIUM_DECAY_EPOCHS);
   return base * mult;
 }
-export const MAX_RECORD_BYTES = 512;          // consensus MAX_URI_BYTES — records live in `uri`
+export const MAX_RECORD_BYTES = MAX_URI_BYTES; // records live in a Propose `uri`, so the node cap is the record cap
 export const MAX_AMOUNT = (1n << 96n) - 1n;
 export const SCORE_FILL = 100;
 export const SCORE_CANCEL = 0;
@@ -278,11 +278,11 @@ export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same c
 // Non-retroactive + emit-gated: below V27 the 240-block rule is unchanged, so every pre-V27 canonical
 // hash is byte-identical (a mixed-version fleet does not fork below the gate). It is a RELAXATION (fresh
 // resolvers accept a sale a stale one rejects), so EVERY replayer must run the V27 core BEFORE the tip
-// crosses V27_HEIGHT. Set at 52_500: past V26 (51_200) AND past the unrelated V23 nset-clear gate
-// (also 52_000, an independent already-shipped rule) so no two gate activations pile onto one block,
-// ~1.8 days after V26. The redundancy proof needs the sealed model active and the only adopters are the
-// operator's two hosts + wallet build (no external audience yet). MUST match cairnx_ref.py + helpers.js
-// + the vendored UI/wallet bundles.
+// crosses V27_HEIGHT. First set at 52,500; pulled in to 46,520 on 2026-07-03 with V24 to V26, so it sits
+// 40 blocks after V26 and 80 after V25 (V23 at 52,000 is an independent rule). The redundancy proof needs
+// the sealed model active (V25 <= V27). Because V27 - V25 < COMMIT_MAX_BLOCKS, the relaxation could reach a
+// name claimed under the pre-V25 path; no such name existed on the chain (see the resolve.ts offer branch).
+// MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles.
 export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same coordinated re-pin
 // v2.8 fclaim (§31). Operator-chosen activation height, set 2026-07-12, bumped 2026-07-13 (55,000 -> 60,000) for
 // deploy runway. At authoring, ~6,900 blocks above the live tip (~53.1k), so ALL then-current chain data + every

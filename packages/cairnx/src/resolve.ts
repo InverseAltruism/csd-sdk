@@ -533,9 +533,9 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
           // checked above), and finalize requires ev.height > effHeight + REG_COMMIT_MAX_BLOCKS, so by
           // the time any sale can exist the freeze has passed and every window-valid displacer's reveal
           // deadline (regWindow = REG_COMMIT_MAX_BLOCKS, keyed on reveal height) is closed; the shorter
-          // embargo is exactly sufficient. Below V27 the 240-block rule is unchanged (byte-identical);
-          // and by V27 (>= 52,000) any pre-V25 name is far past even the 240-block bar, so the
-          // relaxation only ever benefits genuinely-fresh sealed-era names.
+          // embargo is exactly sufficient. Below V27 the 240-block rule is unchanged (byte-identical).
+          // V27 is only 80 blocks past V25, so a pre-V25 name could in principle meet V27 inside the
+          // 240-block bar; on the chain none did (youngest effective height 46,062; test/vectors.test.ts).
           const saleEmbargo = ev.height >= V27_HEIGHT ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
           if (ev.height >= V13_HEIGHT && !n.viaFill && ev.height - n.effHeight <= saleEmbargo) {
             note(ev, ev.id, "offer", false, "name too young to sell (must out-age the reveal window)"); continue;

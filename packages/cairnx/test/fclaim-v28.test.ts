@@ -103,4 +103,21 @@ ok(hugeSt.offers[OID].claimedBy === undefined && hugeSt.fclaims[hugeFc] === unde
 ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && /out of safe-integer range/.test(e.note ?? "")),
   "MF-20: the rejection happens AT the safe-integer guard leg, not at a later ladder leg");
 
+// ── 12. CONVENTION griefing note (Correction 2): two addresses alternating holds keep the seller's cancel
+//        frozen, because the cooldown binds only the address that held last; one address alone cannot ──
+{
+  const ex = (h: number) => epochOf(h) + FCLAIM_MAX_EPOCH_AHEAD;
+  const until = (h: number) => (ex(h) + 1) * EPOCH_LEN;      // first block the hold no longer covers
+  const u1 = until(H0 + 3), u2 = until(u1);
+  const first = PE(id("e1"), fclaim({ offer: OID }), H0 + 3, B, ex(H0 + 3));
+  const cancelAt = (h: number, t: string) => AE(id(t), OID, A, h, {}, SCORE_CANCEL, 0, 0);
+  const chained = resolve([...base, first,
+    cancelAt(u1, "e2"), PE(id("e3"), fclaim({ offer: OID }), u1, C, ex(u1), 1),
+    cancelAt(u2, "e4"), PE(id("e5"), fclaim({ offer: OID }), u2, B, ex(u2), 1)], u2 + 5);
+  ok(chained.offers[OID].status === "open" && chained.offers[OID].claimTxid === id("e5"),
+    "griefing note: alternating holders freeze the seller's cancel at every lapse block");
+  const alone = resolve([...base, first, cancelAt(u1, "e6"), PE(id("e7"), fclaim({ offer: OID }), u1, B, ex(u1), 1)], u1 + 5);
+  ok(alone.offers[OID].status === "cancelled", "griefing note: the same address re-claiming at the lapse block is in cooldown, so the cancel lands");
+}
+
 console.log(`cairnx-core fclaim B2 behavior: ${pass} passed`);
