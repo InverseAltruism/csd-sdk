@@ -117,7 +117,8 @@ Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladd
    chain-derivable stream the guard denies nothing new; it only removes the branch's dependence on a
    later leg's coincidental bound (the disconnected-defenses class), restoring three-way parity with the
    offer/bid guards and the Python oracle.
-2. Replay identity is PROVEN, not argued. `replay-corpus.json` carries ZERO fclaim, so ITS
+2. Replay identity is PROVEN, not argued. `replay-corpus.json` carried ZERO fclaim at the time (the
+   2026-10-13 extension added the chain's four), so ITS
    zero-movement says nothing about this branch (`cases.json` is different: it carries six fclaim
    vectors, two of them grant-positive, and those ARE pinned and unmoved, so the pinned vector surface
    does exercise the guarded branch). The proof is a live [pins..tip] differential: the
@@ -132,7 +133,7 @@ Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladd
 
 **The golden pin does NOT live in the frozen corpus.** Seal policy (`scripts/seal-differential.mjs`
 steps 2 and 2b) forbids touching `cases.json` / `replay-corpus.json` / `replay-hashes.json`, and those
-carry no fclaim anyway. The behavior is pinned by `packages/cairnx/test/fclaim-v28.test.ts` case 11 (a
+carried no fclaim at the time. The behavior is pinned by `packages/cairnx/test/fclaim-v28.test.ts` case 11 (a
 NaN `E` grants nothing; an unsafe-int `E` grants nothing; the rejection is cut AT the guard leg, not a
 later ladder leg) plus the archived live differential. JS/Python parity is pinned by the full fclaim
 crosslang suite (v28-fclaim, v28-namegive-fclaim, v29-mux), which exercises the guarded branch against
@@ -214,6 +215,11 @@ checkpoint at ~tip 80,000 and a 0.1.41 re-pin escape hatch if adoption lags.
    asserts them; the B9 step ADDS the V29 entry to that same corpus + pin set post-crossing.) Stop rule:
    regenerating the EXISTING pinned heights must reproduce them byte-identical FIRST; any divergence there
    is an incident (stop, page the operator), never a reason to edit a pin.
+   EXECUTED 2026-10-13: replay-corpus.json re-captured with the cairnx Scanner and truncated at the
+   finalized height 117,000 (tip 118,331 at capture; 1,133 events, 744 at or above V28, 731 at or above
+   V29, 4 fclaim). All 20 earlier pins, including the retired tip-of-record 60,425, reproduced
+   byte-identically; the 88,000 and 117,000 entries were added. `REPLAY_CORPUS_PIN` restated in the
+   same commit; the Python oracle agrees at all 21 pinned heights (`conformance/replay-corpus-crosslang.mjs`).
 2. ~~CONVENTION.md still reads v2.8~~ CLOSED 2026-07-23: CONVENTION.md section 32 is the normative v2.9
    write-up (M4 duplicate-event drop + M5 open-holds cap count, both keyed on the event's own height
    `>= V29_HEIGHT`), drafted from `types.ts`/`resolve.ts` and cross-checked against the independent

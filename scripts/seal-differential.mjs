@@ -78,29 +78,28 @@ step(`vector-corpus non-movement vs ${BASELINE_REF} (B6-era pins: ${B6_ERA_PINS.
 // hashes FROM the corpus and compares them to hashes derived FROM the same corpus, so a gutted
 // corpus regenerates its own green. This step pins the committed CONTENT instead.
 //
-// B9 UPDATE POINT (P75-8b, ~2026-08-30): REPLAY_CORPUS_PIN below is the ONE place a sanctioned
-// corpus extension touches, in the SAME commit as the new corpus. Recompute both sha256s over the
-// new committed files and restate the floors from the new corpus's exact facts. Floors only ever
-// RISE (minEvents up, heightSpan wider or equal, tipHeight up, minPinnedHeights up): the sha256
-// lines prove the files did not move outside a sanctioned re-pin, the floor lines prove a
-// sanctioned re-pin did not quietly narrow what the corpus exercises.
-// ★RESIDUAL, stated so "content-pinned" is never misread as "regime-covering": this corpus contains
-// ZERO events at or above 60,000 and ZERO fclaim records (heightSpan.hi below is 58,390, visibly under
-// the V28 gate). This pin proves the corpus was NOT NARROWED. It does NOT give the stop rule any
-// coverage of the live V28 fclaim regime. That arrives only with the B9 extension, at which point
-// heightSpan.hi must rise past 60,000 so the new fclaim events themselves become non-narrowable.
+// UPDATE POINT: REPLAY_CORPUS_PIN below is the ONE place a sanctioned corpus extension touches, in
+// the SAME commit as the new corpus. Recompute both sha256s over the new committed files and restate
+// the floors from the new corpus's exact facts. Floors only ever RISE (minEvents, minFclaim and
+// minPinnedHeights up, heightSpan wider or equal, tipHeight up): the sha256 lines prove the files did
+// not move outside a sanctioned re-pin, the floor lines prove a re-pin did not quietly narrow what the
+// corpus exercises. The 2026-10-13 extension (tip 117,000) reproduced every earlier pin byte-identically,
+// including the retired tip-of-record 60,425, before the V29 and tip entries were added.
+// Coverage: the corpus reaches past V28 (60,000) and V29 (88,000) and carries the chain's fclaim
+// records; heightSpan.hi and minFclaim make that coverage non-narrowable.
 const REPLAY_CORPUS_PIN = {
   corpusFile: "packages/cairnx/test/vectors/replay-corpus.json",
-  corpusSha256: "b9cc703b676f327cc516c53197be1f8a9f84c67abf7bdf7818fd9e98f0173d4f",
+  corpusSha256: "83cc1e1a7cadeb7743cf47974589b3f729820d8fcaff563f0c84a60a63b0e9f8",
   hashesFile: "packages/cairnx/test/vectors/replay-hashes.json",
-  hashesSha256: "871fbf7140b42f7e8d50906acac99b6b1c9294c84922f9b2067dd31557674c2d",
+  hashesSha256: "26ebd3a23fedcf32afb5cae6751edb0353676efe3f0445db6a929be4491724ec",
   format: 1,
-  tipHeight: 60_425,
-  minEvents: 389,                          // event-count floor: B9 ADDS events, never removes
-  minPinnedHeights: 20,                    // floor on the replay-hashes.json pin set
-  heightSpan: { lo: 29_865, hi: 58_390 },  // coverage floor: events must still span this range
+  tipHeight: 117_000,
+  minEvents: 1_133,                        // event-count floor: an extension ADDS events, never removes
+  minFclaim: 4,                            // fclaim-record floor (the V28 open-lane claim)
+  minPinnedHeights: 21,                    // floor on the replay-hashes.json pin set
+  heightSpan: { lo: 29_865, hi: 116_988 }, // coverage floor: events must still span this range
 };
-step("replay-corpus content pin (sha256 + event-count floor + height-span floor)");
+step("replay-corpus content pin (sha256 + event-count, fclaim and height-span floors)");
 {
   const { createHash } = await import("node:crypto");
   const sha256hex = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -119,6 +118,8 @@ step("replay-corpus content pin (sha256 + event-count floor + height-span floor)
   if (corpus.tipHeight !== P.tipHeight) bad.push(`replay-corpus tipHeight ${corpus.tipHeight} != pinned ${P.tipHeight}`);
   const evs = Array.isArray(corpus.events) ? corpus.events : [];
   if (evs.length < P.minEvents) bad.push(`replay-corpus narrowed: ${evs.length} events < floor ${P.minEvents} (a thin corpus proves nothing)`);
+  const nFclaim = evs.filter((e) => e.kind === "propose" && typeof e.uri === "string" && e.uri.includes('"t":"fclaim"')).length;
+  if (nFclaim < P.minFclaim) bad.push(`replay-corpus narrowed: ${nFclaim} fclaim records < floor ${P.minFclaim}`);
   const hts = evs.map((e) => e.height).filter((h) => Number.isFinite(h));
   const lo = hts.length ? Math.min(...hts) : Infinity, hi = hts.length ? Math.max(...hts) : -Infinity;
   if (!(lo <= P.heightSpan.lo && hi >= P.heightSpan.hi)) bad.push(`replay-corpus height span [${lo}, ${hi}] no longer covers the pinned floor [${P.heightSpan.lo}, ${P.heightSpan.hi}]`);
@@ -129,7 +130,7 @@ step("replay-corpus content pin (sha256 + event-count floor + height-span floor)
     for (const m of bad) console.error(`  PIN VIOLATION: ${m}`);
     die(`${bad.length} replay-corpus pin violation(s): corpus changes are P75-8b/B9 re-pin business ONLY (update REPLAY_CORPUS_PIN in the SAME commit as a sanctioned corpus change, never to silence this)`);
   }
-  console.log(`  replay corpus content-pinned: ${evs.length} events, span [${lo}, ${hi}], tip ${corpus.tipHeight}, ${nPins} pinned heights, both sha256 ok`);
+  console.log(`  replay corpus content-pinned: ${evs.length} events (${nFclaim} fclaim), span [${lo}, ${hi}], tip ${corpus.tipHeight}, ${nPins} pinned heights, both sha256 ok`);
 }
 
 // ── 3. build the baseline dist in a throwaway worktree ─────────────────────────────────────────────

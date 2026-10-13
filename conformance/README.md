@@ -23,6 +23,9 @@ this directory, only the JS implementation existed, so the contract was asserted
   `canonicalState(JS.resolve) === Python.resolve === JSON.stringify(expectedState)` for every case.
   Real-chain co-sign: `cairnx/scripts/conformance-crosslang.mjs` scans the live indexer and replays
   the ACTUAL on-chain event stream through both impls at every pinned height.
+- **`replay-corpus-crosslang.mjs`:** the same co-sign offline, over the committed on-chain corpus
+  (`packages/cairnx/test/vectors/replay-corpus.json`, fclaim and V29 included): JS == Python and
+  sha256(JS) == `replay-hashes.json` at every pinned height.
 
 Run: `npm run test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
 

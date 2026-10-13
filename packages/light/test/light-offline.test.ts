@@ -453,5 +453,37 @@ if (inclBlock) {
   ok("S5-a: a poisoned snapshot is REJECTED whole via the chunked async path (same LWMA gate)", threw && /bits/.test(msg));
 }
 
+// ── H3 boundaries: MTP window and future drift (node chain/time.rs: an 11-header median, now + 2 h) ──
+{
+  const lcB = new LightClient({ headerProvider: provider });
+  lcB.seedTrusted(seed, cpHash);
+  await lcB.sync(FX.tip - 1);
+  const victim = byH.get(FX.tip)!;
+  const parentH = (lcB as any).at(FX.tip - 1) as { header: BlockHeader };
+  const errOf = (f: () => void): string => { try { f(); return ""; } catch (e: any) { return e?.message ?? String(e); } };
+
+  // MTP over a hand-built window whose parent is back-dated, so the median binds before min spacing.
+  // Parent time 50; the ten before it 100..1000; one more before those at 5000. The median of the last
+  // 11 is 500; a 10- or 12-header window gives 600. Times 501..600 are accepted only by the 11 rule.
+  const at = (time: number): BlockHeader => ({ ...victim.header, time } as BlockHeader);
+  const win = [at(5000), ...Array.from({ length: 10 }, (_, k) => at(100 * (k + 1))), at(50)];
+  const parent = { height: FX.tip - 1, hash: "", header: at(50), chainwork: 0n };
+  const check = (time: number) => errOf(() => (lcB as any).checkTimeRules(FX.tip, at(time), win, parent));
+  ok("MTP: a time one second above the 11-header median passes the time rules", check(501) === "");
+  ok("MTP: a time equal to the 11-header median is rejected on MTP", /MTP/.test(check(500)));
+  ok("MTP: a time between the 11- and 12-header medians passes", check(600) === "");
+
+  // Future drift through the public ingest path: the time rules run before PoW, so a header that passes
+  // them fails on PoW (its hash changed) and one that does not fails on time.
+  const t = Number(parentH.header.time) + 1000;
+  const fut = { ...victim.header, time: t } as BlockHeader;
+  const realNow = Date.now;
+  const ingestAt = (nowSecs: number) => { Date.now = () => nowSecs * 1000; try { return errOf(() => lcB.ingest(FX.tip, fut, headerHash(fut))); } finally { Date.now = realNow; } };
+  const atLimit = ingestAt(t - 2 * 60 * 60);
+  ok("drift: a header exactly 2 h ahead of the clock passes the time rules (fails later, on PoW)", atLimit !== "" && !/time/.test(atLimit) && /PoW/.test(atLimit));
+  ok("drift: a header 2 h + 1 s ahead of the clock is rejected as too far in the future", /future/.test(ingestAt(t - 2 * 60 * 60 - 1)));
+  ok("drift: the real tip header still ingests after the probes", errOf(() => lcB.ingest(FX.tip, victim.header, victim.hash)) === "");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

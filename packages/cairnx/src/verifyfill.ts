@@ -134,6 +134,8 @@ export interface FillVerdict { safe: boolean; reason: string }
  * across offers, so without this the surface would false-accept a cap-denied fclaim. `opts.pay` overrides the
  * payment (base units to want.payto) for a PARTIAL tail-fill; defaults to the offer's full want.value.
  *
+ * `opts.sums` is caller data (the per-address outputs the caller is about to build), so it cannot default on:
+ * without it there is nothing to bind. A caller that omits it keeps the overpay exposure described next.
  * `opts.sums` (OPT-IN, B6a / REBIND W3; default OFF = byte-identical verdicts for existing callers) binds the
  * caller's PLANNED per-address CSD payment sums to the PROVEN offer state: requiredFillOutputs is re-run over
  * the merkle-proven, replayed offer (so `paid`/`delivered` are the chain's, not a served lie) and the caller's
@@ -220,6 +222,9 @@ export async function verifyFillSpv(
   // live holds it had when THIS fclaim was granted; if that is >= MAX_ACTIVE_CLAIMS the real resolver denied
   // this fclaim on the cap and the fill would burn. (B5/B6 must ALSO refuse to CREATE a claim at the cap;
   // this is the fill-side backstop, and it fails CLOSED if the count is not asserted.)
+  // Count what the resolver counts: for a grant at height >= V29_HEIGHT only holds on offers still OPEN at
+  // that height (a hold on an offer this buyer already filled no longer occupies a slot); below V29, every
+  // live hold. Over-counting refuses an honest fill; under-counting lets a cap-denied fill burn.
   if (!Number.isInteger(opts.myLiveHoldsAtGrant) || opts.myLiveHoldsAtGrant < 0)
     return no("the caller must assert myLiveHoldsAtGrant (the buyer's concurrent other-offer live-hold count) for the cap check");
   if (opts.myLiveHoldsAtGrant >= MAX_ACTIVE_CLAIMS) return no("you held the max active claims when this fclaim was granted - the resolver denied it on the cap, refusing (the payment would burn)"); // MUTATE_GUARD_CAP

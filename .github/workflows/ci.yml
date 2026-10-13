@@ -20,6 +20,8 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Every file:line citation in CONSENSUS_CHANGES.md must still point at the line it quotes.
+      - run: node scripts/check-consensus-citations.mjs
       - run: pnpm -r --filter "./packages/*" build
       - run: node scripts/check-lockstep.mjs   # workspace:* + published pins match workspace (queries npm) + dist-freshness (needs built dist/)
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
@@ -55,3 +57,6 @@ jobs:
       # crosscheck-siwc + nprofile-crosslang (v1.9 parse/resolve/dormancy + constant PARITY) +
       # 1500-iter fuzz (now emits nprofile), each asserting JS == Python. See conformance/README.md.
       - run: pnpm test:crosslang
+      # Citation check + audit self-tests + invariants + race harness. Invariant and money-safety findings
+      # are report-only (printed, exit 0); a stale citation, a failed self-test or a JS/Python divergence fails.
+      - run: pnpm run audit:all

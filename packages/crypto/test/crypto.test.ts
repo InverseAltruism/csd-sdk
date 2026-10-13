@@ -2,7 +2,7 @@
 // node's funded key (block-21043 era) + property checks.
 import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig, parseScriptSig, signerAddrFromScriptSig, recoverSigner } from "../src/index.js";
 import { sighash } from "@inversealtruism/csd-codec";
-import { GOLDEN_TX } from "@inversealtruism/csd-vectors";
+import { GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -36,6 +36,15 @@ ok("verify rejects a wrong digest", !verifyDigest(a.sig64, a.pub33, "0x" + "00".
   ok("verify REJECTS the high-S twin (malleability blocked)", verifyDigest(highSig, a.pub33, sh) === false);
 }
 ok("buildScriptSig is 99 bytes (0x40+64+0x21+33)", buildScriptSig(a.sig64, a.pub33).slice(2).length / 2 === 99);
+
+// The real Propose and Attest vectors: the mined signature verifies against the pinned sighash, which
+// ties expectedSighash to what the node accepted rather than to this SDK's own sighash().
+for (const [name, v] of [["Propose", GOLDEN_PROPOSE_TX], ["Attest", GOLDEN_ATTEST_TX]] as const) {
+  const p = parseScriptSig(v.tx.inputs[0]!.scriptSig);
+  ok(`${name} vector: the on-chain signature verifies against expectedSighash`, !!p && verifyDigest(p.sig64, p.pub33, v.expectedSighash));
+  ok(`${name} vector: the same signature fails against a one-bit-different digest`,
+    !!p && !verifyDigest(p.sig64, p.pub33, v.expectedSighash.slice(0, -1) + (v.expectedSighash.endsWith("0") ? "1" : "0")));
+}
 
 const g = keygen();
 ok("keygen produces a valid self-consistent keypair", isValidPriv(g.priv) && addrFromPriv(g.priv) === g.addr);

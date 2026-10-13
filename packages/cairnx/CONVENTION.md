@@ -1098,6 +1098,17 @@ mutates that offer object, so an inside-closure read sees the hold; a value snap
 apply-time target scan would not.) The freeze is scoped to `claimTxid !== undefined`, so pre-V28 legacy holds
 keep §16 behavior byte-for-byte.
 
+*Griefing note (Correction 2).* The freeze lets a buyer who holds a claim block the seller's cancel, and
+nothing in this version bounds how many holds follow one another. The claim cooldown binds only the address
+that held last (`claimedBy` is last-write-wins), so two addresses can alternate: each grant buys a hold of 61 to
+90 blocks for one Propose fee (0.25 CSD), and a grant that lands in the block where the previous hold lapses
+also freezes a cancel in that block. Sustained, that costs about 2 to 3 CSD a day at the 120-second block
+target. While the chain of holds lasts the seller cannot withdraw the offer, and the holder can fill it at its
+posted terms whenever they become favourable: a free option on a stale price, not a loss of funds already
+paid. The exposure ends at the offer's expiry, because a hold can never outlive it. A seller who may need to
+pull an offer should keep its expiry short or quote taker-bound (Lane B, below), which cannot be claimed.
+`packages/cairnx/test/fclaim-v28.test.ts` case 12 pins both halves (two holders freeze the cancel; one cannot).
+
 **Lane B (taker-bound offers become uncancellable at V28).** A taker-bound (RFQ) answer is a firm quote: at
 `h >= V28`, both cancel paths reject a cancel when `o.taker !== undefined` and the offer was anchored at V28+.
 The maker exits by letting the answer expire (one epoch, about an hour). This eliminates the cancel-reorder half
