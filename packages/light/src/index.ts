@@ -191,19 +191,14 @@ export class LightClient {
 
   /** Verify a single header at `height` and append it (full consensus checks). */
   ingest(height: number, header: BlockHeader, claimedHash?: string): VerifiedHeader {
-    return this.append(height, header, claimedHash, true);
-  }
-
-  /** `checkDrift` false only for records restored from storage, which passed the wall-clock bound when first ingested. */
-  private append(height: number, header: BlockHeader, claimedHash: string | undefined, checkDrift: boolean): VerifiedHeader {
     if (height !== this.baseHeight + this.chain.length) throw new Error(`out-of-order ingest at ${height} (tip ${this.baseHeight + this.chain.length - 1})`);
-    const vh = this.verifyOne(height, header, this.windowBefore(height), this.at(height - 1), claimedHash, checkDrift);
+    const vh = this.verifyOne(height, header, this.windowBefore(height), this.at(height - 1), claimedHash);
     this.chain.push(vh);
     return vh;
   }
 
   /** Pure verification of one header against a window + parent (no mutation). */
-  private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string, checkDrift = true): VerifiedHeader {
+  private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string): VerifiedHeader {
     const hashBytes = headerHashBytes(header);
     const hash = hx(hashBytes);
     if (claimedHash && claimedHash.toLowerCase() !== hash.toLowerCase()) throw new Error(`header hash mismatch at ${height}`);
@@ -215,7 +210,7 @@ export class LightClient {
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
       // Timestamp consensus rules (H3) — mirror chain/index.rs (min-spacing, MTP, future-drift) so a
       // crafted-timestamp fork cannot steer the LWMA difficulty down. Enforced BEFORE bits/PoW, as the node does.
-      this.checkTimeRules(height, header, window, parent, checkDrift);
+      this.checkTimeRules(height, header, window, parent);
       const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
@@ -239,14 +234,13 @@ export class LightClient {
    * it can reject a header the node accepts, never accept one the node rejects. The standard API
    * (`syncFromCheckpoint`, context = LWMA_WINDOW = 45 ≥ MTP_WINDOW) always supplies a full window.
    */
-  private checkTimeRules(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader, checkDrift = true): void {
+  private checkTimeRules(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader): void {
     const time = Number(header.time);
     const minAllowed = Number(parent.header.time) + MIN_BLOCK_SPACING_SECS;
     if (time < minAllowed) throw new Error(`time too early at ${height}: ${time} < parent+${MIN_BLOCK_SPACING_SECS} (${minAllowed})`);
     const recent = window.slice(Math.max(0, window.length - MTP_WINDOW)).map((h) => Number(h.time)).sort((a, b) => a - b);
     const mtp = recent.length ? recent[Math.floor(recent.length / 2)]! : 0;
     if (time <= mtp) throw new Error(`time <= MTP at ${height}: ${time} <= ${mtp}`);
-    if (!checkDrift) return;
     const maxAllowed = Math.floor(Date.now() / 1000) + MAX_FUTURE_DRIFT_SECS;
     if (time > maxAllowed) throw new Error(`time too far in future at ${height}: ${time} > now+${MAX_FUTURE_DRIFT_SECS}`);
   }
@@ -519,7 +513,8 @@ export class LightClient {
     // seedTrusted legitimately trusts. Check order mirrors verifyOne (time BEFORE bits BEFORE
     // PoW, as the node does). The H3 time rules are deterministic for min-spacing/MTP and the
     // wall-clock future-drift bound only loosens as time passes, so an honestly-synced snapshot
-    // can never regress on restore.
+    // fails on restore only when the clock is set back more than MAX_FUTURE_DRIFT_SECS behind a stored
+    // header (test/records.test.ts); the caller then cold-starts.
     // MF-02: a genesis-rooted snapshot (baseHeight 0) carries NO genuine trusted seed prefix, so
     // every header must be LWMA re-derived regardless of the attacker-controllable `trusted` flag.
     const fullWindowAvailable = baseHeight === 0 || height - baseHeight >= LWMA_WINDOW;
@@ -567,9 +562,9 @@ export class LightClient {
   /**
    * Builds a client from stored records contiguous from `firstHeight`. Records up to `anchorHeight`
    * (at most LWMA_WINDOW + 1 of them) go through `seedTrusted` against `opts.checkpoints[anchorHeight]`,
-   * which must be configured; a seed failure throws. Records above go through the `ingest` checks
-   * without the wall-clock drift bound, and the first that fails stops the restore: the client keeps
-   * the records below it and `failed` names it.
+   * which must be configured; a seed failure throws. Records above go through `ingest` (the wall-clock
+   * drift bound included), and the first that fails stops the restore: the client keeps the records
+   * below it and `failed` names it.
    */
   static async fromRecords(records: Uint8Array, at: { firstHeight: number; anchorHeight: number }, opts: LightClientOptions = {}, yieldEvery = 512): Promise<RecordsRestore> {
     const n = recordCount(records);
@@ -587,7 +582,7 @@ export class LightClient {
     const { yieldTask, close } = taskYielder();
     try {
       for (let i = seedLen; i < n; i++) {
-        try { lc.append(firstHeight + i, rec(i), undefined, false); }
+        try { lc.ingest(firstHeight + i, rec(i)); }
         catch (e) { return { client: lc, failed: { height: firstHeight + i, reason: e instanceof Error ? e.message : String(e) } }; }
         if ((i - seedLen) % yieldEvery === yieldEvery - 1) await yieldTask();
       }

@@ -60,8 +60,8 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 csd-codec adds `deserializeHeader` (the inverse of `serializeHeader`) and `HEADER_BYTES`; csd-light adds
 `verifyLinkedRecords`, `LightClient.fromRecords` and `toRecords`. No byte, LWMA, chainwork, PoW or merkle change:
-`fromRecords` verifies through the existing `seedTrusted` and `ingest` checks, minus the wall-clock drift bound
-for restored records only, and equals `fromSnapshot` on the fixture.
+`fromRecords` verifies through the existing `seedTrusted` and `ingest` checks, unchanged, and equals
+`fromSnapshot` on the fixture.
 
 ## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; STAGED, not published; no consensus-surface change) - shared helpers in one home
 

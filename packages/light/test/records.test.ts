@@ -113,22 +113,27 @@ console.log("- fromRecords -");
   ok("each restore opens its own MessageChannel and posts one task per 8 ingested records", made === 2 && posts === 2 * Math.floor((FX.tip - CP) / 8));
 }
 
-console.log("- fromRecords skips only the wall-clock drift bound -");
+console.log("- fromRecords keeps the wall-clock drift bound -");
 {
   const realNow = Date.now;
   const tipTime = Number(byH.get(FX.tip)!.header.time);
-  const fresh = LightClient.fromSnapshot({ v: 1, baseHeight: FX.from, headers: honest.toSnapshot().headers.slice(0, FX.tip - FX.from) }, { checkpoints: { [CP]: hashAt(CP) } });
-  Date.now = () => (tipTime - 3 * 3600) * 1000; // the clock is 3 h behind the stored tip
+  const nowSecs = tipTime - 3 * 3600; // the clock is 3 h behind the stored tip
+  const firstAhead = FX.headers.find((h) => h.height > CP && Number(h.header.time) > nowSecs + 2 * 3600)!.height;
+  const snap = honest.toSnapshot();
+  Date.now = () => nowSecs * 1000;
   try {
     const r = await LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
-    ok("a stored suffix restores intact with the clock set back 3 h", !r.failed && sameChain(r.client, fromSnap));
-    ok("the same clock still refuses the tip header on ingest", /future/.test(errOf(() => fresh.ingest(FX.tip, byH.get(FX.tip)!.header))));
-    const early = { ...byH.get(CP + 5)!.header, time: Number(byH.get(CP + 4)!.header.time) + 1 };
-    const e = await LightClient.fromRecords(new Uint8Array([...slice(FX.from, CP + 4), ...pack([early])]), { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
-    ok("the deterministic time rules still apply on restore", e.failed?.height === CP + 5 && /time too early/.test(e.failed.reason));
+    ok("with the clock 3 h back the restore stops at the first record above now + 2 h and keeps the prefix",
+      firstAhead < FX.tip && r.failed?.height === firstAhead && /future/.test(r.failed.reason) && r.client.tip!.height === firstAhead - 1 && r.client.tip!.hash === hashAt(firstAhead - 1));
+    ok("with the clock 3 h back fromSnapshot refuses the honest snapshot", /future/.test(errOf(() => LightClient.fromSnapshot(snap, { checkpoints: CHECKPOINTS }))));
   } finally {
     Date.now = realNow;
   }
+  const r = await LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
+  ok("honest: with a correct clock the same records restore intact", !r.failed && sameChain(r.client, fromSnap));
+  const early = { ...byH.get(CP + 5)!.header, time: Number(byH.get(CP + 4)!.header.time) + 1 };
+  const e = await LightClient.fromRecords(new Uint8Array([...slice(FX.from, CP + 4), ...pack([early])]), { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
+  ok("the deterministic time rules still apply on restore", e.failed?.height === CP + 5 && /time too early/.test(e.failed.reason));
 }
 
 console.log("- toRecords -");
