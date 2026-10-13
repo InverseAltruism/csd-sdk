@@ -16,7 +16,7 @@
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
-  type BlockHeader, headerHashBytes, hx,
+  type BlockHeader, headerHashBytes, hx, hb, sha256d, HEADER_BYTES,
   verifyMerkleProof, merkleBranch, txid as codecTxid, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
   MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
@@ -27,6 +27,55 @@ export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from
 
 /** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
 const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBitsMemo(bits); return s > MAX_U128 ? MAX_U128 : s; };
+
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.length !== b.length) return false;
+  for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+  return true;
+};
+const hash32 = (hex: string, what: string): Uint8Array => {
+  const b = hb(hex);
+  if (b.length !== 32) throw new Error(`${what} must be a 32-byte hash`);
+  return b;
+};
+const recordCount = (records: Uint8Array): number => {
+  if (!records.length || records.length % HEADER_BYTES !== 0) throw new Error(`records: ${records.length} bytes is not a whole number of ${HEADER_BYTES}-byte records`);
+  return records.length / HEADER_BYTES;
+};
+
+export interface LinkedRecordsEnds {
+  /** Height of the first record; used to name heights in errors. */
+  firstHeight: number;
+  /** Expected hash of the first record. */
+  firstHash?: string;
+  /** Expected `prev` of the first record (the hash of the block below the run). */
+  prevHash?: string;
+  /** Expected hash of the last record. */
+  lastHash: string;
+}
+
+/**
+ * Authenticates a run of serialized headers by hash links alone: sha256d of each record, each `prev`
+ * byte-compared to the record below, and both ends compared to the given hashes. At least one of
+ * `firstHash` or `prevHash` is required, so a run missing records at its start is refused rather than
+ * read at shifted heights (test/records.test.ts). Checks no PoW, time or LWMA rule. Throws with the failing height.
+ */
+export function verifyLinkedRecords(records: Uint8Array, ends: LinkedRecordsEnds): void {
+  const { firstHeight } = ends;
+  if (!Number.isSafeInteger(firstHeight) || firstHeight < 0) throw new Error(`records: bad firstHeight ${firstHeight}`);
+  const n = recordCount(records);
+  if (ends.firstHash === undefined && ends.prevHash === undefined) throw new Error("records: firstHash or prevHash is required to bind the first record");
+  const firstHash = ends.firstHash === undefined ? undefined : hash32(ends.firstHash, "firstHash");
+  const lastHash = hash32(ends.lastHash, "lastHash");
+  let prev = ends.prevHash === undefined ? undefined : hash32(ends.prevHash, "prevHash");
+  for (let i = 0; i < n; i++) {
+    const rec = records.subarray(i * HEADER_BYTES, (i + 1) * HEADER_BYTES);
+    if (prev && !sameBytes(rec.subarray(4, 36), prev)) throw new Error(`records: prev link broken at ${firstHeight + i}`);
+    prev = sha256d(rec);
+    if (i === 0 && firstHash && !sameBytes(prev, firstHash)) throw new Error(`records: first record at ${firstHeight} does not match firstHash`);
+  }
+  if (!sameBytes(prev!, lastHash)) throw new Error(`records: last record at ${firstHeight + n - 1} does not match lastHash`);
+}
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
 
