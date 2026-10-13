@@ -16,7 +16,7 @@
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
-  type BlockHeader, headerHashBytes, hx, hb, sha256d, HEADER_BYTES,
+  type BlockHeader, headerHashBytes, hx, hb, sha256d, serializeHeader, deserializeHeader, HEADER_BYTES,
   verifyMerkleProof, merkleBranch, txid as codecTxid, GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
   MTP_WINDOW, MIN_BLOCK_SPACING_SECS, MAX_FUTURE_DRIFT_SECS,
 } from "@inversealtruism/csd-codec";
@@ -75,6 +75,24 @@ export function verifyLinkedRecords(records: Uint8Array, ends: LinkedRecordsEnds
     if (i === 0 && firstHash && !sameBytes(prev, firstHash)) throw new Error(`records: first record at ${firstHeight} does not match firstHash`);
   }
   if (!sameBytes(prev!, lastHash)) throw new Error(`records: last record at ${firstHeight + n - 1} does not match lastHash`);
+}
+
+/** Result of `LightClient.fromRecords`: the client holds every record up to the last good one. */
+export interface RecordsRestore { client: LightClient; failed?: { height: number; reason: string } }
+
+/**
+ * A yield that queues a plain task behind the ones already pending (scheduler.yield runs ahead of them
+ * and starves the popup's message tasks). One channel per call, so concurrent callers do not share a
+ * wake slot; `close` releases the port, which otherwise keeps a Node process alive.
+ */
+function taskYielder(): { yieldTask: () => Promise<void>; close: () => void } {
+  const mc = new MessageChannel();
+  let wake: (() => void) | undefined;
+  mc.port1.onmessage = () => { const w = wake; wake = undefined; w?.(); };
+  return {
+    yieldTask: () => new Promise<void>((r) => { wake = r; mc.port2.postMessage(0); }),
+    close: () => { mc.port1.close(); mc.port2.close(); },
+  };
 }
 
 export type TrustLevel = "verified-inclusion" | "scanned" | "rpc-trusted";
@@ -173,14 +191,19 @@ export class LightClient {
 
   /** Verify a single header at `height` and append it (full consensus checks). */
   ingest(height: number, header: BlockHeader, claimedHash?: string): VerifiedHeader {
+    return this.append(height, header, claimedHash, true);
+  }
+
+  /** `checkDrift` false only for records restored from storage, which passed the wall-clock bound when first ingested. */
+  private append(height: number, header: BlockHeader, claimedHash: string | undefined, checkDrift: boolean): VerifiedHeader {
     if (height !== this.baseHeight + this.chain.length) throw new Error(`out-of-order ingest at ${height} (tip ${this.baseHeight + this.chain.length - 1})`);
-    const vh = this.verifyOne(height, header, this.windowBefore(height), this.at(height - 1), claimedHash);
+    const vh = this.verifyOne(height, header, this.windowBefore(height), this.at(height - 1), claimedHash, checkDrift);
     this.chain.push(vh);
     return vh;
   }
 
   /** Pure verification of one header against a window + parent (no mutation). */
-  private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string): VerifiedHeader {
+  private verifyOne(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader | undefined, claimedHash?: string, checkDrift = true): VerifiedHeader {
     const hashBytes = headerHashBytes(header);
     const hash = hx(hashBytes);
     if (claimedHash && claimedHash.toLowerCase() !== hash.toLowerCase()) throw new Error(`header hash mismatch at ${height}`);
@@ -192,7 +215,7 @@ export class LightClient {
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
       // Timestamp consensus rules (H3) — mirror chain/index.rs (min-spacing, MTP, future-drift) so a
       // crafted-timestamp fork cannot steer the LWMA difficulty down. Enforced BEFORE bits/PoW, as the node does.
-      this.checkTimeRules(height, header, window, parent);
+      this.checkTimeRules(height, header, window, parent, checkDrift);
       const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
     }
@@ -216,13 +239,14 @@ export class LightClient {
    * it can reject a header the node accepts, never accept one the node rejects. The standard API
    * (`syncFromCheckpoint`, context = LWMA_WINDOW = 45 ≥ MTP_WINDOW) always supplies a full window.
    */
-  private checkTimeRules(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader): void {
+  private checkTimeRules(height: number, header: BlockHeader, window: BlockHeader[], parent: VerifiedHeader, checkDrift = true): void {
     const time = Number(header.time);
     const minAllowed = Number(parent.header.time) + MIN_BLOCK_SPACING_SECS;
     if (time < minAllowed) throw new Error(`time too early at ${height}: ${time} < parent+${MIN_BLOCK_SPACING_SECS} (${minAllowed})`);
     const recent = window.slice(Math.max(0, window.length - MTP_WINDOW)).map((h) => Number(h.time)).sort((a, b) => a - b);
     const mtp = recent.length ? recent[Math.floor(recent.length / 2)]! : 0;
     if (time <= mtp) throw new Error(`time <= MTP at ${height}: ${time} <= ${mtp}`);
+    if (!checkDrift) return;
     const maxAllowed = Math.floor(Date.now() / 1000) + MAX_FUTURE_DRIFT_SECS;
     if (time > maxAllowed) throw new Error(`time too far in future at ${height}: ${time} > now+${MAX_FUTURE_DRIFT_SECS}`);
   }
@@ -400,6 +424,15 @@ export class LightClient {
     };
   }
 
+  /** Serialized records for heights [fromHeight .. tip], 84 bytes each; empty when fromHeight is above the tip. */
+  toRecords(fromHeight: number): Uint8Array {
+    if (!Number.isSafeInteger(fromHeight) || fromHeight < this.baseHeight) throw new Error(`toRecords: ${fromHeight} is below the held base ${this.baseHeight}`);
+    const rows = this.chain.slice(fromHeight - this.baseHeight);
+    const out = new Uint8Array(rows.length * HEADER_BYTES);
+    rows.forEach((r, i) => out.set(serializeHeader(r.header), i * HEADER_BYTES));
+    return out;
+  }
+
   /**
    * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, timestamp
    * rules, PoW on every header, AND `bits` re-derived from the LWMA window for every NON-trusted
@@ -529,6 +562,39 @@ export class LightClient {
       if (i % chunk === chunk - 1) await new Promise((res) => setTimeout(res, 0));
     }
     return lc;
+  }
+
+  /**
+   * Builds a client from stored records contiguous from `firstHeight`. Records up to `anchorHeight`
+   * (at most LWMA_WINDOW + 1 of them) go through `seedTrusted` against `opts.checkpoints[anchorHeight]`,
+   * which must be configured; a seed failure throws. Records above go through the `ingest` checks
+   * without the wall-clock drift bound, and the first that fails stops the restore: the client keeps
+   * the records below it and `failed` names it.
+   */
+  static async fromRecords(records: Uint8Array, at: { firstHeight: number; anchorHeight: number }, opts: LightClientOptions = {}, yieldEvery = 512): Promise<RecordsRestore> {
+    const n = recordCount(records);
+    const { firstHeight, anchorHeight } = at;
+    const seedLen = anchorHeight - firstHeight + 1;
+    if (!Number.isSafeInteger(firstHeight) || firstHeight < 0 || !Number.isSafeInteger(anchorHeight) || seedLen < 1 || seedLen > n || seedLen > LWMA_WINDOW + 1) {
+      throw new Error(`fromRecords: anchor ${anchorHeight} must lie within the first ${LWMA_WINDOW + 1} of ${n} records from ${firstHeight}`);
+    }
+    if (!Number.isSafeInteger(yieldEvery) || yieldEvery < 1) throw new Error(`fromRecords: yieldEvery must be a positive integer, got ${yieldEvery}`);
+    const lc = new LightClient(opts);
+    const anchorHash = lc.checkpoints[anchorHeight];
+    if (!anchorHash) throw new Error(`fromRecords: no checkpoint configured at anchor ${anchorHeight}`);
+    const rec = (i: number) => deserializeHeader(records.subarray(i * HEADER_BYTES, (i + 1) * HEADER_BYTES));
+    lc.seedTrusted(Array.from({ length: seedLen }, (_, i) => ({ height: firstHeight + i, header: rec(i) })), anchorHash);
+    const { yieldTask, close } = taskYielder();
+    try {
+      for (let i = seedLen; i < n; i++) {
+        try { lc.append(firstHeight + i, rec(i), undefined, false); }
+        catch (e) { return { client: lc, failed: { height: firstHeight + i, reason: e instanceof Error ? e.message : String(e) } }; }
+        if ((i - seedLen) % yieldEvery === yieldEvery - 1) await yieldTask();
+      }
+    } finally {
+      close();
+    }
+    return { client: lc };
   }
 }
 
