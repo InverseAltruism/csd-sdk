@@ -3,11 +3,13 @@
 import {
   serialize, deserialize, txid, sighash, strippedTx,
   serializeHeader, headerHash, bitsToTarget, powOk, merkleRoot, verifyMerkleProof, merkleBranch,
-  payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128, MAX_TX_BYTES,
+  payloadHash, canonicalJson, bytesToHex, hb, workForBits, MAX_U128,
   COINBASE_TXID, COINBASE_VOUT, isCoinbaseInput,
   blockReward, blockRewardBase, emittedSupplyBase, maxSupplyBase, INITIAL_REWARD, HALVING_INTERVAL,
+  CHAIN_ID, CHAIN_ID_HASH, GENESIS_TIME, GENESIS_HASH,
 } from "../src/index.js";
-import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
+import { sha256 } from "@noble/hashes/sha256";
+import { GOLDEN_HEADER, GOLDEN_TX, GOLDEN_POW, GOLDEN_GENESIS, TX_VECTORS, HEADER_VECTORS, LIVE_BLOCKS } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
 const eq = (n: string, a: unknown, b: unknown) => {
@@ -110,16 +112,37 @@ const throwsD = (b: Uint8Array) => { try { deserialize(b); return false; } catch
 const validBytes = serialize(TX_VECTORS[0]!.tx);
 eq("deserialize accepts a valid tx", throwsD(validBytes), false);
 eq("deserialize REJECTS trailing bytes (non-canonical)", throwsD(new Uint8Array([...validBytes, 0x00])), true);
-eq("deserialize REJECTS oversized input (> MAX_TX_BYTES)", throwsD(new Uint8Array(MAX_TX_BYTES + 1)), true);
+eq("deserialize REJECTS oversized input (> 100,000 bytes)", throwsD(new Uint8Array(100_001)), true);
 // version(4)=1 ‖ nIn(8 LE)=513 → caps before any allocation/loop
 eq("deserialize REJECTS too many inputs (513 > 512) before allocating", throwsD(new Uint8Array([1,0,0,0, 1,2,0,0,0,0,0,0])), true);
 // version ‖ nIn=0 ‖ nOut=513
 eq("deserialize REJECTS too many outputs (513 > 512) before allocating", throwsD(new Uint8Array([1,0,0,0, 0,0,0,0,0,0,0,0, 1,2,0,0,0,0,0,0])), true);
+// The accept side of each node limit, at its literal value (a limit that drifts down fails here).
+{
+  const base = TX_VECTORS[0]!.tx;
+  const inp = base.inputs[0]!, out = base.outputs[0]!;
+  const sized = (uriLen: number) => serialize({ ...base, app: { type: "Propose", domain: "d", payloadHash: "0x" + "11".repeat(32), uri: "u".repeat(uriLen), expiresEpoch: 0 } });
+  const fill = 100_000 - sized(0).length;
+  eq("a tx of exactly 100,000 bytes decodes", sized(fill).length === 100_000 && !throwsD(sized(fill)), true);
+  eq("the same tx one byte longer is refused", sized(fill + 1).length === 100_001 && throwsD(sized(fill + 1)), true);
+  eq("a tx with 512 inputs decodes", throwsD(serialize({ ...base, inputs: Array.from({ length: 512 }, () => inp) })), false);
+  eq("a tx with 512 outputs decodes", throwsD(serialize({ ...base, outputs: Array.from({ length: 512 }, () => out) })), false);
+  // A complete 513-input (513-output) tx, so the refusal can only come from the count limit, not a short buffer.
+  const errD = (b: Uint8Array) => { try { deserialize(b); return ""; } catch (e) { return String((e as Error).message); } };
+  eq("a complete tx with 513 inputs is refused on the input limit", /too many inputs/.test(errD(serialize({ ...base, inputs: Array.from({ length: 513 }, () => inp) }))), true);
+  eq("a complete tx with 513 outputs is refused on the output limit", /too many outputs/.test(errD(serialize({ ...base, outputs: Array.from({ length: 513 }, () => out) }))), true);
+}
 
 console.log("\n— chainwork u128 faithfulness (A-S4: clamp per-block work to u128 like the node) —");
 eq("workForBits clamps an extreme low-target to MAX_U128", workForBits(0x10000001) === MAX_U128, true);
+eq("MAX_U128 is the node's u128 ceiling, 2^128 - 1", workForBits(0x10000001) === (1n << 128n) - 1n, true);
 eq("workForBits at real difficulty is NOT clamped (< MAX_U128)", workForBits(LIVE_BLOCKS[0]!.header.bits) < MAX_U128, true);
 eq("workForBits at real difficulty is > 0", workForBits(LIVE_BLOCKS[0]!.header.bits) > 0n, true);
+
+console.log("\n- chain identity params match the node's -");
+eq("CHAIN_ID_HASH is sha256(CHAIN_ID)", "0x" + bytesToHex(sha256(new TextEncoder().encode(CHAIN_ID))), "0x" + bytesToHex(CHAIN_ID_HASH));
+eq("CHAIN_ID is the mainnet id", CHAIN_ID, "compute-substrate-mainnet");
+eq("GENESIS_TIME and GENESIS_HASH match the node's genesis anchor", [GENESIS_TIME, GENESIS_HASH], [GOLDEN_GENESIS.time, GOLDEN_GENESIS.hash]);
 
 console.log("\n— coinbase sentinels + exact-bigint emission (Plan 57 B4) —");
 eq("coinbase sentinel exports match the wire constants", COINBASE_TXID === "0x" + "00".repeat(32) && COINBASE_VOUT === 0xffffffff, true);
@@ -165,6 +188,27 @@ console.log("\nMF-16: leading BOM (U+FEFF) preserved on decode (byte round-trip 
   const plainBack = deserialize(serialize(plainTx));
   eq("MF-16 happy path: a normal-string tx round-trips byte-identical", hxOf(serialize(plainBack)), hxOf(serialize(plainTx)));
   eq("MF-16 happy path: txid is stable for a normal-string tx", txid(plainBack), txid(plainTx));
+}
+
+console.log("\nInvalid UTF-8 in a string field is rejected on decode (the node's bincode read_string refuses it)");
+{
+  // `fatal: true` on the decoder: a lossy decode would turn 0xff into U+FFFD, so the decoded tx would
+  // re-serialize to different bytes and a different txid than the node holds.
+  const tx: Parameters<typeof serialize>[0] = {
+    version: 1, locktime: 0,
+    inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }],
+    outputs: [{ value: 1, scriptPubkey: "0x" + "cd".repeat(20) }],
+    app: { type: "Propose", domain: "plain", payloadHash: "0x" + "11".repeat(32), uri: "u", expiresEpoch: 0 },
+  };
+  const good = serialize(tx);
+  const at = good.length - 9;   // the one uri byte, followed only by the u64 expiresEpoch
+  eq("the uri byte sits where the fixture expects it", good[at], 0x75);
+  const bad = good.slice();
+  bad[at] = 0xff;
+  let threw = false;
+  try { deserialize(bad); } catch { threw = true; }
+  eq("a Propose whose uri is invalid UTF-8 fails to decode", threw, true);
+  eq("the same tx with valid UTF-8 decodes to its own bytes", hxOf(serialize(deserialize(good))), hxOf(good));
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
