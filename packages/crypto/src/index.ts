@@ -5,11 +5,8 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { ripemd160 } from "@noble/hashes/ripemd160";
 import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex, hexToBytes, randomBytes } from "@noble/hashes/utils";
-
-const strip0x = (h: string): string => (h.startsWith("0x") ? h.slice(2) : h);
-const hb = (h: string): Uint8Array => hexToBytes(strip0x(h));
-const hx = (b: Uint8Array): string => "0x" + bytesToHex(b);
+import { bytesToHex, randomBytes } from "@noble/hashes/utils";
+import { hb, hx, strip0x } from "@inversealtruism/csd-codec";
 
 /** hash160(x) = ripemd160(sha256(x)) → 0x-hex (20 bytes). */
 export function hash160(bytes: Uint8Array): string { return hx(ripemd160(sha256(bytes))); }
