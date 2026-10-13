@@ -92,7 +92,64 @@ export const GOLDEN_GENESIS = {
   bits: 0x1e00ffff,
 };
 
+// ── real mainnet app transactions ──
+// golden_vectors.rs freezes only an `AppPayload::None` tx, so the Propose and Attest encodings are
+// pinned with real mined transactions instead. Each is anchored outside this SDK twice: the txid is
+// the node's (GET /tx/:id), and the signature in scriptSig, which the node verified, verifies
+// against expectedSighash (asserted in csd-crypto's test).
+
+/** A cairnx:v1 fclaim Propose, mined at 65,507. */
+export const GOLDEN_PROPOSE_TX: TxVector = {
+  tx: {
+    version: 1,
+    inputs: [{
+      prevTxid: "0xa11cb429f9a2fad0f6707dfdce07977721fddab845405d67b211499e9de9547a", vout: 0,
+      scriptSig: "0x40560c786b3fbbbb3ca566e586fc5b5cfaf78853fd55618ccebc1c9c5bd929b3225fbd6525c03919ebb289e5cb4a5abbb5d4e7ce79db6432de795acea25a5c1c6c21038e2468cae294322e242d476f20b581cd06def39782a4e76a12139b150338a35d",
+    }],
+    outputs: [{ value: 14_875_000_000, scriptPubkey: "0x44d92872a5b65d37d60ed532f41efe7c5aed59ec" }],
+    locktime: 0,
+    app: {
+      type: "Propose",
+      domain: "cairnx:v1",
+      payloadHash: "0x2a6e602b13fbf986187b1dec962193513ca0213794d7990d558a0fd4ae2bafda",
+      uri: "{\"offer\":\"0xa11cb429f9a2fad0f6707dfdce07977721fddab845405d67b211499e9de9547a\",\"t\":\"fclaim\",\"v\":1}",
+      expiresEpoch: 2184,
+    },
+  },
+  expectedConsensusBytes:
+    "0x010000000100000000000000a11cb429f9a2fad0f6707dfdce07977721fddab845405d67b211499e9de9547a00000000630000000000000040560c786b3fbbbb3ca566e586fc5b5cfaf78853fd55618ccebc1c9c5bd929b3225fbd6525c03919ebb289e5cb4a5abbb5d4e7ce79db6432de795acea25a5c1c6c21038e2468cae294322e242d476f20b581cd06def39782a4e76a12139b150338a35d0100000000000000c07c9e760300000044d92872a5b65d37d60ed532f41efe7c5aed59ec00000000010000000900000000000000636169726e783a76312a6e602b13fbf986187b1dec962193513ca0213794d7990d558a0fd4ae2bafda61000000000000007b226f66666572223a22307861313163623432396639613266616430663637303764666463653037393737373231666464616238343534303564363762323131343939653964653935343761222c2274223a2266636c61696d222c2276223a317d8808000000000000",
+  expectedTxid: "0x43e9c34f7c8cead5808ada276835946a9307236c53fe9b932c17219a51c6d2c6",
+  expectedSighash: "0xf01234520e8350bf6954b63465373e2e3dee213eea80cec3138451fcababa33b",
+};
+
+/** A cairnx:v1 fill Attest (score 100, three outputs), mined at 100,931. */
+export const GOLDEN_ATTEST_TX: TxVector = {
+  tx: {
+    version: 1,
+    inputs: [{
+      prevTxid: "0xc8f8f1082c513111e40bf781d9e55603bd47eeea7693a5008f9e64f31923755c", vout: 0,
+      scriptSig: "0x40e33f47331304c03a8982adfea4f59dbabdeb8c74e9e3350725fb3af1ad5cfb10586ef89ca19daec30e2069bcac8ffca327ca55d124dd1216254797a50fc8ddf321038ced2205cdb279adef6ade020aa82059da28f3538b6104d53620041f9a3c6417",
+    }],
+    outputs: [
+      { value: 125_500_000, scriptPubkey: "0x44d92872a5b65d37d60ed532f41efe7c5aed59ec" },
+      { value: 1_500_000, scriptPubkey: "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016" },
+      { value: 1_368_000_000, scriptPubkey: "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016" },
+    ],
+    locktime: 0,
+    app: {
+      type: "Attest",
+      proposalId: "0x5ce9ed82eef3d61bdeefaf68ab84f18bab6c58985c60c610bcf22585f879c086",
+      score: 100,
+      confidence: 100,
+    },
+  },
+  expectedConsensusBytes:
+    "0x010000000100000000000000c8f8f1082c513111e40bf781d9e55603bd47eeea7693a5008f9e64f31923755c00000000630000000000000040e33f47331304c03a8982adfea4f59dbabdeb8c74e9e3350725fb3af1ad5cfb10586ef89ca19daec30e2069bcac8ffca327ca55d124dd1216254797a50fc8ddf321038ced2205cdb279adef6ade020aa82059da28f3538b6104d53620041f9a3c6417030000000000000060fa7a070000000044d92872a5b65d37d60ed532f41efe7c5aed59ec60e31600000000006b09ce74e6070ebc982ab0fb793a211c4d24f01600068a51000000006b09ce74e6070ebc982ab0fb793a211c4d24f01600000000020000005ce9ed82eef3d61bdeefaf68ab84f18bab6c58985c60c610bcf22585f879c0866400000064000000",
+  expectedTxid: "0x55c72675c7ffd55f21694aad6d2e193644e17bf1e2c39d3b8ff7e2b8e767e660",
+  expectedSighash: "0x5dfdd57b712557a8fd7c18eee0bd2e63f90ca1f1730e8ef9633236d44ab32ce5",
+};
+
 export const HEADER_VECTORS: HeaderVector[] = [GOLDEN_HEADER];
-export const TX_VECTORS: TxVector[] = [GOLDEN_TX];
+export const TX_VECTORS: TxVector[] = [GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX];
 
 export * from "./live.js";
