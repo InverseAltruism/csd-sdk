@@ -52,6 +52,8 @@ export interface LinkedRecordsEnds {
   prevHash?: string;
   /** Expected hash of the last record. */
   lastHash: string;
+  /** Height of the last record; when given, the record count must be lastHeight - firstHeight + 1. */
+  lastHeight?: number;
 }
 
 /**
@@ -64,6 +66,7 @@ export function verifyLinkedRecords(records: Uint8Array, ends: LinkedRecordsEnds
   const { firstHeight } = ends;
   if (!Number.isSafeInteger(firstHeight) || firstHeight < 0) throw new Error(`records: bad firstHeight ${firstHeight}`);
   const n = recordCount(records);
+  if (ends.lastHeight !== undefined && ends.lastHeight - firstHeight + 1 !== n) throw new Error(`records: ${n} records from ${firstHeight} do not end at lastHeight ${ends.lastHeight}`);
   if (ends.firstHash === undefined && ends.prevHash === undefined) throw new Error("records: firstHash or prevHash is required to bind the first record");
   const firstHash = ends.firstHash === undefined ? undefined : hash32(ends.firstHash, "firstHash");
   const lastHash = hash32(ends.lastHash, "lastHash");
@@ -561,7 +564,7 @@ export class LightClient {
 
   /**
    * Builds a client from stored records contiguous from `firstHeight`. Records up to `anchorHeight`
-   * (at most LWMA_WINDOW + 1 of them) go through `seedTrusted` against `opts.checkpoints[anchorHeight]`,
+   * (LWMA_WINDOW or LWMA_WINDOW + 1 of them, a full window for the first ingest) go through `seedTrusted` against `opts.checkpoints[anchorHeight]`,
    * which must be configured; a seed failure throws. Records above go through `ingest` (the wall-clock
    * drift bound included), and the first that fails stops the restore: the client keeps the records
    * below it and `failed` names it.
@@ -570,8 +573,8 @@ export class LightClient {
     const n = recordCount(records);
     const { firstHeight, anchorHeight } = at;
     const seedLen = anchorHeight - firstHeight + 1;
-    if (!Number.isSafeInteger(firstHeight) || firstHeight < 0 || !Number.isSafeInteger(anchorHeight) || seedLen < 1 || seedLen > n || seedLen > LWMA_WINDOW + 1) {
-      throw new Error(`fromRecords: anchor ${anchorHeight} must lie within the first ${LWMA_WINDOW + 1} of ${n} records from ${firstHeight}`);
+    if (!Number.isSafeInteger(firstHeight) || firstHeight < 0 || !Number.isSafeInteger(anchorHeight) || seedLen > n || seedLen < LWMA_WINDOW || seedLen > LWMA_WINDOW + 1) {
+      throw new Error(`fromRecords: the seed from ${firstHeight} to anchor ${anchorHeight} must be ${LWMA_WINDOW} or ${LWMA_WINDOW + 1} of the ${n} records`);
     }
     if (!Number.isSafeInteger(yieldEvery) || yieldEvery < 1) throw new Error(`fromRecords: yieldEvery must be a positive integer, got ${yieldEvery}`);
     const lc = new LightClient(opts);
