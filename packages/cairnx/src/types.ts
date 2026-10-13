@@ -1,7 +1,7 @@
 // CairnX shared types. The convention is CONVENTION.md; these mirror it 1:1.
 // v1   = tokens (deploy/mint/transfer) + offers/fills (atomic DvP).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
-import { EPOCH_LEN, MAX_URI_BYTES } from "@inversealtruism/csd-codec";
+import { EPOCH_LEN, MAX_URI_BYTES, epochOf } from "@inversealtruism/csd-codec";
 
 export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
@@ -37,7 +37,7 @@ export const V16_HEIGHT = 33_600;
 // ≥ V16_HEIGHT; non-retroactive so it is safe even if the tip crosses it before the UI rollout completes
 // (no claim attest / open CSD offer exists below it in the wild → nothing to reinterpret).
 export const V17_HEIGHT = 34_000;
-export { EPOCH_LEN };   // SINGLE-SOURCED from @inversealtruism/csd-codec (no re-declaration → no drift; audit M5)
+export { EPOCH_LEN, epochOf };   // SINGLE-SOURCED from @inversealtruism/csd-codec (no re-declaration → no drift; audit M5)
 // ── v1.5 lease parameters (epochs ≈ 1h: 30 blocks × ~2min) ──
 export const NAME_TERM_EPOCHS = 8_760;        // one term ≈ 1 year
 export const NAME_GRACE_EPOCHS = 720;         // ≈ 30 days: only the OWNER may renew in grace
@@ -320,8 +320,6 @@ export const V28_HEIGHT = 60_000;
 // replay-hash RE-PIN (replay-hashes.json) is a POST-CROSSING runbook step (see CONSENSUS_CHANGES.md) that needs
 // the live-indexer generator reachable into the V29 region; do NOT re-pin from a guessed hash.
 export const V29_HEIGHT = 88_000;
-
-export const epochOf = (height: number) => Math.floor(height / EPOCH_LEN);
 
 // ── pure client-side selectors ──────────────────────────────────────────────────────────────────
 // Exported so the browser UI / wallet / swapguard IMPORT these instead of re-deriving them (a

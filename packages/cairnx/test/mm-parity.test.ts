@@ -1,7 +1,7 @@
 // The maker's sizer, notional, curve and fee sum live in cairnx-core/mm. These cases are the
 // maker's own fixtures (ladder, bids, fills, curve table) run against the moved functions.
 import assert from "node:assert/strict";
-import { makerRebate, tradeFee, FEE_BPS_V16 } from "../src/index.js";
+import { makerRebate, tradeFee, FEE_BPS, FEE_BPS_V16, MIN_FEE_ATTEST } from "../src/index.js";
 import {
   acceptBid, expScaled, rfqBuyAllIn, rfqFillAllIn, sizeBid, sunriseCurve, tierFor, tradeNotional,
 } from "../src/mm/index.js";
@@ -143,6 +143,17 @@ t("rfqBuyAllIn / rfqFillAllIn: the swap probe pins, and every leg rounds up", ()
   assert.equal(tradeFee(1n, FEE_BPS_V16), 1n);
   assert.equal(rfqFillAllIn(1n), 1n + 1n + 25_000_001n + 5_000_000n);
   assert.equal(rfqBuyAllIn(1n), 55_000_003n);
+});
+
+t("rfqFillAllIn(n, feeBps): the offer's own rate, FEE_BPS_V16 when absent", () => {
+  const n = 123_456_789n, sum = (bps: number) => n + tradeFee(n, bps) + makerRebate(n) + BigInt(MIN_FEE_ATTEST);
+  assert.equal(rfqFillAllIn(n, FEE_BPS), sum(FEE_BPS));
+  assert.equal(rfqFillAllIn(n, FEE_BPS), rfqFillAllIn(n) - (tradeFee(n, FEE_BPS_V16) - tradeFee(n, FEE_BPS)));
+  assert.equal(rfqFillAllIn(n, 0), sum(0));
+  assert.equal(rfqFillAllIn(n, FEE_BPS_V16), sum(FEE_BPS_V16));
+  assert.equal(rfqFillAllIn(n, undefined), rfqFillAllIn(n));
+  assert.equal(rfqFillAllIn(n, null), rfqFillAllIn(n));
+  assert.equal(rfqFillAllIn(n), sum(FEE_BPS_V16));
 });
 
 console.log(`mm-parity: ${pass} passed`);

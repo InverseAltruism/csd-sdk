@@ -5,10 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { keygen } from "@inversealtruism/csd-crypto";
-import { EPOCH_LEN } from "@inversealtruism/csd-codec";
+import { EPOCH_LEN, epochOf as codecEpochOf } from "@inversealtruism/csd-codec";
 import {
   buildPeerRecord, buildGatewayRecord, buildIdentityCommit, buildIdentityReveal,
-  resolvePeers, resolveGateways, resolveIdentity, reverseIdentity, DOMAINS,
+  resolvePeers, resolveGateways, resolveIdentity, reverseIdentity, DOMAINS, epochOf,
   type ChainRecord, type ResolveOpts, type BuiltRecord, type AttRecord,
 } from "../src/index.js";
 
@@ -315,4 +315,9 @@ test("M2: a malformed pub does not crash resolveGateways or resolveIdentity eith
     content: { t: "identity-reveal", handle: "evil", address: "0x" + "55".repeat(20), pub: "0xODD", sig: "xyz" } as any, attestations: [],
   };
   assert.doesNotThrow(() => resolveIdentity([poisonId], "evil", OPTS), "malformed identity pub must not throw");
+});
+
+test("epochOf is csd-codec's selector, re-exported (no registry twin)", () => {
+  assert.equal(epochOf, codecEpochOf);
+  assert.deepEqual([0, 29, 30, 89, 90].map((h) => epochOf(h)), [0, 0, 1, 2, 3]);
 });

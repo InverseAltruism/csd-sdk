@@ -2,15 +2,13 @@
 // in anchor order and returns the same result for the same input, on any machine. That
 // determinism IS the trust model: two independent indexers (or a client-side SDK run)
 // converge because they apply the identical convention, not because consensus signed it.
-import { EPOCH_LEN } from "@inversealtruism/csd-codec";
+import { epochOf } from "@inversealtruism/csd-codec";
 import type {
   ChainRecord, ResolveOpts, RankedPeer, RankedGateway, ResolvedIdentity,
   PeerContent, GatewayContent, IdentityRevealContent, IdentityCommitContent,
 } from "./types.js";
 import { DOMAINS } from "./types.js";
 import { verifyPeer, verifyGateway, verifyIdentitySig, commitHash } from "./verify.js";
-
-export const epochOf = (height: number): number => Math.floor(height / EPOCH_LEN);
 
 // Fail-closed boundary for the resolver entry points, mirroring verify.ts safe(): an unexpected throw
 // over a hostile record set must degrade to "nothing resolved", never crash the caller (indexer and

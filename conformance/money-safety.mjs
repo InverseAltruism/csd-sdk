@@ -28,15 +28,11 @@ import {
   resolve, TREASURY_ADDR, DEPLOY_FEE, V11_HEIGHT, V25_HEIGHT, V26_HEIGHT, V27_HEIGHT, V28_HEIGHT, REG_COMMIT_MAX_BLOCKS,
   REG_FINALIZE_GRACE_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, EPOCH_LEN, epochOf,
   nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameFinalize,
-  deploy, mint, offer, fclaim, tradeFee, makerRebate, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL,
+  deploy, mint, offer, fclaim, tradeFee, makerRebate, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, burnedPayment,
 } from "../packages/cairnx/dist/index.js";
 
 const T = TREASURY_ADDR;
-const AMOUNT_RE = /^(0|[1-9][0-9]*)$/;
 const csd = (n) => (Number(n) / 1e8).toFixed(2);
-// read a paidTo treasury amount with the SAME fail-closed contract the resolver uses (ptAmt): a
-// non-canonical value reads as 0 in the resolver, so it also anchors nothing spendable here.
-const ptTreas = (pt) => { const v = pt && pt[T]; return (typeof v === "string" && AMOUNT_RE.test(v)) ? BigInt(v) : 0n; };
 
 // ── the detector ──────────────────────────────────────────────────────────────────────────────────
 // Given a sequence, return the burns: rejected events that anchored a treasury output. Pure, read-only.
@@ -51,7 +47,7 @@ export function findBurns(events, tipHeight) {
     if (!ev) continue;
     const actor = ev.proposer || ev.attester || "?";
     if (actor === T) continue;                           // treasury paying itself is a wash, not a burn
-    const t = ptTreas(ev.paidTo);                        // the treasury/premium output on this rejected record
+    const t = burnedPayment(ev.paidTo, actor).treasury;  // the treasury/premium output on this rejected record
     if (t > 0n) burns.push({ height: l.height, kind: l.kind, reason: l.note || "(rejected)", actor, burned: t });
   }
   return burns;

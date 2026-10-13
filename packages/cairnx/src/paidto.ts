@@ -9,6 +9,9 @@
 // AT THE SINK so an alternate output source cannot reintroduce the cross-language fork
 // (BigInt("0x2") = 2 while Python int("0x2") raises). Non-conforming outputs are SKIPPED, not
 // thrown: byte-identical behavior to the scanner for every honest input.
+import { ptAmt } from "./resolve.js";
+import { TREASURY_ADDR, type OfferState } from "./types.js";
+
 export function paidToFromOutputs(outputs: readonly { addr: string; value: number }[]): Record<string, string> {
   // Null-prototype accumulator (Plan 57 R1): a strictly-safer divergence from the scanner's plain
   // object, and the one that matches Python dict semantics. Two hostile-addr edges change: an addr
@@ -23,4 +26,18 @@ export function paidToFromOutputs(outputs: readonly { addr: string; value: numbe
     m[o.addr] = (BigInt(m[o.addr] ?? "0") + BigInt(o.value)).toString();
   }
   return m;
+}
+
+/** What a record resolve() refused paid to the parties the protocol pays, read with the resolver's ptAmt:
+ *  `treasury` is the output to TREASURY_ADDR, `counterparty` the outputs to the target offer's seller and
+ *  want.payto (pass `offer` for a fill, omit it otherwise). Each address counts once and the payer's own
+ *  outputs never count, so a payer paying itself burns nothing. */
+export function burnedPayment(
+  paidTo: Readonly<Record<string, unknown>> | undefined, payer: string,
+  offer?: Pick<OfferState, "seller" | "want"> | null,
+): { treasury: bigint; counterparty: bigint } {
+  const read = (addr: string): bigint => (addr === payer ? 0n : ptAmt(paidTo?.[addr]));
+  let counterparty = 0n;
+  if (offer) for (const addr of new Set([offer.seller, offer.want.payto])) if (addr !== TREASURY_ADDR) counterparty += read(addr);
+  return { treasury: read(TREASURY_ADDR), counterparty };
 }

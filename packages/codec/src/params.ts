@@ -25,6 +25,7 @@ export const MIN_BLOCK_SPACING_SECS = 60;
 
 /** App layer. */
 export const EPOCH_LEN = 30; // blocks per epoch (~1h)
+export const epochOf = (height: number): number => Math.floor(height / EPOCH_LEN);
 
 /** Supply / fees (base units; 1 CSD = COIN). */
 export const COIN = 100_000_000;

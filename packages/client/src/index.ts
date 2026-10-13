@@ -153,9 +153,9 @@ export class CsdClient {
   blockByHeight(h: number): Promise<RpcBlock> { return this.getOk(`/block/height/${h}`); }
   blockByHash(hash: string): Promise<RpcBlock> { return this.getOk(`/block/${hash}`); }
   tx(id: string): Promise<RpcTxInfo> { return this.get(`/tx/${id}`); }
-  // Default available=true: excludes immature/locked coinbase UTXOs so callers don't build txs spending
-  // un-spendable outputs (the node would silently reject them) — audit TXB-1-SDK. Pass {available:false}
-  // for the full set (e.g. balance display that wants to show locked coinbases).
+  // Default available=true: the node drops only outpoints already spent by a tx in its mempool, so a builder
+  // does not pick a pending-spent input; coinbase outputs are not filtered. {available:false} returns every
+  // unspent output, pending-spent ones included (e.g. a balance display).
   utxos(addr: string, opts: { available?: boolean } = {}): Promise<RpcUtxos> {
     return this.get(`/utxos/${addr}${opts.available === false ? "" : "?available=true"}`);
   }

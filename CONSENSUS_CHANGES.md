@@ -56,6 +56,20 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; STAGED, not published; no consensus-surface change) - shared helpers in one home
+
+`epochOf` moved into `csd-codec` next to `EPOCH_LEN` (same formula); cairnx-core and csd-registry import it
+instead of defining it. `csd-crypto` imports `strip0x`, `hb` and `hx` from codec instead of its own identical
+copies. cairnx-core adds `ptAmt`, `burnedPayment` and `myProvenFillClosedOffer` to the root export and a fee
+rate argument to `rfqFillAllIn`; none of them is read by `resolve()`. No bytes, math, gate or replay change:
+replay corpus 21/21 byte-identical and the golden vectors unchanged. Because codec moved, every workspace
+package that depends on it bumps: csd-crypto 0.1.17, csd-client 0.1.17, csd-tx 0.1.20, csd-light 0.1.22,
+csd-registry 0.1.19, csd-siwc 0.1.18, cairnx-core 0.1.44. csd-vectors and csd-indexwire are unchanged.
+
+Publish order (pnpm only): (1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`,
+`csd-registry`, `csd-siwc`, `cairnx-core` in any order. If `packages/registry` is deleted before the publish
+(Plan 85 P-5), drop it from step 3.
+
 ## csd-crypto 0.1.16 + csd-tx 0.1.19 + csd-registry 0.1.18 + csd-siwc 0.1.17 (2026-10-09, Plan 83 W2; STAGED, not published; no consensus-surface change) - one csd-codec in the published graph
 
 Published `csd-crypto@0.1.15` pins `csd-codec@0.1.15`, while every other package pins `csd-codec@0.1.16`, so
