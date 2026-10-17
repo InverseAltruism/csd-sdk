@@ -266,7 +266,32 @@ let surfChecks = 0;
         surfChecks++;
         if (dflt === false && old !== false) { diverged++; console.error(`  SURFACE ACCEPTS MORE bindOfferTerms(${rn},${h},served#${i}) default legs: old=${old} new=${dflt}`); }
       }
-      eq(`bindOfferTerms(${rn},${h},honest served, default legs)`, OLD.bindOfferTerms(servedGrid[1], to), NEW.bindOfferTerms(servedGrid[1], tn));
+      // honest served shapes: the default legs accept them, as the baseline does
+      const honest = servedGrid[1];
+      const honestVariants = [
+        honest,
+        { ...honest, give: { ...rec.give }, want: { ...rec.want } },
+        { ...honest, taker: honest.taker ?? null, bid: honest.bid ?? null },
+        { ...honest, ...(honest.taker ? { taker: honest.taker.toUpperCase() } : {}), ...(honest.bid ? { bid: honest.bid.toUpperCase() } : {}) },
+        { ...honest, id: "0x" + "0e".repeat(32), seller: A, status: "open", expiresEpoch: 9e15, paid: "0", delivered: "0", fills: [] },
+      ];
+      for (let i = 0; i < honestVariants.length; i++) {
+        surfChecks++;
+        if (NEW.bindOfferTerms(honestVariants[i], tn) !== false) { diverged++; console.error(`  DEFAULT LEGS OVER-REFUSE bindOfferTerms(${rn},${h},honest#${i})`); }
+        eq(`bindOfferTerms(${rn},${h},honest#${i},default vs baseline)`, OLD.bindOfferTerms(honestVariants[i], to), NEW.bindOfferTerms(honestVariants[i], tn));
+      }
+      // the default legs enforce: every give or want-type lie on the honest shape is refused by default,
+      // while the opted-out call keeps the baseline verdict (which accepts these lies)
+      const giveLies = rec.give.name !== undefined
+        ? [{ name: rec.give.name + "x" }, { ticker: "AAA", amount: "10" }, {}]
+        : [{ ...rec.give, amount: String(BigInt(rec.give.amount) * 1_000_000n) }, { ...rec.give, ticker: rec.give.ticker + "X" }, { name: "gemname" }, { ticker: rec.give.ticker }];
+      const wantLies = rec.want.ticker !== undefined ? [{ value: "500000000", payto: A }] : [];
+      const lies = [...giveLies.map((g) => ({ ...honest, give: g })), ...wantLies.map((w) => ({ ...honest, want: w }))];
+      for (let i = 0; i < lies.length; i++) {
+        surfChecks++;
+        if (NEW.bindOfferTerms(lies[i], tn) !== true) { diverged++; console.error(`  DEFAULT LEG LOST bindOfferTerms(${rn},${h},lie#${i}) not refused by default`); }
+        eq(`bindOfferTerms(${rn},${h},lie#${i},legs off)`, OLD.bindOfferTerms(lies[i], to), NEW.bindOfferTerms(lies[i], tn, { give: false, wantType: false }));
+      }
     }
   }
   const offers = [
@@ -289,7 +314,7 @@ let surfChecks = 0;
     eq(`claimGraceOf(${cu},fc)`, OLD.claimGraceOf(cu, "0xfc"), NEW.claimGraceOf(cu, "0xfc"));
   }
   for (const h of [29_000, 29_960, 33_599, 33_600, 60_000]) eq(`feeBpsAt(${h})`, OLD.feeBpsAt(h), NEW.feeBpsAt(h));
-  console.log(`  ${surfChecks} legacy-surface checks (legacy call shapes, plus the bindOfferTerms default legs as reject-more)`);
+  console.log(`  ${surfChecks} legacy-surface checks (legacy call shapes, plus the bindOfferTerms default legs: reject-more, enforcing, honest)`);
 }
 
 if (diverged) die(`${diverged} divergence(s) between the 0.1.38 baseline and the tree - the D4 zero-semantic-payload claim is FALSE`);
