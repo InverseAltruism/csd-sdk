@@ -67,7 +67,7 @@ console.log("selectInputs: one outpoint in two spellings is taken once");
       verify: async (ins) => {
         seen.push(ins.map((i) => i.txid));
         const bad = ins.find((i) => i.txid.toLowerCase().endsWith(T));
-        return bad ? { ok: false, total: 0, badInput: bad } : { ok: true, total: ins.reduce((a, i) => a + i.value, 0) };
+        return bad ? { ok: false, total: 0, badInput: bad } : { ok: true, total: ins.reduce((a, i) => a + (utxos.find((u) => u.txid === i.txid)?.value ?? 0), 0) };
       },
     });
     assert.equal(r.ok, true);
