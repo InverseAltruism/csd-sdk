@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.1.45
+## 0.2.0
+
+Breaking for callers that hand-build `ProvenOfferTerms` or rely on the old two-argument verdict; see Migration.
 
 - `bindOfferTerms` checks the give and wantType legs by default. A served offer whose `give` (ticker, amount
   or name) or want type differs from the merkle-proven offer now counts as a mismatch with the two-argument
@@ -14,6 +16,18 @@
 - Depends on csd-codec 0.1.18 (reject-more input canon, see `CONSENSUS_CHANGES.md`); `records.ts` imports
   the codec's well-formed UTF-16 predicate instead of its own copy, with the same verdicts.
 - `resolve()` and canonical state are byte-identical to 0.1.44.
+
+Migration. Callers that already pass `{ give: true, wantType: true }` with minted terms need no change (the
+site's `swapguard.js`, the wallet's `wallet.ts` and cairn-sdk's `fillverify.ts` production path). These move
+together with the 0.2.0 pin:
+- cairn-sdk `test/fillverify.test.ts`: the two-argument assertions on hand-built terms expect the old default
+  (the inflated give passing); pass `{ give: false, wantType: false }` there or expect the refusal.
+- cairn-sdk `src/fillverify.ts`: the result's `terms` field is typed `ProvenOfferTerms`, which drops the mint
+  brand, so a dApp passing it back to `bindOfferTerms` without the opt-out no longer compiles; type it
+  `MintedProvenOfferTerms`.
+- cairn `test/b7a-flip.test.mjs`: its two-argument call asserts the give leg is off; it now refuses.
+- cairn-wallet `src/vendor/cairnx-spv.js` and `cairnx-spv.d.ts`: the vendored bundle keeps the 0.1.x
+  contract (legs opt-in) until it is re-vendored from 0.2.0.
 
 ## 0.1.44
 

@@ -79,20 +79,22 @@ vectors, the replay corpus (21 of 21 heights) and `scripts/seal-differential.mjs
   `retries` to 0 (NaN disabled the byte cap and made the retry bound never trip).
 
 Because codec moved, every workspace package that depends on it bumps: csd-crypto 0.1.18, csd-client
-0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.1.45 (which
+0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.2.0 (which
 also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish order (pnpm only):
 (1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`, `csd-registry`, `csd-siwc`,
 `cairnx-core` in any order.
 
-## cairnx-core 0.1.45 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
+## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
 
 `bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
 is not read by `resolve()`. Its give and wantType legs, opt-in since 0.1.39, are now on unless the caller passes
 `{ give: false, wantType: false }`, which returns the earlier two-argument verdict on every input. Reject-more
 only: the legs add refusals and remove none. The in-stack callers already pass both legs on with minted terms,
 so their verdicts do not move. No bytes, math, gate or replay change: `scripts/seal-differential.mjs` step 5
-now compares the 0.1.38 baseline against the opted-out call and checks that the default legs never accept an
-input the baseline refused.
+now compares the 0.1.38 baseline against the opted-out call, checks that the default legs never accept an
+input the baseline refused, refuse each give and want-type lie, and accept honest served offers. The minor
+version moves (0.2.0) because hand-built terms with the two-argument call are now a compile error in
+TypeScript and a refusal at runtime; `packages/cairnx/CHANGELOG.md` lists the consumers that move with it.
 
 ## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; unreleased; no consensus-surface change)
 
