@@ -92,6 +92,15 @@ console.log("canonicalJson: JSON data only");
       assert.throws(() => payloadHash({ a: [v] }), /is not a plain object/, `nested ${name}`);
     }
   });
+  check("a class extends null instance and an object over a bare null-prototype object throw", () => {
+    class NullBase extends (null as unknown as ObjectConstructor) {
+      constructor() { return Object.create(NullBase.prototype) as NullBase; }
+    }
+    const inst = Object.assign(new NullBase(), { a: 1 });
+    assert.equal(Object.getPrototypeOf(Object.getPrototypeOf(inst)), null, "fixture: the prototype chain ends in null");
+    assert.throws(() => canonicalJson(inst), /is not a plain object/);
+    assert.throws(() => canonicalJson(Object.create(Object.create(null) as object)), /is not a plain object/);
+  });
   check("a Map and {} no longer share one payload hash", () => {
     assert.throws(() => payloadHash(new Map([["k", "v"]])));
     assert.equal(payloadHash({}), "0x" + "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a");

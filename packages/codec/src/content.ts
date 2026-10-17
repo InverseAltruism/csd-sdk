@@ -20,10 +20,16 @@ const MAX_DEPTH = 256;
 // JSON data only: an object must be plain (its prototype is null or a realm's Object.prototype). A Map, Set,
 // Date, typed array or class instance would hash as `{}` or as its own enumerable fields, so two different
 // values could share one payload_hash; those throw instead, as do functions, symbols and array holes.
+// Another realm's Object.prototype is recognised by its own `constructor`, that realm's native Object; a
+// `class extends null` prototype also has a null prototype but a non-native constructor.
+const NATIVE_OBJECT_SOURCE = Function.prototype.toString.call(Object);
 const isPlainObject = (v: object): boolean => {
   if (Object.prototype.toString.call(v) !== "[object Object]") return false;
-  const p = Object.getPrototypeOf(v);
-  return p === null || Object.getPrototypeOf(p) === null;
+  const p: unknown = Object.getPrototypeOf(v);
+  if (p === null || p === Object.prototype) return true;
+  if (typeof p !== "object" || Object.getPrototypeOf(p) !== null) return false;
+  const c: unknown = Object.getOwnPropertyDescriptor(p, "constructor")?.value;
+  return typeof c === "function" && c.prototype === p && Function.prototype.toString.call(c) === NATIVE_OBJECT_SOURCE;
 };
 
 /** Canonical JSON of JSON data (see the file header). The output parses with JSON.parse
