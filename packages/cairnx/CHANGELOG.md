@@ -11,6 +11,8 @@
   `LegacyBindOpts` type). At runtime, hand-built terms passed without the opt-out lack the give and wantType
   fields and are refused (the predicate returns `true`).
 - Callers that already pass `{ give: true, wantType: true }` with minted terms get the same verdicts as before.
+- Depends on csd-codec 0.1.18 (reject-more input canon, see `CONSENSUS_CHANGES.md`); `records.ts` imports
+  the codec's well-formed UTF-16 predicate instead of its own copy, with the same verdicts.
 - `resolve()` and canonical state are byte-identical to 0.1.44.
 
 ## 0.1.44

@@ -56,6 +56,34 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more only) - input canon
+
+Every change refuses input that was accepted before and changes nothing for honest input; the golden
+vectors, the replay corpus (21 of 21 heights) and `scripts/seal-differential.mjs` are unchanged.
+
+- csd-codec `serialize`, `txid` and `sighash` throw on a Propose domain or uri with an unpaired surrogate.
+  `utf8ToBytes` mapped one to U+FFFD, so two different strings serialized to the same bytes; the Python
+  oracle's `str.encode("utf-8")` raises. The node holds these fields as UTF-8 strings, so a mined tx has
+  none, and the vectors and replay corpus confirm no historical txid moves. The predicate (`isWellFormedUtf16`) now lives in csd-codec once;
+  cairnx-core `records.ts` and csd-siwc import it instead of their own copies (same semantics).
+- csd-codec `verifyMerkleProof` requires the txid, every sibling and the root to be 32 bytes. An empty
+  txid, branch and root verified, and a short sibling was zero-padded into the hash buffer.
+- csd-codec `canonicalJson` (and `payloadHash`) throw on a Map, Set, Date, typed array, class instance,
+  function, symbol or array hole. Plain objects, including null-prototype, cross-realm and `JSON.parse`
+  output, hash as before.
+- csd-codec `verifyContentBytes` accepts the expected hash without `0x` (it returned false before).
+- csd-tx `selectInputs` dedupes an outpoint served with and without `0x` (it selected it twice); an
+  `exclude` key in either spelling skips the coin. `buildPropose` returns `ok:false` for a lone surrogate
+  instead of throwing from the codec. `buildSend` is marked `@deprecated` in favour of `buildSendVerified`.
+- csd-client: a non-finite `maxResponseBytes` falls back to the 16 MiB default and a non-finite
+  `retries` to 0 (NaN disabled the byte cap and made the retry bound never trip).
+
+Because codec moved, every workspace package that depends on it bumps: csd-crypto 0.1.18, csd-client
+0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.1.45 (which
+also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish order (pnpm only):
+(1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`, `csd-registry`, `csd-siwc`,
+`cairnx-core` in any order.
+
 ## cairnx-core 0.1.45 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
 
 `bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
