@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.45
+
+- `bindOfferTerms` checks the give and wantType legs by default. A served offer whose `give` (ticker, amount
+  or name) or want type differs from the merkle-proven offer now counts as a mismatch with the two-argument
+  call too. To opt out, pass `{ give: false, wantType: false }`: that returns the 0.1.44 two-argument verdict
+  on every input. Opting out of one leg leaves the other on.
+- Type change: with a leg on, the terms must come from `provenOfferTerms` or `bindProvenOffer` (the
+  `MintedProvenOfferTerms` brand). A hand-built `ProvenOfferTerms` compiles only with both legs off (the new
+  `LegacyBindOpts` type). At runtime, hand-built terms passed without the opt-out lack the give and wantType
+  fields and are refused (the predicate returns `true`).
+- Callers that already pass `{ give: true, wantType: true }` with minted terms get the same verdicts as before.
+- `resolve()` and canonical state are byte-identical to 0.1.44.
+
 ## 0.1.44
 
 - `rfqFillAllIn(n, feeBps?)` (`cairnx-core/mm`) takes the offer's fee rate; omitted or null keeps

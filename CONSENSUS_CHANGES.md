@@ -56,6 +56,16 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.1.45 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
+
+`bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
+is not read by `resolve()`. Its give and wantType legs, opt-in since 0.1.39, are now on unless the caller passes
+`{ give: false, wantType: false }`, which returns the earlier two-argument verdict on every input. Reject-more
+only: the legs add refusals and remove none. The in-stack callers already pass both legs on with minted terms,
+so their verdicts do not move. No bytes, math, gate or replay change: `scripts/seal-differential.mjs` step 5
+now compares the 0.1.38 baseline against the opted-out call and checks that the default legs never accept an
+input the baseline refused.
+
 ## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; unreleased; no consensus-surface change)
 
 csd-codec adds `deserializeHeader` (the inverse of `serializeHeader`) and `HEADER_BYTES`; csd-light adds

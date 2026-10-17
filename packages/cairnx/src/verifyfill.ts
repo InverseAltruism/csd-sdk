@@ -292,8 +292,8 @@ export async function verifyFillSpv(
 // false-refuse every partially-filled offer). previewFill pivots partial-vs-whole SOLELY on `offer.min !==
 // undefined`, so binding `min` pins the caller to the exact branch resolve() takes (F2 partial-fill leg).
 //
-// B6a (REBIND W2/W7) ADDITIVE fields, populated by provenOfferTerms and IGNORED by a 2-arg bindOfferTerms
-// call (verdicts stay byte-identical for every pre-B6 caller; they participate ONLY under the opt-in legs):
+// B6a (REBIND W2/W7) fields, populated by provenOfferTerms and compared by bindOfferTerms's give and wantType
+// legs (on by default; a caller that opts out of both gets the pre-B6 verdict and these are ignored):
 //   giveTicker/giveAmount/giveName - the offer's give, copied VERBATIM as strings (resolve.ts copies the
 //     record's give verbatim at creation and tracks `delivered` separately, so a string compare against the
 //     RECORD is exact and partial-fill-safe; a deep object compare against a served OfferState is NOT, and
@@ -309,9 +309,8 @@ export interface ProvenOfferTerms {
 // A type-level brand minted ONLY by provenOfferTerms (the sole in-module cast). The audit found FOUR
 // hand-built ProvenOfferTerms producers and three interface re-declarations; B4 routed all of them through
 // provenOfferTerms, and this brand makes a FIFTH hand copy a compile error wherever minted terms are
-// required (the opt-in 3-arg bindOfferTerms below). Type-level only: the symbol never exists at runtime,
-// no byte of output changes, and every existing STRUCTURAL use of ProvenOfferTerms keeps compiling
-// (the 2-arg bindOfferTerms overload still accepts a plain ProvenOfferTerms).
+// required (bindOfferTerms with its default legs). Type-level only: the symbol does not exist at runtime
+// and no byte of output changes; a plain ProvenOfferTerms is accepted only with both legs opted out.
 declare const PROVEN_TERMS_MINT: unique symbol;
 export type MintedProvenOfferTerms = ProvenOfferTerms & { readonly [PROVEN_TERMS_MINT]: "cairnx-core/provenOfferTerms" };
 /** UNSAFE escape hatch, TESTS ONLY: brand a hand-built terms object. Production code must never call this -
@@ -330,7 +329,7 @@ export const feeBpsAt = (height: number): number =>
 // derived from the height. A caller feeds this the record it already merkle-bound (bindRecord / verifyTxInclusion).
 // B6a: also carries the give legs + wantType (verbatim strings; see the interface note) and returns the
 // BRANDED type - this function is the brand's sole minter. The pre-B6 fields are emitted bit-identically, so
-// a 2-arg bindOfferTerms over this output returns the same verdict it always did.
+// bindOfferTerms with both legs opted out returns the pre-B6 verdict over this output.
 export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): MintedProvenOfferTerms {
   const w = offerRec.want as { value?: string; ticker?: string };
   const g = offerRec.give as { ticker?: string; amount?: string; name?: string };
@@ -363,21 +362,24 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): M
  * `value` is bound only when `t.value` is defined so a token<->token offer (no CSD value) is not spuriously
  * refused; a caller that binds want.value separately (the site does) may still pass it here (redundant-safe).
  *
- * B6a (REBIND W2 legs + W7) OPT-IN legs, via the third argument (default OFF: a 2-arg call is byte-identical
- * to the pre-B6 predicate on every input). The 3-arg overload requires MINTED terms (the brand), so a caller
- * adopting the new legs cannot feed them a hand-built terms object that leaves the new fields undefined -
- * that shape would false-refuse every honest fill (the W2 trap this file documents).
- *   opts.give     - bind give.ticker / give.amount / give.name: EXPLICIT PRESENCE (a served give growing or
- *                   losing a field mismatches) AND verbatim string equality. Closes the W7 shortchange (a
- *                   genuine offer served with give.amount inflated a millionfold passes every legacy leg).
- *   opts.wantType - the SYMMETRIC want-type refusal: the served offer's want type (token iff want.ticker is
- *                   a string, the isTokenWant pivot) must equal the proven type. The legacy value leg already
- *                   catches proven-CSD-served-as-token (String(undefined) mismatches t.value); this closes
- *                   the reverse, proven-token-served-as-CSD, which today only wallet.ts catches one-sidedly.
+ * The give and wantType legs (REBIND W2 legs + W7) are ON by default. Their third-argument switches opt out
+ * explicitly (`false`); omitted or `undefined` keeps a leg on. With a leg on the terms must be MINTED (the
+ * brand), because a hand-built terms object leaves the give/wantType fields undefined and would refuse every
+ * honest fill (the W2 trap this file documents). A plain ProvenOfferTerms is accepted only with both legs
+ * off, which is the pre-B6 predicate exactly (`scripts/seal-differential.mjs` step 5).
+ *   give     - bind give.ticker / give.amount / give.name: EXPLICIT PRESENCE (a served give growing or
+ *              losing a field mismatches) AND verbatim string equality. Closes the W7 shortchange (a
+ *              genuine offer served with give.amount inflated a millionfold passes every other leg).
+ *   wantType - the SYMMETRIC want-type refusal: the served offer's want type (token iff want.ticker is
+ *              a string, the isTokenWant pivot) must equal the proven type. The value leg already
+ *              catches proven-CSD-served-as-token (String(undefined) mismatches t.value); this closes
+ *              the reverse, proven-token-served-as-CSD.
  */
 export interface BindTermsOpts { give?: boolean; wantType?: boolean }
-export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms): boolean;
-export function bindOfferTerms(servedOffer: unknown, t: MintedProvenOfferTerms, opts: BindTermsOpts): boolean;
+/** Both legs off: the pre-B6 verdict, for callers that hold hand-built (unminted) terms. */
+export type LegacyBindOpts = { give: false; wantType: false };
+export function bindOfferTerms(servedOffer: unknown, t: MintedProvenOfferTerms, opts?: BindTermsOpts): boolean;
+export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts: LegacyBindOpts): boolean;
 export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?: BindTermsOpts): boolean {
   const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
   const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v).toLowerCase());
@@ -389,11 +391,11 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?:
   const om = o?.min;
   if ((om !== undefined && om !== null) !== (t.min !== undefined)) return true;
   if (t.min !== undefined && String(om) !== t.min) return true;
-  if (opts?.wantType) {
-    // terms minted before B6 carry no wantType; under the opt-in that is a mismatch (fail closed), never a pass.
+  if (opts?.wantType !== false) {
+    // terms without a wantType (minted before B6) mismatch under this leg: fail closed.
     if (t.wantType === undefined || (typeof o?.want?.ticker === "string") !== (t.wantType === "token")) return true; // MUTATE_LEG_WANTTYPE
   }
-  if (opts?.give) {
+  if (opts?.give !== false) {
     const g = o?.give;
     // per-field EXPLICIT presence + verbatim string equality (never a deep object compare: resolve.ts copies
     // the record's give verbatim and partial fills track `delivered` separately - the RECORD is the truth).
