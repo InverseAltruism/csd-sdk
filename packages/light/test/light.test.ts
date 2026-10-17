@@ -9,11 +9,12 @@ import { type BlockHeader } from "@inversealtruism/csd-codec";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
-const BASE = process.env.CSD_RPC || "http://127.0.0.1:8790";
+const BASE = process.env.CSD_RPC;
 
 let reachable = false;
-try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
-if (!reachable) { console.log(`\n(no node at ${BASE} — live light tests skipped)`); console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`); process.exit(fail === 0 ? 0 : 1); }
+if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
+if (!BASE) console.log("\nSKIP: live light tests: CSD_RPC unset (live-node tests are opt-in)");
+if (!BASE || !reachable) { if (BASE) console.log(`\n(no node at ${BASE} — live light tests skipped)`); console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`); process.exit(fail === 0 ? 0 : 1); }
 const client = new CsdClient({ baseUrl: BASE });
 const tip = await client.tip();
 

@@ -77,7 +77,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 pnpm install                     # pnpm@10.32.1 pinned
 pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import sibling dists)
 pnpm -r test                     # per-package suites
-pnpm test:e2e                    # oracle/edge/security (oracle needs CSD_RPC, else skips)
+pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
 pnpm run audit:all               # check-consensus-citations (hard) + invariants + money-safety + race harness
 node scripts/check-lockstep.mjs

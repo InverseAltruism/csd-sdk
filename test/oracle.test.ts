@@ -15,12 +15,13 @@ import { verifyDigest, addrFromPub, hash160 } from "@inversealtruism/csd-crypto"
 import { CsdClient, rpcTxToTx, rpcHeaderToHeader } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 
-const BASE = process.env.CSD_RPC || "http://127.0.0.1:8790";
+const BASE = process.env.CSD_RPC;
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
 
 let reachable = false;
-try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
+if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
+if (!BASE) { console.log("SKIP: oracle tests: CSD_RPC unset (live-node tests are opt-in; set CSD_RPC to a node RPC to run them)"); process.exit(0); }
 if (!reachable) { console.log(`(no node at ${BASE} — oracle tests require the live chain) SKIPPED`); process.exit(0); }
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();

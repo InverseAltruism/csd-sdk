@@ -57,10 +57,11 @@ const shAtt = sighash({ ...base, app: { type: "Attest", proposalId: "0x" + "00".
 ok("None / Propose / Attest produce distinct sighashes", new Set([shNone, shProp, shAtt]).size === 3);
 
 console.log("\n— light client: forged chain rejected (needs node) —");
-const BASE = process.env.CSD_RPC || "http://127.0.0.1:8790";
+const BASE = process.env.CSD_RPC;
 let reachable = false;
-try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
-if (reachable) {
+if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
+if (!BASE) console.log("  SKIP: light forged-chain tests: CSD_RPC unset (live-node tests are opt-in)");
+if (BASE && reachable) {
   const c = new CsdClient({ baseUrl: BASE });
   // foreign genesis: feed a non-genesis header at height 0
   const real1 = await c.blockByHeight(1);
@@ -79,7 +80,7 @@ if (reachable) {
   let rejOrder = false;
   try { new LightClient({ client: c }).ingest(5, real31.header as any); } catch { rejOrder = true; }
   ok("out-of-order ingest rejected", rejOrder);
-} else {
+} else if (BASE) {
   console.log("  (node down — light forged-chain tests skipped)");
 }
 
