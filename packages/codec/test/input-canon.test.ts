@@ -1,7 +1,8 @@
 // Input canon of the codec: hostile or malformed input is refused, and every honest input encodes to the
 // same bytes as before (the golden vectors in codec.test.ts and csd-vectors pin those bytes).
 import assert from "node:assert/strict";
-import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, type Tx } from "../src/index.js";
+import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, canonicalJson, payloadHash, verifyContentBytes, type Tx } from "../src/index.js";
+import { runInNewContext } from "node:vm";
 import { GOLDEN_PROPOSE_TX } from "@inversealtruism/csd-vectors";
 
 let pass = 0;
@@ -75,6 +76,58 @@ console.log("verifyMerkleProof: every node is exactly 32 bytes");
   });
   check("a single-tx block (empty branch, root == txid) still verifies", () => {
     assert.equal(verifyMerkleProof(leaves[0]!, 0, [], merkleRoot([leaves[0]!])), true);
+  });
+}
+
+console.log("canonicalJson: JSON data only");
+{
+  class Point { constructor(public x: number) {} }
+  const nonPlain: [string, unknown][] = [
+    ["Map", new Map([["a", 1]])], ["Set", new Set([1])], ["Date", new Date(0)], ["class instance", new Point(1)],
+    ["Uint8Array", new Uint8Array([1])], ["RegExp", /a/], ["boxed String", new String("a")],
+  ];
+  check("Map, Set, Date, class instances and other non-plain objects throw, top level and nested", () => {
+    for (const [name, v] of nonPlain) {
+      assert.throws(() => canonicalJson(v), /is not a plain object/, name);
+      assert.throws(() => payloadHash({ a: [v] }), /is not a plain object/, `nested ${name}`);
+    }
+  });
+  check("a Map and {} no longer share one payload hash", () => {
+    assert.throws(() => payloadHash(new Map([["k", "v"]])));
+    assert.equal(payloadHash({}), "0x" + "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a");
+  });
+  check("functions, symbols and array holes throw", () => {
+    assert.throws(() => canonicalJson({ f: () => 1 }), /a function is not JSON data/);
+    assert.throws(() => canonicalJson([Symbol("s")]), /a symbol is not JSON data/);
+    assert.throws(() => canonicalJson([1, , 2]), /an array hole is not JSON data/);
+  });
+  check("plain, null-prototype, cross-realm and JSON.parse objects hash as before", () => {
+    const literal = { b: 1, a: [2, { d: 4, c: 3 }], u: undefined, n: null };
+    const expected = '{"a":[2,{"c":3,"d":4}],"b":1,"n":null}';
+    assert.equal(canonicalJson(literal), expected);
+    const bare = Object.assign(Object.create(null) as Record<string, unknown>, { b: 1, a: [2, { d: 4, c: 3 }], n: null });
+    assert.equal(canonicalJson(bare), expected);
+    assert.equal(canonicalJson(runInNewContext('({ b: 1, a: [2, { d: 4, c: 3 }], n: null })')), expected);
+    assert.equal(canonicalJson(JSON.parse('{"__proto__":{"x":1},"a":[null]}')), '{"__proto__":{"x":1},"a":[null]}');
+    assert.equal(canonicalJson([undefined, 1]), "[null,1]");
+  });
+  check("the output parses as JSON on a mixed grid", () => {
+    for (const v of [{ a: undefined, b: [undefined, 1] }, [], {}, "s", 1.5, true, null, { "10": 1, "2": [{ z: "\u{1F600}" }] }]) {
+      assert.doesNotThrow(() => JSON.parse(canonicalJson(v)));
+    }
+  });
+}
+
+console.log("verifyContentBytes: a bare or upper-case hash is accepted");
+{
+  const bytes = new TextEncoder().encode('{"a":1}');
+  const h = payloadHash({ a: 1 });
+  check("0x-prefixed, bare, upper-case and 0X-prefixed forms of the right hash verify", () => {
+    for (const form of [h, h.slice(2), h.toUpperCase(), h.slice(2).toUpperCase(), "0X" + h.slice(2)]) assert.equal(verifyContentBytes(bytes, form), true, form);
+  });
+  check("a wrong, truncated or empty hash is refused in every form", () => {
+    const wrong = h.slice(0, -1) + (h.endsWith("0") ? "1" : "0");
+    for (const form of [wrong, wrong.slice(2), h.slice(0, -2), h.slice(2, -2), "", "0x", h + "00"]) assert.equal(verifyContentBytes(bytes, form), false, form);
   });
 }
 
