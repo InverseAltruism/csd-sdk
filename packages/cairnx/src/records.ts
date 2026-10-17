@@ -1,5 +1,5 @@
 // CairnX record validation + builders (pure; no I/O).
-import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
+import { canonicalJson, payloadHash, isWellFormedUtf16 } from "@inversealtruism/csd-codec";
 import {
   ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
@@ -28,36 +28,16 @@ export function nameCommit(name: string, salt: string, owner: string): string {
   return payloadHash({ t: "cairnx:name:commit:v1", name, salt, owner: owner.toLowerCase() });
 }
 
-/**
- * True iff a JS string is well-formed UTF-16 (no lone/unpaired surrogate). A lone surrogate has NO
- * valid UTF-8 encoding, so per CONVENTION A1 ("raw UTF-8, never escaped") its canonical form is
- * UNDEFINABLE: V8's JSON.stringify escapes it to ASCII `\uXXXX` and accepts, while a spec-conformant
- * raw-UTF-8 resolver (Rust serde_json / Python / Go) rejects or mangles it to U+FFFD. That is a
- * cross-language consensus FORK on identical chain bytes. We use the native primitive where present
- * (Node ≥20 / modern V8) and fall back to a manual surrogate scan for older runtimes.
- */
-function strWellFormed(s: string): boolean {
-  const wf = (String.prototype as { isWellFormed?: (this: string) => boolean }).isWellFormed;
-  if (typeof wf === "function") return wf.call(s);
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c >= 0xd800 && c <= 0xdbff) {                 // high surrogate: must be followed by a low one
-      const n = s.charCodeAt(i + 1);
-      if (!(n >= 0xdc00 && n <= 0xdfff)) return false;
-      i++;
-    } else if (c >= 0xdc00 && c <= 0xdfff) {          // lone low surrogate
-      return false;
-    }
-  }
-  return true;
-}
+// A lone surrogate has NO valid UTF-8 encoding, so per CONVENTION A1 ("raw UTF-8, never escaped") its
+// canonical form is UNDEFINABLE: V8's JSON.stringify escapes it to ASCII `\uXXXX` and accepts, while a
+// raw-UTF-8 resolver (Rust serde_json / Python / Go) rejects or mangles it to U+FFFD: a cross-language fork.
 /** Recursively reject any non-well-formed UTF-16 string anywhere in a decoded record (keys + values). */
 function isWellFormedDeep(v: unknown): boolean {
-  if (typeof v === "string") return strWellFormed(v);
+  if (typeof v === "string") return isWellFormedUtf16(v);
   if (Array.isArray(v)) return v.every(isWellFormedDeep);
   if (v && typeof v === "object") {
     for (const [k, val] of Object.entries(v)) {
-      if (!strWellFormed(k)) return false;
+      if (!isWellFormedUtf16(k)) return false;
       if (!isWellFormedDeep(val)) return false;
     }
   }

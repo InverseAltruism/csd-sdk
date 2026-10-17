@@ -13,7 +13,7 @@
 //   sighash = sha256d( tagged_hash("CSD_SIG_V1", bincode(stripped_tx) ‖ CHAIN_ID_HASH) )
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, utf8ToBytes } from "@noble/hashes/utils";
-import { hb, hx, hbFixed, u32, u64, lenBytes, sha256d } from "./bytes.js";
+import { hb, hx, hbFixed, u32, u64, lenBytes, sha256d, utf8Strict } from "./bytes.js";
 import { CHAIN_ID_HASH, MAX_TX_BYTES, MAX_TX_INPUTS, MAX_TX_OUTPUTS } from "./params.js";
 
 export type App =
@@ -40,7 +40,7 @@ export function strippedTx(tx: Tx): Tx {
 function serializeApp(app: App): Uint8Array {
   if (app.type === "None") return u32(0);
   if (app.type === "Propose")
-    return concatBytes(u32(1), lenBytes(utf8ToBytes(app.domain)), hbFixed(app.payloadHash, 32), lenBytes(utf8ToBytes(app.uri)), u64(app.expiresEpoch));
+    return concatBytes(u32(1), lenBytes(utf8Strict(app.domain, "Propose domain")), hbFixed(app.payloadHash, 32), lenBytes(utf8Strict(app.uri, "Propose uri")), u64(app.expiresEpoch));
   return concatBytes(u32(2), hbFixed(app.proposalId, 32), u32(app.score), u32(app.confidence));
 }
 

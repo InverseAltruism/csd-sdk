@@ -44,6 +44,30 @@ export function u64(n: number | bigint): Uint8Array {
 }
 export const lenBytes = (b: Uint8Array): Uint8Array => concatBytes(u64(b.length), b);
 
+/** True iff `s` is well-formed UTF-16 (no unpaired surrogate), i.e. iff it has a UTF-8 encoding. */
+export function isWellFormedUtf16(s: string): boolean {
+  const wf = (String.prototype as { isWellFormed?: (this: string) => boolean }).isWellFormed;
+  if (typeof wf === "function") return wf.call(s);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {                 // high surrogate: must be followed by a low one
+      const n = s.charCodeAt(i + 1);
+      if (!(n >= 0xdc00 && n <= 0xdfff)) return false;
+      i++;
+    } else if (c >= 0xdc00 && c <= 0xdfff) {          // lone low surrogate
+      return false;
+    }
+  }
+  return true;
+}
+
+/** UTF-8 bytes of `s`; throws on an unpaired surrogate, which `utf8ToBytes` would map to U+FFFD (so two
+ *  different strings would encode alike) and Python's `str.encode("utf-8")` refuses. */
+export function utf8Strict(s: string, field: string): Uint8Array {
+  if (!isWellFormedUtf16(s)) throw new Error(`${field} must not contain an unpaired surrogate`);
+  return utf8ToBytes(s);
+}
+
 // Fixed-width field decode that REJECTS a wrong byte length (consensus uses [u8;32]/[u8;20]
 // and rejects anything else) — so a raw-tx builder can't silently truncate a field and sign
 // bytes the caller didn't intend.

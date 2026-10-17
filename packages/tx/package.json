@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/tx.test.ts",
+    "test": "tsx test/tx.test.ts && tsx test/input-canon.test.ts",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

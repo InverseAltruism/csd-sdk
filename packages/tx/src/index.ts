@@ -1,7 +1,7 @@
 // @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
-import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
+import { type Tx, type TxOutput, type App, serialize, txid, sighash, isWellFormedUtf16, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
 import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@inversealtruism/csd-crypto";
 
 export interface Utxo { txid: string; vout: number; value: number; confirmations?: number; coinbase?: boolean }
@@ -263,6 +263,8 @@ const valueOuts = (outputs?: { to: string; value: number }[]): TxOutput[] | { er
 // buildProposeVerified so the two lanes cannot drift.
 const utf8Len = (s: string): number => new TextEncoder().encode(s).length;
 const proposeCapError = (domain: string, uri: string): string | null => {
+  if (!isWellFormedUtf16(domain)) return "domain contains an unpaired surrogate (no UTF-8 encoding) - the codec refuses to serialize it";
+  if (!isWellFormedUtf16(uri)) return "uri contains an unpaired surrogate (no UTF-8 encoding) - the codec refuses to serialize it";
   const d = utf8Len(domain);
   if (d > MAX_DOMAIN_BYTES) return `domain is ${d} UTF-8 bytes (> MAX_DOMAIN_BYTES=${MAX_DOMAIN_BYTES}) - the node rejects this tx`;
   const u = utf8Len(uri);
