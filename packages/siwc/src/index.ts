@@ -18,7 +18,7 @@
 // IMPORTANT: this library is stateless. SINGLE-USE NONCE is the relying party's responsibility:
 // issue a fresh nonce per attempt, store it bound to the browser session, and DELETE it atomically
 // on a successful verify. The signature is NOT a bearer token — after verify, issue your OWN session.
-import { taggedHash, sha256d, GENESIS_HASH } from "@inversealtruism/csd-codec";
+import { taggedHash, sha256d, GENESIS_HASH, isWellFormedUtf16 } from "@inversealtruism/csd-codec";
 import { signDigest, verifyDigest, addrFromPub, isValidAddr } from "@inversealtruism/csd-crypto";
 import { utf8ToBytes, bytesToHex, randomBytes } from "@noble/hashes/utils";
 
@@ -62,10 +62,8 @@ const hasLF = (s: string) => /[\n\r\u2028\u2029\u0085\u000b\u000c]/.test(s);
 // surrogate to U+FFFD, so two DIFFERENT messages hash to ONE digest (siwcDigest is non-injective over
 // arbitrary strings); the Python reference cannot encode one at all, which is the C1 cross-language
 // class. No honest client makes one: a lone surrogate has no UTF-8 encoding and only survives a JSON
-// "\ud800" escape. Valid pairs are stripped first, so real astral text (emoji) is untouched. No
-// lookbehind: this module ships to MV3 and to browsers.
-const hasLoneSurrogate = (s: string): boolean =>
-  /[\uD800-\uDFFF]/.test(s) && /[\uD800-\uDFFF]/.test(s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""));
+// "\ud800" escape. Valid pairs are well-formed, so real astral text (emoji) is untouched.
+const hasLoneSurrogate = (s: string): boolean => !isWellFormedUtf16(s);
 
 function assertField(name: string, v: string): void {
   if (typeof v !== "string" || v.length === 0) throw new Error(`siwc: ${name} required`);

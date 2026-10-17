@@ -269,7 +269,7 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
     "provenOfferTerms derives {height, feeBps=150, value, no min/taker/bid} from a whole-fill CSD offer");
 
   // the honest served offer matches every proven field -> NO mismatch (no false refuse)
-  const served = { height: H, feeBps: 150, want: { value: "500000000" }, taker: undefined, bid: undefined, min: undefined };
+  const served = { height: H, feeBps: 150, give: { ticker: "AAA", amount: "10" }, want: { value: "500000000" }, taker: undefined, bid: undefined, min: undefined };
   ok(bindOfferTerms(served, t) === false, "bindOfferTerms: honest served offer == proven terms -> no mismatch");
   // each single-field lie flips to mismatch (true)
   ok(bindOfferTerms({ ...served, height: H + 1 }, t) === true, "bindOfferTerms: wrong height -> mismatch");
@@ -297,6 +297,12 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   ok(boPL !== null && boPL.payto === A, "bindProvenOffer: payto-less record defaults payto to the proven author");
   const notOffer = { kind: "propose", id: OID, proposer: A, ...fclaim({ offer: OID }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
   ok(bindProvenOffer(notOffer) === null, "bindProvenOffer: a non-offer record fails closed (null)");
+
+  // the production shape: the resolver's own OfferState against terms from the proven offer event, with the
+  // default legs and with the explicit in-stack form; the honest offer binds both ways (no false refusal)
+  const servedState = resolve(base, H0 + 5).offers[OID];
+  ok(servedState !== undefined && bindOfferTerms(servedState, bo!.terms) === false, "default legs: the resolver's honest OfferState binds to bindProvenOffer terms");
+  ok(bindOfferTerms(servedState, bo!.terms, { give: true, wantType: true }) === false, "explicit legs: the same honest OfferState binds");
 }
 
 // ── 13. B6a (REBIND W3): the OPT-IN `sums` payment bind vs proven fill progress ──
@@ -339,7 +345,7 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   ok(mutSums.safe === true, `MUTATION[sums guard removed]: the W3 overpay forgery now PASSES -> the guard is the sole rejecter`);
 }
 
-// ── 14. B6a (REBIND W2 legs + W7): the OPT-IN give legs + symmetric want-type refusal, and the W3-adjacent
+// ── 14. B6a (REBIND W2 legs + W7): the give legs + symmetric want-type refusal (default on), and the W3-adjacent
 // maker-rebate no-false-refusal pin on the whole-fill open lane (payto === seller merges the rebate leg). ──
 {
   // rebate merge pin: the open-lane whole fill's per-address sum INCLUDES the maker rebate; the sums seam
@@ -362,7 +368,11 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { give: true }) === true, "give legs: inflated give.amount (the W7 millionfold shortchange) -> mismatch");
   ok(bindOfferTerms({ ...servedTok, give: { ticker: "BBB", amount: "10" } }, tTok, { give: true }) === true, "give legs: swapped give.ticker -> mismatch");
   ok(bindOfferTerms({ ...servedTok, give: { name: "gem" } }, tTok, { give: true }) === true, "give legs: token give served as a name give (presence flip) -> mismatch");
-  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok) === false, "DEFAULT OFF: the same inflated give passes the 2-arg call (byte-identical pre-B6 verdict - the leg arms in B7)");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok) === true, "DEFAULT ON: the inflated give is refused by the 2-arg call");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "BBB", amount: "10" } }, tTok) === true, "DEFAULT ON: the swapped give.ticker is refused by the 2-arg call");
+  ok(bindOfferTerms(servedTok, tTok) === false, "DEFAULT ON: the honest served give binds with the 2-arg call");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { give: false, wantType: false }) === false, "OPT-OUT: both legs off restores the pre-B6 verdict (the inflated give passes)");
+  ok(bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { wantType: false }) === true, "a single opt-out leaves the other leg on (give still refuses)");
   const tName = provenOfferTerms({ v: 1, t: "offer", give: { name: "gemname" }, want: { value: "500000000", payto: A } } as never, H);
   ok(tName.giveName === "gemname" && tName.giveTicker === undefined, "provenOfferTerms mints giveName for a name give");
   ok(bindOfferTerms({ ...servedTok, give: { name: "gemname" } }, tName, { give: true }) === false, "give legs: honest name give -> no mismatch");
@@ -372,14 +382,19 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   const tTokWant = provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { ticker: "BBB", amount: "5" } } as never, H);
   ok(tTokWant.wantType === "token" && tTokWant.value === undefined, "provenOfferTerms mints wantType=token for a token want");
   const servedAsCsd = { height: H, feeBps: 150, want: { value: "500000000" }, give: { ticker: "AAA", amount: "10" } };
-  ok(bindOfferTerms(servedAsCsd, tTokWant) === false, "documented hole: 2-arg call cannot see a proven-token want served as CSD");
+  ok(bindOfferTerms(servedAsCsd, tTokWant) === true, "DEFAULT ON: the 2-arg call refuses a proven-token want served as CSD");
+  ok(bindOfferTerms(servedAsCsd, tTokWant, { give: false, wantType: false }) === false, "OPT-OUT: both legs off restores the pre-B6 verdict (proven-token served as CSD passes)");
+  ok(bindOfferTerms(servedAsCsd, tTokWant, { give: false }) === true, "a give-only opt-out leaves the wantType leg on");
+  const hand = { height: H, feeBps: 150, value: "500000000" };
+  ok(bindOfferTerms(servedTok, hand, { give: false, wantType: false }) === false, "OPT-OUT: hand-built terms keep the pre-B6 verdict on an honest offer");
+  ok(bindOfferTerms(servedTok, hand as never) === true, "DEFAULT ON: hand-built terms (no give or wantType) fail closed when a JS caller passes them without the opt-out");
   ok(bindOfferTerms(servedAsCsd, tTokWant, { wantType: true }) === true, "wantType leg: proven-token served-as-CSD -> mismatch (the symmetric refusal)");
   const servedAsTok = { height: H, feeBps: 150, want: { ticker: "BBB", amount: "5" }, give: { ticker: "AAA", amount: "10" } };
   ok(bindOfferTerms(servedAsTok, tTokWant, { wantType: true }) === false, "wantType leg: honest token-want service -> no mismatch");
   ok(bindOfferTerms(servedTok, tTok, { wantType: true }) === false, "wantType leg: honest CSD-want service -> no mismatch");
-  // a pre-B6 hand-built terms object (no wantType) FAILS CLOSED under the opt-in (never a silent pass)
+  // a pre-B6 hand-built terms object (no wantType) fails closed under the wantType leg
   const preB6 = unsafeMintProvenOfferTerms({ height: H, feeBps: 150, value: "500000000" });
-  ok(bindOfferTerms(servedTok, preB6, { wantType: true }) === true, "wantType leg: terms minted without wantType fail CLOSED under the opt-in");
+  ok(bindOfferTerms(servedTok, preB6, { wantType: true }) === true, "wantType leg: terms minted without wantType fail closed");
 
   // MUTATIONS: each new leg removed -> its lie passes (each leg is the sole rejecter of its lie)
   ok(await withGuardRemoved("MUTATE_LEG_GIVEAMOUNT", async (m) => m.bindOfferTerms({ ...servedTok, give: { ticker: "AAA", amount: "10000000" } }, tTok, { give: true })) === false,

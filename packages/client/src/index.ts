@@ -49,6 +49,12 @@ export interface ClientOptions {
   parseJson?: (text: string) => unknown;
 }
 
+const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_RETRIES = 0;
+// A non-finite option (NaN, Infinity) disables the bound it sets (`x > NaN` and `attempt >= NaN` are false),
+// so it falls back to the option's default.
+const finiteOr = (v: number | undefined, dflt: number): number => (v !== undefined && Number.isFinite(v) ? v : dflt);
+
 export class CsdClient {
   private readonly base: string;
   private readonly f: typeof fetch;
@@ -58,7 +64,7 @@ export class CsdClient {
   private readonly parseJson: (text: string) => unknown;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
-    this.maxBytes = Math.max(1, opts.maxResponseBytes ?? 16 * 1024 * 1024);
+    this.maxBytes = Math.max(1, finiteOr(opts.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
     this.parseJson = opts.parseJson ?? JSON.parse;
     // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
     // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
@@ -67,7 +73,7 @@ export class CsdClient {
     const gf = globalThis.fetch;
     this.f = opts.fetch ?? (gf ? gf.bind(globalThis) : gf);
     this.timeoutMs = opts.timeoutMs ?? 10_000;
-    this.retries = Math.max(0, opts.retries ?? 0);
+    this.retries = Math.max(0, Math.floor(finiteOr(opts.retries, DEFAULT_RETRIES)));
     if (!this.f) throw new Error("no fetch available — pass opts.fetch");
   }
 
@@ -174,6 +180,8 @@ export class CsdClient {
    * rejects on timeout (default 10 min — CSD blocks are ~2 min but the live miner is lumpy).
    * A tx that drops OUT of the chain mid-wait (reorg) keeps polling until it re-confirms or
    * times out — never resolves on a stale sighting.
+   * The count is `tip.height - tx.height + 1` from the RPC's own /tx and /tip answers, with no PoW
+   * or inclusion check, so a lying RPC can over-state it. Gate funds on csd-light, not on this.
    */
   async waitForTx(txid: string, opts: { confirmations?: number; timeoutMs?: number; pollMs?: number } = {}): Promise<WaitForTxResult> {
     const want = Math.max(1, opts.confirmations ?? 1);
@@ -231,8 +239,7 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
  *  a forged body whose recomputed txid still matches the prevout is impossible. Fail-CLOSED: any
  *  unreachable/forged/missing source aborts. Returns the verified input total (use it to compute
  *  change from REAL values, not the reported ones). RPC-facing builders (wallet, cairn-sdk) should
- *  call this before assembling a spend; csd-tx itself is pure and cannot fetch.
- *  (Mirrors the proven cairn-wallet `node.ts` implementation; the wallet's TXB-1 cure made canonical.) */
+ *  call this before assembling a spend; csd-tx itself is pure and cannot fetch. */
 export async function verifyInputValues(
   client: { tx(id: string): Promise<RpcTxInfo> },
   inputs: { txid: string; vout: number }[],

@@ -1,7 +1,7 @@
 // @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
-import { type Tx, type TxOutput, type App, serialize, txid, sighash, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
+import { type Tx, type TxOutput, type App, serialize, txid, sighash, isWellFormedUtf16, strip0x, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
 import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@inversealtruism/csd-crypto";
 
 export interface Utxo { txid: string; vout: number; value: number; confirmations?: number; coinbase?: boolean }
@@ -9,12 +9,13 @@ export interface Selection { inputs: { txid: string; vout: number; value: number
 
 /**
  * Greedy largest-first coin selection. Prefers mature non-coinbase coins; HARDENED against a
- * hostile/buggy RPC: missing confirmations → 0 (unspendable), dedupe by (case-normalized)
- * outpoint, drop non-positive/unsafe values, refuse to exceed the consensus input cap, and
- * safe-integer-guard the running sum so no mis-signed value can slip in.
+ * hostile/buggy RPC: missing confirmations → 0 (unspendable), dedupe by outpoint (lower-case txid with
+ * any `0x` stripped, so one coin served in two spellings is taken once), drop non-positive/unsafe
+ * values, refuse to exceed the consensus input cap, and safe-integer-guard the running sum so no
+ * mis-signed value can slip in.
  *
- * `exclude` skips specific outpoints, keyed EXACTLY `${txid.toLowerCase()}:${vout}` (the same
- * case-normalized key the dedupe uses — a mixed-case caller key silently excludes nothing).
+ * `exclude` skips specific outpoints, keyed `${txid.toLowerCase()}:${vout}`; a key with or without the
+ * `0x` matches either spelling of the coin. A mixed-case caller key matches nothing.
  * Upstreamed 2026-07-06 from the wallet's ghost-coin recovery (0.2.53): coins a prior verify
  * round proved unfetchable are excluded fail-closed instead of poisoning every retry.
  */
@@ -28,8 +29,8 @@ export function selectInputs(utxos: Utxo[], need: number, exclude?: ReadonlySet<
     if (!Number.isFinite(c) || c < 1) return false;
     const v = Number(x.value);
     if (!Number.isFinite(v) || v <= 0 || !Number.isSafeInteger(v)) return false;
-    const key = `${String(x.txid).toLowerCase()}:${Number(x.vout)}`;
-    if (exclude?.has(key)) return false;
+    const key = `${strip0x(String(x.txid).toLowerCase())}:${Number(x.vout)}`;
+    if (exclude && (exclude.has(key) || exclude.has(`0x${key}`))) return false;
     if (seen.has(key)) return false; seen.add(key);
     return true;
   });
@@ -231,6 +232,9 @@ export async function buildSendVerified(p: { outputs: { to: string; value: numbe
 }
 
 /**
+ * @deprecated Use `buildSendVerified`. This builder trusts the RPC-reported UTXO values, so an RPC that
+ * under-reports a coin makes the change too small and the difference is burned as fee.
+ *
  * Build + sign a 1→many transfer (None app). Change → sender.
  * `maxFee` (optional) overrides the generous max-fee backstop — pass it only to deliberately
  * authorize a fee above the default cap (default: max(1 CSD, 10% of inputs)).
@@ -263,6 +267,8 @@ const valueOuts = (outputs?: { to: string; value: number }[]): TxOutput[] | { er
 // buildProposeVerified so the two lanes cannot drift.
 const utf8Len = (s: string): number => new TextEncoder().encode(s).length;
 const proposeCapError = (domain: string, uri: string): string | null => {
+  if (!isWellFormedUtf16(domain)) return "domain contains an unpaired surrogate (no UTF-8 encoding) - the codec refuses to serialize it";
+  if (!isWellFormedUtf16(uri)) return "uri contains an unpaired surrogate (no UTF-8 encoding) - the codec refuses to serialize it";
   const d = utf8Len(domain);
   if (d > MAX_DOMAIN_BYTES) return `domain is ${d} UTF-8 bytes (> MAX_DOMAIN_BYTES=${MAX_DOMAIN_BYTES}) - the node rejects this tx`;
   const u = utf8Len(uri);

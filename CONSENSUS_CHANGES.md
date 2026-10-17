@@ -56,6 +56,50 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more except one content check) - input canon
+
+Every change but one refuses input that was accepted before. The exception is `verifyContentBytes`, which
+now accepts the expected hash written without `0x`: it compares the same sha256 digest, so it removes a
+false refusal of genuine bytes; it is a content check that `resolve()` does not call. No honest byte,
+txid, sighash or replay output moves: the golden vectors are unchanged, the replay corpus reproduces 21 of
+21 pinned heights, and `scripts/seal-differential.mjs` passes.
+
+- csd-codec `serialize`, `txid` and `sighash` throw on a Propose domain or uri with an unpaired surrogate.
+  `utf8ToBytes` mapped one to U+FFFD, so two different strings serialized to the same bytes; the Python
+  oracle's `str.encode("utf-8")` raises. The node holds these fields as UTF-8 strings, so a mined tx has
+  none, and the vectors and replay corpus confirm no historical txid moves. The predicate (`isWellFormedUtf16`) now lives in csd-codec once;
+  cairnx-core `records.ts` and csd-siwc import it instead of their own copies (same semantics).
+- csd-codec `verifyMerkleProof` requires the txid, every sibling and the root to be 32 bytes. An empty
+  txid, branch and root verified, and a short sibling was zero-padded into the hash buffer.
+- csd-codec `canonicalJson` (and `payloadHash`) throw on a Map, Set, Date, typed array, class instance,
+  function, symbol or array hole. Plain objects, including null-prototype, cross-realm and `JSON.parse`
+  output, hash as before.
+- csd-codec `verifyContentBytes` accepts the expected hash without `0x` (it returned false before): the one
+  accept-more change, for the same digest only.
+- csd-tx `selectInputs` dedupes an outpoint served with and without `0x` (it selected it twice); an
+  `exclude` key in either spelling skips the coin. `buildPropose` returns `ok:false` for a lone surrogate
+  instead of throwing from the codec. `buildSend` is marked `@deprecated` in favour of `buildSendVerified`.
+- csd-client: a non-finite `maxResponseBytes` or `retries` falls back to that option's default (16 MiB, 0
+  retries); NaN disabled the byte cap and made the retry bound never trip.
+
+Because codec moved, every workspace package that depends on it bumps: csd-crypto 0.1.18, csd-client
+0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.2.0 (which
+also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish order (pnpm only):
+(1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`, `csd-registry`, `csd-siwc`,
+`cairnx-core` in any order.
+
+## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
+
+`bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
+is not read by `resolve()`. Its give and wantType legs, opt-in since 0.1.39, are now on unless the caller passes
+`{ give: false, wantType: false }`, which returns the earlier two-argument verdict on every input. Reject-more
+only: the legs add refusals and remove none. The in-stack callers already pass both legs on with minted terms,
+so their verdicts do not move. No bytes, math, gate or replay change: `scripts/seal-differential.mjs` step 5
+now compares the 0.1.38 baseline against the opted-out call, checks that the default legs never accept an
+input the baseline refused, refuse each give and want-type lie, and accept honest served offers. The minor
+version moves (0.2.0) because hand-built terms with the two-argument call are now a compile error in
+TypeScript and a refusal at runtime; `packages/cairnx/CHANGELOG.md` lists the consumers that move with it.
+
 ## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; unreleased; no consensus-surface change)
 
 csd-codec adds `deserializeHeader` (the inverse of `serializeHeader`) and `HEADER_BYTES`; csd-light adds

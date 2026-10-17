@@ -17,8 +17,8 @@ const BOUND = {
   height: "bindOfferTerms height leg", feeBps: "bindOfferTerms feeBps leg (= feeBpsAt(proven height))",
   taker: "bindOfferTerms taker leg", bid: "bindOfferTerms bid leg", min: "bindOfferTerms min leg (presence + value)",
   "want.value": "bindOfferTerms value leg (proven-CSD offers)",
-  "give.ticker": "bindOfferTerms give leg (B6a, opt-in)", "give.amount": "bindOfferTerms give leg (B6a, opt-in)",
-  "give.name": "bindOfferTerms give leg (B6a, opt-in)",
+  "give.ticker": "bindOfferTerms give leg (default on)", "give.amount": "bindOfferTerms give leg (default on)",
+  "give.name": "bindOfferTerms give leg (default on)",
 };
 const DELIBERATELY_UNBOUND_WITH_REASON = {
   id: "the lookup key itself; the caller selects the offer BY id and verifyFillSpv merkle-binds the id to the on-chain Propose",

@@ -10,25 +10,48 @@
 // proven `stableStringify`/`buildCommitment`.)
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { strip0x } from "./bytes.js";
 
 // Max nesting depth — `canonicalJson` is recursive and is routinely run over UNTRUSTED content
 // (indexers/wallets/verifiers hash attacker-supplied JSON), so an unbounded depth is a
 // stack-overflow DoS. 256 is far beyond any real content record.
 const MAX_DEPTH = 256;
 
+// JSON data only: an object must be plain (its prototype is null or a realm's Object.prototype). A Map, Set,
+// Date, typed array or class instance would hash as `{}` or as its own enumerable fields, so two different
+// values could share one payload_hash; those throw instead, as do functions, symbols and array holes.
+// Another realm's Object.prototype is recognised by its own `constructor`, that realm's native Object; a
+// `class extends null` prototype also has a null prototype but a non-native constructor.
+const NATIVE_OBJECT_SOURCE = Function.prototype.toString.call(Object);
+const isPlainObject = (v: object): boolean => {
+  if (Object.prototype.toString.call(v) !== "[object Object]") return false;
+  const p: unknown = Object.getPrototypeOf(v);
+  if (p === null || p === Object.prototype) return true;
+  if (typeof p !== "object" || Object.getPrototypeOf(p) !== null) return false;
+  const c: unknown = Object.getOwnPropertyDescriptor(p, "constructor")?.value;
+  return typeof c === "function" && c.prototype === p && Function.prototype.toString.call(c) === NATIVE_OBJECT_SOURCE;
+};
+
+/** Canonical JSON of JSON data (see the file header). The output parses with JSON.parse
+ *  (test/input-canon.test.ts); non-JSON input throws. */
 export function canonicalJson(v: unknown, depth = 0): string {
   if (depth > MAX_DEPTH) throw new Error("canonicalJson: max nesting depth exceeded");
+  if (typeof v === "function" || typeof v === "symbol") throw new Error(`canonicalJson: a ${typeof v} is not JSON data`);
   if (v === null || typeof v !== "object") {
     // `undefined` is not valid JSON; JSON.stringify(undefined) returns the literal `undefined`,
-    // which (a) can't be re-parsed — breaking the served-bytes==canonical self-certification —
+    // which (a) can't be re-parsed (breaking the served-bytes==canonical self-certification)
     // and (b) collides {a:undefined,b:1} with {b:1}. Encode it as null, consistently.
     if (v === undefined) return "null";
     return JSON.stringify(v);
   }
-  if (Array.isArray(v)) return "[" + v.map((x) => canonicalJson(x, depth + 1)).join(",") + "]";
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) if (!(i in v)) throw new Error("canonicalJson: an array hole is not JSON data");
+    return "[" + v.map((x) => canonicalJson(x, depth + 1)).join(",") + "]";
+  }
+  if (!isPlainObject(v)) throw new Error(`canonicalJson: ${Object.prototype.toString.call(v)} is not a plain object`);
   const o = v as Record<string, unknown>;
-  // Drop keys whose value is `undefined` (matches JSON.stringify object semantics) so the output
-  // is always valid, re-parseable JSON and the hash is stable regardless of how undefined arose.
+  // Drop keys whose value is `undefined` (matches JSON.stringify object semantics) so the hash is
+  // stable regardless of how undefined arose.
   return "{" + Object.keys(o).sort().filter((k) => o[k] !== undefined)
     .map((k) => JSON.stringify(k) + ":" + canonicalJson(o[k], depth + 1)).join(",") + "}";
 }
@@ -38,7 +61,8 @@ export function payloadHash(content: unknown): string {
   return "0x" + bytesToHex(sha256(utf8ToBytes(canonicalJson(content))));
 }
 
-/** Verify served bytes match an on-chain payload_hash (self-certification). */
+/** Verify served bytes match an on-chain payload_hash (self-certification); the hash may be given
+ *  with or without `0x`, in any case. */
 export function verifyContentBytes(bytes: Uint8Array, payloadHashHex: string): boolean {
-  return "0x" + bytesToHex(sha256(bytes)) === payloadHashHex.toLowerCase();
+  return bytesToHex(sha256(bytes)) === strip0x(payloadHashHex.toLowerCase());
 }

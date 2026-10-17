@@ -1,8 +1,8 @@
 // B6a rider: the EXECUTABLE compile gate for the ProvenOfferTerms brand. Spawns tsc --noEmit over
 // test/fixtures/brand-usage.ts, whose @ts-expect-error lines assert that a hand-built terms object is a
-// COMPILE ERROR at the opt-in bindOfferTerms overload while every legitimate/legacy use still compiles.
+// COMPILE ERROR at bindOfferTerms unless both legs are opted out, while every legitimate use still compiles.
 // RED conditions (either direction of drift):
-//   - the brand is weakened (a literal satisfies the 3-arg overload) -> "Unused '@ts-expect-error'" -> tsc fails
+//   - the brand is weakened (a literal satisfies the minted overload) -> "Unused '@ts-expect-error'" -> tsc fails
 //   - the brand over-reaches (a legitimate use stops compiling)      -> a real error               -> tsc fails
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -27,10 +27,10 @@ if (r.status !== 0) {
   console.error(r.stderr);
 }
 assert.equal(r.status, 0, "brand compile gate: tsc --noEmit over fixtures/brand-usage.ts must be CLEAN (a failure means the ProvenOfferTerms brand drifted - weakened or over-reaching)");
-console.log("cairnx-core brand compile gate: 1 passed (hand-built terms are a compile error at the opt-in legs; legacy uses compile)");
+console.log("cairnx-core brand compile gate: 1 passed (hand-built terms are a compile error unless both legs are opted out; minted uses compile)");
 
 // B6 gate fold-in (G10): PRODUCTION-CALL guard for the tests-only escape hatch.
-// unsafeMintProvenOfferTerms brands a HAND-BUILT (unproven) terms object so it can open the opt-in
+// unsafeMintProvenOfferTerms brands a HAND-BUILT (unproven) terms object so it can open the
 // bind legs - exactly the W2 defect class the brand exists to make unrepresentable. It may be DEFINED
 // (its single export in verifyfill.ts) but must be referenced NOWHERE in production src: a call from a
 // non-test source file would smuggle an unproven terms object past the brand. The compile gate above

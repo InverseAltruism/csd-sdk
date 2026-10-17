@@ -175,19 +175,19 @@ export function merkleRoot(txidsHex: string[]): string {
  */
 export function verifyMerkleProof(txidHex: string, pos: number, branchHex: string[], merkleRootHex: string): boolean {
   try {
-    let cur = hb(txidHex);
+    let cur = hbFixed(txidHex, 32);
     let idx = pos;
     for (const sibHex of branchHex) {
-      const sib = hb(sibHex);
+      const sib = hbFixed(sibHex, 32);
       const buf = new Uint8Array(64);
       if (idx & 1) { buf.set(sib, 0); buf.set(cur, 32); } else { buf.set(cur, 0); buf.set(sib, 32); }
       cur = sha256d(buf);
       idx >>= 1;
     }
-    // Normalize the expected root through hb→hx so the check is insensitive to a `0x` prefix or
-    // case. Without this, a correctly-valued but unprefixed root makes a VALID proof verify as
-    // false - a dangerous asymmetry for a verifier (good data looks rejected).
-    return hx(cur) === hx(hb(merkleRootHex));
+    // Every node is exactly 32 bytes: a shorter value would be zero-padded into the 64-byte buffer, and an
+    // empty txid with an empty branch would equal an empty root. Normalizing the root through hbFixed->hx
+    // keeps the check insensitive to a `0x` prefix or case.
+    return hx(cur) === hx(hbFixed(merkleRootHex, 32));
   } catch {
     return false;   // malformed input IS a failed verification, never a crash
   }
