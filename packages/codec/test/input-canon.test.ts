@@ -1,7 +1,7 @@
 // Input canon of the codec: hostile or malformed input is refused, and every honest input encodes to the
 // same bytes as before (the golden vectors in codec.test.ts and csd-vectors pin those bytes).
 import assert from "node:assert/strict";
-import { serialize, txid, sighash, isWellFormedUtf16, type Tx } from "../src/index.js";
+import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, type Tx } from "../src/index.js";
 import { GOLDEN_PROPOSE_TX } from "@inversealtruism/csd-vectors";
 
 let pass = 0;
@@ -42,6 +42,39 @@ console.log("serializeApp: unpaired surrogates refused");
   check("isWellFormedUtf16 matches String.prototype.isWellFormed on a grid", () => {
     const grid = ["", "a", "\uD800", "\uDC00", "\uD800\uDC00", "\uDC00\uD800", "a\uD83D", "\uD83D\uDE00\uD83D", "\u{10FFFF}", "\uFFFD"];
     for (const s of grid) assert.equal(isWellFormedUtf16(s), s.isWellFormed(), JSON.stringify(s));
+  });
+}
+
+console.log("verifyMerkleProof: every node is exactly 32 bytes");
+{
+  const leaves = [1, 2, 3, 4, 5].map((n) => "0x" + n.toString(16).padStart(64, "0"));
+  const root = merkleRoot(leaves);
+  check("an empty txid, branch and root no longer verify", () => {
+    assert.equal(verifyMerkleProof("", 0, [], "0x"), false);
+    assert.equal(verifyMerkleProof("0x", 0, [], ""), false);
+  });
+  check("a short txid equal to a short root no longer verifies", () => {
+    assert.equal(verifyMerkleProof("0xabcd", 0, [], "0xabcd"), false);
+  });
+  check("a sibling one byte short is refused (the 64-byte buffer used to zero-pad it)", () => {
+    const L = ["0x" + "01".repeat(32), "0x" + "ab".repeat(31) + "00", "0x" + "03".repeat(32)];
+    const R = merkleRoot(L), br = merkleBranch(L, 0);
+    assert.equal(br[0], L[1]);
+    assert.equal(verifyMerkleProof(L[0]!, 0, br, R), true);
+    assert.equal(verifyMerkleProof(L[0]!, 0, [br[0]!.slice(0, -2), ...br.slice(1)], R), false);
+  });
+  check("a 33-byte root is refused", () => {
+    assert.equal(verifyMerkleProof(leaves[0]!, 0, merkleBranch(leaves, 0), root + "00"), false);
+  });
+  check("honest proofs verify at every position, with or without 0x and in upper case", () => {
+    leaves.forEach((leaf, i) => {
+      const br = merkleBranch(leaves, i);
+      assert.equal(verifyMerkleProof(leaf, i, br, root), true);
+      assert.equal(verifyMerkleProof(leaf.slice(2).toUpperCase(), i, br.map((b) => b.slice(2)), root.slice(2).toUpperCase()), true);
+    });
+  });
+  check("a single-tx block (empty branch, root == txid) still verifies", () => {
+    assert.equal(verifyMerkleProof(leaves[0]!, 0, [], merkleRoot([leaves[0]!])), true);
   });
 }
 
