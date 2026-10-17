@@ -50,6 +50,10 @@ export interface ClientOptions {
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_RETRIES = 0;
+// A non-finite option (NaN, Infinity) disables the bound it sets (`x > NaN` and `attempt >= NaN` are false),
+// so it falls back to the option's default.
+const finiteOr = (v: number | undefined, dflt: number): number => (v !== undefined && Number.isFinite(v) ? v : dflt);
 
 export class CsdClient {
   private readonly base: string;
@@ -60,9 +64,7 @@ export class CsdClient {
   private readonly parseJson: (text: string) => unknown;
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
-    // A non-finite cap (NaN, Infinity) disables every `> max` check, so it falls back to the default.
-    const maxBytes = opts.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-    this.maxBytes = Number.isFinite(maxBytes) ? Math.max(1, maxBytes) : DEFAULT_MAX_RESPONSE_BYTES;
+    this.maxBytes = Math.max(1, finiteOr(opts.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
     this.parseJson = opts.parseJson ?? JSON.parse;
     // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
     // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
@@ -71,8 +73,7 @@ export class CsdClient {
     const gf = globalThis.fetch;
     this.f = opts.fetch ?? (gf ? gf.bind(globalThis) : gf);
     this.timeoutMs = opts.timeoutMs ?? 10_000;
-    const retries = opts.retries ?? 0;
-    this.retries = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : 0;
+    this.retries = Math.max(0, Math.floor(finiteOr(opts.retries, DEFAULT_RETRIES)));
     if (!this.f) throw new Error("no fetch available — pass opts.fetch");
   }
 

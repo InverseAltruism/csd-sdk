@@ -33,12 +33,15 @@ await check("finite caps keep their meaning (default, explicit, and the floor of
   await assert.rejects(mk(scripted(sized(2)), { maxResponseBytes: 0 }).tip(), /too large/);
 });
 
-console.log("retries: a non-finite count means no retries");
+console.log("retries: a non-finite count falls back to the default (0 retries)");
 for (const bad of [NaN, Infinity, -Infinity]) {
-  await check(`retries ${bad}: one network failure throws after a single call`, async () => {
+  await check(`retries ${bad}: behaves as the option omitted (one network failure throws after a single call)`, async () => {
     const f = scripted(down, down, sized(100));
     await assert.rejects(mk(f, { retries: bad }).tip(), /ECONNREFUSED/);
+    const g = scripted(down, down, sized(100));
+    await assert.rejects(mk(g).tip(), /ECONNREFUSED/);
     assert.equal(f.calls, 1);
+    assert.equal(f.calls, g.calls);
   });
 }
 await check("finite retries keep their meaning: retries 2 rides out two failures", async () => {

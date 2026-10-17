@@ -79,8 +79,8 @@ txid, sighash or replay output moves: the golden vectors are unchanged, the repl
 - csd-tx `selectInputs` dedupes an outpoint served with and without `0x` (it selected it twice); an
   `exclude` key in either spelling skips the coin. `buildPropose` returns `ok:false` for a lone surrogate
   instead of throwing from the codec. `buildSend` is marked `@deprecated` in favour of `buildSendVerified`.
-- csd-client: a non-finite `maxResponseBytes` falls back to the 16 MiB default and a non-finite
-  `retries` to 0 (NaN disabled the byte cap and made the retry bound never trip).
+- csd-client: a non-finite `maxResponseBytes` or `retries` falls back to that option's default (16 MiB, 0
+  retries); NaN disabled the byte cap and made the retry bound never trip.
 
 Because codec moved, every workspace package that depends on it bumps: csd-crypto 0.1.18, csd-client
 0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.2.0 (which
