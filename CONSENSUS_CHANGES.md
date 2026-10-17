@@ -56,10 +56,13 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more only) - input canon
+## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more except one content check) - input canon
 
-Every change refuses input that was accepted before and changes nothing for honest input; the golden
-vectors, the replay corpus (21 of 21 heights) and `scripts/seal-differential.mjs` are unchanged.
+Every change but one refuses input that was accepted before. The exception is `verifyContentBytes`, which
+now accepts the expected hash written without `0x`: it compares the same sha256 digest, so it removes a
+false refusal of genuine bytes; it is a content check that `resolve()` does not call. No honest byte,
+txid, sighash or replay output moves: the golden vectors are unchanged, the replay corpus reproduces 21 of
+21 pinned heights, and `scripts/seal-differential.mjs` passes.
 
 - csd-codec `serialize`, `txid` and `sighash` throw on a Propose domain or uri with an unpaired surrogate.
   `utf8ToBytes` mapped one to U+FFFD, so two different strings serialized to the same bytes; the Python
@@ -71,7 +74,8 @@ vectors, the replay corpus (21 of 21 heights) and `scripts/seal-differential.mjs
 - csd-codec `canonicalJson` (and `payloadHash`) throw on a Map, Set, Date, typed array, class instance,
   function, symbol or array hole. Plain objects, including null-prototype, cross-realm and `JSON.parse`
   output, hash as before.
-- csd-codec `verifyContentBytes` accepts the expected hash without `0x` (it returned false before).
+- csd-codec `verifyContentBytes` accepts the expected hash without `0x` (it returned false before): the one
+  accept-more change, for the same digest only.
 - csd-tx `selectInputs` dedupes an outpoint served with and without `0x` (it selected it twice); an
   `exclude` key in either spelling skips the coin. `buildPropose` returns `ok:false` for a lone surrogate
   instead of throwing from the codec. `buildSend` is marked `@deprecated` in favour of `buildSendVerified`.
