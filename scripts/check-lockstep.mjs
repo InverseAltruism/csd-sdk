@@ -33,6 +33,13 @@ for (const p of pkgs) {
   if (newestMs(distDir) + 1000 < newestMs(srcDir)) errors.push(`${p.name}: dist/ OLDER than src/ — rebuild so published bytes match source (M4)`);
 }
 
+// A package that keeps a CHANGELOG.md ships it: pnpm pack does not add it on its own, and a breaking
+// release whose migration note is missing from the tarball leaves npm consumers without it.
+for (const p of pkgs) {
+  if (existsSync(join(pkgsDir, p.__dir, "CHANGELOG.md")) && !(p.files ?? []).includes("CHANGELOG.md"))
+    errors.push(`${p.name}: CHANGELOG.md exists but is not in package.json "files", so the tarball omits it`);
+}
+
 // Independent cadence: packages need NOT share a version (cairnx-core bumps ahead on consensus
 // heights). Coherence comes from the workspace:* check below — pnpm freezes each inter-dep to the
 // exact published version — not from version-equality. Here we only sanity-check valid semver and
