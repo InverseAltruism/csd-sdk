@@ -69,6 +69,7 @@ txid, sighash or replay output moves: the golden vectors are unchanged, the repl
   oracle's `str.encode("utf-8")` raises. The node holds these fields as UTF-8 strings, so a mined tx has
   none, and the vectors and replay corpus confirm no historical txid moves. The predicate (`isWellFormedUtf16`) now lives in csd-codec once;
   cairnx-core `records.ts` and csd-siwc import it instead of their own copies (same semantics).
+  csd-codec also exports `utf8Strict(s, field)`, the encoder that throws on a lone surrogate (added API).
 - csd-codec `verifyMerkleProof` requires the txid, every sibling and the root to be 32 bytes. An empty
   txid, branch and root verified, and a short sibling was zero-padded into the hash buffer.
 - csd-codec `canonicalJson` (and `payloadHash`) throw on a Map, Set, Date, typed array, class instance,
@@ -81,6 +82,7 @@ txid, sighash or replay output moves: the golden vectors are unchanged, the repl
   instead of throwing from the codec. `buildSend` is marked `@deprecated` in favour of `buildSendVerified`.
 - csd-client: a non-finite `maxResponseBytes` or `retries` falls back to that option's default (16 MiB, 0
   retries); NaN disabled the byte cap and made the retry bound never trip.
+  A fractional `retries` is floored (`1.5` allowed 2 retries before, 1 now).
 
 Because codec moved, every workspace package that depends on it bumps: csd-crypto 0.1.18, csd-client
 0.1.18, csd-tx 0.1.21, csd-light 0.1.23, csd-registry 0.1.20, csd-siwc 0.1.19 and cairnx-core 0.2.0 (which
