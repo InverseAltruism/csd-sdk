@@ -57,6 +57,16 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; unreleased, publish window 3; no consensus-surface change) - shared route checks and script address
+
+csd-light adds `tipHeaderPowOk` and `contenderPlausible`, the checks cairn and csd-indexer each carry before a
+non-primary RPC backend may win routing; csd-crypto adds `addrFromScriptPubkey`, the node's address parser
+(compute-substrate `src/api/mod.rs` `parse_addr20` at tag cairn-v0.1.14) returning the lowercase 0x form. Both
+are added API that `resolve()` and the codec do not call: no byte, txid, sighash, LWMA, chainwork or replay
+change, and the golden vectors are unchanged. csd-tx and csd-siwc bump because they depend on csd-crypto.
+Publish order (pnpm only): (1) `csd-crypto`, `csd-light`; (2) `csd-tx`, `csd-siwc`. cairnx-core 0.2.1 (below)
+rides the same window.
+
 ## csd-registry removed (2026-10-19, Plan 85 P-5; no consensus-surface change)
 
 `packages/registry` is deleted from the workspace; 0.1.20 stays its last published version, and later publish windows drop it from their order.
