@@ -20,10 +20,11 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run typecheck   # src and tests, strict + noUncheckedIndexedAccess
       # Every file:line citation in CONSENSUS_CHANGES.md must still point at the line it quotes.
       - run: node scripts/check-consensus-citations.mjs
       - run: pnpm -r --filter "./packages/*" build
+      # after the build: the tests import the workspace packages, whose types are their built dist/*.d.ts
+      - run: pnpm run typecheck   # src and tests, strict + noUncheckedIndexedAccess
       - run: node scripts/check-lockstep.mjs   # workspace:* + published pins and published dist equal this build (queries npm) + dist-freshness (needs built dist/)
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
       # skip cleanly when there is no CSD node (CI has none); the deterministic core
