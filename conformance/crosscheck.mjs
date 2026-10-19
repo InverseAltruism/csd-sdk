@@ -1,4 +1,4 @@
-// META-1 (audit) — cross-IMPLEMENTATION conformance: feed the JS reference (the shipping codec /
+// META-1 (audit): cross-IMPLEMENTATION conformance: feed the JS reference (the shipping codec /
 // cairnx-core) and the INDEPENDENT Python reference (cairnx_ref.py) the SAME corpus
 // and assert byte-identity on every determinism-critical primitive. A JS-only fork (a UTF-16-vs-
 // codepoint key sort, a dropped onlyKeys decoy guard) would diverge here. This
@@ -13,7 +13,7 @@ const ok = (n, c) => { c ? pass++ : (fail++, console.error("  ✗ " + n)); if (c
 
 // ── corpus: the fork-prone shapes the audits found ──
 const canonCorpus = [
-  { b: 1, a: 2, "\u{1D7D8}": 3 },                 // astral key — UTF-16 vs codepoint sort divergence
+  { b: 1, a: 2, "\u{1D7D8}": 3 },                 // astral key: UTF-16 vs codepoint sort divergence
   { "￿": 1, "\u{10000}": 2 },                // BMP-max vs first astral (the exact boundary)
   { z: [3, { y: 1, x: 2 }], a: 9 },               // nested
   { t: "name", name: "alice", salt: "00ff", v: 1 },
@@ -29,7 +29,7 @@ const recordCorpus = [
 ];
 // C1/C2 end-to-end: raw records with a trailing-\n (or other control char) in a regex-gated field, run
 // through the FULL parse gate on both sides (JS parseRecord ⇄ Python parse_record). Both MUST reject the
-// dirty ones and accept the clean one — the exact fork the .match→.fullmatch fix closes. [label, record, expectAccept]
+// dirty ones and accept the clean one: the exact fork the .match→.fullmatch fix closes. [label, record, expectAccept]
 const SALT16 = "00112233445566778899aabbccddeeff";
 const TO20 = "0x" + "11".repeat(20);
 const c1Corpus = [

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-META-1 (audit) — INDEPENDENT second-language reference implementation of CairnX / CSD.
+META-1 (audit): INDEPENDENT second-language reference implementation of CairnX / CSD.
 
 The trust model is "two honest resolvers, different code, converge byte-for-byte." This Python port
 reproduces, from the spec (CONVENTION.md) and NOT transliterated from minified JS:
-  * the determinism-critical primitives — canonical JSON (UTF-16-code-unit key sort), payload hash,
+  * the determinism-critical primitives: canonical JSON (UTF-16-code-unit key sort), payload hash,
     well-formed (lone-surrogate) gate;
-  * the full record-validation gate (`parse_record`) — every `onlyKeys` allow-set + shape rule;
-  * the FULL `resolve()` ledger — tokens / names (commit-reveal, lease) / offers / bids / fills /
-    fees — producing a byte-identical `canonical_state` (the open half of META-1, now closed).
+  * the full record-validation gate (`parse_record`): every `onlyKeys` allow-set + shape rule;
+  * the FULL `resolve()` ledger: tokens / names (commit-reveal, lease) / offers / bids / fills /
+    fees, producing a byte-identical `canonical_state` (the open half of META-1, now closed).
 
 `crosscheck.mjs` feeds the shipping JS and this port the SAME corpus (fork-prone shapes) AND the
 language-neutral vectors in `packages/cairnx/test/vectors/cases.json`, asserting byte-identity. A
 JS-only fork (UTF-16-vs-codepoint sort, a dropped onlyKeys, a float, a non-pinned rounding) diverges
-HERE. The canonical surface is DATA ONLY (the applied-event log is excluded — its prose is a
+HERE. The canonical surface is DATA ONLY (the applied-event log is excluded; its prose is a
 diagnostic, deliberately non-normative), so this port computes the ledger only.
 """
 import json, sys, hashlib, re
@@ -23,13 +23,13 @@ MAX_DEPTH = 256
 
 def u16key(s):
     """Sort key == JS string `<` (UTF-16 code-unit order). NOT codepoint/UTF-8-byte order (which
-    diverges for astral chars — the exact fork the audit pinned). Bytes compare lexicographically =
+    diverges for astral chars: the exact fork the audit pinned). Bytes compare lexicographically =
     code-unit order."""
     return s.encode("utf-16-be")
 
 def u16len(s):
     """JS `String.length` == count of UTF-16 code units (an astral codepoint is 2). Python `len` is
-    codepoints — using it would fork at the 32-/64-unit boundaries (CONVENTION A6, records.ts:116)."""
+    codepoints; using it would fork at the 32-/64-unit boundaries (CONVENTION A6, records.ts:116)."""
     return len(s.encode("utf-16-le")) // 2
 
 def lt(a, b):
@@ -81,20 +81,20 @@ V12_HEIGHT = 30_300
 V13_HEIGHT = 31_100
 V14_HEIGHT = 31_400
 V15_HEIGHT = 32_000
-V16_HEIGHT = 33_600   # v1.6 fee update + maker rebate — ACTIVATION (must match types.ts/helpers.js/wallet)
-V17_HEIGHT = 34_000   # v1.7 claim-to-fill — ACTIVATION (must match types.ts/helpers.js/wallet)
+V16_HEIGHT = 33_600   # v1.6 fee update + maker rebate; ACTIVATION (must match types.ts/helpers.js/wallet)
+V17_HEIGHT = 34_000   # v1.7 claim-to-fill; ACTIVATION (must match types.ts/helpers.js/wallet)
 V18_HEIGHT = 40_000   # v1.8 simplified 2-tier name fee: ACTIVE at 40_000 (must match types.ts/helpers.js/wallet)
-NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD — names ≤ 4 chars (premium)
-NAME_FEE_V18 = 300_000_000        # 3 CSD — names ≥ 5 chars
-V24_HEIGHT = 46_400               # v2.4 length-graded short-name premium — HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
-NAME_FEE_LEN3_V24 = 1_500_000_000 # 15 CSD — names ≤ 3 chars
-NAME_FEE_LEN4_V24 = 1_000_000_000 # 10 CSD — names == 4 chars
-NAME_FEE_MID_V24 = 500_000_000    # 5 CSD  — names 5–9 chars
-NAME_FEE_LONG_V24 = 300_000_000   # 3 CSD  — names ≥ 10 chars
+NAME_FEE_SHORT_V18 = 670_000_000  # 6.7 CSD: names ≤ 4 chars (premium)
+NAME_FEE_V18 = 300_000_000        # 3 CSD: names ≥ 5 chars
+V24_HEIGHT = 46_400               # v2.4 length-graded short-name premium; HARD ADOPTION GATE (V23-class: a fee INCREASE forks STALE verifiers, see types.ts; deploy ALL mirrors + the wallet before the tip crosses it). Pre-V24 byte-identical. MUST match types.ts/helpers.js/wallet.
+NAME_FEE_LEN3_V24 = 1_500_000_000 # 15 CSD: names ≤ 3 chars
+NAME_FEE_LEN4_V24 = 1_000_000_000 # 10 CSD: names == 4 chars
+NAME_FEE_MID_V24 = 500_000_000    # 5 CSD : names 5–9 chars
+NAME_FEE_LONG_V24 = 300_000_000   # 3 CSD : names ≥ 10 chars
 V19_HEIGHT = 36_700               # v1.9 ENS-class identity (nprofile): ACTIVE at 36_700 (must match types.ts/helpers.js/wallet)
 V20_HEIGHT = 38_400              # v2.0 open-lane late-fill fix: honor the claimer's fill AND block new claims through claimUntilHeight+grace (BOUNDED hold = window 40 + grace 5; NOT until-displaced); ACTIVE at 38_400 (must match types.ts/helpers.js/wallet)
-V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap — ACTIVATION (must match types.ts/helpers.js/wallet)
-MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h) — retained ONLY for the [V21,V22) era
+V21_HEIGHT = 40_100             # v2.1 max offer/bid duration cap; ACTIVATION (must match types.ts/helpers.js/wallet)
+MAX_OFFER_EPOCHS = 168          # 7 days (1 epoch = EPOCH_LEN blocks ≈ 1h); retained ONLY for the [V21,V22) era
 V22_HEIGHT = 41_300             # v2.2 REMOVE the offer/bid duration cap from consensus (UI-only policy); keyed on the offer's ANCHOR height so [V21,V22) + pre-V21 stay byte-identical. Set 2026-06-26 at tip ~41145 (+155 safe lockstep margin); dormant under the UI cap so later activation is harmless. MUST match types.ts/helpers.js/wallet.
 V23_HEIGHT = 52_000            # v2.3 nset-clear ("unset"): at EVENT height >= V23 an nset to the ZERO address clears n.addr (falls back to owner; drops out of primary). Gated on event height so all history is byte-identical; zero address is a valid addr so NO validation change. Set 2026-06-27 at tip ~41,836 (+~10,160 ≈ 14d) for wallet 0.2.36 adoption runway. MUST match types.ts/helpers.js/wallet.
 ZERO_ADDR = "0x" + "00" * 20   # the nset-clear sentinel (0x + 40 hex zeros)
@@ -112,7 +112,7 @@ SCORE_CANCEL = 0
 SCORE_CLAIM = 50            # v1.7 payment-free claim attest (∉ {SCORE_FILL, SCORE_CANCEL})
 CLAIM_WINDOW_BLOCKS = 15
 CLAIM_WINDOW_BLOCKS_V20 = 40   # v2.0 (V20): wider exclusive window (~80 min); MUST match types.ts/helpers.js/wallet
-CLAIM_FILL_GRACE_BLOCKS = 5    # v2.0 (V20): bounded fill grace — fill honored + new-claim blocked through claimUntilHeight+grace
+CLAIM_FILL_GRACE_BLOCKS = 5    # v2.0 (V20): bounded fill grace: fill honored + new-claim blocked through claimUntilHeight+grace
 MAX_ACTIVE_CLAIMS = 3
 CLAIM_COOLDOWN_BLOCKS = 15
 CONF_TOKEN_FILL = 1_000_000
@@ -205,7 +205,7 @@ def is_safe_int(n):
 
 # Read an externally-supplied paidTo/pt amount, fail-closed to 0 on any non-canonical value. MIRROR of
 # ptAmt (packages/cairnx/src/resolve/context.ts): BigInt(x)/int(x) accepted DISJOINT non-decimal forms (BigInt("0x10")=16 vs int("0x10")
-# throws) — a latent JS<->Python fork the fuzz never reached. Gate through the SAME AMOUNT_RE record amounts
+# throws): a latent JS<->Python fork the fuzz never reached. Gate through the SAME AMOUNT_RE record amounts
 # use; byte-identical for every canonical scanner value, converges instead of value-vs-throw otherwise.
 def _pt(v):
     return int(v) if isinstance(v, str) and AMOUNT_RE.fullmatch(v) else 0
@@ -240,7 +240,7 @@ FCLAIM_KEYS = {"v", "t", "offer"}
 def _only_keys(r, allowed): return set(r.keys()) <= allowed
 
 def parse_record(uri, payload_hash_hex):
-    # PARITY (audit): a raw lone-surrogate uri must fail CLOSED — JS records.ts uses TextEncoder (surrogate-
+    # PARITY (audit): a raw lone-surrogate uri must fail CLOSED: JS records.ts uses TextEncoder (surrogate-
     # tolerant, never throws), so the reference must REJECT (return None), not raise UnicodeEncodeError, or it
     # crashes the differential on exactly the fork-prone input it exists to police.
     try:
@@ -653,7 +653,7 @@ def resolve(events, tip_height):
 
             elif t == "nfinalize":
                 # v2.5 winner-only register finalize: pay the reg fee AFTER the displacement contest freezes.
-                # Promote the reservation to a NORMAL registered name (NOT viaFill — already displacement-immune
+                # Promote the reservation to a NORMAL registered name (NOT viaFill: already displacement-immune
                 # via the freeze-window math; viaFill would trip the wallet's namespv caution on every fresh name).
                 if not v25: continue
                 n = names.get(rec["name"])
@@ -706,7 +706,7 @@ def resolve(events, tip_height):
                 else: n["addr"] = rec["addr"].lower()
 
             elif t == "nprofile":
-                # v1.9 ENS-class identity (doc 36). INERT — owner-gated, last-write-wins; empty p clears.
+                # v1.9 ENS-class identity (doc 36). INERT: owner-gated, last-write-wins; empty p clears.
                 if not v19: continue
                 n = names.get(rec["name"])
                 if not n or n["owner"] != who: continue
@@ -722,7 +722,7 @@ def resolve(events, tip_height):
                 if payto == TREASURY_ADDR: continue
                 if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
-                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap — [V21,V22) era only; v2.2 (anchor >= V22) removes it
+                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap: [V21,V22) era only; v2.2 (anchor >= V22) removes it
                 give = rec["give"]
                 if is_name_give(give):
                     if not v11: continue
@@ -759,7 +759,7 @@ def resolve(events, tip_height):
                 if not v12: continue
                 if not is_safe_int(ev.get("expiresEpoch")): continue  # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined))
                 if epoch_of(ev["height"]) > ev["expiresEpoch"]: continue
-                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap — [V21,V22) era only; v2.2 (anchor >= V22) removes it
+                if ev["height"] >= V21_HEIGHT and ev["height"] < V22_HEIGHT and ev["expiresEpoch"] - epoch_of(ev["height"]) > MAX_OFFER_EPOCHS: continue  # v2.1 cap: [V21,V22) era only; v2.2 (anchor >= V22) removes it
                 bids[ev["id"]] = {"id": ev["id"], "bidder": who, "want": rec["want"], "give": rec["give"],
                                   "status": "open", "expiresEpoch": ev["expiresEpoch"], "height": ev["height"], "offers": []}
 
@@ -950,7 +950,7 @@ def resolve(events, tip_height):
                 need = {}
                 def _addn(a, v): need[a] = need.get(a, 0) + v
                 _addn(o["want"]["payto"], want); _addn(TREASURY_ADDR, fee)
-                if rebate > 0: _addn(o["seller"], rebate)  # ACCUMULATE — coinciding recipients SUM, never overwrite
+                if rebate > 0: _addn(o["seller"], rebate)  # ACCUMULATE: coinciding recipients SUM, never overwrite
                 if any(_pt(pt.get(a)) < amt for a, amt in need.items()): continue
                 paid = _pt(pt.get(o["want"]["payto"]))
                 if is_name_give(o["give"]):
@@ -1031,7 +1031,7 @@ _ARRAY_INDEX_RE = re.compile(r"^(0|[1-9][0-9]*)$")
 def _is_array_index(k):
     """ECMAScript array-index key: the canonical decimal string of an integer in [0, 2^32-2].
     Such keys enumerate FIRST, in ascending numeric order, in every JS object (and thus in
-    JSON.stringify output) — BEFORE string keys, regardless of insertion/sort order."""
+    JSON.stringify output), BEFORE string keys, regardless of insertion/sort order."""
     if not _ARRAY_INDEX_RE.fullmatch(k): return False
     return int(k) < 4294967295  # 2^32 - 1
 
@@ -1042,9 +1042,9 @@ def _js_obj_key_order(keys):
 
 def _js_stringify(v, depth=0):
     """Byte-identical to JS `JSON.stringify(sortKeys(v))`: object keys emitted as ECMAScript
-    enumerates them — integer-index keys ascending-numeric first, then the remaining keys in
+    enumerates them: integer-index keys ascending-numeric first, then the remaining keys in
     code-unit (UTF-16) order. (canonicalState uses JSON.stringify, NOT the codec canonicalJson, so
-    it inherits this object-key ordering — a real cross-language fork point for numeric names.)"""
+    it inherits this object-key ordering: a real cross-language fork point for numeric names.)"""
     if depth > MAX_DEPTH: raise ValueError("max nesting depth exceeded")
     if v is None or isinstance(v, bool) or not isinstance(v, (dict, list)):
         return _json_scalar(v)
@@ -1054,7 +1054,7 @@ def _js_stringify(v, depth=0):
     return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + _js_stringify(v[k], depth + 1) for k in keys) + "}"
 
 def canonical_state(state):
-    # canonicalState = JS JSON.stringify(sortKeys(data)) — replicate the JS object-key enumeration
+    # canonicalState = JS JSON.stringify(sortKeys(data)); replicate the JS object-key enumeration
     # order (integer-index keys first), which differs from the codec's pure code-unit canonicalJson.
     return _js_stringify(state)
 
@@ -1093,7 +1093,7 @@ def main():
     if "resolve" in job:
         out["resolve"] = [canonical_state(resolve(j["events"], j["tipHeight"])) for j in job["resolve"]]
     if "parseFull" in job:
-        # FULL parse_record cross-check (canonical uri + hash + the per-record schema) — stronger than
+        # FULL parse_record cross-check (canonical uri + hash + the per-record schema): stronger than
         # the `records` job, which uses the simplified onlyKeys gate. Used by the nprofile vectors.
         out["parseFull"] = [_parse_full_one(i, r) for i, r in enumerate(job["parseFull"])]
     if "consts" in job:
@@ -1117,7 +1117,7 @@ def main():
         }
     if "regex" in job:
         # C2: DIRECT regex-vs-regex differential over raw strings (the corpus the builder-based fuzzer
-        # can never reach). fullmatch mirrors JS .test on ^...$ regexes — it rejects the trailing-\n the
+        # can never reach). fullmatch mirrors JS .test on ^...$ regexes; it rejects the trailing-\n the
         # old .match accepted (C1). A future drift on any field surfaces here, not silently on-chain.
         _FIELD_RE = {"amount": AMOUNT_RE, "addr": ADDR_RE, "ticker": TICKER_RE,
                      "hash": HASH_RE, "name": NAME_RE, "salt": SALT_RE, "pkey": PKEY}
