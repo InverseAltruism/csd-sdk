@@ -11,7 +11,7 @@ let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : `\n      ${detail}`}`); };
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const EM = "—";
+const EM = "\u2014";
 
 console.log("check-dashes-paths:");
 const here = offences(root);

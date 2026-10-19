@@ -1,4 +1,4 @@
-// Edge-case conformance (pure — no node). Exercises boundaries the happy-path tests miss:
+// Edge-case conformance (pure, no node). Exercises boundaries the happy-path tests miss:
 // empty/large/coinbase txs, bigint fields, unicode, malformed deserialize, compact-bits
 // rejection cases + round-trip, merkle odd rows, PoW boundary, canonical JSON ordering.
 import {
@@ -13,7 +13,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 const throws = (n: string, f: () => unknown) => { let t = false; try { f(); } catch { t = true; } ok(n, t); };
 const A20 = "0x" + "09".repeat(20), H32 = "0x" + "ab".repeat(32);
 
-console.log("— tx codec edge cases —");
+console.log("-- tx codec edge cases --");
 // empty inputs + empty outputs (a degenerate but serializable tx)
 const empty: Tx = { version: 1, inputs: [], outputs: [], locktime: 0, app: { type: "None" } };
 ok("empty tx round-trips", bytesToHex(serialize(deserialize(serialize(empty)))) === bytesToHex(serialize(empty)));
@@ -35,13 +35,13 @@ ok("unicode domain + empty uri round-trip", (() => { const d = deserialize(seria
 const att: Tx = { version: 1, locktime: 0, inputs: [], outputs: [], app: { type: "Attest", proposalId: H32, score: 4294967295, confidence: 0 } };
 ok("Attest with u32-max score round-trips", (() => { const d = deserialize(serialize(att)) as any; return d.app.score === 4294967295 && d.app.confidence === 0; })());
 
-console.log("\n— malformed input rejection —");
+console.log("\n-- malformed input rejection --");
 throws("deserialize truncated bytes throws", () => deserialize(serialize(multi).slice(0, 10)));
 throws("deserialize unknown app variant (u32=3) throws", () => { const b = serialize(empty); b[b.length - 4] = 3; deserialize(b); });
 throws("wrong-length scriptPubkey field throws (hbFixed)", () => serialize({ ...empty, outputs: [{ value: 1, scriptPubkey: "0x1234" }] }));
 throws("wrong-length payloadHash throws", () => serialize({ ...empty, app: { type: "Propose", domain: "d", payloadHash: "0xabcd", uri: "u", expiresEpoch: 0 } }));
 
-console.log("\n— compact bits ↔ target —");
+console.log("\n-- compact bits ↔ target --");
 ok("sign-bit-set mantissa → invalid (all-zero)", bitsToTarget(0x01800000).every((b) => b === 0));
 ok("exp=0 → invalid", bitsToTarget(0x00123456).every((b) => b === 0));
 ok("mant=0 → invalid", bitsToTarget(0x1e000000).every((b) => b === 0));
@@ -55,7 +55,7 @@ for (const bits of [0x1d00ffff, 0x1e00ffff, 0x1f00ffff, 0x1b0404cb, 0x1c0168fd, 
 }
 ok("bitsToTarget→targetToBits is idempotent for canonical bits", rtBits);
 
-console.log("\n— PoW boundary —");
+console.log("\n-- PoW boundary --");
 const tgt = bitsToTarget(0x1e00ffff);
 ok("hash == target passes", powOk(tgt, 0x1e00ffff));
 const justOver = bitsToTarget(0x1e00ffff).slice(); justOver[31] = (justOver[31]! + 0); // target itself
@@ -63,7 +63,7 @@ const justOver = bitsToTarget(0x1e00ffff).slice(); justOver[31] = (justOver[31]!
 const over = (() => { const v = targetToBigInt(tgt) + 1n; const o = new Uint8Array(32); let x = v; for (let i = 31; i >= 0; i--) { o[i] = Number(x & 0xffn); x >>= 8n; } return o; })();
 ok("hash == target+1 fails", !powOk(over, 0x1e00ffff));
 
-console.log("\n— merkle —");
+console.log("\n-- merkle --");
 for (const k of [1, 2, 3, 4, 5, 8, 9]) {
   const leaves = Array.from({ length: k }, (_, i) => "0x" + bytesToHex(new Uint8Array(32).fill(i + 1)));
   const root = merkleRoot(leaves);
@@ -76,7 +76,7 @@ const r3 = merkleRoot(lv);
 ok("tampered root → proof fails", !verifyMerkleProof(lv[0]!, 0, merkleBranch(lv, 0), "0x" + "ff".repeat(32)));
 ok("wrong leaf → proof fails", !verifyMerkleProof("0x" + "99".repeat(32), 0, merkleBranch(lv, 0), r3));
 
-console.log("\n— canonical JSON / content hash —");
+console.log("\n-- canonical JSON / content hash --");
 ok("keys sorted recursively, arrays preserve order", canonicalJson({ z: 1, a: [3, 2, { y: 1, b: 2 }] }) === '{"a":[3,2,{"b":2,"y":1}],"z":1}');
 ok("key order does not change the hash", payloadHash({ a: 1, b: 2 }) === payloadHash({ b: 2, a: 1 }));
 ok("different content → different hash", payloadHash({ a: 1 }) !== payloadHash({ a: 2 }));

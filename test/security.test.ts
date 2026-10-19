@@ -13,7 +13,7 @@ const ME = addrFromPriv(PRIV);
 const RCPT = "0x" + "cc".repeat(20);
 const utxo = (value: number, conf = 6, coinbase = false, i = 0) => ({ txid: "0x" + (i + 1).toString(16).padStart(64, "0"), vout: 0, value, confirmations: conf, coinbase });
 
-console.log("— hostile RPC: coin selection cannot be poisoned —");
+console.log("-- hostile RPC: coin selection cannot be poisoned --");
 ok("negative value dropped", selectInputs([{ ...utxo(0, 6, false, 1), value: -100 }, utxo(500, 6, false, 2)], 100)?.total === 500);
 ok("NaN value dropped", selectInputs([{ ...utxo(0, 6, false, 1), value: NaN }], 1) === null);
 ok("Infinity value dropped", selectInputs([{ ...utxo(0, 6, false, 1), value: Infinity }], 1) === null);
@@ -24,7 +24,7 @@ ok("duplicate outpoint (mixed case) deduped", selectInputs([{ txid: "0x" + "AB".
 // >512 inputs cap: 600 tiny coins, need exceeds any single → would require >512 → null
 ok("refuses to exceed the 512-input consensus cap", selectInputs(Array.from({ length: 600 }, (_, i) => utxo(1, 6, false, i + 1)), 600) === null);
 
-console.log("\n— buildSend: change always to self, never redirected —");
+console.log("\n-- buildSend: change always to self, never redirected --");
 const s = buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1000)], priv: PRIV });
 ok("change output address == sender (not recipient)", s.tx!.outputs.filter((o) => Number(o.value) === 890).every((o) => o.scriptPubkey === ME));
 ok("no extra output to any non-recipient/non-self address", s.tx!.outputs.every((o) => o.scriptPubkey === RCPT || o.scriptPubkey === ME));
@@ -32,7 +32,7 @@ ok("rejects negative fee", buildSend({ outputs: [{ to: RCPT, value: 1 }], fee: -
 ok("rejects zero amount", buildSend({ outputs: [{ to: RCPT, value: 0 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === false);
 ok("rejects non-hex recipient", buildSend({ outputs: [{ to: "0xzz", value: 1 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === false);
 
-console.log("\n— signing integrity —");
+console.log("\n-- signing integrity --");
 // a signature is over the EXACT tx; mutating any field invalidates it against the new sighash
 const built = buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1000)], priv: PRIV });
 const ss = built.tx!.inputs[0]!.scriptSig.slice(2);
@@ -49,14 +49,14 @@ ok("verifyDigest rejects a high-S signature", (() => {
   return !verifyDigest("0x" + r + sHigh, pub, sighash(strip(built.tx!)));
 })());
 
-console.log("\n— sighash domain separation (no cross-type confusion) —");
+console.log("\n-- sighash domain separation (no cross-type confusion) --");
 const base = { version: 1, locktime: 0, inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [] };
 const shNone = sighash({ ...base, app: { type: "None" } } as Tx);
 const shProp = sighash({ ...base, app: { type: "Propose", domain: "x", payloadHash: "0x" + "00".repeat(32), uri: "", expiresEpoch: 0 } } as Tx);
 const shAtt = sighash({ ...base, app: { type: "Attest", proposalId: "0x" + "00".repeat(32), score: 0, confidence: 0 } } as Tx);
 ok("None / Propose / Attest produce distinct sighashes", new Set([shNone, shProp, shAtt]).size === 3);
 
-console.log("\n— light client: forged chain rejected (needs node) —");
+console.log("\n-- light client: forged chain rejected (needs node) --");
 const BASE = process.env.CSD_RPC;
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
@@ -81,7 +81,7 @@ if (BASE && reachable) {
   try { new LightClient({ client: c }).ingest(5, real31.header as any); } catch { rejOrder = true; }
   ok("out-of-order ingest rejected", rejOrder);
 } else if (BASE) {
-  console.log("  (node down — light forged-chain tests skipped)");
+  console.log("  (node down; light forged-chain tests skipped)");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

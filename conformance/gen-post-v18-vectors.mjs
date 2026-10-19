@@ -1,4 +1,4 @@
-// Generator for the post-v1.8 conformance vectors — the classes that ship in consensus but were NOT in
+// Generator for the post-v1.8 conformance vectors: the classes that ship in consensus but were NOT in
 // the regenerable cases.json bar (a 3rd-party resolver could pass all prior vectors and still fork on
 // these): v1.9 nprofile, v2.0 (V20) claim grace/late-fill, v2.1 (V21) offer-duration cap, name ops
 // (nset/nxfer/nrenew/tmeta), lapsed-lease premium reclaim, claim cooldown + MAX_ACTIVE_CLAIMS, and key
@@ -18,7 +18,7 @@ const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), C = "0x" + "c3".re
 const SALT = "00ffee1122334455";
 let idn = 0xf1900000;
 const nid = () => "0x" + (idn++).toString(16).padStart(64, "0");
-const BIGFEE = { [TREASURY]: "100000000000" };  // 1000 CSD — generous overpay (covers even the ~300 CSD max V24 lapsed-reclaim premium: 15 CSD base × 20); resolver charges the REQUIRED fee into feesPaid (overpay never inflates canonical state)
+const BIGFEE = { [TREASURY]: "100000000000" };  // 1000 CSD, generous overpay (covers even the ~300 CSD max V24 lapsed-reclaim premium: 15 CSD base × 20); resolver charges the REQUIRED fee into feesPaid (overpay never inflates canonical state)
 
 // a Propose event carrying a CairnX record
 const P = (record, { height, pos = 1, proposer = A, expiresEpoch = 5000, paidTo = {} }) => ({
@@ -80,7 +80,7 @@ const DEPLOY = (ticker, owner = A, mint = "issuer", supply = "1000000", height =
 add("tmeta-issuer-sets", [DEPLOY("TKN"), P({ v: 1, t: "tmeta", ticker: "TKN", hash: "0x" + "ab".repeat(32) }, { height: NB, proposer: A })], NB + 10);
 add("tmeta-nonissuer-noop", [DEPLOY("TKN"), P({ v: 1, t: "tmeta", ticker: "TKN", hash: "0x" + "cd".repeat(32) }, { height: NB, proposer: C })], NB + 10);
 
-// ─────────────────────────── v2.0 (V20) claim grace / late-fill (the 69.csd class) — open CSD-priced token offer ───────────────────────────
+// ─────────────────────────── v2.0 (V20) claim grace / late-fill (the 69.csd class): open CSD-priced token offer ───────────────────────────
 const want = 4500000000n;                                  // 45 CSD
 const sellPay = (seller) => ({ [seller]: (want + makerRebate(want)).toString(), [TREASURY]: tradeFee(want, 150).toString() });
 // open offer: A sells 10 TKN for `want` CSD, no taker ⇒ V17 claim-to-fill lane
