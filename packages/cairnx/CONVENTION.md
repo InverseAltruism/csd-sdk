@@ -346,7 +346,7 @@ cap: ecosystem doc 16 §4; these are NOT in canonical state today.)*
   reorg. Treat sub-final fills accordingly.
 - **Spam/squatting:** every record costs ≥ 0.25 CSD (anchor fee floor): sybil-priced, like
   everything on this chain. Ticker squatting is priced, not prevented; names are
-  first-anchored-wins, same as 04-registry's golden rule.
+  first-anchored-wins (§9).
 
 ## 7. Wire-level summary for implementers
 

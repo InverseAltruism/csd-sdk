@@ -71,7 +71,7 @@ rides the same window.
 
 `packages/registry` is deleted from the workspace; 0.1.20 stays its last published version, and later publish windows drop it from their order.
 
-## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more except one content check) - input canon
+## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; published 2026-10-18, publish window 2; reject-more except one content check) - input canon
 
 Every change but one refuses input that was accepted before. The exception is `verifyContentBytes`, which
 now accepts the expected hash written without `0x`: it compares the same sha256 digest, so it removes a
@@ -120,7 +120,7 @@ and 20,000 generated fuzz sequences. `test:crosslang` output is identical and `a
 ledger citations that moved with the code. `scripts/check-consumer-pins.mjs` now counts `src/resolve/` as
 consensus surface. Consumers may stay on 0.2.0.
 
-## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
+## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; published 2026-10-18, publish window 2; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
 
 `bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
 is not read by `resolve()`. Its give and wantType legs, opt-in since 0.1.39, are now on unless the caller passes
