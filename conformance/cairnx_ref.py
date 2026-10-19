@@ -204,7 +204,7 @@ def is_safe_int(n):
     return isinstance(n, int) and not isinstance(n, bool) and abs(n) <= (2**53 - 1)
 
 # Read an externally-supplied paidTo/pt amount, fail-closed to 0 on any non-canonical value. MIRROR of
-# resolve.ts ptAmt: BigInt(x)/int(x) accepted DISJOINT non-decimal forms (BigInt("0x10")=16 vs int("0x10")
+# ptAmt (packages/cairnx/src/resolve/context.ts): BigInt(x)/int(x) accepted DISJOINT non-decimal forms (BigInt("0x10")=16 vs int("0x10")
 # throws) — a latent JS<->Python fork the fuzz never reached. Gate through the SAME AMOUNT_RE record amounts
 # use; byte-identical for every canonical scanner value, converges instead of value-vs-throw otherwise.
 def _pt(v):
@@ -810,7 +810,7 @@ def resolve(events, tip_height):
                 # PARITY: missing -> is_safe_int(None)=False -> reject (match JS Number.isSafeInteger(undefined)).
                 # deny(), not a bare continue: every other rung of this ladder records the DENIED fclaim, and an
                 # expires_epoch at or above 2^53 is a mineable u64, so this rung is on-chain reachable. Mirrors
-                # resolve.ts:631. This is NOT canonically free (the earlier note that it was is FALSE, measured):
+                # applyFclaim in packages/cairnx/src/resolve/market.ts. This is NOT canonically free (the earlier note that it was is FALSE, measured):
                 # below V29 the id de-dup at :411 does not run, so two fclaim events can carry the SAME id, and
                 # deny() OVERWRITES an earlier granted:True entry with granted:False. The fill router at :854
                 # reads fc["granted"], so a paid SCORE_FILL attesting that id routes to the linked offer under a
@@ -973,7 +973,7 @@ def resolve(events, tip_height):
                 if o.get("taker"): continue
                 if is_token_want(o["want"]): continue
                 if claim_held(o, ev["height"]): continue
-                # anti-recycle (KNOWN BOUND, identical to resolve.ts so NOT a fork): keys on being the LAST
+                # anti-recycle (KNOWN BOUND, identical to applyLegacyClaim in packages/cairnx/src/resolve/attest.ts, so NOT a fork): keys on being the LAST
                 # claimer, so a 2nd-address intervening claim resets it (A→B→A recycle). Bounded by
                 # MAX_ACTIVE_CLAIMS + payment-free claims → single-offer griefing, never value loss.
                 if o.get("claimedBy") == who and o.get("claimUntilHeight") is not None and ev["height"] < o["claimUntilHeight"] + claim_grace(o) + CLAIM_COOLDOWN_BLOCKS: continue  # anti-recycle (from hold end)
@@ -1073,6 +1073,17 @@ def record_keys_ok(rec):
     if allowed is None: return True
     return set(rec.keys()) <= allowed
 
+def _parse_full_one(i, r):
+    """One parseFull verdict. A record canonical_json or payload_hash refuses (a float, a lone surrogate, too
+    deep) has no canonical uri, so it is rejected and logged, like an unparseable record in resolve; the rest
+    of the batch still runs."""
+    try:
+        uri, ph = canonical_json(r), payload_hash(r)
+    except ValueError as e:
+        print(f"parseFull[{i}]: no canonical form ({e}); rejected", file=sys.stderr)
+        return False
+    return parse_record(uri, ph) is not None
+
 # ── CLI: read a JSON job from stdin, emit results for crosscheck.mjs to diff ──
 def main():
     job = json.load(sys.stdin)
@@ -1093,7 +1104,7 @@ def main():
     if "parseFull" in job:
         # FULL parse_record cross-check (canonical uri + hash + the per-record schema) — stronger than
         # the `records` job, which uses the simplified onlyKeys gate. Used by the nprofile vectors.
-        out["parseFull"] = [parse_record(canonical_json(r), payload_hash(r)) is not None for r in job["parseFull"]]
+        out["parseFull"] = [_parse_full_one(i, r) for i, r in enumerate(job["parseFull"])]
     if "consts" in job:
         # H1/M5: expose the gate heights + key consensus constants so the JS side can assert PARITY
         # (a V19_HEIGHT or other gate drift between impls is otherwise invisible to scenarios that

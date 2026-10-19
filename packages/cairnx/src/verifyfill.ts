@@ -85,7 +85,7 @@ function bindRecord(ev: ProvenPropose): CairnXRecord | null {
 
 // ── replayLiveHold: the MANDATORY client-side GRANT REPLAY ─────────────────────────────────────────────
 // Re-derive the ENTIRE fclaim grant + hold outcome from the merkle-proven events with the AUTHORITATIVE
-// resolver (the same ladder resolve.ts applies: offer open + CSD + !taker + ee bounds + no prior hold +
+// resolver (the same ladder `applyFclaim` in src/resolve/market.ts applies: offer open + CSD + !taker + ee bounds + no prior hold +
 // cooldown + MAX_ACTIVE_CLAIMS, plus Correction 1/2, last-write-wins claimTxid, and cancels/expiry).
 // Running resolve() over the proven set IS the strongest mirror of the ladder (zero drift), and NONE of it
 // trusts a served "granted" flag. `granted` = the fclaim is materialized in state.fclaims (GRANTED, not
@@ -294,7 +294,7 @@ export async function verifyFillSpv(
 //
 // B6a (REBIND W2/W7) fields, populated by provenOfferTerms and compared by bindOfferTerms's give and wantType
 // legs (on by default; a caller that opts out of both gets the pre-B6 verdict and these are ignored):
-//   giveTicker/giveAmount/giveName - the offer's give, copied VERBATIM as strings (resolve.ts copies the
+//   giveTicker/giveAmount/giveName - the offer's give, copied VERBATIM as strings (`applyOffer` in src/resolve/market.ts copies the
 //     record's give verbatim at creation and tracks `delivered` separately, so a string compare against the
 //     RECORD is exact and partial-fill-safe; a deep object compare against a served OfferState is NOT, and
 //     must never be written here).
@@ -317,7 +317,7 @@ export type MintedProvenOfferTerms = ProvenOfferTerms & { readonly [PROVEN_TERMS
  *  hand-built terms are exactly the W2 defect class the brand exists to make unrepresentable. */
 export const unsafeMintProvenOfferTerms = (t: ProvenOfferTerms): MintedProvenOfferTerms => t as MintedProvenOfferTerms;
 
-// The treasury fee rate the resolver STAMPS on an offer at its creation height (resolve.ts: v11 ? (v16 ?
+// The treasury fee rate the resolver STAMPS on an offer at its creation height (`applyOffer` in src/resolve/market.ts: v11 ? (v16 ?
 // FEE_BPS_V16 : FEE_BPS) : 0). requiredFillOutputs sizes the treasury fee from offer.feeBps, so binding a
 // served feeBps to feeBpsAt(the MERKLE-PROVEN creation height) stops a lying resolver deflating it. Single-
 // sourced here so the wallet fillspv, the site swapguard and any dApp bind the SAME rate.
@@ -397,7 +397,7 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?:
   }
   if (opts?.give !== false) {
     const g = o?.give;
-    // per-field EXPLICIT presence + verbatim string equality (never a deep object compare: resolve.ts copies
+    // per-field EXPLICIT presence + verbatim string equality (never a deep object compare: `applyOffer` copies
     // the record's give verbatim and partial fills track `delivered` separately - the RECORD is the truth).
     if ((g?.ticker !== undefined && g?.ticker !== null) !== (t.giveTicker !== undefined) || (t.giveTicker !== undefined && String(g?.ticker) !== t.giveTicker)) return true; // MUTATE_LEG_GIVETICKER
     if ((g?.amount !== undefined && g?.amount !== null) !== (t.giveAmount !== undefined) || (t.giveAmount !== undefined && String(g?.amount) !== t.giveAmount)) return true; // MUTATE_LEG_GIVEAMOUNT

@@ -22,6 +22,7 @@ try {
   write(join(sdk, "scripts/check-consumer-pins.mjs"), "");
   copyFileSync(SCRIPT, join(sdk, "scripts/check-consumer-pins.mjs"));
   for (const f of ["resolve", "records", "types", "preflight"]) write(join(sdk, `packages/cairnx/src/${f}.ts`), `export const ${f} = 1;\n`);
+  write(join(sdk, "packages/cairnx/src/resolve/market.ts"), "export const market = 1;\n");
   setCore("1.0.0");
   git("init", "-q"); git("add", "-A"); git("commit", "-q", "-m", "1.0.0"); git("tag", "cairnx-core-1.0.0");
   write(join(sdk, "packages/cairnx/src/resolve.ts"), "export const resolve = 2;\n");
@@ -52,6 +53,15 @@ try {
   pin("cairn-sdk", "1.2.0"); pin("cairnx", "1.1.0");
   r = run();
   ok("strict: any lag fails", r.code === 1 && /cairnx svc pins cairnx-core 1\.1\.0 != canonical 1\.2\.0: re-pin/.test(r.out));
+
+  // resolve() dispatches into packages/cairnx/src/resolve/*.ts, so a change there alone is consensus drift.
+  git("tag", "cairnx-core-1.2.0");
+  write(join(sdk, "packages/cairnx/src/resolve/market.ts"), "export const market = 2;\n");
+  setCore("1.3.0");
+  git("commit", "-qam", "1.3.0");
+  pin("cairnx", "1.3.0"); pin("cairn-sdk", "1.2.0");
+  r = run();
+  ok("graded: a lag across a resolve/ handler change fails", r.code === 1 && /CONSENSUS-SURFACE DRIFT/.test(r.out) && /resolve\/market\.ts/.test(r.out));
 } finally {
   rmSync(parent, { recursive: true, force: true });
 }

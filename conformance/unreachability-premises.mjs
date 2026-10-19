@@ -1,6 +1,6 @@
 // unreachability-premises.mjs (B6 rider; the R3 deferral from the B0a batch record, re-routed docs -> test).
 //
-// The v2.8 lease-lapse freeze (resolve.ts voidOpenNameOffers, "a name-offer carrying a live fclaim hold is
+// The v2.8 lease-lapse freeze (`voidOpenNameOffers`, packages/cairnx/src/resolve/context.ts, "a name-offer carrying a live fclaim hold is
 // FROZEN") was argued STRUCTURALLY UNREACHABLE by the B0a gate: a held name-offer can never coexist with a
 // lapsed/recapturable name. That argument is a chain of three premises, each enforced by a named guard:
 //   P1  the v1.5 lease guard: a name offer whose lease ends inside the offer window is REJECTED at

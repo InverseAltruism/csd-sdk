@@ -181,7 +181,7 @@ Half the incidents reduce to the client acting against state it cannot see or ve
 false-confirm, the V26 recapture reservation being invisible, the viaFill caution). For each
 fee-bearing wallet or UI action, list the state the resolver checks that the client cannot currently
 observe and verify. Each gap is a candidate finding. Concretely, walk every state read on a
-fee-or-validity path in `packages/cairnx/src/resolve.ts` and map it to a client-observable source (an
+fee-or-validity path in `packages/cairnx/src/resolve.ts` and its handlers in `packages/cairnx/src/resolve/` and map it to a client-observable source (an
 endpoint plus an SPV verify path). Any unmapped read is a latent burn or false-confirm. This is a
 read-only review, not new guard code, and it is the single most useful lens because it is the
 generator of the whole class.

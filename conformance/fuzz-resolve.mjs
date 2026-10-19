@@ -13,7 +13,8 @@ let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (d
 // intent is all a counter can capture here.
 // They are printed under a `gen:` prefix and deliberately NOT used as behavioural assertions: a
 // generation-side counter that is asserted is a test that cannot fail, which is the exact defect class this
-// batch exists to remove. Behavioural coverage of the deny ladder and of resolve.ts:799 is carried by the
+// batch exists to remove. Behavioural coverage of the deny ladder and of the legacy-claim rejection in `applyLegacyClaim`
+// (packages/cairnx/src/resolve/attest.ts) is carried by the
 // deterministic self-check at the bottom (which drives real sequences through resolve) and by the
 // state-derived cov.* counters. Caught at the B0a gate by Opus-B (B0a-R1/R2) after the first cut asserted
 // these; the PoC changed one token so the resolver never reached :799 while the counter still read 27.
@@ -202,8 +203,8 @@ function openFlow(h0) {
 // lapseFlow's far-future re-claims) but every one of those events was a `propose`, so not one attest ever
 // reached the gate. That made the fork guard on every later consensus change vacuous for V28.
 // This flow drives: grant, the fill routed through the fclaim txid, Correction 1 (an offer-txid fill during
-// a live hold must be rejected), the post-holdEnd lapse, and the legacy SCORE_CLAIM that resolve.ts:799
-// rejects outright from V28. Heights are forced around the gate.
+// a live hold must be rejected), the post-holdEnd lapse, and the legacy SCORE_CLAIM that `applyLegacyClaim`
+// (packages/cairnx/src/resolve/attest.ts) rejects outright from V28. Heights are forced around the gate.
 function fclaimFlow(h0) {
   const ev = [];
   const D = "0x" + "f0".repeat(20), B = "0x" + "fb".repeat(20), C = "0x" + "fc".repeat(20);
@@ -292,6 +293,44 @@ function regFlow(h0) {
   return ev;
 }
 
+// v2.6 SEALED RECAPTURE: a name registered and paid below V25 lapses past its term and grace; a recapturer
+// commits, reveals payment-free (a reservation in the internal recaptures map, the lapsed record untouched) and
+// pays the decaying premium at a winner-only nfinalize. lapseFlow's far-future reclaim has no salt, so at >= V26
+// it is rejected before this path (recaptureFinalized read 0 over 20,000 sequences without this flow). Sometimes a second recapturer contests, a reveal or the
+// finalize misses its window, or the premium is one unit short, so the accept path and its rejects both run.
+const RC_D = "0x" + "d7".repeat(20), RC_E = "0x" + "e7".repeat(20), RC_F = "0x" + "f7".repeat(20);
+const leaseEnd = (regH) => R.epochOf(regH) + R.NAME_TERM_EPOCHS;                  // paidThrough of a pre-V25 registration
+const recapturePremium = (nm, regH, h) => R.expiredClaimFee(nm, R.epochOf(h) - (leaseEnd(regH) + R.NAME_GRACE_EPOCHS), h);
+function recaptureFlow() {
+  const NM = "rc" + ri(100, 9999);
+  const mkSalt = (p) => p + Array.from({ length: ri(14, 28) }, () => "0123456789abcdef"[ri(0, 15)]).join("");
+  const sE = mkSalt("e7"), sF = mkSalt("f7");
+  const ev = [];
+  const push = (who, rec, h, paid) => { if (rec) ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: ri(0, 3), expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} }); };
+  const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+  push(RC_D, validOr(() => R.nameClaim({ name: NM })), regH, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+  // first height of the first lapsed epoch, plus a point inside the premium's decay window
+  const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN + ri(0, R.NAME_PREMIUM_DECAY_EPOCHS * R.EPOCH_LEN);
+  push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), cEh, {});
+  const contested = chance(0.4);
+  const cFh = contested ? (chance(0.5) ? cEh - ri(1, 3) : cEh + ri(0, 2)) : null;   // F earlier => F wins the reservation
+  if (contested) push(RC_F, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), cFh, {});
+  push(RC_E, validOr(() => R.nameClaim({ name: NM, salt: sE })), cEh + ri(1, chance(0.85) ? R.REG_COMMIT_MAX_BLOCKS : R.REG_COMMIT_MAX_BLOCKS + 4), {});
+  if (contested) push(RC_F, validOr(() => R.nameClaim({ name: NM, salt: sF })), cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS), {});
+  const fin = (who, s, ch) => {                                     // 0-2 in-window, 3 too early, 4 expired
+    const mode = ri(0, 4);
+    const hf = mode === 3 ? ch + ri(0, R.REG_COMMIT_MAX_BLOCKS)
+             : mode === 4 ? ch + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS + ri(1, 4)
+             : ch + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS);
+    const need = recapturePremium(NM, regH, hf);
+    const fee = chance(0.2) ? need - 1n : need;                     // sometimes one unit short -> reject
+    push(who, validOr(() => R.nameFinalize({ name: NM, salt: s })), hf, { [TREAS]: fee.toString() });
+  };
+  if (chance(0.9)) fin(RC_E, sE, cEh);
+  if (contested && chance(0.6)) fin(RC_F, sF, cFh);
+  return ev;
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -301,6 +340,7 @@ function genSeq() {
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.13)) { const e = regFlow(ri(R.V25_HEIGHT - 20, R.V25_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.16)) { const e = fclaimFlow(ri(R.V28_HEIGHT - 40, R.V28_HEIGHT + 2500)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 120) }; }
+  if (chance(0.12)) { const e = recaptureFlow(); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
   const len = ri(1, 16);
   // REBIND B0a: the band used to be ri(29810, V23+1000), an arithmetic maximum of 59,400 once the
@@ -375,7 +415,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -397,6 +437,8 @@ for (let i = 0; i < N; i++) {
     if (js[i].includes('"claimTxid":')) cov.fclaimHeld++;
     if (st.offers && Object.values(st.offers).some((o) => o.claimTxid && o.status === "filled")) cov.fclaimFilled++;
     if (Number(st.tipHeight) >= R.V28_HEIGHT) cov.aboveV28++;
+    // a recapturer owns a name only through a v2.6 recapture nfinalize: no flow registers or transfers one to them
+    if (st.names && Object.values(st.names).some((n) => n && (n.owner === RC_E || n.owner === RC_F) && !n.pending && !n.expired)) cov.recaptureFinalized++;
   } catch { /* JS state always parses */ }
   if (js[i] !== pj[i]) {
     diverged++;
@@ -453,7 +495,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
 }
 // V28 self-check (REBIND B0a). The headline defect this batch closes: before it, NOT ONE attest in 20,000
 // generated sequences ever reached V28, so every v2.8 branch, grant, the fclaim fill routing, Correction 1,
-// and the legacy-SCORE_CLAIM rejection at resolve.ts:799, was unfuzzed, while V28 is the gate this
+// and the legacy-SCORE_CLAIM rejection in `applyLegacyClaim` (packages/cairnx/src/resolve/attest.ts), was unfuzzed, while V28 is the gate this
 // differential exists to guard. Deterministic, seed-independent, and it asserts the branches are REACHED,
 // not merely that the counters moved.
 {
@@ -471,12 +513,12 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   const fill = { kind: "attest", txid: nid(), proposalId: g.id, attester: B, score: 100, confidence: 0, height: holdEnd - 1, pos: 0, paidTo: pt };
   const held = resolve([dep, mnt, off, legacy, g], base + 5).offers[off.id];
   if (held.claimTxid !== g.id || held.claimedBy !== B.toLowerCase()) { console.error(`✗ v28 self-check FAILED, fclaim did not grant the hold (claimTxid=${held.claimTxid})`); process.exit(1); }
-  // resolve.ts:799 rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
+  // `applyLegacyClaim` (packages/cairnx/src/resolve/attest.ts) rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
   // the gate" would also pass if the attest were simply malformed or aimed at nothing, so pair it with a
   // BELOW-gate control built the same way: the identical claim must be GRANTED there. The pair is what makes
   // the gate the cause. (Opus-B, B0a-R2: an assertion that passes on absence is not an assertion.)
   const legOnly = resolve([dep, mnt, off, legacy], base + 5).offers[off.id];
-  if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; resolve.ts:799 should reject it"); process.exit(1); }
+  if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; src/resolve/attest.ts applyAttest should reject it"); process.exit(1); }
   {
     const lb = R.V28_HEIGHT - 60;   // comfortably below the gate, well above V17 where the claim lane opened
     const depL = P(R.deploy({ ticker: "FCHL", decimals: 0, supply: "1000000", mint: "issuer" }), D, lb - 4, { [TREAS]: String(R.DEPLOY_FEE) });
@@ -493,7 +535,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
     // Found at the B0a re-gate by Opus-B (M4).
     const legAcross = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT + 40, pos: 0, paidTo: {} };
     const across = resolve([depL, mntL, offL, legAcross], R.V28_HEIGHT + 60).offers[offL.id];
-    if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); resolve.ts:799 must key on the CLAIM's height, not the offer's`); process.exit(1); }
+    if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); src/resolve/attest.ts applyAttest must key on the CLAIM's height, not the offer's`); process.exit(1); }
     // Exact-boundary pin: nothing else in the suite probes height === V28_HEIGHT itself, so a `>` for `>=`
     // slip is invisible. The gate is inclusive, so a claim AT the gate must already be rejected (Opus-B, M3).
     const legAt = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT, pos: 0, paidTo: {} };
@@ -509,6 +551,29 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   if (!cov.aboveV28) { console.error("✗ aboveV28 coverage is 0, no sequence resolved at or above the V28 gate"); process.exit(1); }
   if (!cov.fclaimHeld) { console.error("✗ fclaimHeld coverage is 0, the fuzz never granted a v2.8 hold"); process.exit(1); }
   if (!cov.fclaimFilled) { console.error("✗ fclaimFilled coverage is 0, the fuzz never routed a fill through an fclaim txid"); process.exit(1); }
-  console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (resolve.ts:799), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
+  console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (src/resolve/attest.ts applyAttest), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
+}
+// V26 self-check: commit -> payment-free reveal -> nfinalize on a LAPSED name hands it to the recapturer as a
+// normal fresh lease, and the premium is paid exactly once. The control (the same sequence without the finalize)
+// leaves the lapsed record untouched, so the finalize is what moved the name. Deterministic, seed-independent.
+{
+  const NM = "rcchk", salt = "e7e7e7e7e7e7e7e7e7e7", regH = R.V25_HEIGHT - 100;
+  const cH = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN, hf = cH + R.REG_COMMIT_MAX_BLOCKS + 2;
+  const mk = (who, rec, h, paid) => ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} });
+  const regFee = R.nameRegFee(NM, regH), premium = recapturePremium(NM, regH, hf);
+  const seq = [
+    mk(RC_D, R.nameClaim({ name: NM }), regH, { [TREAS]: regFee.toString() }),
+    mk(RC_E, R.nameCommitRecord({ commit: R.nameCommit(NM, salt, RC_E) }), cH),
+    mk(RC_E, R.nameClaim({ name: NM, salt }), cH + 1),
+    mk(RC_E, R.nameFinalize({ name: NM, salt }), hf, { [TREAS]: premium.toString() }),
+  ];
+  const st = resolve(seq, hf + 3), n = st.names[NM];
+  if (!n || n.owner !== RC_E || n.pending || n.viaFill || n.expired || BigInt(st.feesPaid) !== regFee + premium || premium <= regFee) {
+    console.error(`✗ v26 recapture self-check FAILED, the finalize did not hand over the lapsed name (owner=${n && n.owner}, expired=${n && n.expired}, feesPaid=${st.feesPaid}, premium=${premium})`); process.exit(1);
+  }
+  const ctl = resolve(seq.slice(0, 3), cH + 3).names[NM];
+  if (!ctl || ctl.owner !== RC_D || !ctl.expired) { console.error(`✗ v26 recapture self-check FAILED, the reservation alone changed the lapsed record (owner=${ctl && ctl.owner})`); process.exit(1); }
+  if (!cov.recaptureFinalized) { console.error("✗ recaptureFinalized coverage is 0, the fuzz never reached the v2.6 sealed-recapture accept path"); process.exit(1); }
+  console.log(`✓ v26 recapture self-check: commit→payment-free reveal→nfinalize hands a lapsed name to the recapturer (premium once, not viaFill); fuzz finalized ${cov.recaptureFinalized} recapture(s)`);
 }
 process.exit(diverged ? 1 : 0);

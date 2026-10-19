@@ -284,7 +284,7 @@ function corpus() {
   }
 
   // 8b. REG-1 REGRESSION PIN (P75-4). An fclaim GRANT whose expiresEpoch is 2^53 is a MINEABLE on-chain u64
-  //     with no exact JS representation, so the safe-integer rung at resolve.ts denies it. That rung MUST use
+  //     with no exact JS representation, so the safe-integer rung in `applyFclaim` (packages/cairnx/src/resolve/market.ts) denies it. That rung MUST use
   //     deny(), which records the DENIED fclaim in the fclaims map; the map is what the fill lane reads to flag
   //     the buyer's subsequent PAID SCORE_FILL as a pay-without-delivery burn. Regress that one rung to the
   //     pre-REG-1 shape (a bare note() + continue) and the map entry never exists, the paid fill goes silent,

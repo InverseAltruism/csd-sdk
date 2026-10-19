@@ -260,7 +260,7 @@ v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (4
 
 ### Package layout
 
-`src/resolve.ts` (the ledger) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
+`src/resolve.ts` + `src/resolve/` (the ledger: the replay loop and its per-record handlers) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
 height-gated client selectors) · `src/client.ts` (reorg-safety helpers a payer applies) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /

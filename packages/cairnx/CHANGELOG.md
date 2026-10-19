@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Internal split, no behaviour change: `src/resolve.ts` keeps the replay loop and dispatches each record to
+  handlers in `src/resolve/` (tokens, names, market, attest) over one shared state context. The exported names
+  and their types are unchanged, and `resolve()` returns the same state, event log included, for the same input.
+  Every consumer may stay on 0.2.0.
+
 ## 0.2.0
 
 Breaking for callers that hand-build `ProvenOfferTerms` or rely on the old two-argument verdict; see Migration.

@@ -18,8 +18,8 @@ const canonical = JSON.parse(readFileSync(join(SDK, "packages/cairnx/package.jso
 // consumers that pin cairnx-core directly via npm (the bundled consumers, cairn UI and cairn-wallet, carry a
 // vendored esbuild instead and are guarded by their own check-vendor-fresh + PROVENANCE, not a pin).
 // Tiers (Plans/68 D3): "strict" = any pin mismatch is fatal (a live replayer must not lag at all). "graded" = a lag is fatal ONLY when the pinned-version..canonical diff touches the
-// consensus surface (packages/cairnx/src/{resolve,records,types}.ts, the bytes a replayer derives state
-// from); a helpers-only lag (preflight/primary/client-selector logic) is an ADVISORY nudge, because the
+// consensus surface (packages/cairnx/src/{resolve,records,types}.ts and the resolve/ handlers, the bytes a
+// replayer derives state from); a helpers-only lag (preflight/primary/client-selector logic) is an ADVISORY nudge, because the
 // lagging consumer still computes byte-identical canonical state. Grading needs the cairnx-core-<ver> tag
 // to compute the diff; an unknown pinned version fails CLOSED (fatal) rather than guessing.
 const CONSUMERS = [
@@ -29,7 +29,7 @@ const CONSUMERS = [
 ];
 
 const { execSync } = await import("node:child_process");
-const CONSENSUS_SURFACE = ["packages/cairnx/src/resolve.ts", "packages/cairnx/src/records.ts", "packages/cairnx/src/types.ts"];
+const CONSENSUS_SURFACE = ["packages/cairnx/src/resolve.ts", "packages/cairnx/src/resolve", "packages/cairnx/src/records.ts", "packages/cairnx/src/types.ts"];
 /** "" when ver..HEAD leaves the consensus surface untouched; a --stat summary when it drifted; null when unknowable. */
 function consensusDrift(ver) {
   // ver comes from a sibling package.json (trusted), but guard the shape anyway before it reaches a
