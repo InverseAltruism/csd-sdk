@@ -1,9 +1,9 @@
 // Quickstart for the Compute Substrate SDK. Run against a node or the Cairn proxy:
 //   CSD_RPC=http://127.0.0.1:8790 node examples/quickstart.mjs
 //   CSD_RPC=https://cairn-substrate.com/api/rpc node examples/quickstart.mjs
-import { txid, sighash, payloadHash } from "@inversealtruism/csd-codec";
+import { payloadHash } from "@inversealtruism/csd-codec";
 import { keygen } from "@inversealtruism/csd-crypto";
-import { buildSend, buildPropose } from "@inversealtruism/csd-tx";
+import { buildSend } from "@inversealtruism/csd-tx";
 import { CsdClient } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 
@@ -25,15 +25,15 @@ const send = buildSend({
 console.log("built tx:", send.ok ? send.txid : send.error);
 // To broadcast a REAL one: const r = await client.submit(send.nodeJson)
 
-// 3) Content addressing — the on-chain payload_hash of an off-chain record
+// 3) Content addressing: the on-chain payload_hash of an off-chain record
 console.log("payload_hash:", payloadHash({ v: 1, title: "hello CSD", body: "gm" }));
 
 // 4) Read the chain
 const tip = await client.tip().catch(() => null);
-if (!tip) { console.log(`(no node at ${RPC} — skipping live steps)`); process.exit(0); }
+if (!tip) { console.log(`(no node at ${RPC}; skipping live steps)`); process.exit(0); }
 console.log("tip height:", tip.height);
 
-// 5) Light client — verify the chain yourself (PoW + LWMA + chainwork), no trust in the RPC.
+// 5) Light client: verify the chain yourself (PoW + LWMA + chainwork), no trust in the RPC.
 //    From a recent checkpoint so you don't fetch all of history:
 const light = new LightClient({ client });
 const cpH = Math.max(46, tip.height - 20);
@@ -51,4 +51,4 @@ if (blk.txs[0]) {
 
 // 7) Balances are honestly flagged (a header chain can't prove non-spend)
 const bal = await light.balance(me.addr);
-console.log("balance trustLevel:", bal.trustLevel, "—", bal.note);
+console.log("balance trustLevel:", bal.trustLevel, "-", bal.note);

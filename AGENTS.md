@@ -16,7 +16,7 @@ This repo follows the maintainers' cross-repo engineering standard (a private do
 - Comments state constraints and non-obvious invariants, not history or audit IDs. Removing code needs the same evidence as adding it.
 - Docs: this file holds what stays true (no version tables, no status snapshots; versions live in `package.json` and tags, live state comes from a live query). Dates are absolute, no em dashes.
 
-Known deviations (checked 2026-10-11, not exhaustive): the root has no `lint` script; `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
+Known deviations (checked 2026-10-11, not exhaustive): `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/test/primary.test.ts:63` reads the sibling cairnx fixture when present; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
 
 ## The stack around it
 
@@ -67,7 +67,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 
 1. Consumers of this repo run live services, so consensus changes are the most dangerous edits in the whole ecosystem: write up the design and get maintainer sign-off first, always.
 2. Security fixes must not regress UX (no hot-path latency/declines; warn over hard-block).
-3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing.
+3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing (`pnpm check:dashes-paths` checks every tracked doc in CI).
 4. Run `pnpm run audit:all` before merging ANY change to packages/cairnx/src/* or a new gate. test:crosslang only proves the two impls AGREE; they can agree and both be unsound.
 5. Releases are maintainer-only: tags and `pnpm publish` happen on maintainer say-so, never speculatively.
 
@@ -77,6 +77,8 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 pnpm install                     # pnpm@10.32.1 pinned
 pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import sibling dists)
 pnpm typecheck                   # tsc over packages/*/src, packages/*/test and test/ (strict, noUncheckedIndexedAccess)
+pnpm lint                        # Biome, four rules: unused imports, empty blocks, focused tests, @ts-ignore
+pnpm check:dashes-paths          # em dashes in tracked docs, sibling-checkout paths in code (exceptions listed in the script)
 pnpm -r test                     # per-package suites
 pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
@@ -95,7 +97,7 @@ Gotchas: pnpm blocks esbuild postinstall unless onlyBuiltDependencies (already s
 - Root e2e (independent oracles, never self-grading): test/oracle.test.ts (real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), edge.test.ts, security.test.ts (hostile RPC/counterparty).
 - Cross-language differential (CI fork gate): crosscheck.mjs + crosscheck-regex.mjs (raw regex differential, the C1 class) + crosscheck-resolve.mjs + replay-corpus-crosslang.mjs (the committed on-chain corpus at every pinned height) + crosscheck-siwc.mjs + nprofile-crosslang.mjs + fuzz-resolve.mjs 1500 + one straddle test per gate (v20-v27). Real-chain co-sign conformance (live co-sign and vendor-parity tests) lives downstream in the consumer repos.
 - Money-safety conformance (REPORT-ONLY: CI runs them through `audit:all`, but a finding never fails the build; standing directive is to run and GROW them): audit:invariants (read the COVERAGE line, not just violations; widen fuel before trusting a clean run), audit:money-safety (a burn = rejected resolve().events entry whose paidTo pays the treasury), audit:race (P1 treasury-burn / P2 displacement-burn / P3 payment-without-delivery / P4 byte-identity; run only on a SETTLED tree, mid-rebuild dist reads as fake divergence).
-- CI: install --frozen-lockfile, typecheck, the consensus citation check, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it). A `secrets` job runs gitleaks over the full history (release binary, sha256 checked). Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment.
+- CI: install --frozen-lockfile, typecheck, lint (blocking; `test/lint-config.test.ts` pins that biome.json enables exactly the four rules), the consensus citation check, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it). A `secrets` job runs gitleaks over the full history (release binary, sha256 checked). Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment; the workflow token is read-only and no checkout keeps credentials (`test/ci-workflow.test.ts` pins this shape).
 
 ## Release and publish
 

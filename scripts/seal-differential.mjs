@@ -27,7 +27,7 @@
 //
 // Usage: node scripts/seal-differential.mjs [baselineRef]     (default: the 0.1.38 release commit)
 import { spawnSync } from "node:child_process";
-import { readFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";

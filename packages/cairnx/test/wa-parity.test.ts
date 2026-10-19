@@ -21,7 +21,7 @@ import path from "node:path";
 import { payloadHash } from "@inversealtruism/csd-codec";
 import {
   deploy, mint, offer, fclaim, offerCancelAll,
-  verifyFillSpv, resolve,
+  verifyFillSpv,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, FILL_TIP_MARGIN,
   FEE_BPS_V16, TREASURY_ADDR, DEPLOY_FEE, epochOf, fclaimHoldEnd,
 } from "../src/index.js";

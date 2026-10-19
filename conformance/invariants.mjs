@@ -1,4 +1,4 @@
-// LEDGER-SOUNDNESS INVARIANTS — a general, feature-agnostic correctness oracle for the CairnX resolver.
+// LEDGER-SOUNDNESS INVARIANTS: a general, feature-agnostic correctness oracle for the CairnX resolver.
 //
 // money-safety.mjs targets ONE failure mode (a fee anchored then rejected) and the fixtures encode KNOWN
 // incidents. This file is the general tool: properties that must hold for EVERY resolved state regardless
@@ -18,9 +18,9 @@
 //        (pipe the real on-chain event stream here, or the fuzz corpus, for coverage far beyond the built-in fuel)
 //
 // Report-only. Wraps the compiled resolver; changes nothing. Exit 1 ONLY on --selftest if an invariant fails
-// to fire (the checker is broken) — a real-corpus violation is a finding printed for triage, not a build break.
+// to fire (the checker is broken); a real-corpus violation is a finding printed for triage, not a build break.
 
-import { resolve, TREASURY_ADDR, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
+import { resolve, TREASURY_ADDR, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
 import { pathToFileURL } from "node:url";
 
 const T = TREASURY_ADDR;
@@ -306,11 +306,11 @@ function runCorpus(N, seed) {
     if ((st.events || []).some((l) => l.ok && l.height >= V28_HEIGHT)) cov.v28plus++;   // an APPLIED event in the live V28 regime
     if (violations.length) { scenariosWithViol++; for (const vln of violations) { const key = vln.split(":")[0]; hits.set(key, (hits.get(key) || 0) + 1); if ((hits.get("__samples_" + key) || []).length === undefined) hits.set("__samples_" + key, []); const sm = hits.get("__samples_" + key); if (sm.length < 3) sm.push({ vln, seed: SEED }); } }
   }
-  console.log(`LEDGER-SOUNDNESS INVARIANTS — ${N} random scenarios (seed ${seed >>> 0})  [report-only]\n`);
+  console.log(`LEDGER-SOUNDNESS INVARIANTS: ${N} random scenarios (seed ${seed >>> 0})  [report-only]\n`);
   console.log(`coverage reached: ${JSON.stringify(cov)}\n`);
-  if (scenariosWithViol === 0) { console.log("✓ 0 invariant violations — the resolver stayed ledger-sound across every scenario the fuel reached."); process.exit(0); }
+  if (scenariosWithViol === 0) { console.log("✓ 0 invariant violations; the resolver stayed ledger-sound across every scenario the fuel reached."); process.exit(0); }
   for (const [k, n] of hits) { if (k.startsWith("__samples_")) continue; console.log(`✗ ${k}: ${n} violation(s)`); for (const sm of hits.get("__samples_" + k) || []) console.log(`    ${sm.vln}`); }
-  console.log(`\n${scenariosWithViol}/${N} scenarios violated an invariant. Reproduce with the printed seed. (A real violation is a resolver soundness bug or a too-strict invariant — investigate before trusting.)`);
+  console.log(`\n${scenariosWithViol}/${N} scenarios violated an invariant. Reproduce with the printed seed. (A real violation is a resolver soundness bug or a too-strict invariant; investigate before trusting.)`);
   process.exit(0);
 }
 

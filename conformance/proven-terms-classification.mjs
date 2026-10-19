@@ -11,7 +11,7 @@
 //
 // Also fails on a STALE classification (a listed field the resolver no longer produces), so the list
 // cannot rot into false confidence.
-import { resolve, deploy, mint, offer, bid, fclaim, requiredFillOutputs, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee, REG_COMMIT_MAX_BLOCKS, SCORE_FILL, V28_HEIGHT, EPOCH_LEN, DEPLOY_FEE, TREASURY_ADDR, epochOf } from "../packages/cairnx/dist/index.js";
+import { resolve, deploy, mint, offer, bid, fclaim, requiredFillOutputs, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee, REG_COMMIT_MAX_BLOCKS, SCORE_FILL, V28_HEIGHT, DEPLOY_FEE, TREASURY_ADDR, epochOf } from "../packages/cairnx/dist/index.js";
 
 const BOUND = {
   height: "bindOfferTerms height leg", feeBps: "bindOfferTerms feeBps leg (= feeBpsAt(proven height))",
