@@ -78,7 +78,7 @@ pnpm install                     # pnpm@10.32.1 pinned
 pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import sibling dists)
 pnpm typecheck                   # tsc over packages/*/src, packages/*/test and test/ (strict, noUncheckedIndexedAccess)
 pnpm lint                        # Biome, four rules: unused imports, empty blocks, focused tests, @ts-ignore
-pnpm check:dashes-paths          # em dashes in tracked docs, sibling-checkout paths in code (exceptions listed in the script)
+pnpm check:dashes-paths          # em dashes in tracked docs, sibling-checkout paths in code (exceptions in scripts/dashes-exceptions.json)
 pnpm -r test                     # per-package suites
 pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate

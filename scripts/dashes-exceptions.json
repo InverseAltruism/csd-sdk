@@ -1,0 +1,10 @@
+{
+  "dashes": {
+    "packages/cairnx/CONVENTION.md": "the normative convention (ships in cairnx-core); its em-dash pass is Plan 85 item 13d.2",
+    "packages/cairnx/test/vectors/VECTORS.md": "a B6-era pin: scripts/seal-differential.mjs requires it unchanged since the 0.1.38 baseline"
+  },
+  "paths": {
+    "packages/cairnx/test/primary.test.ts": "byte-parity tripwire against the canonical cairnx fixture, read only when that sibling checkout exists; the vendored copy is the one the test needs",
+    "test/check-dashes-paths.test.ts": "fixtures for this check"
+  }
+}
