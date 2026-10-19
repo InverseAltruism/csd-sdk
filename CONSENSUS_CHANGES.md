@@ -132,14 +132,14 @@ input the baseline refused, refuse each give and want-type lie, and accept hones
 version moves (0.2.0) because hand-built terms with the two-argument call are now a compile error in
 TypeScript and a refusal at runtime; `packages/cairnx/CHANGELOG.md` lists the consumers that move with it.
 
-## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; unreleased; no consensus-surface change)
+## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; published 2026-10-14 in csd-codec 0.1.17 and csd-light 0.1.22, publish window 1; no consensus-surface change)
 
 csd-codec adds `deserializeHeader` (the inverse of `serializeHeader`) and `HEADER_BYTES`; csd-light adds
 `verifyLinkedRecords`, `LightClient.fromRecords` and `toRecords`. No byte, LWMA, chainwork, PoW or merkle change:
 `fromRecords` verifies through the existing `seedTrusted` and `ingest` checks, unchanged, and equals
 `fromSnapshot` on the fixture.
 
-## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; STAGED, not published; no consensus-surface change) - shared helpers in one home
+## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; published 2026-10-14, publish window 1; no consensus-surface change) - shared helpers in one home
 
 `epochOf` moved into `csd-codec` next to `EPOCH_LEN` (same formula); cairnx-core and csd-registry import it
 instead of defining it. `csd-crypto` imports `strip0x`, `hb` and `hx` from codec instead of its own identical
