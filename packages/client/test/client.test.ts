@@ -12,7 +12,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
 if (!BASE) { console.log("SKIP: csd-client live test: CSD_RPC unset (live-node tests are opt-in)"); process.exit(0); }
-if (!reachable) { console.log(`(no node at ${BASE}; skipping @inversealtruism/csd-client live test)`); process.exit(0); }
+if (!reachable) { console.error(`FAIL: csd-client live test: CSD_RPC=${BASE} set but no node answers /tip`); process.exit(1); }
 
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();

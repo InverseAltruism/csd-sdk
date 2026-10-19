@@ -11,8 +11,8 @@ const BASE = process.env.CSD_RPC;
 
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
-if (!BASE) console.log("\nSKIP: live light tests: CSD_RPC unset (live-node tests are opt-in)");
-if (!BASE || !reachable) { if (BASE) console.log(`\n(no node at ${BASE}; live light tests skipped)`); console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`); process.exit(fail === 0 ? 0 : 1); }
+if (!BASE) { console.log("\nSKIP: live light tests: CSD_RPC unset (live-node tests are opt-in)"); process.exit(0); }
+if (!reachable) { console.error(`FAIL: live light tests: CSD_RPC=${BASE} set but no node answers /tip`); process.exit(1); }
 const client = new CsdClient({ baseUrl: BASE });
 const tip = await client.tip();
 
