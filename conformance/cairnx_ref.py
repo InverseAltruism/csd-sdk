@@ -1073,6 +1073,17 @@ def record_keys_ok(rec):
     if allowed is None: return True
     return set(rec.keys()) <= allowed
 
+def _parse_full_one(i, r):
+    """One parseFull verdict. A record canonical_json or payload_hash refuses (a float, a lone surrogate, too
+    deep) has no canonical uri, so it is rejected and logged, like an unparseable record in resolve; the rest
+    of the batch still runs."""
+    try:
+        uri, ph = canonical_json(r), payload_hash(r)
+    except ValueError as e:
+        print(f"parseFull[{i}]: no canonical form ({e}); rejected", file=sys.stderr)
+        return False
+    return parse_record(uri, ph) is not None
+
 # ── CLI: read a JSON job from stdin, emit results for crosscheck.mjs to diff ──
 def main():
     job = json.load(sys.stdin)
@@ -1093,7 +1104,7 @@ def main():
     if "parseFull" in job:
         # FULL parse_record cross-check (canonical uri + hash + the per-record schema) — stronger than
         # the `records` job, which uses the simplified onlyKeys gate. Used by the nprofile vectors.
-        out["parseFull"] = [parse_record(canonical_json(r), payload_hash(r)) is not None for r in job["parseFull"]]
+        out["parseFull"] = [_parse_full_one(i, r) for i, r in enumerate(job["parseFull"])]
     if "consts" in job:
         # H1/M5: expose the gate heights + key consensus constants so the JS side can assert PARITY
         # (a V19_HEIGHT or other gate drift between impls is otherwise invisible to scenarios that

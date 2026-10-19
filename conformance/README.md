@@ -13,7 +13,9 @@ this directory, only the JS implementation existed, so the contract was asserted
   the Python reference the SAME corpus of fork-prone shapes (astral keys, the U+FFFF↔U+10000 sort
   boundary, lone surrogates, decoy keys, near-tie weights) and asserts byte-identity on every
   primitive. A JS-only fork, a UTF-16-vs-codepoint key sort, a dropped `onlyKeys` decoy guard, a
-  `Math.pow` ranking, diverges HERE.
+  `Math.pow` ranking, diverges HERE. In the full parse-gate job (`parseFull`) a record Python cannot
+  canonicalize (a float, a lone surrogate) is one rejected record, logged to stderr, as an unparseable
+  record is in `resolve()`; the rest of the batch still runs.
 
 - **`cairnx_ref.py`** (resolve half), now ALSO a full INDEPENDENT `resolve()` ledger port:
   `parse_record` (every `onlyKeys` allow-set + shape rule) and `resolve()` (tokens / names with

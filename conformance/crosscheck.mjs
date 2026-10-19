@@ -52,6 +52,9 @@ const c1Corpus = [
   ["offer ts safe", { v: 1, t: "offer", give: { ticker: "GOLD", amount: "10" }, want: { value: "100" }, ts: 1781387000 }, true],
   ["bid ts 2^53 (unsafe int)", { v: 1, t: "bid", want: { ticker: "GOLD", amount: "10" }, give: { value: "100" }, ts: 2 ** 53 }, false],
   ["bid ts safe", { v: 1, t: "bid", want: { ticker: "GOLD", amount: "10" }, give: { value: "100" }, ts: 1781387000 }, true],
+  // canonical_json raises on these in Python; each must read as one rejected record, not abort the batch
+  ["transfer ts float (Python canonical_json raises)", { v: 1, t: "transfer", ticker: "GOLD", to: TO20, amount: "100", ts: 1.5 }, false],
+  ["name lone-surrogate value (Python payload_hash raises)", { v: 1, t: "name", name: "alice\uD800", salt: SALT16 }, false],
 ];
 
 // ── JS reference outputs ──
