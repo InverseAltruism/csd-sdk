@@ -1,12 +1,18 @@
 // Compare a published npm tarball's dist/ with a local build, in memory (nothing from the tarball is written to
 // disk or executed). Used by check-lockstep.mjs for every package version that is already on npm.
 //
-// untar accepts only what `pnpm pack` emits for these packages (checked 2026-10-19 on all 10 registry tarballs
-// and fresh packs): POSIX ustar headers with a valid checksum, regular-file entries, all under `package/`.
-// It refuses, rather than interprets, anything an installer could read differently from this reader: PAX
-// extended headers, GNU long-name headers, links and other entry types, roots other than `package/`, paths
-// with empty, `.` or `..` segments, absolute paths, backslashes, two entries with the same install path,
-// and non-zero bytes after the end-of-archive block.
+// What the check detects: a published version whose dist/ differs from this tree's build of the same version
+// (one version, two code states, the M4 accident class). What it does not: a hostile tarball crafted so that
+// npm's extraction differs from this reader, and any newly published version (only versions equal to the
+// workspace version are examined, so an attacker who can publish would publish a new one). The reader refuses
+// every archive shape `pnpm pack` does not emit for these packages (checked 2026-10-19 on all 10 registry
+// tarballs and fresh packs): each header is POSIX ustar ("ustar\0" + "00"), type "0", printable-ASCII name of
+// at most 100 bytes with no prefix and no linkname, an 11-digit octal size and a 6-digit octal checksum in
+// their canonical terminations; every path is under package/, canonical, and unique when compared
+// case-insensitively (directory components included; names are ASCII, so no two Unicode spellings of one
+// path can occur); only zeros follow the end-of-archive block. A whole-tarball sha512 compare is not used because pnpm 10.32.1 orders the packed
+// package.json "dependencies" by which workspace:* resolution finishes first: packs of csd-tx matched the
+// registry 11 times in 15, csd-registry 3 in 10, csd-siwc and csd-light 9 in 10 (2026-10-19).
 import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -22,6 +28,11 @@ export function integrityOk(bytes, integrity) {
   return m !== null && createHash("sha512").update(bytes).digest("base64") === m[1];
 }
 
+/** @param {Uint8Array} b */
+const latin1 = (b) => Array.from(b, (c) => String.fromCharCode(c)).join("");
+/** @param {Uint8Array} b */
+const allZero = (b) => b.every((c) => c === 0);
+
 /**
  * The regular files of a gzipped ustar archive, keyed by path (`package/...`). Throws on anything outside the
  * rule in the header comment, so an unexpected archive fails the check instead of being compared partially.
@@ -30,46 +41,54 @@ export function integrityOk(bytes, integrity) {
  */
 export function untar(tgz) {
   const buf = gunzipSync(tgz);
-  const dec = new TextDecoder("utf-8", { fatal: true });
-  /** @param {Uint8Array} b */
-  const cstr = (b) => { const z = b.indexOf(0); return dec.decode(z < 0 ? b : b.subarray(0, z)); };
-  /** @param {Uint8Array} b @param {string} what */
-  const octal = (b, what) => {
-    const t = cstr(b).trim();
-    if (!/^[0-7]+$/.test(t)) throw new Error(`tar: bad ${what} field`);
-    return parseInt(t, 8);
-  };
   /** @type {Map<string, Uint8Array>} */
   const files = new Map();
   /** @type {Set<string>} */
-  const seen = new Set();
+  const fileKeys = new Set();
+  /** @type {Set<string>} */
+  const dirKeys = new Set();
+  const key = (/** @type {string} */ p) => p.toLowerCase();
   let off = 0;
   while (off + 512 <= buf.length) {
     const h = buf.subarray(off, off + 512);
-    if (h.every((b) => b === 0)) {
-      if (!buf.subarray(off).every((b) => b === 0)) throw new Error("tar: data after the end-of-archive block");
+    if (allZero(h)) {
+      if (!allZero(buf.subarray(off))) throw new Error("tar: data after the end-of-archive block");
       break;
     }
+    if (latin1(h.subarray(257, 265)) !== "ustar\u000000") throw new Error("tar: not a POSIX ustar header (magic and version)");
+    const ck = latin1(h.subarray(148, 156));
+    if (!/^[0-7]{6}(\0 | \0)$/.test(ck)) throw new Error("tar: checksum field not in canonical form");
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 0x20 : (h[i] ?? 0);
-    if (octal(h.subarray(148, 156), "checksum") !== sum) throw new Error("tar: header checksum mismatch");
-    if (cstr(h.subarray(257, 263)) !== "ustar" || h[262] !== 0) throw new Error("tar: not a POSIX ustar header");
-    const size = octal(h.subarray(124, 136), "size");
-    const prefix = cstr(h.subarray(345, 500));
-    const raw = prefix ? `${prefix}/${cstr(h.subarray(0, 100))}` : cstr(h.subarray(0, 100));
+    if (parseInt(ck.slice(0, 6), 8) !== sum) throw new Error("tar: header checksum mismatch");
+    const sz = latin1(h.subarray(124, 136));
+    if (!/^[0-7]{11}[ \0]$/.test(sz)) throw new Error("tar: size field not in canonical form");
+    const size = parseInt(sz.slice(0, 11), 8);
+    const nameField = h.subarray(0, 100);
+    const nul = nameField.indexOf(0);
+    const nameBytes = nul < 0 ? nameField : nameField.subarray(0, nul);
+    if (nul >= 0 && !allZero(nameField.subarray(nul))) throw new Error("tar: bytes after the name terminator");
+    if (!nameBytes.length || !nameBytes.every((c) => c >= 0x20 && c <= 0x7e)) throw new Error("tar: name is not printable ASCII");
+    const path = latin1(nameBytes);
+    if (!allZero(h.subarray(345, 500))) throw new Error(`tar: ${path}: a name prefix is not emitted by pnpm pack`);
     const type = String.fromCharCode(h[156] ?? 0);
+    if (type !== "0") throw new Error(`tar: entry type "${type}" (${path}) is not a regular file`);
+    if (!allZero(h.subarray(157, 257))) throw new Error(`tar: ${path}: a linkname on a regular file`);
     const body = buf.subarray(off + 512, off + 512 + size);
-    if (body.length !== size) throw new Error(`tar: truncated entry ${raw}`);
+    if (body.length !== size) throw new Error(`tar: truncated entry ${path}`);
     off += 512 + Math.ceil(size / 512) * 512;
-    const isDir = type === "5";
-    if (!isDir && type !== "0" && type !== "\0") throw new Error(`tar: entry type "${type}" (${raw}) is not a regular file or directory`);
-    const path = isDir && raw.endsWith("/") ? raw.slice(0, -1) : raw;
     const segs = path.split("/");
-    if (path.includes("\\") || segs[0] !== "package" || (!isDir && segs.length < 2) || segs.some((g) => g === "" || g === "." || g === ".."))
-      throw new Error(`tar: path ${JSON.stringify(raw)} is not a canonical path under package/`);
-    if (seen.has(path)) throw new Error(`tar: two entries install to ${path}`);
-    seen.add(path);
-    if (!isDir) files.set(path, Uint8Array.from(body));
+    if (path.includes("\\") || segs[0] !== "package" || segs.length < 2 || segs.some((g) => g === "" || g === "." || g === ".."))
+      throw new Error(`tar: path ${JSON.stringify(path)} is not a canonical path under package/`);
+    const k = key(path);
+    if (fileKeys.has(k) || dirKeys.has(k)) throw new Error(`tar: two entries install to ${path} (compared case-insensitively)`);
+    for (let i = 1; i < segs.length; i++) {
+      const d = key(segs.slice(0, i).join("/"));
+      if (fileKeys.has(d)) throw new Error(`tar: ${path} collides with a file at a directory component`);
+      dirKeys.add(d);
+    }
+    fileKeys.add(k);
+    files.set(path, Uint8Array.from(body));
   }
   return files;
 }

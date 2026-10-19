@@ -5,9 +5,13 @@
 // inter-package dependency is "workspace:*", which pnpm freezes to the dependency's EXACT current
 // version when the dependent publishes; (2) the published graph: a package version already on npm
 // keeps the pins it shipped with, so those pins must equal the current workspace versions (bump the
-// dependent when its dependency moves); (3) the published dist: a package version already on npm
-// must have a tarball whose dist/ equals this tree's build byte for byte, so changed source at a
-// published version fails until the version is bumped; (4) the M4 dist-freshness check for versions
+// dependent when its dependency moves); (3) the published dist: for each package whose workspace
+// version is already on npm, the registry tarball's dist/ must equal this tree's build byte for byte,
+// so changed source at a published version fails until the version is bumped. It catches that
+// accident (one version, two code states); it is not a defence against a hostile registry: it never
+// looks at a newly published version, and a tarball crafted to extract differently under npm is out
+// of scope, though published-dist.mjs refuses every archive shape `pnpm pack` does not emit (its
+// header says why a whole-tarball hash compare is not used); (4) the M4 dist-freshness check for versions
 // not yet on npm: publish-guard runs this script and the package tests before prepack rebuilds, so
 // those tests run on the dist that exists. Cross-package byte-identity is enforced separately by the conformance job,
 // CI's "REAL lockstep guard". Exits 1 with a report on violation.
