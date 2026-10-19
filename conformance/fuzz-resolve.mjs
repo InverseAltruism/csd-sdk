@@ -518,7 +518,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   // BELOW-gate control built the same way: the identical claim must be GRANTED there. The pair is what makes
   // the gate the cause. (Opus-B, B0a-R2: an assertion that passes on absence is not an assertion.)
   const legOnly = resolve([dep, mnt, off, legacy], base + 5).offers[off.id];
-  if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; resolve.ts:799 should reject it"); process.exit(1); }
+  if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; src/resolve/attest.ts applyAttest should reject it"); process.exit(1); }
   {
     const lb = R.V28_HEIGHT - 60;   // comfortably below the gate, well above V17 where the claim lane opened
     const depL = P(R.deploy({ ticker: "FCHL", decimals: 0, supply: "1000000", mint: "issuer" }), D, lb - 4, { [TREAS]: String(R.DEPLOY_FEE) });
@@ -535,7 +535,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
     // Found at the B0a re-gate by Opus-B (M4).
     const legAcross = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT + 40, pos: 0, paidTo: {} };
     const across = resolve([depL, mntL, offL, legAcross], R.V28_HEIGHT + 60).offers[offL.id];
-    if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); resolve.ts:799 must key on the CLAIM's height, not the offer's`); process.exit(1); }
+    if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); src/resolve/attest.ts applyAttest must key on the CLAIM's height, not the offer's`); process.exit(1); }
     // Exact-boundary pin: nothing else in the suite probes height === V28_HEIGHT itself, so a `>` for `>=`
     // slip is invisible. The gate is inclusive, so a claim AT the gate must already be rejected (Opus-B, M3).
     const legAt = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT, pos: 0, paidTo: {} };
@@ -551,7 +551,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   if (!cov.aboveV28) { console.error("✗ aboveV28 coverage is 0, no sequence resolved at or above the V28 gate"); process.exit(1); }
   if (!cov.fclaimHeld) { console.error("✗ fclaimHeld coverage is 0, the fuzz never granted a v2.8 hold"); process.exit(1); }
   if (!cov.fclaimFilled) { console.error("✗ fclaimFilled coverage is 0, the fuzz never routed a fill through an fclaim txid"); process.exit(1); }
-  console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (resolve.ts:799), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
+  console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (src/resolve/attest.ts applyAttest), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
 }
 // V26 self-check: commit -> payment-free reveal -> nfinalize on a LAPSED name hands it to the recapturer as a
 // normal fresh lease, and the premium is paid exactly once. The control (the same sequence without the finalize)
