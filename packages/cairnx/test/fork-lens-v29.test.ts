@@ -15,7 +15,7 @@
 // divergence height drops below 88,000 and the assertions below RED. (Importing the constant would move the
 // behaviour and the threshold together and the fixture would never catch the mutation.)
 import assert from "node:assert/strict";
-import { resolve, canonicalState, requiredFillOutputs, deploy, mint, offer, fclaim,
+import { resolve, requiredFillOutputs, deploy, mint, offer, fclaim,
          V28_HEIGHT, V29_HEIGHT, EPOCH_LEN, DEPLOY_FEE, SCORE_FILL, MAX_ACTIVE_CLAIMS, TREASURY_ADDR } from "../src/index.js";
 
 const OPERATOR_V29 = 88_000;   // the operator decision (2026-07-20). The divergence MUST NOT occur below this.

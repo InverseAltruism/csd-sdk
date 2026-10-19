@@ -2,9 +2,9 @@
 // empty/large/coinbase txs, bigint fields, unicode, malformed deserialize, compact-bits
 // rejection cases + round-trip, merkle odd rows, PoW boundary, canonical JSON ordering.
 import {
-  serialize, deserialize, txid, sighash, strippedTx,
-  bitsToTarget, targetToBits, targetToBigInt, powOk, headerHash, serializeHeader,
-  merkleRoot, verifyMerkleProof, merkleBranch, canonicalJson, payloadHash, bytesToHex, hb,
+  serialize, deserialize, strippedTx,
+  bitsToTarget, targetToBits, targetToBigInt, powOk,
+  merkleRoot, verifyMerkleProof, merkleBranch, canonicalJson, payloadHash, bytesToHex,
   type Tx,
 } from "@inversealtruism/csd-codec";
 

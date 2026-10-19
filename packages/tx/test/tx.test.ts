@@ -1,5 +1,5 @@
 // @inversealtruism/csd-tx: builder + coin-selection conformance + adversarial guards.
-import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson, type Utxo } from "../src/index.js";
+import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, txToNodeJson, type Utxo } from "../src/index.js";
 import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 

@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import {
   resolve, canonicalState, requiredFillOutputs, deploy, mint, offer, offerCancelAll, fclaim,
   nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
-  canonicalJson, payloadHash, V28_HEIGHT, EPOCH_LEN, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, SCORE_CLAIM, epochOf,
+  V28_HEIGHT, EPOCH_LEN, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, SCORE_CLAIM, epochOf,
   REG_COMMIT_MAX_BLOCKS, FCLAIM_MAX_EPOCH_AHEAD,
 } from "../packages/cairnx/dist/index.js";
 

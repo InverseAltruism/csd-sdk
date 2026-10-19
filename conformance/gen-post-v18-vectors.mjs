@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 import {
   nameCommit, resolve, canonicalState, makerRebate, tradeFee, epochOf,
-  V17_HEIGHT, V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V24_HEIGHT, MAX_OFFER_EPOCHS,
+  V19_HEIGHT, V20_HEIGHT, V21_HEIGHT, V24_HEIGHT, MAX_OFFER_EPOCHS,
   NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, CLAIM_WINDOW_BLOCKS_V20, CLAIM_FILL_GRACE_BLOCKS, MAX_ACTIVE_CLAIMS,
 } from "../packages/cairnx/dist/index.js";
 

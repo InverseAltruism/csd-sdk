@@ -7,10 +7,10 @@
 // corpus (cases.json / replay-hashes.json / wa-parity) stays byte-frozen for the B6 seal differential. The
 // V29 replay-hash RE-PIN (replay-hashes.json) is DEFERRED: it is a post-crossing runbook step that needs the
 // live-indexer generator reachable into the V29 region (tip ~58.3k today). Do NOT pin V29 replay hashes here.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import {
   resolve, canonicalState, requiredFillOutputs, deploy, mint, offer, fclaim,
-  canonicalJson, payloadHash, V28_HEIGHT, V29_HEIGHT, EPOCH_LEN, DEPLOY_FEE, SCORE_FILL, epochOf,
+  V28_HEIGHT, V29_HEIGHT, DEPLOY_FEE, SCORE_FILL, epochOf,
 } from "../packages/cairnx/dist/index.js";
 
 if (V29_HEIGHT <= V28_HEIGHT) throw new Error(`V29_HEIGHT=${V29_HEIGHT} must be above V28_HEIGHT=${V28_HEIGHT}`);

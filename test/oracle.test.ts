@@ -10,9 +10,9 @@
 //   3. LWMA / CHAINWORK ORACLE: sync from genesis; every header's `bits` must equal the
 //      locally re-derived LWMA value AND the node's reported chainwork must match exactly.
 //   4. DESERIALIZE ORACLE: real on-chain txs round-trip serialize(deserialize)==bytes.
-import { serialize, deserialize, txid, sighash, headerHash, merkleRoot, hb, bytesToHex } from "@inversealtruism/csd-codec";
-import { verifyDigest, addrFromPub, hash160 } from "@inversealtruism/csd-crypto";
-import { CsdClient, rpcTxToTx, rpcHeaderToHeader } from "@inversealtruism/csd-client";
+import { serialize, deserialize, txid, sighash, hb, bytesToHex } from "@inversealtruism/csd-codec";
+import { verifyDigest, addrFromPub } from "@inversealtruism/csd-crypto";
+import { CsdClient, rpcTxToTx } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 
 const BASE = process.env.CSD_RPC;

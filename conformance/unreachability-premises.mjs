@@ -14,7 +14,7 @@
 // own events log / state - never from generation-side math). Test-only: no shipping source, no re-vendor.
 import {
   resolve, offer, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
-  REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS,
+  REG_COMMIT_MAX_BLOCKS, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS,
   TREASURY_ADDR, V28_HEIGHT, EPOCH_LEN, epochOf,
 } from "../packages/cairnx/dist/index.js";
 

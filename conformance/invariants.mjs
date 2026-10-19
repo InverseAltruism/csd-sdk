@@ -20,7 +20,7 @@
 // Report-only. Wraps the compiled resolver; changes nothing. Exit 1 ONLY on --selftest if an invariant fails
 // to fire (the checker is broken) — a real-corpus violation is a finding printed for triage, not a build break.
 
-import { resolve, TREASURY_ADDR, V15_HEIGHT, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
+import { resolve, TREASURY_ADDR, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
 import { pathToFileURL } from "node:url";
 
 const T = TREASURY_ADDR;

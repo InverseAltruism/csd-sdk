@@ -1,9 +1,9 @@
 // Quickstart for the Compute Substrate SDK. Run against a node or the Cairn proxy:
 //   CSD_RPC=http://127.0.0.1:8790 node examples/quickstart.mjs
 //   CSD_RPC=https://cairn-substrate.com/api/rpc node examples/quickstart.mjs
-import { txid, sighash, payloadHash } from "@inversealtruism/csd-codec";
+import { payloadHash } from "@inversealtruism/csd-codec";
 import { keygen } from "@inversealtruism/csd-crypto";
-import { buildSend, buildPropose } from "@inversealtruism/csd-tx";
+import { buildSend } from "@inversealtruism/csd-tx";
 import { CsdClient } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 

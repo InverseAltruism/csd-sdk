@@ -1,8 +1,8 @@
 // Security / adversarial tests. Assumes a HOSTILE RPC + a HOSTILE counterparty and proves the
 // SDK cannot be made to lose funds, sign the wrong thing, or accept a forged chain.
-import { buildSend, selectInputs, signTx, txToNodeJson } from "@inversealtruism/csd-tx";
-import { sighash, txid, type Tx } from "@inversealtruism/csd-codec";
-import { addrFromPriv, verifyDigest, signDigest } from "@inversealtruism/csd-crypto";
+import { buildSend, selectInputs } from "@inversealtruism/csd-tx";
+import { sighash, type Tx } from "@inversealtruism/csd-codec";
+import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 import { LightClient } from "@inversealtruism/csd-light";
 import { CsdClient } from "@inversealtruism/csd-client";
 

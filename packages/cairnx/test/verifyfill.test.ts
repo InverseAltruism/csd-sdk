@@ -14,11 +14,11 @@ import {
   deploy, mint, offer, fclaim, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
   bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms,
-  V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, FILL_TIP_MARGIN, MAX_ACTIVE_CLAIMS,
+  V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS,
   V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
   TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
 } from "../src/index.js";
-import type { ChainEvent, OfferState, ProvenEvent, ProvenPropose, FillSpvIo } from "../src/index.js";
+import type { ChainEvent, ProvenEvent, ProvenPropose, FillSpvIo } from "../src/index.js";
 
 let pass = 0;
 const ok = (cond: boolean, name: string) => { assert.ok(cond, name); pass++; };
