@@ -39,6 +39,8 @@ const scripts = (f: string): Record<string, string> => JSON.parse(readFileSync(n
 const root = scripts("package.json");
 const pkgOf = (f: string) => f.startsWith("packages/") ? `${f.split("/").slice(0, 2).join("/")}/package.json` : "package.json";
 const local = (f: string) => f.startsWith("packages/") ? f.split("/").slice(2).join("/") : f;
+ok("CI runs the live opt-in guard (live suites skip by name with CSD_RPC unset, fail when it names no node)",
+  /^\s*- run: pnpm exec tsx test\/live-opt-in\.test\.ts\b/m.test(ci));
 const inCi = LIVE_ONLY.filter((f) => ci.includes(local(f).replace(/^test\//, "")));
 ok("no CI step runs a live-only suite", inCi.length === 0, inCi.join(", "));
 const offline = LIVE_ONLY.filter((f) => {

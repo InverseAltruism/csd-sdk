@@ -39,6 +39,7 @@ jobs:
       - run: pnpm -r --filter "./packages/*" test
       - run: pnpm exec tsx test/edge.test.ts
       - run: pnpm exec tsx test/security.test.ts
+      - run: pnpm exec tsx test/live-opt-in.test.ts   # offline: live suites skip by name, and fail against a refused loopback port
       - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
       - run: pnpm exec tsx test/ci-workflow.test.ts   # this file: read-only token, no stored credentials, SHA pins, the secret scan
