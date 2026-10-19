@@ -36,7 +36,7 @@ try {
   put("scripts/dashes-exceptions.json", read("scripts/dashes-exceptions.json"));
   put("README.md", `a ${EM} b\n`);
   put("docs/archive/old.md", `a ${EM} b\n`);
-  put("packages/cairnx/CONVENTION.md", `a ${EM} b\n`);
+  put("packages/cairnx/test/vectors/VECTORS.md", `a ${EM} b\n`);
   put("notes.txt", `a ${EM} b\n`);
   put("untracked.md", `a ${EM} b\n`, false);
   put("docs/guide.md", "load ../cairn-wallet/dist and /opt/cairn_substrate/csd-sdk\n");
