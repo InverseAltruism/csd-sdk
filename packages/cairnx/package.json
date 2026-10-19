@@ -43,6 +43,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean && tsup src/mm/index.ts --format esm,cjs --dts --out-dir dist/mm",
     "test": "node test/run.mjs",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

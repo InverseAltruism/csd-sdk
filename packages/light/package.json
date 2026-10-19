@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx test/light-offline.test.ts && tsx test/records.test.ts && tsx test/content-bind.test.ts && tsx test/lwma-memo.test.ts && tsx test/light.test.ts",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

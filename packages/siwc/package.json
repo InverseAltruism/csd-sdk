@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx test/siwc.test.ts && tsx test/refusal-parity.test.ts",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
