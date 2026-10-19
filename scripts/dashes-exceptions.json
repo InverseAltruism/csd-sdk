@@ -1,0 +1,9 @@
+{
+  "dashes": {
+    "packages/cairnx/test/vectors/VECTORS.md": "sealed evidence keeps its bytes (decision, 2026-10-19): scripts/seal-differential.mjs requires it unchanged since the 0.1.38 baseline"
+  },
+  "paths": {
+    "packages/cairnx/test/primary.test.ts": "byte-parity tripwire against the canonical cairnx fixture, read only when that sibling checkout exists; the vendored copy is the one the test needs",
+    "test/check-dashes-paths.test.ts": "fixtures for this check"
+  }
+}

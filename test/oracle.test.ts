@@ -22,7 +22,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
 if (!BASE) { console.log("SKIP: oracle tests: CSD_RPC unset (live-node tests are opt-in; set CSD_RPC to a node RPC to run them)"); process.exit(0); }
-if (!reachable) { console.log(`(no node at ${BASE}; oracle tests require the live chain) SKIPPED`); process.exit(0); }
+if (!reachable) { console.error(`FAIL: oracle tests: CSD_RPC=${BASE} set but no node answers /tip`); process.exit(1); }
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();
 

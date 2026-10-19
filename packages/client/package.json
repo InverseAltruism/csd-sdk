@@ -28,7 +28,8 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/client.test.ts && tsx test/hostile.test.ts && tsx test/input-canon.test.ts",
+    "test": "tsx test/hostile.test.ts && tsx test/input-canon.test.ts",
+    "test:live": "tsx test/client.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },

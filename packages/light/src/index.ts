@@ -1,18 +1,18 @@
-// @inversealtruism/csd-light — Compute Substrate light client.
+// @inversealtruism/csd-light: Compute Substrate light client.
 //
 // Trust model (honest): the PoW header chain is the root of trust. We verify, for every header:
 //   1. it links to its parent (prev == headerHash(parent))
 //   2. its PoW is valid (sha256d(header) ≤ target(bits))
-//   3. its `bits` is exactly what the LWMA mandates (re-derived locally from the window) — so a
+//   3. its `bits` is exactly what the LWMA mandates (re-derived locally from the window), so a
 //      server cannot feed a low-difficulty fork
 // and we follow the MAX-CHAINWORK chain (reorg-aware: a higher-work branch replaces ours). What
 // we CANNOT prove from headers alone: that an output is still UNSPENT (no UTXO commitment in the
-// header) — so balances are `rpc-trusted` unless backed by a block scan. Every read carries a
+// header), so balances are `rpc-trusted` unless backed by a block scan. Every read carries a
 // `trustLevel`. (See ROADMAP §honest-limits.)
 //
 // Two start modes:
-//   • sync(to)                 — full verification from GENESIS (chainwork is absolute).
-//   • syncFromCheckpoint(...)  — seed a TRUSTED header window at a pinned checkpoint, then verify
+//   • sync(to):                full verification from GENESIS (chainwork is absolute).
+//   • syncFromCheckpoint(...): seed a TRUSTED header window at a pinned checkpoint, then verify
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
 //                                relative to the checkpoint; the seed is trusted, not re-verified.
 import {
@@ -24,8 +24,9 @@ import { CsdClient, rpcHeaderToHeader, rpcTxToTx, type RpcTxJson } from "@invers
 import { expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 
 export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
+export { tipHeaderPowOk, contenderPlausible, type ContenderPlausibleOpts } from "./route.js";
 
-/** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
+/** Cumulative chainwork add, saturating at u128: matches the node's `chainwork.saturating_add` (A-S4). */
 const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBitsMemo(bits); return s > MAX_U128 ? MAX_U128 : s; };
 
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => {
@@ -108,7 +109,7 @@ export interface InclusionResult {
    *  `txid(tx)` and bind an offer record to the ON-CHAIN commitment, not a resolver-served /proposal. */
   tx?: RpcTxJson;
   /** SG-CONTENT-BIND-1: the proven tx's committed `app.payload_hash` when it is a Propose (else undefined).
-   *  This is the on-chain commitment an offer record must hash to — never the served `p.payload_hash`. */
+   *  This is the on-chain commitment an offer record must hash to, never the served `p.payload_hash`. */
   appPayloadHash?: string;
 }
 export interface ReorgResult { adopted: boolean; rolledBack?: number; newTip?: number; reason?: string }
@@ -128,8 +129,8 @@ export interface LightClientOptions {
    *  the batch source throws or returns an empty page (one-shot cold start, no self-heal), while
    *  sync() still hard-fails (incremental callers re-poll, so a failed tick heals itself). */
   headersBatchProvider?: HeadersBatchProvider;
-  /** Pin checkpoints {height: expectedHash}: any header at a pinned height — whether synced forward,
-   *  seeded, or restored from a snapshot — must match, else it's rejected (optional trust anchor). */
+  /** Pin checkpoints {height: expectedHash}: any header at a pinned height (whether synced forward,
+   *  seeded, or restored from a snapshot) must match, else it's rejected (optional trust anchor). */
   checkpoints?: Record<number, string>;
 }
 
@@ -139,7 +140,7 @@ export class LightClient {
   private readonly checkpoints: Record<number, string>;
   /** Verified header chain. chain[i].height = baseHeight + i. */
   readonly chain: VerifiedHeader[] = [];
-  /** Height of chain[0] — 0 for genesis-start, the seed start for checkpoint-start. */
+  /** Height of chain[0]: 0 for genesis-start, the seed start for checkpoint-start. */
   baseHeight = 0;
 
   private readonly batch?: HeadersBatchProvider;
@@ -211,7 +212,7 @@ export class LightClient {
     } else {
       if (!parent) throw new Error(`no parent context for height ${height}`);
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
-      // Timestamp consensus rules (H3) — mirror chain/index.rs (min-spacing, MTP, future-drift) so a
+      // Timestamp consensus rules (H3): mirror chain/index.rs (min-spacing, MTP, future-drift) so a
       // crafted-timestamp fork cannot steer the LWMA difficulty down. Enforced BEFORE bits/PoW, as the node does.
       this.checkTimeRules(height, header, window, parent);
       const exp = expectedBitsFromWindow(window, height);
@@ -233,7 +234,7 @@ export class LightClient {
    *
    * Edge (safe-direction): right after a checkpoint seed shorter than MTP_WINDOW, the available window
    * can be shorter than the node's full MTP walk (which would reach below baseHeight). A truncated
-   * median over ascending times is ≥ the node's, so the `time > mtp` gate is only ever STRICTER here —
+   * median over ascending times is ≥ the node's, so the `time > mtp` gate is only ever STRICTER here:
    * it can reject a header the node accepts, never accept one the node rejects. The standard API
    * (`syncFromCheckpoint`, context = LWMA_WINDOW = 45 ≥ MTP_WINDOW) always supplies a full window.
    */
@@ -250,7 +251,7 @@ export class LightClient {
 
   /**
    * Seed a TRUSTED, contiguous header run ending at a pinned checkpoint, so forward sync needs
-   * only a small window — not a 27k-block genesis fetch. The seed is the trust anchor (PoW links
+   * only a small window, not a 27k-block genesis fetch. The seed is the trust anchor (PoW links
    * are still spot-checked, but seed bits aren't LWMA-re-derived; that's the explicit trade for
    * not syncing from genesis). chainwork becomes RELATIVE to the seed. `checkpointHash` MUST match
    * the last seeded header.
@@ -355,7 +356,7 @@ export class LightClient {
    * SG-CONTENT-BIND-1: the merkle branch is folded over a txid RE-DERIVED from each tx BODY
    * (`codecTxid(rpcTxToTx(body))`), NEVER the server-reported `.txid` field. The txid commits to the
    * whole tx (incl. `app.payload_hash`), so a body whose recomputed id folds to the PoW-verified merkle
-   * root is authentic byte-for-byte — a lying read path that swaps a body while keeping the reported
+   * root is authentic byte-for-byte: a lying read path that swaps a body while keeping the reported
    * `.txid` re-derives to a different id and fails closed (it neither matches the requested txid nor
    * folds to the root). On a proven inclusion we SURFACE the proven tx (`tx`) and, for a Propose, its
    * committed `appPayloadHash`, so a caller can bind an offer's terms to the ON-CHAIN commitment
@@ -371,9 +372,9 @@ export class LightClient {
     if (height < this.baseHeight) return { trustLevel: "rpc-trusted", included: false, reason: `tx below the synced base (${this.baseHeight})` };
     if (height > tipHeight) {
       const gap = height - tipHeight;
-      if (gap > 256) return { trustLevel: "rpc-trusted", included: false, reason: `tx at ${height} is ${gap} blocks beyond tip — sync(${height}) first` };
+      if (gap > 256) return { trustLevel: "rpc-trusted", included: false, reason: `tx at ${height} is ${gap} blocks beyond tip; sync(${height}) first` };
       await this.sync(height);
-      // sync() advanced the tip — recompute it, else `confirmations` below uses the STALE pre-sync
+      // sync() advanced the tip: recompute it, else `confirmations` below uses the STALE pre-sync
       // tip and under-reports (≤0) the depth of a tx that is actually at depth ≥1.
       tipHeight = this.baseHeight + this.chain.length - 1;
     }
@@ -389,7 +390,7 @@ export class LightClient {
     }
     const pos = derivedIds.findIndex((x) => x.toLowerCase() === txidHex.toLowerCase());
     if (pos < 0) return { trustLevel: "rpc-trusted", included: false, reason: "tx body not found in block (or re-derived txid mismatch)" };
-    // Fold the RE-DERIVED leaf (== the body's real txid) to the PoW-verified root — so the merkle
+    // Fold the RE-DERIVED leaf (== the body's real txid) to the PoW-verified root, so the merkle
     // proof authenticates the exact body we surface, not merely the requested id.
     const ok = verifyMerkleProof(derivedIds[pos]!, pos, merkleBranch(derivedIds, pos), verified.header.merkle);
     if (!ok) return { trustLevel: "rpc-trusted", included: false, reason: "merkle proof failed" };
@@ -399,7 +400,7 @@ export class LightClient {
   }
 
   /**
-   * Balance for an address. HONEST: `rpc-trusted` — a header chain cannot prove an output is still
+   * Balance for an address. HONEST: `rpc-trusted`; a header chain cannot prove an output is still
    * unspent (no UTXO commitment). A future Neutrino-style scan would yield `trustLevel:'scanned'`.
    */
   async balance(addr: string): Promise<{ confirmed: number; trustLevel: TrustLevel; note: string }> {
@@ -411,7 +412,7 @@ export class LightClient {
   /**
    * Serialize the verified chain for persistence. A long-lived consumer (wallet, bridge differ)
    * snapshots on shutdown and `fromSnapshot`s on boot instead of re-fetching FULL BLOCK BODIES
-   * for the whole window every restart (the default provider's per-header cost). Headers only —
+   * for the whole window every restart (the default provider's per-header cost). Headers only:
    * tiny (≈100 bytes/height as JSON).
    */
   toSnapshot(): ChainSnapshot {
@@ -431,10 +432,10 @@ export class LightClient {
   }
 
   /**
-   * Restore from a snapshot. The load RE-VERIFIES — hash recomputation, prev links, timestamp
+   * Restore from a snapshot. The load RE-VERIFIES: hash recomputation, prev links, timestamp
    * rules, PoW on every header, AND `bits` re-derived from the LWMA window for every NON-trusted
    * (forward-synced) header, exactly as the live `sync`/`verifyOne` path accepted it. Only the
-   * original seed window (`trusted`) skips the time/LWMA re-derivation — the same posture
+   * original seed window (`trusted`) skips the time/LWMA re-derivation, the same posture
    * `seedTrusted` allows for the checkpoint trade. A checkpoint-configured client additionally
    * refuses ANY snapshot, genesis-rooted included, unless a pinned checkpoint COVERS the whole
    * trusted seed prefix: `baseHeight + LWMA_WINDOW - 1 <= cp <= last` for some configured `cp`
@@ -445,19 +446,19 @@ export class LightClient {
    * recomputed, never read from the file.
    */
   /** Shared restore setup (containment + baseHeight normalisation) for fromSnapshot /
-      fromSnapshotAsync — one copy, so the two entry points can never drift on the anchor rules. */
+      fromSnapshotAsync: one copy, so the two entry points can never drift on the anchor rules. */
   private static prepareRestore(s: ChainSnapshot, opts: LightClientOptions): { lc: LightClient; baseHeight: number } {
     if (s.v !== 1 || !Array.isArray(s.headers) || !s.headers.length) throw new Error("bad snapshot");
     const lc = new LightClient(opts);
     // Anchor containment (C1). A restored `trusted` header skips the LWMA/time/bits re-derivation, so
-    // the trusted seed prefix — the first LWMA_WINDOW headers, heights [baseHeight .. baseHeight +
-    // LWMA_WINDOW - 1] — is accepted on PoW + prev-link alone. That is only SAFE when a pinned
+    // the trusted seed prefix (the first LWMA_WINDOW headers, heights [baseHeight .. baseHeight +
+    // LWMA_WINDOW - 1]) is accepted on PoW + prev-link alone. That is only SAFE when a pinned
     // checkpoint sits AT OR ABOVE the top of that prefix AND inside the snapshot: the checkpoint's
     // hash-pin forces its header real, and the backward prev-chain then forces every header at or below
     // it real, so no forged trusted header can hide in the prefix. Require exactly that: some configured
     // checkpoint `cp` with `baseHeight + LWMA_WINDOW - 1 <= cp <= last`.
     //   - Honest wallet snapshots seed baseHeight = CP - LWMA_WINDOW (syncFromCheckpoint), so
-    //     baseHeight + LWMA_WINDOW - 1 = CP - 1 <= CP — accepted, zero false-reject.
+    //     baseHeight + LWMA_WINDOW - 1 = CP - 1 <= CP: accepted, zero false-reject.
     //   - The prior check only required `baseHeight <= cp <= last`, which left a poisoning BAND
     //     (baseHeight in [cp - LWMA_WINDOW + 1 .. cp]) where forged min-difficulty headers ABOVE the
     //     checkpoint fell inside the trusted-skip prefix and restored as verified (H1, PoC-confirmed).
@@ -494,7 +495,7 @@ export class LightClient {
   }
 
   /** The per-header restore step, shared VERBATIM by fromSnapshot (sync) and fromSnapshotAsync
-      (chunked) — a second verifier copy could drift (S5-a). Carries (prevHash, work) across. */
+      (chunked): a second verifier copy could drift (S5-a). Carries (prevHash, work) across. */
   private static restoreOne(lc: LightClient, baseHeight: number, e: ChainSnapshot["headers"][number], i: number, prevHash: string | null, work: bigint): { prevHash: string; work: bigint } {
     const height = Number(e.height); // MF-01: normalise the untyped per-header height once
     if (!Number.isSafeInteger(height) || height < 0) throw new Error(`snapshot bad height at index ${i}: ${height}`);
@@ -545,12 +546,12 @@ export class LightClient {
     return lc;
   }
 
-  /** S5-a (register Phase 4, 2026-09-12): the CHUNKED async restore — the IDENTICAL per-header
+  /** S5-a (register Phase 4, 2026-09-12): the CHUNKED async restore, the IDENTICAL per-header
       verification (restoreOne, shared with the sync path), but yields to the event loop every
       `chunk` headers so a long snapshot restore doesn't freeze the MV3 UI thread on slow hardware.
       The consumer view stays atomic: the wallet holds the PROMISE (`_spvSrc`) and only the resolved
       client is ever read. The checkpoint is NEVER bumped and the rejection semantics are unchanged
-      (a hostile snapshot is still refused whole — the throw just happens at a later await). */
+      (a hostile snapshot is still refused whole; the throw just happens at a later await). */
   static async fromSnapshotAsync(s: ChainSnapshot, opts: LightClientOptions = {}, chunk = 2000): Promise<LightClient> {
     const { lc, baseHeight } = LightClient.prepareRestore(s, opts);
     let prevHash: string | null = null, work = 0n;

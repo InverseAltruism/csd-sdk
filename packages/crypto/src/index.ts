@@ -1,4 +1,4 @@
-// @inversealtruism/csd-crypto — Compute Substrate crypto primitives. Thin, debuggable wrappers over @noble.
+// @inversealtruism/csd-crypto: Compute Substrate crypto primitives. Thin, debuggable wrappers over @noble.
 //   address  = hash160(compressed pubkey)  (raw 20-byte hash160, 0x-hex; no base58/bech32)
 //   sign     = secp256k1 ECDSA, RFC6979 deterministic, LOW-S enforced, compact 64-byte
 // (Matches consensus crypto/mod.rs + the proven csdcore.ts.)
@@ -18,6 +18,27 @@ export function addrFromPriv(priv: string): string { return hash160(secp256k1.ge
 /** A valid 0x..40-hex CSD address (raw hash160). */
 export const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 export function isValidAddr(a: string): boolean { return ADDR_RE.test(a); }
+
+// The node's address text parser (compute-substrate src/api/mod.rs parse_addr20): str::trim, one lowercase "0x"
+// stripped, hex digits of either case, exactly 20 bytes. str::trim strips Unicode White_Space, which JS
+// String#trim does not match (it strips U+FEFF and keeps U+0085).
+const RUST_WS = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
+const rustTrim = (s: string): string => {
+  let a = 0, b = s.length;
+  while (a < b && RUST_WS.test(s.charAt(a))) a++;
+  while (b > a && RUST_WS.test(s.charAt(b - 1))) b--;
+  return s.slice(a, b);
+};
+const HEX40 = /^[0-9a-fA-F]{40}$/;
+
+/** The address a script_pubkey pays (every CSD script_pubkey is the payee's 20-byte hash160), in the canonical
+ *  lowercase 0x form; null for anything the node's address parser rejects. */
+export function addrFromScriptPubkey(spk: unknown): string | null {
+  if (typeof spk !== "string") return null;
+  const t = rustTrim(spk);
+  const h = t.startsWith("0x") ? t.slice(2) : t;
+  return HEX40.test(h) ? "0x" + h.toLowerCase() : null;
+}
 
 export function isValidPriv(h: string): boolean {
   try { const b = hb(h); return b.length === 32 && secp256k1.utils.isValidPrivateKey(b); } catch { return false; }
@@ -44,8 +65,8 @@ export function signDigest(digestHex: string, priv: string): { sig64: string; pu
 /** Verify a compact-64 LOW-S signature over a digest. Rejects high-S (malleability). */
 export function verifyDigest(sig64: string, pub33: string, digestHex: string): boolean {
   // Whole body fail-closed: hb() throws on malformed hex, so an attacker-supplied bad sig/pubkey/digest
-  // must return false, not throw (it is reachable unauthenticated via verifySiwc + the registry
-  // resolver — audit M1). Also enforce the exact 32-byte digest length (L14).
+  // must return false, not throw (it is reachable unauthenticated via verifySiwc; audit M1). Also enforce the
+  // exact 32-byte digest length (L14).
   try {
     const s = hb(sig64), p = hb(pub33), d = hb(digestHex);
     if (s.length !== 64 || p.length !== 33 || d.length !== 32) return false;
@@ -61,14 +82,14 @@ export function buildScriptSig(sig64: string, pub33: string): string {
 
 // ── scriptSig parsing (Plan 56 item 18: the SDK gap that made three consumers re-roll this) ──
 // TWO exports with DELIBERATELY distinct contracts. Do not "unify" them:
-//   parseScriptSig / signerAddrFromScriptSig — STRUCTURAL, the scanner contract.
+//   parseScriptSig / signerAddrFromScriptSig: STRUCTURAL, the scanner contract.
 //     Attribution-compatible with the copies it replaces (cairn chainscan.ts + csd-indexer
 //     decode.ts; one documented strictness, see the sig-regex note below): length >= 198 hex
 //     chars, TRAILING BYTES TOLERATED, no signature verification. Scanners attribute txs the node
 //     has already consensus-validated, so a sig check there is redundant CPU with new failure
 //     modes; changing tolerance would silently change historical attribution (the full-chain
 //     differential in conformance/ pins zero deltas before any consumer swap).
-//   recoverSigner — STRICT, the wallet/verifier contract (namespv): EXACT length AND the
+//   recoverSigner: STRICT, the wallet/verifier contract (namespv): EXACT length AND the
 //     signature must verify against the caller-supplied digest (the merkle root commits the tx
 //     body but not the scriptSig, so without the sig check a lying node could re-attribute a
 //     record's author).

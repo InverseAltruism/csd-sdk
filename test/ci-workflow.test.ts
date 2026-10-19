@@ -32,5 +32,25 @@ ok("the secret scan: pinned gitleaks, this repo's config, full history, merge di
   /fetch-depth: 0/.test(ci) && /gitleaks" detect [^\n]*-c \.gitleaks\.toml/.test(ci) &&
   /--log-opts="[^"]*--full-history[^"]*--all[^"]*--diff-merges=first-parent[^"]*"/.test(ci));
 
+// A live suite with no node exits 0 having asserted nothing, so a CI step that runs one reads green while checking
+// nothing. They run only from `pnpm test:live`.
+const LIVE_ONLY = ["test/oracle.test.ts", "packages/client/test/client.test.ts", "packages/light/test/light.test.ts"];
+const scripts = (f: string): Record<string, string> => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")).scripts;
+const root = scripts("package.json");
+const pkgOf = (f: string) => f.startsWith("packages/") ? `${f.split("/").slice(0, 2).join("/")}/package.json` : "package.json";
+const local = (f: string) => f.startsWith("packages/") ? f.split("/").slice(2).join("/") : f;
+ok("CI runs the live opt-in guard (live suites skip by name with CSD_RPC unset, fail when it names no node)",
+  /^\s*- run: pnpm exec tsx test\/live-opt-in\.test\.ts\b/m.test(ci));
+const inCi = LIVE_ONLY.filter((f) => ci.includes(local(f).replace(/^test\//, "")));
+ok("no CI step runs a live-only suite", inCi.length === 0, inCi.join(", "));
+const offline = LIVE_ONLY.filter((f) => {
+  const s = scripts(pkgOf(f));
+  return Object.entries(s).some(([k, v]) => k !== "test:live" && v.includes(local(f)));
+});
+ok("no offline script runs a live-only suite", offline.length === 0, offline.join(", "));
+const reached = LIVE_ONLY.filter((f) => (scripts(pkgOf(f))["test:live"] ?? "").includes(local(f)));
+ok("every live-only suite runs from test:live, and the root test:live reaches the packages",
+  reached.length === LIVE_ONLY.length && /--if-present run test:live/.test(root["test:live"] ?? ""), `reached: ${reached.join(", ")}`);
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

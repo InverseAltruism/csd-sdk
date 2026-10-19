@@ -57,7 +57,21 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more except one content check) - input canon
+## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; unreleased, publish window 3; no consensus-surface change) - shared route checks and script address
+
+csd-light adds `tipHeaderPowOk` and `contenderPlausible`, the checks cairn and csd-indexer each carry before a
+non-primary RPC backend may win routing; csd-crypto adds `addrFromScriptPubkey`, the node's address parser
+(compute-substrate `src/api/mod.rs` `parse_addr20` at tag cairn-v0.1.14) returning the lowercase 0x form. Both
+are added API that `resolve()` and the codec do not call: no byte, txid, sighash, LWMA, chainwork or replay
+change, and the golden vectors are unchanged. csd-tx and csd-siwc bump because they depend on csd-crypto.
+Publish order (pnpm only): (1) `csd-crypto`, `csd-light`; (2) `csd-tx`, `csd-siwc`. cairnx-core 0.2.1 (below)
+rides the same window.
+
+## csd-registry removed (2026-10-19, Plan 85 P-5; no consensus-surface change)
+
+`packages/registry` is deleted from the workspace; 0.1.20 stays its last published version, and later publish windows drop it from their order.
+
+## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; published 2026-10-18, publish window 2; reject-more except one content check) - input canon
 
 Every change but one refuses input that was accepted before. The exception is `verifyContentBytes`, which
 now accepts the expected hash written without `0x`: it compares the same sha256 digest, so it removes a
@@ -106,7 +120,7 @@ and 20,000 generated fuzz sequences. `test:crosslang` output is identical and `a
 ledger citations that moved with the code. `scripts/check-consumer-pins.mjs` now counts `src/resolve/` as
 consensus surface. Consumers may stay on 0.2.0.
 
-## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
+## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; published 2026-10-18, publish window 2; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
 
 `bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
 is not read by `resolve()`. Its give and wantType legs, opt-in since 0.1.39, are now on unless the caller passes
@@ -118,14 +132,14 @@ input the baseline refused, refuse each give and want-type lie, and accept hones
 version moves (0.2.0) because hand-built terms with the two-argument call are now a compile error in
 TypeScript and a refusal at runtime; `packages/cairnx/CHANGELOG.md` lists the consumers that move with it.
 
-## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; unreleased; no consensus-surface change)
+## csd-codec + csd-light record primitives (2026-10-13, Plan 86 S1; published 2026-10-14 in csd-codec 0.1.17 and csd-light 0.1.22, publish window 1; no consensus-surface change)
 
 csd-codec adds `deserializeHeader` (the inverse of `serializeHeader`) and `HEADER_BYTES`; csd-light adds
 `verifyLinkedRecords`, `LightClient.fromRecords` and `toRecords`. No byte, LWMA, chainwork, PoW or merkle change:
 `fromRecords` verifies through the existing `seedTrusted` and `ingest` checks, unchanged, and equals
 `fromSnapshot` on the fixture.
 
-## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; STAGED, not published; no consensus-surface change) - shared helpers in one home
+## csd-codec 0.1.17 + cairnx-core 0.1.44 and their dependents (2026-10-13, Plan 85 12.1; published 2026-10-14, publish window 1; no consensus-surface change) - shared helpers in one home
 
 `epochOf` moved into `csd-codec` next to `EPOCH_LEN` (same formula); cairnx-core and csd-registry import it
 instead of defining it. `csd-crypto` imports `strip0x`, `hb` and `hx` from codec instead of its own identical

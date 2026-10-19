@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const LEDGER = "CONSENSUS_CHANGES.md";
 
-// A bare basename is ambiguous on disk (packages/registry/src/resolve.ts exists too),
-// so every bare name the ledger cites must be spelled out here. An unlisted bare name
+// A bare basename can name more than one file in the tree, so every bare name the ledger
+// cites must be spelled out here. An unlisted bare name
 // is a hard failure, never a guess.
 const ALIASES = {
   "resolve.ts": "packages/cairnx/src/resolve.ts",
