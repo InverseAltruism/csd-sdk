@@ -292,6 +292,44 @@ function regFlow(h0) {
   return ev;
 }
 
+// v2.6 SEALED RECAPTURE: a name registered and paid below V25 lapses past its term and grace; a recapturer
+// commits, reveals payment-free (a reservation in the internal recaptures map, the lapsed record untouched) and
+// pays the decaying premium at a winner-only nfinalize. lapseFlow's far-future reclaim has no salt, so at >= V26
+// it is rejected before this path (recaptureFinalized read 0 over 20,000 sequences without this flow). Sometimes a second recapturer contests, a reveal or the
+// finalize misses its window, or the premium is one unit short, so the accept path and its rejects both run.
+const RC_D = "0x" + "d7".repeat(20), RC_E = "0x" + "e7".repeat(20), RC_F = "0x" + "f7".repeat(20);
+const leaseEnd = (regH) => R.epochOf(regH) + R.NAME_TERM_EPOCHS;                  // paidThrough of a pre-V25 registration
+const recapturePremium = (nm, regH, h) => R.expiredClaimFee(nm, R.epochOf(h) - (leaseEnd(regH) + R.NAME_GRACE_EPOCHS), h);
+function recaptureFlow() {
+  const NM = "rc" + ri(100, 9999);
+  const mkSalt = (p) => p + Array.from({ length: ri(14, 28) }, () => "0123456789abcdef"[ri(0, 15)]).join("");
+  const sE = mkSalt("e7"), sF = mkSalt("f7");
+  const ev = [];
+  const push = (who, rec, h, paid) => { if (rec) ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: ri(0, 3), expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} }); };
+  const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+  push(RC_D, validOr(() => R.nameClaim({ name: NM })), regH, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+  // first height of the first lapsed epoch, plus a point inside the premium's decay window
+  const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN + ri(0, R.NAME_PREMIUM_DECAY_EPOCHS * R.EPOCH_LEN);
+  push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), cEh, {});
+  const contested = chance(0.4);
+  const cFh = contested ? (chance(0.5) ? cEh - ri(1, 3) : cEh + ri(0, 2)) : null;   // F earlier => F wins the reservation
+  if (contested) push(RC_F, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), cFh, {});
+  push(RC_E, validOr(() => R.nameClaim({ name: NM, salt: sE })), cEh + ri(1, chance(0.85) ? R.REG_COMMIT_MAX_BLOCKS : R.REG_COMMIT_MAX_BLOCKS + 4), {});
+  if (contested) push(RC_F, validOr(() => R.nameClaim({ name: NM, salt: sF })), cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS), {});
+  const fin = (who, s, ch) => {                                     // 0-2 in-window, 3 too early, 4 expired
+    const mode = ri(0, 4);
+    const hf = mode === 3 ? ch + ri(0, R.REG_COMMIT_MAX_BLOCKS)
+             : mode === 4 ? ch + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS + ri(1, 4)
+             : ch + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS);
+    const need = recapturePremium(NM, regH, hf);
+    const fee = chance(0.2) ? need - 1n : need;                     // sometimes one unit short -> reject
+    push(who, validOr(() => R.nameFinalize({ name: NM, salt: s })), hf, { [TREAS]: fee.toString() });
+  };
+  if (chance(0.9)) fin(RC_E, sE, cEh);
+  if (contested && chance(0.6)) fin(RC_F, sF, cFh);
+  return ev;
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -301,6 +339,7 @@ function genSeq() {
   if (chance(0.18)) { const e = openFlow(ri(R.V17_HEIGHT, R.V17_HEIGHT + 5000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.13)) { const e = regFlow(ri(R.V25_HEIGHT - 20, R.V25_HEIGHT + 3000)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.16)) { const e = fclaimFlow(ri(R.V28_HEIGHT - 40, R.V28_HEIGHT + 2500)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 120) }; }
+  if (chance(0.12)) { const e = recaptureFlow(); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   const events = [];
   const len = ri(1, 16);
   // REBIND B0a: the band used to be ri(29810, V23+1000), an arithmetic maximum of 59,400 once the
@@ -375,7 +414,7 @@ if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0,
 const pj = JSON.parse(py.stdout).resolve;
 
 let diverged = 0, jsThrows = 0;
-const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0 };
+const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
 for (let i = 0; i < N; i++) {
   if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
   // coverage: confirm the fuzzer actually reaches the high-risk paths
@@ -397,6 +436,8 @@ for (let i = 0; i < N; i++) {
     if (js[i].includes('"claimTxid":')) cov.fclaimHeld++;
     if (st.offers && Object.values(st.offers).some((o) => o.claimTxid && o.status === "filled")) cov.fclaimFilled++;
     if (Number(st.tipHeight) >= R.V28_HEIGHT) cov.aboveV28++;
+    // a recapturer owns a name only through a v2.6 recapture nfinalize: no flow registers or transfers one to them
+    if (st.names && Object.values(st.names).some((n) => n && (n.owner === RC_E || n.owner === RC_F) && !n.pending && !n.expired)) cov.recaptureFinalized++;
   } catch { /* JS state always parses */ }
   if (js[i] !== pj[i]) {
     diverged++;
@@ -510,5 +551,28 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   if (!cov.fclaimHeld) { console.error("✗ fclaimHeld coverage is 0, the fuzz never granted a v2.8 hold"); process.exit(1); }
   if (!cov.fclaimFilled) { console.error("✗ fclaimFilled coverage is 0, the fuzz never routed a fill through an fclaim txid"); process.exit(1); }
   console.log(`✓ v28 fclaim self-check: grant + fclaim-routed fill deliver, a legacy SCORE_CLAIM at >=V28 is rejected (resolve.ts:799), and Correction 1 blocks an offer-txid fill during the hold; fuzz resolved ${cov.aboveV28} sequence(s) at/above the gate, granted ${cov.fclaimHeld} hold(s) and routed ${cov.fclaimFilled} fill(s) through an fclaim txid`);
+}
+// V26 self-check: commit -> payment-free reveal -> nfinalize on a LAPSED name hands it to the recapturer as a
+// normal fresh lease, and the premium is paid exactly once. The control (the same sequence without the finalize)
+// leaves the lapsed record untouched, so the finalize is what moved the name. Deterministic, seed-independent.
+{
+  const NM = "rcchk", salt = "e7e7e7e7e7e7e7e7e7e7", regH = R.V25_HEIGHT - 100;
+  const cH = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN, hf = cH + R.REG_COMMIT_MAX_BLOCKS + 2;
+  const mk = (who, rec, h, paid) => ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: 1, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} });
+  const regFee = R.nameRegFee(NM, regH), premium = recapturePremium(NM, regH, hf);
+  const seq = [
+    mk(RC_D, R.nameClaim({ name: NM }), regH, { [TREAS]: regFee.toString() }),
+    mk(RC_E, R.nameCommitRecord({ commit: R.nameCommit(NM, salt, RC_E) }), cH),
+    mk(RC_E, R.nameClaim({ name: NM, salt }), cH + 1),
+    mk(RC_E, R.nameFinalize({ name: NM, salt }), hf, { [TREAS]: premium.toString() }),
+  ];
+  const st = resolve(seq, hf + 3), n = st.names[NM];
+  if (!n || n.owner !== RC_E || n.pending || n.viaFill || n.expired || BigInt(st.feesPaid) !== regFee + premium || premium <= regFee) {
+    console.error(`✗ v26 recapture self-check FAILED, the finalize did not hand over the lapsed name (owner=${n && n.owner}, expired=${n && n.expired}, feesPaid=${st.feesPaid}, premium=${premium})`); process.exit(1);
+  }
+  const ctl = resolve(seq.slice(0, 3), cH + 3).names[NM];
+  if (!ctl || ctl.owner !== RC_D || !ctl.expired) { console.error(`✗ v26 recapture self-check FAILED, the reservation alone changed the lapsed record (owner=${ctl && ctl.owner})`); process.exit(1); }
+  if (!cov.recaptureFinalized) { console.error("✗ recaptureFinalized coverage is 0, the fuzz never reached the v2.6 sealed-recapture accept path"); process.exit(1); }
+  console.log(`✓ v26 recapture self-check: commit→payment-free reveal→nfinalize hands a lapsed name to the recapturer (premium once, not viaFill); fuzz finalized ${cov.recaptureFinalized} recapture(s)`);
 }
 process.exit(diverged ? 1 : 0);
