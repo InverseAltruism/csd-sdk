@@ -6,10 +6,10 @@ import {
 } from "@inversealtruism/csd-codec";
 
 const TIP_HASH = /^0x[0-9a-fA-F]{64}$/;
-/** A finite positive x floored and raised to `min`; anything else (NaN, ±Infinity, 0, negative) is `dflt`. */
-const opt = (x: unknown, dflt: number, min: number): number => {
+/** x when it is a finite positive number, else `dflt` (NaN, ±Infinity, 0 and negatives all read as `dflt`). */
+const positive = (x: unknown, dflt: number): number => {
   const n = Number(x);
-  return Number.isFinite(n) && n > 0 ? Math.max(min, Math.floor(n)) : dflt;
+  return Number.isFinite(n) && n > 0 ? n : dflt;
 };
 
 /**
@@ -61,11 +61,13 @@ export interface ContenderPlausibleOpts {
  * and its target no easier than the expected local target times maxEase. No anchor (local tip below anchorFloor)
  * passes, so failover works before the local index exists; an unparseable claim or invalid bits fails.
  *
- * Config contract (a non-finite, zero or negative value always becomes the default):
- * - blockSecs: finite > 0, floored, at least 1; otherwise TARGET_BLOCK_SECS (120).
- * - maxAhead: finite > 0, floored; otherwise 0 (no blocks past the local tip beyond the staleness allowance).
+ * Config contract (a non-finite, zero or negative value always becomes the default). Fractions are kept where
+ * csd-indexer keeps them; cairn floors blockSecs and maxAhead, so its adapter passes Math.max(1, Math.floor(blockSecs))
+ * and Math.floor(maxAhead) to keep its behaviour.
+ * - blockSecs: finite > 0, at least 1, fractions kept; otherwise TARGET_BLOCK_SECS (120).
+ * - maxAhead: finite > 0, fractions kept; otherwise 0 (no blocks past the local tip beyond the staleness allowance).
  * - maxEase: finite > 0, floored, at least 1; otherwise 1 (no easier than the expected local target).
- * - anchorFloor: finite > 0, compared as given (not floored, so 10.5 makes 11 the first anchor); otherwise 0.
+ * - anchorFloor: finite > 0, compared as given (so 10.5 makes 11 the first anchor); otherwise 0.
  * - localTime, nowSecs: either non-finite grants no staleness allowance. localHeight non-finite: no anchor (passes).
  * - claimedHeight or contenderBits non-finite, or bits that decode to no target: fails.
  * - expectedLocalBits null or decoding to no target: the LWMA test is skipped, the delta cap still applies.
@@ -73,16 +75,15 @@ export interface ContenderPlausibleOpts {
 export function contenderPlausible(opts: ContenderPlausibleOpts): boolean {
   if (!opts.enabled) return true;
   const lh = Number(opts.localHeight);
-  const af = Number(opts.anchorFloor ?? 0);
-  if (!Number.isFinite(lh) || lh < (Number.isFinite(af) && af > 0 ? af : 0)) return true;
+  if (!Number.isFinite(lh) || lh < positive(opts.anchorFloor, 0)) return true;
   const claimed = Number(opts.claimedHeight);
   if (!Number.isFinite(claimed)) return false;
   // A reachable but frozen primary stalls the local anchor while an honest secondary keeps advancing, so the
   // cap grows by the blocks that wall-clock time allows since the local tip.
-  const bs = opt(opts.blockSecs, TARGET_BLOCK_SECS, 1);
+  const bs = Math.max(1, positive(opts.blockSecs, TARGET_BLOCK_SECS));
   const staleBlocks = Number.isFinite(opts.localTime) && Number.isFinite(opts.nowSecs)
     ? Math.max(0, Math.floor((Number(opts.nowSecs) - Number(opts.localTime)) / bs)) : 0;
-  if (claimed > lh + opt(opts.maxAhead, 0, 0) + staleBlocks) return false;
+  if (claimed > lh + positive(opts.maxAhead, 0) + staleBlocks) return false;
   const cbits = Number(opts.contenderBits);
   if (!Number.isFinite(cbits)) return false;
   const contenderTarget = targetToBigInt(bitsToTarget(cbits));
@@ -90,7 +91,7 @@ export function contenderPlausible(opts: ContenderPlausibleOpts): boolean {
   if (opts.expectedLocalBits == null) return true;
   const expected = targetToBigInt(bitsToTarget(Number(opts.expectedLocalBits)));
   if (expected <= 0n) return true; // the caller's own anchor is anomalous: the delta cap above still applied
-  let threshold = expected * BigInt(opt(opts.maxEase, 1, 1));
+  let threshold = expected * BigInt(Math.max(1, Math.floor(positive(opts.maxEase, 1))));
   const powLimitTarget = targetToBigInt(bitsToTarget(POW_LIMIT_BITS));
   if (threshold > powLimitTarget) threshold = powLimitTarget;
   return contenderTarget <= threshold;
