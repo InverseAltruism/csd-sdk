@@ -16,7 +16,7 @@ This repo follows the maintainers' cross-repo engineering standard (a private do
 - Comments state constraints and non-obvious invariants, not history or audit IDs. Removing code needs the same evidence as adding it.
 - Docs: this file holds what stays true (no version tables, no status snapshots; versions live in `package.json` and tags, live state comes from a live query). Dates are absolute, no em dashes.
 
-Known deviations (checked 2026-10-11, not exhaustive): `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
+Known deviations (checked 2026-10-11, not exhaustive): `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/test/primary.test.ts:63` reads the sibling cairnx fixture when present; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
 
 ## The stack around it
 
