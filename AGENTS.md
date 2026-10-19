@@ -67,7 +67,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 
 1. Consumers of this repo run live services, so consensus changes are the most dangerous edits in the whole ecosystem: write up the design and get maintainer sign-off first, always.
 2. Security fixes must not regress UX (no hot-path latency/declines; warn over hard-block).
-3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing.
+3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing (`pnpm check:dashes-paths` checks every tracked doc in CI).
 4. Run `pnpm run audit:all` before merging ANY change to packages/cairnx/src/* or a new gate. test:crosslang only proves the two impls AGREE; they can agree and both be unsound.
 5. Releases are maintainer-only: tags and `pnpm publish` happen on maintainer say-so, never speculatively.
 
@@ -78,6 +78,7 @@ pnpm install                     # pnpm@10.32.1 pinned
 pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import sibling dists)
 pnpm typecheck                   # tsc over packages/*/src, packages/*/test and test/ (strict, noUncheckedIndexedAccess)
 pnpm lint                        # Biome, four rules: unused imports, empty blocks, focused tests, @ts-ignore
+pnpm check:dashes-paths          # em dashes in tracked docs, sibling-checkout paths in code (exceptions listed in the script)
 pnpm -r test                     # per-package suites
 pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
