@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-light",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "engines": {
     "node": ">=18"
   },
@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/light-offline.test.ts && tsx test/records.test.ts && tsx test/content-bind.test.ts && tsx test/lwma-memo.test.ts",
+    "test": "tsx test/light-offline.test.ts && tsx test/records.test.ts && tsx test/content-bind.test.ts && tsx test/lwma-memo.test.ts && tsx test/route.test.ts",
     "test:live": "tsx test/light.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
@@ -36,6 +36,9 @@
   "dependencies": {
     "@inversealtruism/csd-codec": "workspace:*",
     "@inversealtruism/csd-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@inversealtruism/csd-vectors": "workspace:*"
   },
   "license": "MIT",
   "sideEffects": false,

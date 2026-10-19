@@ -24,6 +24,7 @@ import { CsdClient, rpcHeaderToHeader, rpcTxToTx, type RpcTxJson } from "@invers
 import { expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 
 export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
+export { tipHeaderPowOk, contenderPlausible, type ContenderPlausibleOpts } from "./route.js";
 
 /** Cumulative chainwork add, saturating at u128 — matches the node's `chainwork.saturating_add` (A-S4). */
 const satAddWork = (a: bigint, bits: number): bigint => { const s = a + workForBitsMemo(bits); return s > MAX_U128 ? MAX_U128 : s; };
