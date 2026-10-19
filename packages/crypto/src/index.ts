@@ -19,6 +19,27 @@ export function addrFromPriv(priv: string): string { return hash160(secp256k1.ge
 export const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 export function isValidAddr(a: string): boolean { return ADDR_RE.test(a); }
 
+// The node's address text parser (compute-substrate src/api/mod.rs parse_addr20): str::trim, one lowercase "0x"
+// stripped, hex digits of either case, exactly 20 bytes. str::trim strips Unicode White_Space, which JS
+// String#trim does not match (it strips U+FEFF and keeps U+0085).
+const RUST_WS = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
+const rustTrim = (s: string): string => {
+  let a = 0, b = s.length;
+  while (a < b && RUST_WS.test(s.charAt(a))) a++;
+  while (b > a && RUST_WS.test(s.charAt(b - 1))) b--;
+  return s.slice(a, b);
+};
+const HEX40 = /^[0-9a-fA-F]{40}$/;
+
+/** The address a script_pubkey pays (every CSD script_pubkey is the payee's 20-byte hash160), in the canonical
+ *  lowercase 0x form; null for anything the node's address parser rejects. */
+export function addrFromScriptPubkey(spk: unknown): string | null {
+  if (typeof spk !== "string") return null;
+  const t = rustTrim(spk);
+  const h = t.startsWith("0x") ? t.slice(2) : t;
+  return HEX40.test(h) ? "0x" + h.toLowerCase() : null;
+}
+
 export function isValidPriv(h: string): boolean {
   try { const b = hb(h); return b.length === 32 && secp256k1.utils.isValidPrivateKey(b); } catch { return false; }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-crypto",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "engines": { "node": ">=18" },
   "description": "Compute Substrate crypto primitives \u2014 secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
   "type": "module",
@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/crypto.test.ts",
+    "test": "tsx test/crypto.test.ts && tsx test/script-pubkey.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
