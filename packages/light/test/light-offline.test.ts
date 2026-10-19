@@ -1,4 +1,4 @@
-// OFFLINE light-client verification — runs in CI with NO node, against a committed fixture of
+// OFFLINE light-client verification: runs in CI with NO node, against a committed fixture of
 // REAL mainnet headers. The live light.test.ts exits 0 when no node is reachable, so without this
 // the entire light client (PoW + LWMA re-derivation + checkpoint seed + inclusion + tamper
 // rejection) was UNTESTED in CI. Real headers are used so PoW/LWMA are genuine, not synthetic.
@@ -33,7 +33,7 @@ const provider: HeaderProvider = async (h: number) => {
   return { header: r.header, hash: r.hash, txids: r.txids };
 };
 
-console.log("— offline light client (real-header fixture, no node) —");
+console.log("offline light client (real-header fixture, no node):");
 const CP = FX.from + LWMA_WINDOW - 1; // checkpoint after a full LWMA window of context
 const seed = FX.headers.slice(0, LWMA_WINDOW).map((h) => ({ height: h.height, header: h.header, hash: h.hash }));
 const cpHash = byH.get(CP)!.hash;
@@ -60,7 +60,7 @@ if (inclBlock) {
   const bogus = verifyMerkleProof("0x" + "de".repeat(32), pos, merkleBranch(txids, pos), vh!.header.merkle);
   ok("a bogus txid does NOT fold to the verified root (no false inclusion)", bogus === false);
 } else {
-  console.log("  (no multi-tx block in the synced range — inclusion check skipped)");
+  console.log("  (no multi-tx block in the synced range; inclusion check skipped)");
 }
 
 // 3) TAMPER: a header with a flipped nonce fails PoW on ingest (the chain must reject it)
@@ -92,7 +92,7 @@ if (inclBlock) {
 }
 
 // 6) SG-2: a localStorage-POISONED snapshot (a MIN-DIFFICULTY header spliced into the saved chain)
-//    must be REJECTED on restore — not silently restored and later trusted as `verified-inclusion`.
+//    must be REJECTED on restore: not silently restored and later trusted as `verified-inclusion`.
 //    A real attacker forges hash + PoW to match: at POW_LIMIT (min difficulty) the PoW grind is cheap,
 //    so PoW alone passes and ONLY the SG-2 LWMA re-derivation catches it. Grinding ~min-difficulty PoW
 //    is too slow to do inline every CI run, so we bake the ground nonce as a fixed test vector against
@@ -120,7 +120,7 @@ if (inclBlock) {
   ok("a min-difficulty poisoned snapshot header is REJECTED by LWMA on restore (not verified-inclusion)", threw && /bits/.test(msg));
 
   // H4: the same poison header, now flagged trusted:true to try to SKIP the LWMA re-derivation, must
-  // STILL be rejected — a forward header (full window present) is LWMA-checked regardless of `trusted`.
+  // STILL be rejected: a forward header (full window present) is LWMA-checked regardless of `trusted`.
   const pTrusted = { ...lastSnap, header: poison, hash: headerHash(poison), trusted: true };
   const poisonedTrustedSnap = { ...snap, headers: [...snap.headers.slice(0, -1), pTrusted] };
   let threwH4 = false, msgH4 = "";
@@ -133,7 +133,7 @@ if (inclBlock) {
   ok("the un-poisoned snapshot restores cleanly to the right tip", restored);
 }
 
-// 7) SG-2: the `checkpoints` option is no longer inert — a restored header at a pinned height that
+// 7) SG-2: the `checkpoints` option is no longer inert; a restored header at a pinned height that
 //    doesn't match the pinned hash is REJECTED (the baked checkpoint is the one trust anchor).
 {
   const honest = new LightClient({ headerProvider: provider });
@@ -151,7 +151,7 @@ if (inclBlock) {
 
 // 8) H3: a forward header that violates the timestamp rules (min-spacing / MTP) is REJECTED on time,
 //    BEFORE the bits/PoW checks (mirrors chain/index.rs ordering). We set time = parent.time, which
-//    violates BOTH time ≥ parent+MIN_BLOCK_SPACING_SECS AND time > MTP — so the time gate fires first
+//    violates BOTH time ≥ parent+MIN_BLOCK_SPACING_SECS AND time > MTP; so the time gate fires first
 //    and we don't need to grind a fresh PoW for the tampered header.
 {
   const lcT = new LightClient({ headerProvider: provider });
@@ -256,10 +256,10 @@ if (inclBlock) {
   ok("a batch-ONLY client still hard-fails with the ORIGINAL batch error", msgO === "upstream 429");
 }
 
-// 9) C1: ANCHOR CONTAINMENT — a checkpoint-configured client must refuse a snapshot that does not
+// 9) C1: ANCHOR CONTAINMENT: a checkpoint-configured client must refuse a snapshot that does not
 //    span its lowest pinned checkpoint. The per-header pin only fires for heights INSIDE the
 //    snapshot, so a poisoned snapshot rooted ABOVE the checkpoint carries no anchor at all and its
-//    `trusted` seed prefix (attacker-controlled flags) is honoured at face value — the exact
+//    `trusted` seed prefix (attacker-controlled flags) is honoured at face value; the exact
 //    poisoning defense the doc-comment claims. Requires storage-write + hostile RPC to exploit,
 //    but the anchor must hold even then.
 {
@@ -314,7 +314,7 @@ if (inclBlock) {
 
 // 10) C1 defense-in-depth: the H3 timestamp rules now also run on RESTORE (same set of headers as
 //     the LWMA re-derivation, same verifyOne order: time BEFORE bits BEFORE PoW). A snapshot whose
-//     tip time is rewound to its parent's time must die on the TIME rule — pre-change it slipped
+//     tip time is rewound to its parent's time must die on the TIME rule; pre-change it slipped
 //     the restore path entirely (only PoW caught the byte change, with a misleading error).
 {
   const honest = new LightClient({ headerProvider: provider });
@@ -365,11 +365,11 @@ if (inclBlock) {
   // forged min-difficulty child at height 44 (ground OFFLINE; see test/_regrind-genesis-poison.mjs).
   // time = parent + 120 so the H3 time rules PASS and the failure lands specifically on bits, not time.
   const POISON_NONCE_44 = 9039078;
-  const forged = { version: 1, prev: h43.hash, merkle: h44.header.merkle, time: h43.header.time + 120, bits: POW_LIMIT_BITS, nonce: POISON_NONCE_44 } as BlockHeader;
+  const forged = { version: 1, prev: h43.hash, merkle: h44.header.merkle, time: Number(h43.header.time) + 120, bits: POW_LIMIT_BITS, nonce: POISON_NONCE_44 } as BlockHeader;
   ok("MF-02: the baked min-difficulty poison header at 44 passes PoW (else: regrind the vector)", powOk(headerHashBytes(forged), POW_LIMIT_BITS));
   const honestExp44 = expectedBitsFromWindow(raw.slice(0, 44).map((e) => e.header), 44);
   ok("MF-02: the forged min-difficulty bits differ from the honest LWMA expectation at 44", POW_LIMIT_BITS !== honestExp44);
-  const malicious = { v: 1, baseHeight: 0, headers: [...raw.slice(0, 44), { height: 44, hash: headerHash(forged), header: forged, chainwork: "0", trusted: true }] };
+  const malicious = { v: 1 as const, baseHeight: 0, headers: [...raw.slice(0, 44), { height: 44, hash: headerHash(forged), header: forged, chainwork: "0", trusted: true }] };
   let threw = false, msg = "";
   try { LightClient.fromSnapshot(malicious); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
   ok("MF-02: a genesis-rooted snapshot with a forged trusted:true min-difficulty header at 44 is REJECTED on bits", threw && /bad bits/.test(msg));
@@ -443,7 +443,7 @@ if (inclBlock) {
     p instanceof Promise && (await p).chain.length === snap.headers.length);
 
   // (3) a hostile snapshot (the baked min-difficulty poison header) is REJECTED WHOLE via the
-  //     chunked async path too — the LWMA gate is identical (the throw just lands at a later await)
+  //     chunked async path too: the LWMA gate is identical (the throw just lands at a later await)
   const lastSnap = snap.headers[snap.headers.length - 1]!;
   const poison = { ...lastSnap.header, bits: POW_LIMIT_BITS, nonce: 6926799 } as BlockHeader;
   const pEntry = { ...lastSnap, header: poison, hash: headerHash(poison) };

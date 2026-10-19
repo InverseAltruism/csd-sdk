@@ -256,7 +256,7 @@ is bounded in the light client, not the chain.
 | v2.3 | 52 000 | `nset` to the zero address CLEARS the pointer (*still pending as of 2026-07-06, tip ~48 300*) |
 
 v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (49 200 / 51 000 / 51 200 /
-52 500) — see the re-pin history note in `CONVENTION.md` and `CONSENSUS_CHANGES.md` 0.1.33.
+52 500); see the re-pin history note in `CONVENTION.md` and `CONSENSUS_CHANGES.md` 0.1.33.
 
 ### Package layout
 
@@ -290,8 +290,8 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 
 ### Write a conformant resolver in another language
 
-1. Implement `CONVENTION.md` §1–§30 (apply order, every record type, the `V*_HEIGHT` activations — using
-   the re-pinned v2.4–v2.7 heights — the canonical-state format, ordinal key ordering, data surface only).
+1. Implement `CONVENTION.md` §1–§30 (apply order, every record type, the `V*_HEIGHT` activations (using
+   the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data surface only).
 2. Replay `test/vectors/cases.json`: your canonical state must equal `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare `sha256(canonicalState)` against `test/vectors/replay-hashes.json`.
 
@@ -314,8 +314,9 @@ is a silent chain fork, the exact bug class the shared-core de-dup (`cairn/docs/
 | **the Python oracle** `conformance/cairnx_ref.py` | INDEPENDENT re-implementation (the differential, **KEEP**) | `test:crosslang` (JS⇄Python) |
 
 **To make a consensus change:** edit `src/` here **and** `conformance/cairnx_ref.py`; add a height-gated
-`V*_HEIGHT` (never reinterpret history) + a vector; `pnpm build && pnpm test && pnpm test:crosslang &&
-node scripts/check-lockstep.mjs` (all green); **bump the version**; `pnpm publish`; **rebuild + recommit
+`V*_HEIGHT` (never reinterpret history) + a vector; `pnpm build && pnpm test && pnpm test:crosslang`
+(all green); **bump the version** (`node scripts/check-lockstep.mjs` fails until you do: it compares the
+published tarball of the current version with this build); `pnpm publish`; **rebuild + recommit
 the two vendored bundles**; re-pin every consumer and deploy them **between** activation heights, not
 across one (below the gate the output is byte-identical, so the rollout is fork-free).
 

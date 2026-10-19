@@ -16,7 +16,7 @@ const scripted = (...handlers: Handler[]) => {
   const f = Object.assign(
     async (_url: unknown, _init?: unknown): Promise<Response> => {
       f.calls++;
-      return handlers[Math.min(f.calls - 1, handlers.length - 1)]();
+      return handlers[Math.min(f.calls - 1, handlers.length - 1)]!();
     },
     { calls: 0 },
   );
@@ -163,7 +163,7 @@ console.log("verifyInputValues badInput naming (M1):");
     const zeroId = idOf(zeroBody);
     ok("branch: non-positive value → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: zeroBody }) as never }, [{ txid: zeroId, vout: 0 }]), { txid: zeroId, vout: 0 }));
   }
-  // 7. total overflow: two DISTINCT coins each near 2^53 — the SECOND coin overflows the running
+  // 7. total overflow: two DISTINCT coins each near 2^53; the SECOND coin overflows the running
   //    total and must be the one named (Fable QC: the first cut reused one outpoint twice, which a
   //    real selection never contains, so the naming couldn't be distinguished).
   {

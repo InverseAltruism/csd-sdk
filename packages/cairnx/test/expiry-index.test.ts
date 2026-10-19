@@ -31,15 +31,15 @@ events.push({ kind: "attest", txid: nid(), proposalId: soon[0], attester: D, sco
 
 const tip = (expSoon + 1) * 30;
 const full = resolve(events, tip);
-assert.equal(full.offers[soon[0]].status, "cancelled");
-for (const id of soon.slice(1)) assert.equal(full.offers[id].status, "expired", id);
-assert.equal(full.offers[lateId].status, "open");
+assert.equal(full.offers[soon[0]!]!.status, "cancelled");
+for (const id of soon.slice(1)) assert.equal(full.offers[id]!.status, "expired", id);
+assert.equal(full.offers[lateId]!.status, "open");
 assert.equal(canonicalState(resolve(events, tip)), canonicalState(full));
 
 const prefix = events.slice(0, -1);
 const prefixTip = cancelAt - 1;
 assert.equal(canonicalState(resolve(prefix, prefixTip)), canonicalState(resolve(events.filter((e) => e.height <= prefixTip), prefixTip)));
-assert.equal(resolve(prefix, prefixTip).offers[soon[0]].status, "open");
+assert.equal(resolve(prefix, prefixTip).offers[soon[0]!]!.status, "open");
 
 const below = [P(deploy({ ticker: "EARLY", decimals: 0, supply: "1", mint: "issuer" }), ACTIVATION_HEIGHT - 5, 0, 9e15, { [TREASURY_ADDR]: "100000000" })];
 assert.equal(resolve(below, ACTIVATION_HEIGHT).tokens.EARLY, undefined);

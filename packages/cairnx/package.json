@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "CairnX — tokens, atomic DvP trades and leased .csd names on Compute Substrate, as a pure deterministic convention library (Ordinals/Runes class). Ships the normative CONVENTION.md and the conformance vectors.",
+  "description": "CairnX: tokens, atomic DvP trades and leased .csd names on Compute Substrate, as a pure deterministic convention library (Ordinals/Runes class). Ships the normative CONVENTION.md and the conformance vectors.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -43,6 +43,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean && tsup src/mm/index.ts --format esm,cjs --dts --out-dir dist/mm",
     "test": "node test/run.mjs",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

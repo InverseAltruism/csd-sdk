@@ -26,7 +26,7 @@ const base: ChainEvent[] = [
   PE(id("02"), mint({ ticker: "AAA", amount: "1000" }), H0 + 1, A, 9e9),
   PE(OID, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A } }), H0 + 2, A, 9e9),
 ];
-const baseOffer = resolve(base, H0 + 5).offers[OID];
+const baseOffer = resolve(base, H0 + 5).offers[OID]!;
 assert.ok(baseOffer && baseOffer.status === "open", "sanity: base offer is open");
 const fillOutputs = (o: OfferState, pay: string): Record<string, string> =>
   Object.fromEntries(requiredFillOutputs(o, pay)!.map((x) => [x.to, String(x.value)]));
@@ -37,20 +37,20 @@ const E = epochOf(H0 + 3) + 2;                       // a valid hold-end epoch
 const fcTx = id("f1");
 const grant = PE(fcTx, fclaim({ offer: OID }), H0 + 3, B, E);
 const gState = resolve([...base, grant], H0 + 10);
-const held = gState.offers[OID];
+const held = gState.offers[OID]!;
 ok(held.claimedBy === B && held.claimTxid === fcTx && held.claimUntilHeight === (E + 1) * EPOCH_LEN, "GRANT sets the hold (claimedBy/claimTxid/claimUntilHeight)");
 ok(gState.fclaims[fcTx] !== undefined && gState.fclaims[fcTx].offer === OID, "state.fclaims carries the GRANTED fclaim");
 const holdEnd = (E + 1) * EPOCH_LEN - 1;
 const fillState = resolve([...base, grant, AE(id("11"), fcTx, B, holdEnd, paidFor)], holdEnd + 5);
-ok(fillState.offers[OID].status === "filled" && fillState.balances["AAA"][B].available === "10", "fclaim FILL at holdEnd delivers 10 AAA to the buyer");
+ok(fillState.offers[OID]!.status === "filled" && fillState.balances["AAA"]![B]!.available === "10", "fclaim FILL at holdEnd delivers 10 AAA to the buyer");
 
 // ── 2. holdEnd boundary: a fill one block PAST holdEnd is rejected (claim not held) ──
 const lateFill = resolve([...base, grant, AE(id("12"), fcTx, B, holdEnd + 1, paidFor)], holdEnd + 5);
-ok(lateFill.offers[OID].status === "open", "fclaim fill PAST holdEnd is rejected (hold lapsed)");
+ok(lateFill.offers[OID]!.status === "open", "fclaim fill PAST holdEnd is rejected (hold lapsed)");
 
 // ── 3. Correction 1: an OFFER-TXID fill during the hold is rejected ──
 const c1 = resolve([...base, grant, AE(id("13"), OID, B, H0 + 10, paidFor)], H0 + 15);
-ok(c1.offers[OID].status === "open" && c1.offers[OID].claimTxid === fcTx, "Correction 1: offer-txid fill during a hold is rejected");
+ok(c1.offers[OID]!.status === "open" && c1.offers[OID]!.claimTxid === fcTx, "Correction 1: offer-txid fill during a hold is rejected");
 
 // ── 4. DENIED fclaim (unknown offer) is not materialized; a fill on it delivers nothing ──
 const badFc = id("f9");
@@ -61,20 +61,20 @@ ok((denFill.balances["AAA"] ?? {})[C] === undefined && denFill.events.some((e) =
 
 // ── 5. Correction 2 (ocancel): a same-block ocancel (pos 0) then fclaim grant (pos 1) leaves the offer held ──
 const c2o = resolve([...base, PE(id("20"), offerCancelAll({}), H0 + 3, A, 9e9, 0), PE(id("f2"), fclaim({ offer: OID }), H0 + 3, B, E, 1)], H0 + 10);
-ok(c2o.offers[OID].status === "open" && c2o.offers[OID].claimTxid === id("f2"), "Correction 2 (ocancel): held offer survives the same-block mass-cancel");
+ok(c2o.offers[OID]!.status === "open" && c2o.offers[OID]!.claimTxid === id("f2"), "Correction 2 (ocancel): held offer survives the same-block mass-cancel");
 
 // ── 6. Correction 2 (score-0 cancel): a same-block score-0 cancel + fclaim grant leaves the offer held ──
 const c2s = resolve([...base, PE(id("f3"), fclaim({ offer: OID }), H0 + 3, B, E, 0), AE(id("21"), OID, A, H0 + 3, {}, SCORE_CANCEL, 0, 0)], H0 + 10);
-ok(c2s.offers[OID].status === "open" && c2s.offers[OID].claimTxid === id("f3"), "Correction 2 (score-0): held offer survives the same-block cancel");
+ok(c2s.offers[OID]!.status === "open" && c2s.offers[OID]!.claimTxid === id("f3"), "Correction 2 (score-0): held offer survives the same-block cancel");
 
 // ── 7. Lane B: a taker-bound V28+ offer cannot be cancelled ──
 const tOID = id("1f");
 const laneB = resolve([...base, PE(tOID, offer({ give: { ticker: "AAA", amount: "5" }, want: { value: "100000000", payto: A }, taker: B }), H0 + 3, A, 9e9), AE(id("22"), tOID, A, H0 + 5, {}, SCORE_CANCEL)], H0 + 10);
-ok(laneB.offers[tOID].status === "open", "Lane B: a taker-bound V28+ offer is uncancellable");
+ok(laneB.offers[tOID]!.status === "open", "Lane B: a taker-bound V28+ offer is uncancellable");
 
 // ── 8. SCORE_CLAIM sunset: a legacy claim attest at V28+ grants nothing ──
 const sunset = resolve([...base, AE(id("23"), OID, B, H0 + 3, {}, SCORE_CLAIM)], H0 + 10);
-ok(sunset.offers[OID].claimedBy === undefined, "SCORE_CLAIM at V28+ is rejected (no legacy claim)");
+ok(sunset.offers[OID]!.claimedBy === undefined, "SCORE_CLAIM at V28+ is rejected (no legacy claim)");
 
 // ── 9. Last-write-wins: B's hold lapses, C grants, claimTxid moves to C; a fill on B's old fclaim is rejected ──
 const bFc = id("fb"), cFc = id("fc");
@@ -83,22 +83,22 @@ const bHoldEnd = (epochOf(H0 + 3) + 1) * EPOCH_LEN - 1;
 const cH = bHoldEnd + EPOCH_LEN;                                            // well after B's hold + cooldown
 const cGrant = PE(cFc, fclaim({ offer: OID }), cH, C, epochOf(cH));
 const lww = resolve([...base, bGrant, cGrant, AE(id("31"), bFc, B, cH + 1, { [A]: "500000000" })], cH + 5);
-ok(lww.offers[OID].claimTxid === cFc && lww.offers[OID].claimedBy === C, "last-write-wins: 2nd grant re-assigns claimTxid to C");
-ok(lww.offers[OID].status === "open", "a fill on a SUPERSEDED fclaim txid is rejected (offer stays open)");
+ok(lww.offers[OID]!.claimTxid === cFc && lww.offers[OID]!.claimedBy === C, "last-write-wins: 2nd grant re-assigns claimTxid to C");
+ok(lww.offers[OID]!.status === "open", "a fill on a SUPERSEDED fclaim txid is rejected (offer stays open)");
 
 // ── 10. Anti-squat: an expiry more than FCLAIM_MAX_EPOCH_AHEAD ahead is denied ──
 const squatFc = id("f8");
 const squat = resolve([...base, PE(squatFc, fclaim({ offer: OID }), H0 + 3, B, epochOf(H0 + 3) + FCLAIM_MAX_EPOCH_AHEAD + 1)], H0 + 10);
-ok(squat.offers[OID].claimedBy === undefined && squat.fclaims[squatFc] === undefined, "anti-squat: an over-far expiry is denied");
+ok(squat.offers[OID]!.claimedBy === undefined && squat.fclaims[squatFc] === undefined, "anti-squat: an over-far expiry is denied");
 
 // ── 11. MF-20: a non-safe-integer expiresEpoch can never grant, and is cut at the guard leg ──
 const nanFc = id("f6");
 const nanSt = resolve([...base, PE(nanFc, fclaim({ offer: OID }), H0 + 3, B, Number.NaN)], H0 + 10);
-ok(nanSt.offers[OID].claimedBy === undefined && nanSt.fclaims[nanFc] === undefined,
+ok(nanSt.offers[OID]!.claimedBy === undefined && nanSt.fclaims[nanFc] === undefined,
   "MF-20: a NaN expiresEpoch grants nothing (pre-guard it granted with claimUntilHeight NaN -> canonical null)");
 const hugeFc = id("f7");
 const hugeSt = resolve([...base, PE(hugeFc, fclaim({ offer: OID }), H0 + 3, B, 2 ** 53)], H0 + 10);
-ok(hugeSt.offers[OID].claimedBy === undefined && hugeSt.fclaims[hugeFc] === undefined,
+ok(hugeSt.offers[OID]!.claimedBy === undefined && hugeSt.fclaims[hugeFc] === undefined,
   "MF-20: an unsafe-int expiresEpoch grants nothing");
 ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && /out of safe-integer range/.test(e.note ?? "")),
   "MF-20: the rejection happens AT the safe-integer guard leg, not at a later ladder leg");
@@ -114,10 +114,10 @@ ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && /out of safe-intege
   const chained = resolve([...base, first,
     cancelAt(u1, "e2"), PE(id("e3"), fclaim({ offer: OID }), u1, C, ex(u1), 1),
     cancelAt(u2, "e4"), PE(id("e5"), fclaim({ offer: OID }), u2, B, ex(u2), 1)], u2 + 5);
-  ok(chained.offers[OID].status === "open" && chained.offers[OID].claimTxid === id("e5"),
+  ok(chained.offers[OID]!.status === "open" && chained.offers[OID]!.claimTxid === id("e5"),
     "griefing note: alternating holders freeze the seller's cancel at every lapse block");
   const alone = resolve([...base, first, cancelAt(u1, "e6"), PE(id("e7"), fclaim({ offer: OID }), u1, B, ex(u1), 1)], u1 + 5);
-  ok(alone.offers[OID].status === "cancelled", "griefing note: the same address re-claiming at the lapse block is in cooldown, so the cancel lands");
+  ok(alone.offers[OID]!.status === "cancelled", "griefing note: the same address re-claiming at the lapse block is in cooldown, so the cancel lands");
 }
 
 console.log(`cairnx-core fclaim B2 behavior: ${pass} passed`);

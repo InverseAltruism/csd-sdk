@@ -1,7 +1,7 @@
 // P5.0 conformance: the resolvers are PURE + DETERMINISTIC, so the same epoch set
 // yields the same result regardless of input order (two independent indexers agree).
 // Fixtures are signed with REAL keys via the SDK crypto, so verification is exercised
-// for real — a tampered/unsigned record is genuinely rejected, not assumed valid.
+// for real: a tampered/unsigned record is genuinely rejected, not assumed valid.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { keygen } from "@inversealtruism/csd-crypto";
@@ -25,7 +25,7 @@ const OPTS: ResolveOpts = { nowEpoch: 10, topK: 25, decayPerEpoch: 0.97 };
 // correctly-rounded → a Rust/Go/Py port can rank a near-tie differently = a cross-language fork
 // of peer/gateway/IDENTITY selection). This test is the conformance PIN: it reimplements the
 // canonical floored fixed-point in independent BigInt and asserts the resolver's order matches it
-// exactly — over deliberately CLOSE weights. A revert to Math.pow would diverge on a near-tie here.
+// exactly: over deliberately CLOSE weights. A revert to Math.pow would diverge on a near-tie here.
 test("RES-H4: ranking is the exact integer decay fixed-point (no float-pow fork)", () => {
   const DSCALE = 1_000_000_000_000n;
   const powFixed = (age: number): bigint => { const a = age <= 0 ? 0 : Math.min(age, 4000); return (97n ** BigInt(a) * DSCALE) / (100n ** BigInt(a)); };
@@ -33,7 +33,7 @@ test("RES-H4: ranking is the exact integer decay fixed-point (no float-pow fork)
   // deliberately-close pairs (same product region): base·0.97^age clusters near each other
   const specs = [
     { id: "P0", base: 100_000_000, epoch: 0 },  // age 10
-    { id: "P1", base: 97_000_000, epoch: 1 },   // age 9   (≈ P0 — the float-fragile near-tie)
+    { id: "P1", base: 97_000_000, epoch: 1 },   // age 9   (≈ P0; the float-fragile near-tie)
     { id: "P2", base: 94_090_000, epoch: 2 },   // age 8   (≈ P0/P1)
     { id: "P3", base: 200_000_000, epoch: 5 },  // age 5   (clearly heavier)
     { id: "P4", base: 50_000_000, epoch: 0 },   // age 10  (clearly lighter)
@@ -171,7 +171,7 @@ test("L12: a non-integer/NaN fee does not crash the resolver (defensive integer 
   assert.doesNotThrow(() => resolvePeers([pAtt], OPTS), "NaN attestation fee must not throw");
 });
 
-// M3 (cont): reverseIdentity must pick the HEAVIER handle by EXACT integer weight, order-independently —
+// M3 (cont): reverseIdentity must pick the HEAVIER handle by EXACT integer weight, order-independently;
 // operating on the winner RECORD resolveIdentity chose (not a re-find by proposalId), so a duplicate-pid
 // feed can't make it feed-order-dependent.
 test("M3: reverseIdentity picks the heavier handle (integer weight), order-independent", () => {
@@ -229,9 +229,9 @@ test("B8-sdklow: reverseName URL-encodes the address path segment (sibling parit
 // ── M2 (deep-review 2026-07-03): a malformed `pub`/`sig` must be SKIPPED, not crash the resolve ──
 // `addrFromPub`/`verifyDigest` call hexToBytes, which THROWS on non-hex/odd-length input. These verifiers
 // run inside resolve's `.filter()`, so before the fix one cheap malformed record (with expiresEpoch=0, which
-// never lapses) propagated its throw and PERMANENTLY errored the whole discovery domain — a one-record DoS.
+// never lapses) propagated its throw and PERMANENTLY errored the whole discovery domain; a one-record DoS.
 // After the safe() wrapper a malformed record fails closed (skipped) and the honest records still resolve.
-test("M2: a malformed pub does not crash resolvePeers — the record is skipped, honest peers survive", () => {
+test("M2: a malformed pub does not crash resolvePeers; the record is skipped, honest peers survive", () => {
   const good = keygen();
   const honest = rec(buildPeerRecord({ priv: good.priv, peer_id: "12D3KooWHONEST", multiaddrs: ["/ip4/1.2.3.4/tcp/8792"], address: good.addr }), good.addr, 100_000_000, 100, { expiresEpoch: 0 });
   // a poison record: non-hex, odd-length pub (would throw in hexToBytes → uncaught before the fix)
@@ -241,7 +241,7 @@ test("M2: a malformed pub does not crash resolvePeers — the record is skipped,
     content: { t: "peer", peer_id: "12D3KooWPOISON", multiaddrs: ["/ip4/9.9.9.9/tcp/1"], pub: "0xZZZZ_not_hex_odd", sig: "nope" } as any,
     attestations: [],
   };
-  let out: ReturnType<typeof resolvePeers> | null = null;
+  let out = null as ReturnType<typeof resolvePeers> | null;
   assert.doesNotThrow(() => { out = resolvePeers(shuffle([honest, poison]), OPTS); }, "a malformed pub must not throw out of resolve");
   assert.ok(out !== null && out!.some((p) => p.peer_id === "12D3KooWHONEST"), "the honest peer still resolves");
   assert.ok(out!.every((p) => p.peer_id !== "12D3KooWPOISON"), "the malformed peer is skipped, not counted");

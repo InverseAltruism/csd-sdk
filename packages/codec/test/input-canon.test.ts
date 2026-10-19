@@ -42,7 +42,7 @@ console.log("serializeApp: unpaired surrogates refused");
   });
   check("isWellFormedUtf16 matches String.prototype.isWellFormed on a grid", () => {
     const grid = ["", "a", "\uD800", "\uDC00", "\uD800\uDC00", "\uDC00\uD800", "a\uD83D", "\uD83D\uDE00\uD83D", "\u{10FFFF}", "\uFFFD"];
-    for (const s of grid) assert.equal(isWellFormedUtf16(s), s.isWellFormed(), JSON.stringify(s));
+    for (const s of grid) assert.equal(isWellFormedUtf16(s), (s as string & { isWellFormed(): boolean }).isWellFormed(), JSON.stringify(s));
   });
 }
 
@@ -94,6 +94,7 @@ console.log("canonicalJson: JSON data only");
   });
   check("a class extends null instance and an object over a bare null-prototype object throw", () => {
     class NullBase extends (null as unknown as ObjectConstructor) {
+      // @ts-expect-error a class that extends null cannot call super(); its constructor returns the instance instead
       constructor() { return Object.create(NullBase.prototype) as NullBase; }
     }
     const inst = Object.assign(new NullBase(), { a: 1 });

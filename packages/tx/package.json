@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Compute Substrate transaction builder — coin selection, fee sizing, buildSend/Propose/Attest, signTx, node-submit JSON. p2pkh-only, SafeInteger-guarded.",
+  "description": "Compute Substrate transaction builder: coin selection, fee sizing, buildSend/Propose/Attest, signTx, node-submit JSON. p2pkh-only, SafeInteger-guarded.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx test/tx.test.ts && tsx test/input-canon.test.ts",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {

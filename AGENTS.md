@@ -16,7 +16,7 @@ This repo follows the maintainers' cross-repo engineering standard (a private do
 - Comments state constraints and non-obvious invariants, not history or audit IDs. Removing code needs the same evidence as adding it.
 - Docs: this file holds what stays true (no version tables, no status snapshots; versions live in `package.json` and tags, live state comes from a live query). Dates are absolute, no em dashes.
 
-Known deviations (checked 2026-10-11, not exhaustive): the root has no `typecheck` or `lint` script (types are checked by the tsup dts build); `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/src/resolve.ts` is over 800 lines; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
+Known deviations (checked 2026-10-11, not exhaustive): the root has no `lint` script; `scripts/check-consumer-pins.mjs` reads sibling consumer checkouts when present (skips absent ones); `packages/cairnx/src/resolve.ts` is over 800 lines; comment essays and audit-ID markers in `packages/cairnx/src` are trimmed per module, not as drive-by edits.
 
 ## The stack around it
 
@@ -53,8 +53,8 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 
 - Byte-identity with the Rust node is the prime invariant. Any change to tx/sighash/header bytes, LWMA/chainwork math, merkle acceptance, or the CairnX replay MUST be recorded in CONSENSUS_CHANGES.md, pinned by a golden vector BEFORE landing, and gated on an activation height. Reject-more hardening is allowed; accept-different never silently.
 - Every pre-existing canonical-state replay hash must stay byte-identical across ANY refactor (prove via test/vectors/replay-hashes.json). If a hash moves, something forked.
-- Intra-workspace deps MUST be `workspace:*` (pnpm rewrites to exact versions at pack time). No carets ever ship. Enforced by scripts/check-lockstep.mjs (+ published pins: every package version already on npm must pin the current workspace versions of its deps; + dist-freshness: dist/ must not be older than src/; + a package with a CHANGELOG.md lists it in `files`, since pnpm pack does not add it).
-- pnpm publish, NEVER npm publish. Every package's prepublishOnly runs scripts/publish-guard.mjs which hard-refuses a non-pnpm client. Reason: the 0.1.22 incident (raw npm shipped unresolved workspace:* specifiers).
+- Intra-workspace deps MUST be `workspace:*` (pnpm rewrites to exact versions at pack time). No carets ever ship. Enforced by scripts/check-lockstep.mjs (+ published pins: every package version already on npm must pin the current workspace versions of its deps; + published dist: for a version already on npm, the registry tarball (sha512-verified) must hold byte-identical dist/ files to this tree's build, so a source change needs a version bump. It detects that accident (one version, two code states), not a hostile tarball crafted to extract differently under npm and not a newly published version; the reader in scripts/published-dist.mjs refuses every archive shape `pnpm pack` does not emit. A whole-tarball hash compare is not used: pnpm 10.32.1 orders the packed package.json dependencies by which workspace:* resolution finishes first, so packs of csd-tx matched the registry 11 times in 15 and csd-registry 3 in 10 (2026-10-19); + dist-freshness: dist/ must not be older than src/, for versions not yet on npm; + a package with a CHANGELOG.md lists it in `files`, since pnpm pack does not add it).
+- pnpm publish, NEVER npm publish. Every package's prepublishOnly runs scripts/publish-guard.mjs which hard-refuses a non-pnpm client. Reason: the 0.1.22 incident (raw npm shipped unresolved workspace:* specifiers). Every package's prepack runs its build, so a packed tarball always carries a dist built from the tree; pnpm runs prepublishOnly before prepack, so the guard's tests see the dist that existed (the M4 freshness leg covers that gap).
 - Independent versioning (strict lockstep deliberately abandoned; do not re-litigate): bump the packages you changed AND every workspace package that depends on them. A published version keeps the exact pins it shipped with, so an unbumped dependent keeps the old dependency in the published graph (csd-crypto 0.1.15 kept pinning csd-codec 0.1.15 after codec moved to 0.1.16). Numbers still need not match.
 - Consumers must pin exact versions; never let a lockfile resolve two different csd-codec copies (sign with one encoding, verify with another).
 - The Python oracle is independent by design, written from the spec, never transliterated from the JS. It exists to catch exactly the C1 class.
@@ -76,6 +76,7 @@ Adoption-gate discipline: fee increases hurt STALE verifiers (attacker pays the 
 ```bash
 pnpm install                     # pnpm@10.32.1 pinned
 pnpm -r build                    # BUILD BEFORE TESTING (tsx tests import sibling dists)
+pnpm typecheck                   # tsc over packages/*/src, packages/*/test and test/ (strict, noUncheckedIndexedAccess)
 pnpm -r test                     # per-package suites
 pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
@@ -94,7 +95,7 @@ Gotchas: pnpm blocks esbuild postinstall unless onlyBuiltDependencies (already s
 - Root e2e (independent oracles, never self-grading): test/oracle.test.ts (real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), edge.test.ts, security.test.ts (hostile RPC/counterparty).
 - Cross-language differential (CI fork gate): crosscheck.mjs + crosscheck-regex.mjs (raw regex differential, the C1 class) + crosscheck-resolve.mjs + replay-corpus-crosslang.mjs (the committed on-chain corpus at every pinned height) + crosscheck-siwc.mjs + nprofile-crosslang.mjs + fuzz-resolve.mjs 1500 + one straddle test per gate (v20-v27). Real-chain co-sign conformance (live co-sign and vendor-parity tests) lives downstream in the consumer repos.
 - Money-safety conformance (REPORT-ONLY: CI runs them through `audit:all`, but a finding never fails the build; standing directive is to run and GROW them): audit:invariants (read the COVERAGE line, not just violations; widen fuel before trusting a clean run), audit:money-safety (a burn = rejected resolve().events entry whose paidTo pays the treasury), audit:race (P1 treasury-burn / P2 displacement-burn / P3 payment-without-delivery / P4 byte-identity; run only on a SETTLED tree, mid-rebuild dist reads as fake divergence).
-- CI: install --frozen-lockfile, the consensus citation check, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it).
+- CI: install --frozen-lockfile, typecheck, the consensus citation check, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it). A `secrets` job runs gitleaks over the full history (release binary, sha256 checked). Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment.
 
 ## Release and publish
 
@@ -102,7 +103,7 @@ Consensus-touching checklist (CONSENSUS_CHANGES.md): (1) land with golden vector
 
 ## Consumer footprint
 
-npm-pinning consumers: cairnx (trading service), cairn-cli, cairn-sdk, csd-indexer and the bridge relayer pin exact versions; `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins. A re-pinned package.json is INERT until that service restarts, so a coherent pin table is not the same as a coherent fleet: confirm each replayer by live query before a gate height, never by reading a manifest.
+npm-pinning consumers: cairnx (trading service), cairn-sdk, csd-indexer and the bridge relayer pin exact versions; `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins. A re-pinned package.json is INERT until that service restarts, so a coherent pin table is not the same as a coherent fleet: confirm each replayer by live query before a gate height, never by reading a manifest.
 
 Vendored consumers: the cairn website serves the packages server-side and ships PROVENANCE-pinned browser vendor bundles; cairn-wallet ships its own vendored SPV bundle whose PROVENANCE pins an exact csd-sdk version + commit, kept honest by each repo's check-vendor-fresh gate and the shared golden vectors. Each freshness gate compares BYTES, so a docs-only commit past that pin is a warning, not a failure, and the pin is refreshed by that repo's own `check-vendor-fresh.mjs --write` on its next vehicle. clarvis (the second-source resolver) runs cairnx-core and must ride every gate bump.
 

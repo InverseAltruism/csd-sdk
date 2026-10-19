@@ -98,7 +98,7 @@ const tipDenied = holdEnd - 5;                              // within fc1's hold
 {
   // sanity: the resolver really denies fc2 (fc1 remains the routing target)
   const st = resolve(deniedEvents, tipDenied);
-  ok(st.fclaims[fc1] !== undefined && st.fclaims[fc2] === undefined && st.offers[OID].claimTxid === fc1,
+  ok(st.fclaims[fc1] !== undefined && st.fclaims[fc2] === undefined && st.offers[OID]!.claimTxid === fc1,
     "sanity: fc2 is DENIED (fc1 stays the live routing target)");
   const v = await vfs(OID, fc2, B, makeIo(deniedEvents, tipDenied));
   ok(v.safe === false, `EXIT-A: denied-fclaim fill is REFUSED (${v.reason})`);
@@ -113,7 +113,7 @@ const holderEvents: ChainEvent[] = [...base, gC];
 const tipHolder = holdEnd - 5;
 {
   const st = resolve(holderEvents, tipHolder);
-  ok(st.offers[OID].claimedBy === C && st.offers[OID].claimTxid === fcC, "sanity: C is the live holder of fcC");
+  ok(st.offers[OID]!.claimedBy === C && st.offers[OID]!.claimTxid === fcC, "sanity: C is the live holder of fcC");
   const v = await vfs(OID, fcC, B, makeIo(holderEvents, tipHolder));
   ok(v.safe === false, `EXIT-B: forged-cancel-holder (me is not the holder) is REFUSED (${v.reason})`);
 }
@@ -127,7 +127,7 @@ const tipHolder = holdEnd - 5;
   const cancel = AE(id("2c"), OID, A, holdEndX + 2, {}, SCORE_CANCEL);   // after the hold lapsed -> not frozen
   const tipCancel = holdEndX + 5;
   const st = resolve([...base, gx, cancel], tipCancel);
-  ok(st.offers[OID].status === "cancelled", "sanity: the offer is cancelled after the hold lapsed");
+  ok(st.offers[OID]!.status === "cancelled", "sanity: the offer is cancelled after the hold lapsed");
   const v = await vfs(OID, fcx, B, makeIo([...base, gx, cancel], tipCancel));
   ok(v.safe === false, `cancelled offer is CAUGHT by the grant replay (${v.reason})`);
 }
@@ -160,11 +160,11 @@ const tipHolder = holdEnd - 5;
 {
   const POID = id("0e");
   const pOffer = PE(POID, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A }, min: "100000000" }), H0 + 2, A, 9e9);
-  const pBase: ChainEvent[] = [base[0], base[1], pOffer];
+  const pBase: ChainEvent[] = [base[0]!, base[1]!, pOffer];
   const Ep = epochOf(H0 + 3) + 2;
   const pFc = id("f5");
   const pGrant = PE(pFc, fclaim({ offer: POID }), H0 + 3, B, Ep);
-  const pOfferState = resolve([...pBase, pGrant], H0 + 5).offers[POID];
+  const pOfferState = resolve([...pBase, pGrant], H0 + 5).offers[POID]!;
   const outs = Object.fromEntries(requiredFillOutputs(pOfferState, "200000000")!.map((o) => [o.to, String(o.value)]));
   const priorFill = AE(id("3f"), pFc, B, H0 + 6, outs, SCORE_FILL);     // an earlier partial fill (fill-basis)
   const holdEndP = fclaimHoldEnd(Ep);
@@ -292,15 +292,15 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   const bo = bindProvenOffer(offerEv);
   ok(bo !== null && bo.seller === A && bo.payto === A && bo.terms.feeBps === 150 && bo.terms.value === "500000000",
     "bindProvenOffer: seller=author, payto=want.payto, terms derived");
-  const paytoLessEv = { kind: "propose", id: OID, proposer: A, ...offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000" } }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
+  const paytoLessEv = { kind: "propose", id: OID, proposer: A, ...offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000" } }), expiresEpoch: 9e9, height: H, pos: 0, depth: 0, paidTo: {} } as ProvenPropose;
   const boPL = bindProvenOffer(paytoLessEv);
   ok(boPL !== null && boPL.payto === A, "bindProvenOffer: payto-less record defaults payto to the proven author");
-  const notOffer = { kind: "propose", id: OID, proposer: A, ...fclaim({ offer: OID }), expiresEpoch: 9e9, height: H, pos: 0, paidTo: {} } as ProvenPropose;
+  const notOffer = { kind: "propose", id: OID, proposer: A, ...fclaim({ offer: OID }), expiresEpoch: 9e9, height: H, pos: 0, depth: 0, paidTo: {} } as ProvenPropose;
   ok(bindProvenOffer(notOffer) === null, "bindProvenOffer: a non-offer record fails closed (null)");
 
   // the production shape: the resolver's own OfferState against terms from the proven offer event, with the
   // default legs and with the explicit in-stack form; the honest offer binds both ways (no false refusal)
-  const servedState = resolve(base, H0 + 5).offers[OID];
+  const servedState = resolve(base, H0 + 5).offers[OID]!;
   ok(servedState !== undefined && bindOfferTerms(servedState, bo!.terms) === false, "default legs: the resolver's honest OfferState binds to bindProvenOffer terms");
   ok(bindOfferTerms(servedState, bo!.terms, { give: true, wantType: true }) === false, "explicit legs: the same honest OfferState binds");
 }
@@ -312,16 +312,16 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
 {
   const POID = id("0d");
   const pOffer = PE(POID, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A }, min: "100000000" }), H0 + 2, A, 9e9);
-  const pBase: ChainEvent[] = [base[0], base[1], pOffer];
+  const pBase: ChainEvent[] = [base[0]!, base[1]!, pOffer];
   const Ep = epochOf(H0 + 3) + 2;
   const pFc = id("f7");
   const pGrant = PE(pFc, fclaim({ offer: POID }), H0 + 3, B, Ep);
-  const st0 = resolve([...pBase, pGrant], H0 + 5).offers[POID];
+  const st0 = resolve([...pBase, pGrant], H0 + 5).offers[POID]!;
   const firstOuts = Object.fromEntries(requiredFillOutputs(st0, "400000000")!.map((o) => [o.to, String(o.value)]));
   const priorFill = AE(id("4f"), pFc, B, H0 + 6, firstOuts, SCORE_FILL);   // 80% filled on chain
   const evs: ChainEvent[] = [...pBase, pGrant, priorFill];
   const tip = fclaimHoldEnd(Ep) - 5;
-  const provenNow = resolve(evs, tip).offers[POID];
+  const provenNow = resolve(evs, tip).offers[POID]!;
   ok(provenNow.paid === "400000000", "sanity: the chain's paid is 400000000 (80% of the want)");
   const io = makeIo(evs, tip);
   // the SERVED-lie sizing: paid:"0" makes the caller plan the FULL want + fee on the full want
@@ -351,10 +351,10 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   // rebate merge pin: the open-lane whole fill's per-address sum INCLUDES the maker rebate; the sums seam
   // must accept it (this is the exact shape the audit's scalar `dp.pay !== pay` form would false-refuse).
   const tip = holdEnd - 5;
-  const provenO = resolve([...base, grant], tip).offers[OID];
+  const provenO = resolve([...base, grant], tip).offers[OID]!;
   const wholeOuts = requiredFillOutputs(provenO, "500000000")!;
   const merged = Object.fromEntries(wholeOuts.map((o) => [o.to, String(o.value)]));
-  ok(wholeOuts.length === 2 && BigInt(merged[A]) > 500000000n, "sanity: payto===seller merges pay+rebate into ONE leg above the bare want");
+  ok(wholeOuts.length === 2 && BigInt(merged[A]!) > 500000000n, "sanity: payto===seller merges pay+rebate into ONE leg above the bare want");
   const vWhole = await vfs(OID, fcTx, B, makeIo([...base, grant], tip), { sums: merged });
   ok(vWhole.safe === true, `whole open-lane fill with the MERGED pay+rebate sums is ACCEPTED (${vWhole.reason})`);
 

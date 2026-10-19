@@ -79,11 +79,11 @@ function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fi
   const withheldIds: string[] = [];   // on-chain events the resolver hint list OMITS (F8 completeness attack)
   // backing (deploy + mint), shared across scenarios
   for (const b of corpus.backing) {
-    const by = ADDR[b.by];
+    const by = ADDR[b.by]!;
     const built = b.rec.t === "deploy"
       ? deploy({ ticker: b.rec.ticker!, decimals: b.rec.decimals!, supply: b.rec.supply!, mint: "issuer" })
       : mint({ ticker: b.rec.ticker!, amount: b.rec.amount! });
-    const paidTo = b.fee === "DEPLOY_FEE" ? { [TREASURY_ADDR]: String(DEPLOY_FEE) } : {};
+    const paidTo: Record<string, string> = b.fee === "DEPLOY_FEE" ? { [TREASURY_ADDR]: String(DEPLOY_FEE) } : {};
     events.push(PE(rid(s.name + ":" + (b.rec.t)), built, resolveHeight(b.height), by, 9e9, 0, paidTo));
   }
   // offer
@@ -93,30 +93,30 @@ function materialise(s: WaScenario): { events: ChainEvent[]; offerId: string; fi
   if (s.offer.want.payto) wantRec.payto = ADDR[s.offer.want.payto];
   const offerBody: Parameters<typeof offer>[0] = { give: s.offer.give, want: wantRec };
   if (s.offer.min) (offerBody as { min?: string }).min = s.offer.min;
-  events.push(PE(offerId, offer(offerBody), resolveHeight(s.offer.height), ADDR[s.offer.by], 9e9));
+  events.push(PE(offerId, offer(offerBody), resolveHeight(s.offer.height), ADDR[s.offer.by]!, 9e9));
   // the primary fclaim
   const fcId = rid(s.name + ":" + s.fclaim.id);
   idOf[s.fclaim.id] = fcId;
-  events.push(PE(fcId, fclaim({ offer: offerId }), resolveHeight(s.fclaim.height), ADDR[s.fclaim.by], resolveEe(s.fclaim.ee)));
+  events.push(PE(fcId, fclaim({ offer: offerId }), resolveHeight(s.fclaim.height), ADDR[s.fclaim.by]!, resolveEe(s.fclaim.ee)));
   // extra events (a second fclaim, an ocancel)
   for (const e of s.extra) {
     const eid = rid(s.name + ":" + e.id);
     idOf[e.id] = eid;
     if (e.kind === "fclaim") {
-      events.push(PE(eid, fclaim({ offer: offerId }), resolveHeight(e.height), ADDR[e.by], resolveEe(e.ee!)));
+      events.push(PE(eid, fclaim({ offer: offerId }), resolveHeight(e.height), ADDR[e.by]!, resolveEe(e.ee!)));
     } else if (e.kind === "ocancel") {
-      events.push(PE(eid, offerCancelAll({ ticker: e.ticker! }), resolveHeight(e.height), ADDR[e.by], 9e9));
+      events.push(PE(eid, offerCancelAll({ ticker: e.ticker! }), resolveHeight(e.height), ADDR[e.by]!, 9e9));
       if (e.withheld) withheldIds.push(eid.toLowerCase());   // on-chain but omitted from io.offerEventIds
     } else throw new Error(`bad extra kind ${e.kind}`);
   }
   // fill target + tip
-  const fillFclaimId = idOf[s.fill.fclaim];
+  const fillFclaimId = idOf[s.fill.fclaim]!;
   const fillEe = resolveEe((s.extra.find((e) => e.id === s.fill.fclaim)?.ee) ?? s.fclaim.ee);
   let tip: number;
   if (s.fill.tip.kind === "holdEndMinus") tip = fclaimHoldEnd(fillEe) - s.fill.tip.n!;
   else if (s.fill.tip.kind === "absolute") tip = resolveHeight(s.fill.tip.h!);
   else throw new Error(`bad tip ${JSON.stringify(s.fill.tip)}`);
-  return { events, offerId, fillFclaimId, me: ADDR[s.fill.me], tip, pay: s.fill.pay ?? undefined, withheldIds };
+  return { events, offerId, fillFclaimId, me: ADDR[s.fill.me]!, tip, pay: s.fill.pay ?? undefined, withheldIds };
 }
 
 const idKey = (e: ChainEvent) => (e.kind === "propose" ? e.id : e.txid).toLowerCase();

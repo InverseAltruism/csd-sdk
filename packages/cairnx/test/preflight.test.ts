@@ -1,7 +1,7 @@
-// preflight.test.ts — pins the shared pre-flight helpers (previewFill / fillIsSafe / finalizeWinnerCheck)
+// preflight.test.ts: pins the shared pre-flight helpers (previewFill / fillIsSafe / finalizeWinnerCheck)
 // against the REAL resolver, so a client that calls them gates EXACTLY as the chain does. The central
 // property (deep-review 2026-07-03 §5): previewFill's delivered `got` equals the resolver's own delivered
-// amount at and around the C3 zero-delivery boundary — the case prior suites never constructed.
+// amount at and around the C3 zero-delivery boundary; the case prior suites never constructed.
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13,7 +13,7 @@ import {
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN, epochOf,
-  type ChainEvent, type OfferState, type NameState,
+  type ChainEvent, type ProposeEvent, type OfferState, type NameState,
 } from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -22,7 +22,7 @@ let nextId = 1;
 const nid = () => "0x" + (nextId++).toString(16).padStart(64, "0");
 const A = "0x" + "aa".repeat(20), B = "0x" + "bb".repeat(20), C = "0x" + "cc".repeat(20);
 const T = TREASURY_ADDR;
-const prop = (who: string, rec: { uri: string; payloadHash: string }, h: number, paidTo: Record<string, string> = {}, pos = 1, exp = 9e15): ChainEvent =>
+const prop = (who: string, rec: { uri: string; payloadHash: string }, h: number, paidTo: Record<string, string> = {}, pos = 1, exp = 9e15): ProposeEvent =>
   ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos, expiresEpoch: exp, paidTo });
 const att = (who: string, proposalId: string, h: number, paidTo: Record<string, string> = {}, score = 100, pos = 1, confidence = 0): ChainEvent =>
   ({ kind: "attest", txid: nid(), proposalId, attester: who, score, confidence, height: h, pos, paidTo });
@@ -55,7 +55,7 @@ console.log("previewFill == resolver delivered `got` at the C3 zero-delivery bou
       prop(A, mint({ ticker: "RARE", amount: G.toString() }), h0 + 1),
       offEv,
     ], h0 + 3);
-    return st.offers[offEv.id];
+    return st.offers[offEv.id]!;
   };
   const o = freshOffer();
 
@@ -82,7 +82,7 @@ console.log("previewFill == resolver delivered `got` at the C3 zero-delivery bou
   // boundary invariant giveTotal*min >= want: min = want exactly delivers 1
   const trapEdge: OfferState = { ...trapOff, min: "100000000000" };  // min == want (give=1 ⇒ boundary)
   ok("C3 boundary: min==want delivers exactly 1 (giveTotal*min == want)", previewFill(trapEdge, 100000000000n).got === 1n);
-  // feeBps=0 (a pre-v1.1-era offer): the resolver's `o.feeBps ? tradeFee : 0n` charges NOTHING — the
+  // feeBps=0 (a pre-v1.1-era offer): the resolver's `o.feeBps ? tradeFee : 0n` charges NOTHING; the
   // preview must quote 0 too, never a fallback constant (an over-quote makes the taker overpay treasury)
   const freeEraPartial: OfferState = { ...trapEdge, feeBps: 0 };
   const freeP = previewFill(freeEraPartial, 100000000000n);
@@ -94,7 +94,7 @@ console.log("previewFill == resolver delivered `got` at the C3 zero-delivery bou
 }
 
 // ── fillIsSafe: C2/C4 open-CSD live-claim gate + taker match ──
-console.log("\nfillIsSafe — open-CSD claim gate + taker match:");
+console.log("\nfillIsSafe; open-CSD claim gate + taker match:");
 {
   const tip = V27_HEIGHT + 1200;
   const val = 100000000n;
@@ -119,7 +119,7 @@ console.log("\nfillIsSafe — open-CSD claim gate + taker match:");
 }
 
 // ── finalizeWinnerCheck: C1 ──
-console.log("\nfinalizeWinnerCheck — the C1 registration-finalize gate:");
+console.log("\nfinalizeWinnerCheck; the C1 registration-finalize gate:");
 {
   const commitHeight = V25_HEIGHT + 500;
   const mine: NameState = { name: "gm", owner: A, claimId: nid(), height: commitHeight, effectiveHeight: commitHeight, locked: false, pending: true };
@@ -130,7 +130,7 @@ console.log("\nfinalizeWinnerCheck — the C1 registration-finalize gate:");
   ok("already finalized to me (pending cleared) → NOT safe (no second fee needed)", finalizeWinnerCheck({ ...mine, pending: undefined }, A, commitHeight).safe === false);
 
   // ── N-2: the finalize WINDOW, both sides, when a tip is passed (freeze + expiry, resolver-mirrored
-  //    boundaries with the FINALIZE_TIP_MARGIN band — identical to the site's finalizeReady) ──
+  //    boundaries with the FINALIZE_TIP_MARGIN band; identical to the site's finalizeReady) ──
   const eff = commitHeight;
   const finalizeBy = eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS;
   const resv: NameState = { ...mine, finalizeBy };
@@ -156,7 +156,7 @@ console.log("\nfinalizeWinnerCheck — the C1 registration-finalize gate:");
   // finalizeBy. MUTATION CONTRACT: pre-S1 (finalizeBy-derived closeAt) this returned safe:true.
   const lyingResv: NameState = { ...mine, finalizeBy: eff + 1000 };
   const lied = finalizeWinnerCheck(lyingResv, A, commitHeight, closeAt + 1);
-  ok("S1: an inflated resolver finalizeBy is IGNORED — a tip past the eff-derived close still refuses", lied.safe === false && /closed/.test(lied.reason));
+  ok("S1: an inflated resolver finalizeBy is IGNORED; a tip past the eff-derived close still refuses", lied.safe === false && /closed/.test(lied.reason));
   ok("S1: the honest in-window boundary is unchanged by the pure derivation", finalizeWinnerCheck(lyingResv, A, commitHeight, closeAt).safe === true);
 }
 
@@ -174,21 +174,21 @@ console.log("\nend-to-end: fillIsSafe refuses exactly the fill the resolver woul
     att(B, offEv.id, listH + 5, {}, SCORE_CLAIM, 0),   // B claims → wins
   ];
   const st = resolve(ev, listH + 6);
-  const o = st.offers[offEv.id];
+  const o = st.offers[offEv.id]!;
   // C (no claim) is about to fill → the preflight must refuse BEFORE C signs (matching the on-chain reject)
-  ok("C is refused by fillIsSafe (no live claim) — the burn the resolver would take", fillIsSafe(o, C, val + reb, listH + 6).safe === false);
+  ok("C is refused by fillIsSafe (no live claim); the burn the resolver would take", fillIsSafe(o, C, val + reb, listH + 6).safe === false);
   ok("B (the live claimant) is allowed by fillIsSafe", fillIsSafe(o, B, val + reb, listH + 6).safe === true);
 }
 
 // ── requiredFillOutputs: the output list it sizes is ACCEPTED by the real resolver, and any
 // single-unit per-address underpayment is REFUSED (the pay-without-delivery burn class this
 // function now single-sources for the wallet, the cairnx service, and the cairn UI) ──
-console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refused one unit under:");
+console.log("\nrequiredFillOutputs; resolver-accepted at par, resolver-refused one unit under:");
 {
   const outsToPaidTo = (outs: { to: string; value: bigint }[], dropOne?: string): Record<string, string> =>
     Object.fromEntries(outs.map((o) => [o.to, (dropOne === o.to ? o.value - 1n : o.value).toString()]));
 
-  // WHOLE fill on an OPEN v1.7 name ask (claim-to-fill lane) — payto defaults to the seller, so the
+  // WHOLE fill on an OPEN v1.7 name ask (claim-to-fill lane); payto defaults to the seller, so the
   // want and the maker rebate land on ONE address and must be ACCUMULATED (the resolver sums them).
   const H = V27_HEIGHT + 2000, salt = "e".repeat(32);
   const val = 100000000n, reb = makerRebate(val);
@@ -207,9 +207,9 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
     };
   };
   const { ev: probeEv, offId: probeId } = mkEvents({});
-  const openOffer = resolve(probeEv.slice(0, 5), H + 305).offers[probeId];
+  const openOffer = resolve(probeEv.slice(0, 5), H + 305).offers[probeId]!;
   const outs = requiredFillOutputs(openOffer, val)!;
-  ok("open-ask whole fill: 2 outputs (payto==seller ACCUMULATED with rebate, + treasury)", outs.length === 2 && outs[0].to === A && outs[0].value === val + reb && outs[1].to === T);
+  ok("open-ask whole fill: 2 outputs (payto==seller ACCUMULATED with rebate, + treasury)", outs.length === 2 && outs[0]!.to === A && outs[0]!.value === val + reb && outs[1]!.to === T);
   const filledAt = (paidTo: Record<string, string>): boolean => {
     const { ev, offId } = mkEvents(paidTo);
     return resolve(ev, H + 307).offers[offId]?.status === "filled";
@@ -219,9 +219,9 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   ok("one unit under on the treasury leg → resolver REFUSES the fill", filledAt(outsToPaidTo(outs, T)) === false);
 
   // whole-fill OVERPAY: previewFill clamps the effective pay to want (`pay: want`, fee on want), so a
-  // payRaw above want sizes IDENTICAL outputs to par — this map can never make a taker overpay a leg
+  // payRaw above want sizes IDENTICAL outputs to par; this map can never make a taker overpay a leg
   const outsOver = requiredFillOutputs(openOffer, val * 3n)!;
-  ok("whole-fill overpay (payRaw = 3×want) clamps to want: outputs identical to par", outsOver.length === outs.length && outsOver.every((o, i) => o.to === outs[i].to && o.value === outs[i].value));
+  ok("whole-fill overpay (payRaw = 3×want) clamps to want: outputs identical to par", outsOver.length === outs.length && outsOver.every((o, i) => o.to === outs[i]!.to && o.value === outs[i]!.value));
   ok("previewFill pins the whole-fill clamp: pay == want, fee on want", (() => { const p = previewFill(openOffer, val * 3n); return p.deliverable && p.pay === val && p.fee === tradeFee(val, FEE_BPS_V16); })());
 
   // PARTIAL fill (taker-bound token offer): pay + fee(clamped), NO rebate leg
@@ -230,11 +230,11 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
     const dep = prop(A, deploy({ ticker: "PART", decimals: 0, supply: G2.toString(), mint: "issuer" }), H, { [T]: "100000000" });
     const mintEv = prop(A, mint({ ticker: "PART", amount: G2.toString() }), H + 1);
     const offEv = prop(A, offer({ give: { ticker: "PART", amount: G2.toString() }, want: { value: W2.toString() }, min: unit.toString(), taker: B }), H + 2, {});
-    return { o: resolve([dep, mintEv, offEv], H + 3).offers[offEv.id], base: [dep, mintEv, offEv], offId: offEv.id };
+    return { o: resolve([dep, mintEv, offEv], H + 3).offers[offEv.id]!, base: [dep, mintEv, offEv], offId: offEv.id };
   };
   const { o: po, base, offId } = partialOffer();
   const pouts = requiredFillOutputs(po, unit)!;
-  ok("partial fill: 2 outputs (clamped pay + fee), NO rebate leg", pouts.length === 2 && pouts[0].value === unit && pouts[1].to === T && pouts[1].value === tradeFee(unit, FEE_BPS_V16));
+  ok("partial fill: 2 outputs (clamped pay + fee), NO rebate leg", pouts.length === 2 && pouts[0]!.value === unit && pouts[1]!.to === T && pouts[1]!.value === tradeFee(unit, FEE_BPS_V16));
   const partialFills = (paidTo: Record<string, string>): boolean => {
     const st = resolve([...base, att(B, offId, H + 4, paidTo, SCORE_FILL, 2)], H + 5);
     return (st.offers[offId]?.fills?.length ?? 0) > 0;
@@ -250,38 +250,38 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   ok("undeliverable (below min) → null", requiredFillOutputs(po, unit - 1n) === null);
   const freeEra: OfferState = { ...po, feeBps: 0 };
   const fouts = requiredFillOutputs(freeEra, unit)!;
-  ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0].to === A);
+  ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0]!.to === A);
 }
 
 // ── OVERPAY CLAMP on a partially-filled offer: payRaw beyond the REMAINDER is clamped by previewFill
-// (resolve.ts:647 `x = pay < remaining ? pay : remaining`, fee ON the clamp) — the sized outputs carry
+// (resolve.ts:647 `x = pay < remaining ? pay : remaining`, fee ON the clamp); the sized outputs carry
 // exactly the remainder, the resolver ACCEPTS them (the offer completes), and the fee leg is refused
 // one unit under. NOTE what the clamp does NOT guarantee: a pay leg one unit under the remainder is
-// still >= effMin, so the resolver ACCEPTS it and just delivers less (offer left open one unit short) —
+// still >= effMin, so the resolver ACCEPTS it and just delivers less (offer left open one unit short);
 // pinned as-is so nobody "hardens" the clamp into an over-ask ──
-console.log("\nrequiredFillOutputs — overpay clamped to the remainder (fee on the clamp), resolver-pinned:");
+console.log("\nrequiredFillOutputs; overpay clamped to the remainder (fee on the clamp), resolver-pinned:");
 {
   const H2 = V27_HEIGHT + 3000, G3 = 10n, W3 = 100_00000000n, unit3 = W3 / G3; // 10 CSD per token
   const dep = prop(A, deploy({ ticker: "CLMP", decimals: 0, supply: G3.toString(), mint: "issuer" }), H2, { [T]: "100000000" });
   const mintEv = prop(A, mint({ ticker: "CLMP", amount: G3.toString() }), H2 + 1);
   const offEv = prop(A, offer({ give: { ticker: "CLMP", amount: G3.toString() }, want: { value: W3.toString() }, min: unit3.toString(), taker: B }), H2 + 2, {});
-  const first = 3n * unit3;   // 3 tokens already bought — 70 CSD remaining
+  const first = 3n * unit3;   // 3 tokens already bought; 70 CSD remaining
   const base2 = [dep, mintEv, offEv, att(B, offEv.id, H2 + 3, { [A]: first.toString(), [T]: tradeFee(first, FEE_BPS_V16).toString() }, SCORE_FILL, 2)];
-  const o2 = resolve(base2, H2 + 4).offers[offEv.id];
+  const o2 = resolve(base2, H2 + 4).offers[offEv.id]!;
   const remaining = W3 - first;
   const over = requiredFillOutputs(o2, W3)!;   // payRaw = the FULL want, well over the remainder
-  ok("overpaid partial: pay leg = the clamped remainder, fee computed ON THE CLAMP (never on payRaw)", over.length === 2 && over[0].to === A && over[0].value === remaining && over[1].to === T && over[1].value === tradeFee(remaining, FEE_BPS_V16));
+  ok("overpaid partial: pay leg = the clamped remainder, fee computed ON THE CLAMP (never on payRaw)", over.length === 2 && over[0]!.to === A && over[0]!.value === remaining && over[1]!.to === T && over[1]!.value === tradeFee(remaining, FEE_BPS_V16));
   const p2 = previewFill(o2, W3);
   ok("previewFill guarantee: pay clamped to remaining, got = the 7 undelivered tokens", p2.deliverable && p2.pay === remaining && p2.got === 7n);
-  const after = (paidTo: Record<string, string>): OfferState => resolve([...base2, att(B, offEv.id, H2 + 5, paidTo, SCORE_FILL, 2)], H2 + 6).offers[offEv.id];
+  const after = (paidTo: Record<string, string>): OfferState => resolve([...base2, att(B, offEv.id, H2 + 5, paidTo, SCORE_FILL, 2)], H2 + 6).offers[offEv.id]!;
   const par = Object.fromEntries(over.map((x) => [x.to, x.value.toString()]));
-  ok("resolver ACCEPTS exactly the clamped outputs — the offer completes (filled, all 10 delivered)", (() => { const o = after(par); return o.status === "filled" && o.delivered === G3.toString(); })());
+  ok("resolver ACCEPTS exactly the clamped outputs; the offer completes (filled, all 10 delivered)", (() => { const o = after(par); return o.status === "filled" && o.delivered === G3.toString(); })());
   ok("one unit under on the fee leg (fee owed on the CLAMPED amount) → resolver REFUSES the fill", (after({ ...par, [T]: (tradeFee(remaining, FEE_BPS_V16) - 1n).toString() }).fills?.length ?? 0) === 1);
   ok("one unit under on the pay leg is ACCEPTED but does NOT complete (still ≥ effMin; 1 unit left owing)", (() => { const o = after({ ...par, [A]: (remaining - 1n).toString() }); return o.status === "open" && (o.fills?.length ?? 0) === 2; })());
 }
 
 // ── buildFeeHeight: the approach-the-gate build heuristic, pinned at every gate ± margin ──
-console.log("\nbuildFeeHeight — margin behavior at every name-fee gate:");
+console.log("\nbuildFeeHeight; margin behavior at every name-fee gate:");
 {
   ok("FEE_GATE_MARGIN_BLOCKS is 5 (the value both UI copies carried)", FEE_GATE_MARGIN_BLOCKS === 5);
   for (const g of [V18_HEIGHT, V24_HEIGHT]) {

@@ -1,6 +1,6 @@
-// @inversealtruism/csd-client — live integration against the local node (skips cleanly if unreachable).
+// @inversealtruism/csd-client: live integration against the local node (skips cleanly if unreachable).
 // The strong gate: fetch REAL on-chain txs, rebuild the Tx via rpcTxToTx, and confirm our
-// codec's txid matches the on-chain txid — proving serialize/strip against real scriptSig data
+// codec's txid matches the on-chain txid: proving serialize/strip against real scriptSig data
 // (no spending). Also re-verify each block's merkle root + header hash from RPC JSON.
 import { CsdClient, rpcTxToTx, rpcHeaderToHeader } from "../src/index.js";
 import { txid, headerHash, merkleRoot } from "@inversealtruism/csd-codec";
@@ -12,7 +12,7 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
 if (!BASE) { console.log("SKIP: csd-client live test: CSD_RPC unset (live-node tests are opt-in)"); process.exit(0); }
-if (!reachable) { console.log(`(no node at ${BASE} — skipping @inversealtruism/csd-client live test)`); process.exit(0); }
+if (!reachable) { console.log(`(no node at ${BASE}; skipping @inversealtruism/csd-client live test)`); process.exit(0); }
 
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();
@@ -37,9 +37,9 @@ ok("recent blocks: headerHash + merkleRoot reproduce from RPC JSON", blocksOk >=
 ok(`real txs round-trip rpcTxToTx→txid (${txOk}/${txsChecked})`, txsChecked > 0 && txOk === txsChecked);
 
 // reads
-const dom = await c.domains();
+const dom = (await c.domains()) as unknown as { domains?: unknown };   // the node serves an object; csd-client declares string[]
 ok("domains() returns a list", Array.isArray(dom.domains));
-const mp = await c.mempool();
+const mp = (await c.mempool()) as { tx_count?: unknown };
 ok("mempool() returns tx_count", typeof mp.tx_count === "number");
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

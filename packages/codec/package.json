@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Compute Substrate consensus codec — bincode (fixint-LE) serialize/deserialize, txid, sighash (CSD_SIG_V1), header serialize/hash, compact-bits→target, merkle. Byte-identical to the Rust node (golden-vector-gated).",
+  "description": "Compute Substrate consensus codec: bincode (fixint-LE) serialize/deserialize, txid, sighash (CSD_SIG_V1), header serialize/hash, compact-bits→target, merkle. Byte-identical to the Rust node (golden-vector-gated).",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx test/codec.test.ts && tsx test/input-canon.test.ts",
+    "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
