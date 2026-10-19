@@ -34,9 +34,8 @@ jobs:
       - run: pnpm lint   # biome.json: unused imports, empty blocks, focused tests, ts-ignore
       - run: pnpm check:dashes-paths   # no em dash in tracked docs, no sibling-checkout reads outside the listed exceptions
       - run: node scripts/check-lockstep.mjs   # workspace:* + published pins and published dist equal this build (queries npm) + dist-freshness (needs built dist/)
-      # Per-package conformance. The node-dependent suites (client/light) and the live oracle
-      # skip cleanly when there is no CSD node (CI has none); the deterministic core
-      # (codec/crypto/tx/vectors) + edge + the pure security checks run and gate every push.
+      # Per-package conformance, offline. The live-node suites (the oracle, the client and light live tests) are
+      # `pnpm test:live` and never run here: with no node they assert nothing.
       - run: pnpm -r --filter "./packages/*" test
       - run: pnpm exec tsx test/edge.test.ts
       - run: pnpm exec tsx test/security.test.ts
@@ -46,7 +45,6 @@ jobs:
       - run: pnpm exec tsx test/check-dashes-paths.test.ts
       - run: pnpm exec tsx test/lint-config.test.ts   # biome.json enables exactly the four rules
       - run: pnpm exec tsx test/dep-pins.test.ts   # every dependency exact or workspace:*, equal to what the lockfile resolves
-      - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)
 
   secrets:
     runs-on: ubuntu-latest

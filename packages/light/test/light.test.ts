@@ -1,8 +1,6 @@
-// @inversealtruism/csd-light — full verification suite.
-//   LIVE (needs node): genesis sync + per-block LWMA + chainwork match; FULL-RANGE LWMA
-//   spot-checks (high-difficulty regimes); merkle inclusion; checkpoint-start; tamper rejection.
-//   OFFLINE (always): a self-mined synthetic chain proving reorg ADOPTION (higher work) and
-//   REJECTION (lower/equal work) — adoption can't be fabricated on mainnet, so we mine it.
+// @inversealtruism/csd-light live suite (`pnpm test:live`, needs a node at CSD_RPC): genesis sync + per-block LWMA +
+// chainwork match; full-range LWMA spot-checks; merkle inclusion; checkpoint-start; tamper rejection; reorg
+// adopt/reject on real blocks. The offline suites (light-offline, records, content-bind, lwma-memo) run in CI.
 import { LightClient, expectedBitsFromWindow } from "../src/index.js";
 import { CsdClient, rpcHeaderToHeader } from "@inversealtruism/csd-client";
 import { type BlockHeader } from "@inversealtruism/csd-codec";
@@ -14,11 +12,11 @@ const BASE = process.env.CSD_RPC;
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
 if (!BASE) console.log("\nSKIP: live light tests: CSD_RPC unset (live-node tests are opt-in)");
-if (!BASE || !reachable) { if (BASE) console.log(`\n(no node at ${BASE} — live light tests skipped)`); console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`); process.exit(fail === 0 ? 0 : 1); }
+if (!BASE || !reachable) { if (BASE) console.log(`\n(no node at ${BASE}; live light tests skipped)`); console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`); process.exit(fail === 0 ? 0 : 1); }
 const client = new CsdClient({ baseUrl: BASE });
 const tip = await client.tip();
 
-console.log("\n— genesis sync: PoW + LWMA(bits) + chainwork vs node —");
+console.log("\ngenesis sync: PoW + LWMA(bits) + chainwork vs node:");
 const N = 40;
 const lc = new LightClient({ client });
 let threw = ""; try { await lc.sync(N); } catch (e: any) { threw = e?.message ?? String(e); }
@@ -27,7 +25,7 @@ const nb = await client.blockByHeight(N);
 ok("accumulated chainwork == node chainwork @N", String(lc.chainwork) === String(nb.chainwork));
 ok("fullyVerified == true for genesis-start", lc.fullyVerified === true);
 
-console.log("\n— FULL-RANGE LWMA spot-checks (high-difficulty regimes) —");
+console.log("\nFULL-RANGE LWMA spot-checks (high-difficulty regimes):");
 const LWMA = 45;
 const heights = [2000, 5000, 10000, 15000, 20000, 25000, tip.height - 1].filter((h) => h > LWMA && h <= tip.height);
 let spotChecked = 0, spotOk = 0;
@@ -43,13 +41,13 @@ for (const h of heights) {
 }
 ok(`re-derived LWMA bits == real header bits across the chain (${spotOk}/${spotChecked} heights)`, spotChecked >= 3 && spotOk === spotChecked);
 
-console.log("\n— merkle inclusion (within synced range) —");
+console.log("\nmerkle inclusion (within synced range):");
 const blk = await client.blockByHeight(N - 5);
 const tx0 = blk.txs[0];
 if (tx0) { const res = await lc.verifyTxInclusion(tx0.txid); ok("verifyTxInclusion → verified-inclusion", res.trustLevel === "verified-inclusion" && res.included); }
 else ok("inclusion skipped (no tx)", true);
 
-console.log("\n— checkpoint-start (practical: no genesis fetch) —");
+console.log("\ncheckpoint-start (practical: no genesis fetch):");
 const cpH = Math.max(LWMA + 1, tip.height - 25);
 const cpBlock = await client.blockByHeight(cpH);
 const cp = new LightClient({ client });
@@ -60,7 +58,7 @@ let cpErr = ""; try { await cp.sync(tip.height); } catch (e: any) { cpErr = e?.m
 ok("verifies forward from the checkpoint to tip (PoW+LWMA)", cpErr === "" && cp.tip!.hash === tip.tip);
 if (cpErr) console.log("     forward-sync error:", cpErr);
 
-console.log("\n— tamper rejection (live) —");
+console.log("\ntamper rejection (live):");
 const real1 = await client.blockByHeight(1);
 let rejGen = false; try { new LightClient({ client }).ingest(0, { version: real1.header.version, prev: "0x" + "00".repeat(32), merkle: real1.header.merkle, time: 1, bits: 0x1e00ffff, nonce: 0 } as any); } catch { rejGen = true; }
 ok("foreign genesis rejected", rejGen);
@@ -69,7 +67,7 @@ const r31 = await client.blockByHeight(21);
 let rejPow = false; try { lc2.ingest(21, { ...rpcHeaderToHeader(r31.header), nonce: 0 } as any); } catch (e: any) { rejPow = /PoW|bits/.test(e?.message ?? ""); }
 ok("broken-PoW header rejected", rejPow);
 
-console.log("\n— reorg machinery (real valid-PoW blocks: adopt higher-work, reject lower) —");
+console.log("\nreorg machinery (real valid-PoW blocks: adopt higher-work, reject lower):");
 // A true competing fork can't be fabricated on mainnet, but the adopt/reject/rollback machinery
 // is fully exercised with REAL blocks: a longer real extension from an ancestor must be adopted
 // (rollback+replay), a shorter one rejected. Both alt branches are real, valid-PoW headers.
@@ -90,7 +88,7 @@ console.log("\n— reorg machinery (real valid-PoW blocks: adopt higher-work, re
   ok("a broken-prev alt branch is rejected by tryReorg", rc2.tryReorg([{ height: 50, header: { ...node35.header, prev: "0x" + "de".repeat(32) } as any }]).adopted === false);
 }
 
-console.log("\n— balance honesty —");
+console.log("\nbalance honesty:");
 const bal = await lc.balance("0x44d92872a5b65d37d60ed532f41efe7c5aed59ec");
 ok("balance trustLevel == 'rpc-trusted'", bal.trustLevel === "rpc-trusted");
 

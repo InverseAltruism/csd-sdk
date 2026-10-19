@@ -80,7 +80,8 @@ pnpm typecheck                   # tsc over packages/*/src, packages/*/test and 
 pnpm lint                        # Biome, four rules: unused imports, empty blocks, focused tests, @ts-ignore
 pnpm check:dashes-paths          # em dashes in tracked docs, sibling-checkout paths in code (exceptions in scripts/dashes-exceptions.json)
 pnpm -r test                     # per-package suites
-pnpm test:e2e                    # live opt-in guard + oracle/edge/security (live parts run only with CSD_RPC set)
+pnpm test:e2e                    # live opt-in guard + edge/security (their live parts run only with CSD_RPC set)
+pnpm test:live                   # needs CSD_RPC: the oracle and the client and light live suites; never in CI
 pnpm test:crosslang              # full JS<->Python differential: the REAL fork gate
 pnpm run audit:all               # check-consensus-citations (hard) + invariants + money-safety + race harness
 node scripts/check-lockstep.mjs
@@ -94,10 +95,11 @@ Gotchas: pnpm blocks esbuild postinstall unless onlyBuiltDependencies (already s
 
 - Unit: `pnpm -r test`. cairnx runs vectors, name-decoy, client-helpers, paidto, preflight (gate +/- margin grid), primary.
 - Golden vectors: csd-vectors pins the node's golden_vectors.rs + real on-chain data; cairnx pins cases.json + replay-hashes.json (canonical-state sha256 at every activation height).
-- Root e2e (independent oracles, never self-grading): test/oracle.test.ts (real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), edge.test.ts, security.test.ts (hostile RPC/counterparty).
+- Root e2e (independent oracles, never self-grading): edge.test.ts, security.test.ts (hostile RPC/counterparty).
+- Live (`pnpm test:live`, needs CSD_RPC, not in CI; `test/ci-workflow.test.ts` pins that): test/oracle.test.ts (real on-chain signatures vs SDK-computed sighash, node /tx/template match, live mempool acceptance, chainwork-from-genesis match), packages/client/test/client.test.ts, packages/light/test/light.test.ts.
 - Cross-language differential (CI fork gate): crosscheck.mjs + crosscheck-regex.mjs (raw regex differential, the C1 class) + crosscheck-resolve.mjs + replay-corpus-crosslang.mjs (the committed on-chain corpus at every pinned height) + crosscheck-siwc.mjs + nprofile-crosslang.mjs + fuzz-resolve.mjs 1500 + one straddle test per gate (v20-v27). Real-chain co-sign conformance (live co-sign and vendor-parity tests) lives downstream in the consumer repos.
 - Money-safety conformance (REPORT-ONLY: CI runs them through `audit:all`, but a finding never fails the build; standing directive is to run and GROW them): audit:invariants (read the COVERAGE line, not just violations; widen fuel before trusting a clean run), audit:money-safety (a burn = rejected resolve().events entry whose paidTo pays the treasury), audit:race (P1 treasury-burn / P2 displacement-burn / P3 payment-without-delivery / P4 byte-identity; run only on a SETTLED tree, mid-rebuild dist reads as fake divergence).
-- CI: install --frozen-lockfile, typecheck, lint (blocking; `test/lint-config.test.ts` pins that biome.json enables exactly the four rules), the consensus citation check, build, check-lockstep, per-package tests, e2e (node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it). A `secrets` job runs gitleaks over the full history (release binary, sha256 checked). Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment; the workflow token is read-only and no checkout keeps credentials (`test/ci-workflow.test.ts` pins this shape).
+- CI: install --frozen-lockfile, typecheck, lint (blocking; `test/lint-config.test.ts` pins that biome.json enables exactly the four rules), the consensus citation check, build, check-lockstep, per-package tests, edge and security (their node-dependent parts skip); conformance job = Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it). A `secrets` job runs gitleaks over the full history (release binary, sha256 checked). Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment; the workflow token is read-only and no checkout keeps credentials (`test/ci-workflow.test.ts` pins this shape).
 
 ## Release and publish
 
