@@ -1,7 +1,7 @@
 // The replay state one resolve() call threads through the record handlers: the ledger maps, the private expiry
 // indexes and the helpers that mutate them. Internal to cairnx-core; resolve.ts owns the loop and the output.
 import {
-  AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, claimGraceOf, epochOf, isNameGive,
+  AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, claimGraceOf, epochOf, isNameGive,
   type AppliedEvent, type BidState, type ChainEvent, type OfferState, type TokenState,
 } from "../types.js";
 
@@ -145,6 +145,17 @@ export function createContext() {
       releaseGive(o); setOfferStatus(o, "cancelled");
     }
   };
+  // v2.9 (§32, V29 / REBIND M5): the per-address concurrent-hold cap counts an address's LIVE holds (window +
+  // grace). A FILLED offer keeps its claimedBy/claimUntilHeight/claimTxid (never cleared, §31 last-write-wins
+  // invariant), so pre-V29 a completed fclaim buy still counts against the cap until its hold window lapses -> 3
+  // completed buys deny a 4th honest claim. At the counting event's height >= V29 only OPEN holds count (a filled
+  // offer has SETTLED; its residual claim fields are a record, not a live reservation). GATED on the event height so
+  // pre-V29 is byte-identical; this GRANTS a claim a stale replayer denies (a RELAXATION), hence the adoption gate.
+  // One counter for both claim paths: the fclaim grant ladder and the legacy SCORE_CLAIM.
+  const liveHoldCount = (who: string, height: number): number => {
+    let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, height) && (height < V29_HEIGHT || x.status === "open")) liveN++;
+    return liveN;
+  };
   // release a token offer's locked give-amount in FULL to the buyer, consuming the lock so it can never
   // release twice. (The partial-fill path releases a sub-amount and keeps the lock — it does NOT use this.)
   const releaseGiveLock = (o: OfferState, who: string, amt: bigint) => {
@@ -156,7 +167,7 @@ export function createContext() {
 
   return {
     tokens, balances, names, commits, recaptures, offers, offerLock, bids, openOffers, openBids, pendingNames, fclaims, log,
-    setOfferStatus, setBidStatus, putName, bal, note, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, releaseGiveLock,
+    setOfferStatus, setBidStatus, putName, bal, note, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
     feesPaid: 0n,
     // v1.4 fill-before-cancel: at V14_HEIGHT+ a cancel/ocancel's EFFECT is deferred to the block
     // boundary, so any same-block fill wins — a seller can no longer snipe a buyer's in-flight

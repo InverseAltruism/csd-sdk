@@ -96,8 +96,9 @@ also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish 
 `resolve()` keeps the sort, the V29 de-dup, the replay loop, the block-boundary cancel flush and the
 materialization in `src/resolve.ts`; each record kind's apply step moved verbatim into `src/resolve/`
 (`tokens.ts`, `names.ts`, `market.ts`, `attest.ts`) over one state context (`context.ts`). A branch's
-`continue` became its handler's `return`; nothing else in the moved code changed. No byte, math, gate or replay
-change. Checked against the 0.2.0 tree (`origin/master` 275de8e) by resolving the same 21,090 inputs with both
+`continue` became its handler's `return`; nothing else in the moved code changed. The two textually identical
+concurrent-hold cap loops (the fclaim ladder and the legacy SCORE_CLAIM) are then one counter, `liveHoldCount`
+in `context.ts`, called from both. No byte, math, gate or replay change. Checked against the 0.2.0 tree (`origin/master` 275de8e) by resolving the same 21,090 inputs with both
 builds and comparing `canonicalState` and the full returned state (event log, recaptures, fclaims, key order):
 identical for the 76 golden vectors, the 21 pinned replay heights, 993 heights of the full on-chain event set
 captured 2026-10-19 (1,398 events to height 122,800; `canonicalState` sha256 `6bddf30f...56183f1` at that tip)
@@ -273,7 +274,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The same clause on the legacy SCORE_CLAIM path (`packages/cairnx/src/resolve/attest.ts` :258) is inert by design (SCORE_CLAIM at
+  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :155), where the clause is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state

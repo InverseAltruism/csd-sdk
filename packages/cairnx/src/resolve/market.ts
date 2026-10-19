@@ -4,7 +4,7 @@ import { parseAmount } from "../records.js";
 import {
   CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, FEE_BPS, FEE_BPS_V16, MAX_ACTIVE_CLAIMS,
   MAX_OFFER_EPOCHS, REG_COMMIT_MAX_BLOCKS, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT,
-  V16_HEIGHT, V17_HEIGHT, V21_HEIGHT, V22_HEIGHT, V27_HEIGHT, V28_HEIGHT, V29_HEIGHT, epochOf, isNameGive, isTokenWant,
+  V16_HEIGHT, V17_HEIGHT, V21_HEIGHT, V22_HEIGHT, V27_HEIGHT, V28_HEIGHT, epochOf, isNameGive, isTokenWant,
   type BidRecord, type FclaimRecord, type Give, type OfferCancelAllRecord, type OfferRecord, type OfferState, type ProposeEvent,
 } from "../types.js";
 import { claimGrace, claimHeld, effExpiry, type ResolveCtx } from "./context.js";
@@ -141,7 +141,7 @@ export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAl
 }
 
 export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, who: string): void {
-  const { offers, fclaims, note } = c;
+  const { offers, fclaims, note, liveHoldCount } = c;
   // ── v2.8 (§31) open-lane claim GRANT: reserve an OPEN, CSD-priced, untaken offer with a short-expiry
   // Propose. The fill attests THIS txid, so L0's attest-existence + attest-after-expiry rules enforce the
   // hold deadline. On grant, claimedBy/claimUntilHeight/claimTxid are set LAST-WRITE-WINS (a later grant on
@@ -175,14 +175,8 @@ export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, 
   if (claimHeld(target, ev.height)) { deny("offer already claimed (hold live)"); return; }
   // cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
   if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("claim cooldown (you just held this offer)"); return; }
-  // v2.9 (§32, V29 / REBIND M5): the per-address concurrent-hold cap counts an address's LIVE holds. A FILLED
-  // offer keeps its claimedBy/claimUntilHeight/claimTxid (never cleared, §31 last-write-wins invariant), so
-  // pre-V29 a completed fclaim buy still counts against the cap until its hold window lapses -> 3 completed
-  // buys deny a 4th honest claim. At the counting event's height >= V29 only OPEN holds count (a filled offer
-  // has SETTLED; its residual claim fields are a record, not a live reservation). GATED on ev.height so pre-V29
-  // is byte-identical; this GRANTS a claim a stale replayer denies (a RELAXATION), hence the hard adoption gate.
-  let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height) && (ev.height < V29_HEIGHT || x.status === "open")) liveN++;
-  if (liveN >= MAX_ACTIVE_CLAIMS) { deny(`max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  // per-address concurrent-hold cap (liveHoldCount, context.ts; v2.9 counts open holds only from V29).
+  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { deny(`max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
   target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
   fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
   note(ev, ev.id, "fclaim", true);

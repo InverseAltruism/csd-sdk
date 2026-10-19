@@ -2,7 +2,7 @@
 // v1.7 legacy claim (score 50), plus the v2.8 routing of a fill that attests an fclaim txid.
 import {
   CLAIM_COOLDOWN_BLOCKS, CONF_TOKEN_FILL, MAX_ACTIVE_CLAIMS, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL, TREASURY_ADDR,
-  V13_HEIGHT, V14_HEIGHT, V16_HEIGHT, V17_HEIGHT, V28_HEIGHT, V29_HEIGHT, claimWindowAt, isNameGive, isTokenWant,
+  V13_HEIGHT, V14_HEIGHT, V16_HEIGHT, V17_HEIGHT, V28_HEIGHT, claimWindowAt, isNameGive, isTokenWant,
   makerRebate, tradeFee,
   type AttestEvent, type OfferState,
 } from "../types.js";
@@ -226,7 +226,7 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): 
 }
 
 function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
-  const { offers, note } = c;
+  const { note, liveHoldCount } = c;
   // v2.8 (§31): at V28+ the legacy claim attest is REJECTED (claims are fclaim proposals now) so a stale
   // wallet's claim is diagnosable. A pre-V28 live hold still honors legacy fills until it lapses (the
   // sunset); this only stops NEW legacy claims. No height literal is needed in the fill predicate.
@@ -250,13 +250,10 @@ function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: st
   }
   // per-address concurrent-claim cap (anti-squat): count offers this attester still HOLDS (window+grace),
   // so the V20 grace can't expand an address's effective concurrent reach past the cap.
-  // v2.9 (§32, V29 / REBIND M5): the SAME open-holds-only correction as the fclaim cap loop (market.ts), kept
-  // symmetric so the two identical loops stay identical. NOTE it is INERT on this legacy-claim path: a
-  // SCORE_CLAIM at ev.height >= V28 is already rejected above (the §31 sunset), and V29 > V28, so `ev.height
-  // >= V29_HEIGHT` can NEVER be true here -> the added clause always reduces to the pre-V29 count. Kept for
-  // symmetry + defense-in-depth (a future un-sunset of legacy claims would inherit the fix, not the bug).
-  let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, ev.height) && (ev.height < V29_HEIGHT || x.status === "open")) liveN++;
-  if (liveN >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  // liveHoldCount (context.ts) is the fclaim ladder's counter. Its v2.9 open-holds-only clause is INERT here: a
+  // SCORE_CLAIM at ev.height >= V28 is already rejected above (the §31 sunset) and V29 > V28, so this path
+  // reads the pre-V29 count (a future un-sunset of legacy claims would inherit the fix, not the bug).
+  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
   // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
   // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
   o.claimedBy = who; o.claimUntilHeight = ev.height + claimWindowAt(ev.height);
