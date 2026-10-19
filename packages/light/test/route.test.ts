@@ -90,6 +90,22 @@ ok("maxEase below 1 or non-numeric reads as 1", plaus({ maxEase: 0, contenderBit
   plaus({ maxEase: Number.NaN, contenderBits: REAL_BITS }) === true &&
   plaus({ maxEase: Number.NaN, contenderBits: targetToBits(bigIntToTarget(targetToBigInt(bitsToTarget(REAL_BITS)) * 2n)) }) === false);
 
+console.log("contenderPlausible config contract: a non-finite, zero or negative value is the documented default");
+const BAD = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN, 0, -120];
+ok("blockSecs: each bad value is 120 s (the cap after 200 blocks' stale time is 128 + 200)",
+  BAD.every((v) => plaus({ blockSecs: v, claimedHeight: LOCAL + 328, localTime: NOW - STALE }) === true &&
+    plaus({ blockSecs: v, claimedHeight: LOCAL + 329, localTime: NOW - STALE }) === false));
+ok("blockSecs Infinity: one hour stale allows 30 extra blocks, not 3,600",
+  plaus({ blockSecs: Number.POSITIVE_INFINITY, claimedHeight: LOCAL + 128 + 30, localTime: NOW - 3600 }) === true &&
+  plaus({ blockSecs: Number.POSITIVE_INFINITY, claimedHeight: LOCAL + 128 + 500, localTime: NOW - 3600 }) === false);
+ok("maxAhead: each bad value is 0", BAD.every((v) => plaus({ maxAhead: v, claimedHeight: LOCAL }) === true && plaus({ maxAhead: v, claimedHeight: LOCAL + 1 }) === false));
+const TWICE_EASIER = targetToBits(bigIntToTarget(targetToBigInt(bitsToTarget(REAL_BITS)) * 2n));
+ok("maxEase: each bad value is 1", BAD.every((v) => plaus({ maxEase: v }) === true && plaus({ maxEase: v, contenderBits: TWICE_EASIER }) === false));
+ok("anchorFloor: each bad value is 0 (a local tip at height 0 is an anchor)",
+  BAD.every((v) => plaus({ anchorFloor: v, localHeight: 0, claimedHeight: 500 }) === false));
+ok("anchorFloor is compared as given: 0.5 above the local tip makes it no anchor, as the indexer's `lh < scanFrom` does",
+  plaus({ anchorFloor: LOCAL + 0.5, claimedHeight: LOCAL + 99_999 }) === true && plaus({ anchorFloor: LOCAL - 0.5, claimedHeight: LOCAL + 99_999 }) === false);
+
 console.log("honest path, each consumer's call shape over a real window:");
 const FX = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures-headers.json"), "utf8")) as {
   headers: { height: number; hash: string; header: BlockHeader }[];
