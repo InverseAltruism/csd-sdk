@@ -91,6 +91,20 @@ also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish 
 (1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`, `csd-registry`, `csd-siwc`,
 `cairnx-core` in any order.
 
+## cairnx-core 0.2.1 (2026-10-19, Plan 85 12.5; unreleased; no consensus-surface change) - `resolve.ts` split into handlers
+
+`resolve()` keeps the sort, the V29 de-dup, the replay loop, the block-boundary cancel flush and the
+materialization in `src/resolve.ts`; each record kind's apply step moved verbatim into `src/resolve/`
+(`tokens.ts`, `names.ts`, `market.ts`, `attest.ts`) over one state context (`context.ts`). A branch's
+`continue` became its handler's `return`; nothing else in the moved code changed. No byte, math, gate or replay
+change. Checked against the 0.2.0 tree (`origin/master` 275de8e) by resolving the same 21,090 inputs with both
+builds and comparing `canonicalState` and the full returned state (event log, recaptures, fclaims, key order):
+identical for the 76 golden vectors, the 21 pinned replay heights, 993 heights of the full on-chain event set
+captured 2026-10-19 (1,398 events to height 122,800; `canonicalState` sha256 `6bddf30f...56183f1` at that tip)
+and 20,000 generated fuzz sequences. `test:crosslang` output is identical and `audit:all` differs only in the four
+ledger citations that moved with the code. `scripts/check-consumer-pins.mjs` now counts `src/resolve/` as
+consensus surface. Consumers may stay on 0.2.0.
+
 ## cairnx-core 0.2.0 (2026-10-17, Plan 85 12.1b; unreleased; no consensus-surface change) - `bindOfferTerms` give and wantType legs on by default
 
 `bindOfferTerms` is the shared client-side fill fund boundary (the wallet, the site and cairn-sdk call it); it
@@ -160,13 +174,14 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
-sibling offer and bid Propose branches already carry (`resolve.ts` :517 offer, :574 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :39 offer, :99 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
-shipped at `resolve.ts` :660:
+shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
+`packages/cairnx/src/resolve/market.ts` :167:
 
-    if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); continue; }
+    if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
 
 Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladder and calling the same
 `deny()` for the same reason (`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
@@ -258,7 +273,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The same clause on the legacy SCORE_CLAIM path (`resolve.ts` :890) is inert by design (SCORE_CLAIM at
+  deny. The same clause on the legacy SCORE_CLAIM path (`packages/cairnx/src/resolve/attest.ts` :258) is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state
