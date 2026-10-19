@@ -31,6 +31,7 @@ jobs:
       - run: pnpm -r --filter "./packages/*" build
       # after the build: the tests import the workspace packages, whose types are their built dist/*.d.ts
       - run: pnpm run typecheck   # src and tests, strict + noUncheckedIndexedAccess
+      - run: pnpm lint   # biome.json: unused imports, empty blocks, focused tests, ts-ignore
       - run: node scripts/check-lockstep.mjs   # workspace:* + published pins and published dist equal this build (queries npm) + dist-freshness (needs built dist/)
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
       # skip cleanly when there is no CSD node (CI has none); the deterministic core
@@ -41,6 +42,7 @@ jobs:
       - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
       - run: pnpm exec tsx test/ci-workflow.test.ts   # this file: read-only token, no stored credentials, SHA pins, the secret scan
+      - run: pnpm exec tsx test/lint-config.test.ts   # biome.json enables exactly the four rules
       - run: pnpm exec tsx test/dep-pins.test.ts   # every dependency exact or workspace:*, equal to what the lockfile resolves
       - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)
 
