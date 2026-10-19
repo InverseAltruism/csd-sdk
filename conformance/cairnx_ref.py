@@ -5,7 +5,7 @@ META-1 (audit) — INDEPENDENT second-language reference implementation of Cairn
 The trust model is "two honest resolvers, different code, converge byte-for-byte." This Python port
 reproduces, from the spec (CONVENTION.md) and NOT transliterated from minified JS:
   * the determinism-critical primitives — canonical JSON (UTF-16-code-unit key sort), payload hash,
-    well-formed (lone-surrogate) gate, the RES-H4 decay fixed-point;
+    well-formed (lone-surrogate) gate;
   * the full record-validation gate (`parse_record`) — every `onlyKeys` allow-set + shape rule;
   * the FULL `resolve()` ledger — tokens / names (commit-reveal, lease) / offers / bids / fills /
     fees — producing a byte-identical `canonical_state` (the open half of META-1, now closed).
@@ -1058,13 +1058,6 @@ def canonical_state(state):
     # order (integer-index keys first), which differs from the codec's pure code-unit canonicalJson.
     return _js_stringify(state)
 
-# ── RES-H4 registry decay fixed-point (kept for the primitive crosscheck) ──
-DECAY_SCALE = 1_000_000_000_000
-def decay_pow_fixed(age):
-    a = 0 if age <= 0 else min(age, 4000)
-    return (97 ** a * DECAY_SCALE) // (100 ** a)
-def decay_weight_fixed(base, age): return base * decay_pow_fixed(age)
-
 def record_keys_ok(rec):
     """Backward-compat for the primitive crosscheck: the onlyKeys gate (now subsumed by parse_record)."""
     if not isinstance(rec, dict) or not is_wellformed_deep(rec): return False
@@ -1097,8 +1090,6 @@ def main():
         out["payloadHash"] = [payload_hash(x) for x in job["payloadHash"]]
     if "records" in job:
         out["records"] = [record_keys_ok(r) for r in job["records"]]
-    if "weights" in job:
-        out["weights"] = [str(decay_weight_fixed(w["base"], w["age"])) for w in job["weights"]]
     if "resolve" in job:
         out["resolve"] = [canonical_state(resolve(j["events"], j["tipHeight"])) for j in job["resolve"]]
     if "parseFull" in job:

@@ -407,9 +407,8 @@ maker self-publishes, the chain advertises where, aggregators merge.
    `sig` recovers to `maker` (the same csd-crypto scheme as anchors), so quotes are self-certifying and the hosting URL is
    not trusted. Quotes are indicative only; the binding act is the on-chain taker-bound answer, so a lying quote file costs
    its maker reputation, never a counterparty's funds.
-2. The URL is advertised on chain, either through the L3 registry (a `cairnx:makers` list in the csd-registry convention
-   with entries `{ addr, url, ticker? }`; resolvers exist in `@inversealtruism/csd-registry`) or through a new cairnx record
-   `{"v":1,"t":"maker","url":"https://..."}`, which would need a convention revision.
+2. The URL is advertised on chain through a new cairnx record `{"v":1,"t":"maker","url":"https://..."}`, which would
+   need a convention revision.
 3. Aggregators fetch every advertised URL, verify `sig` against the advertised maker, drop stale quotes (older than about
    three poll intervals) and halted makers, keep the latest per maker, and merge the book by best `pricePerUnit` per size
    tier with attribution.

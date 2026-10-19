@@ -1,7 +1,7 @@
 // META-1 (audit) — cross-IMPLEMENTATION conformance: feed the JS reference (the shipping codec /
-// cairnx-core / registry math) and the INDEPENDENT Python reference (cairnx_ref.py) the SAME corpus
+// cairnx-core) and the INDEPENDENT Python reference (cairnx_ref.py) the SAME corpus
 // and assert byte-identity on every determinism-critical primitive. A JS-only fork (a UTF-16-vs-
-// codepoint key sort, a dropped onlyKeys decoy guard, a Math.pow ranking) would diverge here. This
+// codepoint key sort, a dropped onlyKeys decoy guard) would diverge here. This
 // is the second-implementation co-sign the byte-contract previously lacked.
 import { spawnSync } from "node:child_process";
 // relative dist paths (workspace package names don't resolve from this standalone dir)
@@ -26,9 +26,6 @@ const recordCorpus = [
   ["name + lone-surrogate decoy", { v: 1, t: "name", name: "alice", salt: "00112233445566778899aabbccddeeff", "\uD800x": 1 }, false],
   ["clean transfer", { v: 1, t: "transfer", ticker: "GOLD", to: "0x" + "11".repeat(20), amount: "100" }, true],
   ["transfer + extra key", { v: 1, t: "transfer", ticker: "GOLD", to: "0x" + "11".repeat(20), amount: "100", evil: 1 }, false],
-];
-const weightCorpus = [
-  { base: 100000000, age: 10 }, { base: 97000000, age: 9 }, { base: 250000000, age: 0 }, { base: 1, age: 4001 },
 ];
 // C1/C2 end-to-end: raw records with a trailing-\n (or other control char) in a regex-gated field, run
 // through the FULL parse gate on both sides (JS parseRecord ⇄ Python parse_record). Both MUST reject the
@@ -62,16 +59,11 @@ const jsCanon = canonCorpus.map((v) => { try { return { ok: true, v: canonicalJs
 const jsPh = canonCorpus.filter((v) => v && typeof v === "object").map((v) => payloadHash(v));
 const phCorpus = canonCorpus.filter((v) => v && typeof v === "object");
 const jsRecords = recordCorpus.map(([, r]) => parseRecord(canonicalJson(r), payloadHash(r)) !== null);
-const DECAY_SCALE = 1_000_000_000_000n;
-const jsWeights = weightCorpus.map(({ base, age }) => {
-  const a = age <= 0 ? 0 : Math.min(age, 4000);
-  return (BigInt(base) * ((97n ** BigInt(a) * DECAY_SCALE) / (100n ** BigInt(a)))).toString();
-});
 
 const jsC1 = c1Corpus.map(([, r]) => parseRecord(canonicalJson(r), payloadHash(r)) !== null);
 
 // ── Python independent outputs ──
-const job = { canon: canonCorpus, payloadHash: phCorpus, records: recordCorpus.map(([, r]) => r), weights: weightCorpus, parseFull: c1Corpus.map(([, r]) => r) };
+const job = { canon: canonCorpus, payloadHash: phCorpus, records: recordCorpus.map(([, r]) => r), parseFull: c1Corpus.map(([, r]) => r) };
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname], { input: JSON.stringify(job), encoding: "utf8" });
 if (py.status !== 0) { console.error("python ref failed:", py.stderr); process.exit(1); }
 const pj = JSON.parse(py.stdout);
@@ -88,8 +80,6 @@ jsPh.forEach((h, i) => ok(`payloadHash #${i} identical`, h === pj.payloadHash[i]
 recordCorpus.forEach(([label, , expect], i) => {
   ok(`record gate "${label}": JS==Python==${expect}`, jsRecords[i] === pj.records[i] && jsRecords[i] === expect);
 });
-// RES-H4 decay weight integer identity
-jsWeights.forEach((w, i) => ok(`decayWeightFixed #${i} identical (base ${weightCorpus[i].base}, age ${weightCorpus[i].age})`, w === pj.weights[i]));
 // C1/C2 end-to-end: full parse gate agrees AND matches the expected accept/reject (trailing-control-char fork)
 c1Corpus.forEach(([label, , expect], i) => {
   ok(`parse gate "${label}": JS==Python==${expect}`, jsC1[i] === pj.parseFull[i] && jsC1[i] === expect);

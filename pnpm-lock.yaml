@@ -95,15 +95,6 @@ importers:
         specifier: workspace:*
         version: link:../codec
 
-  packages/registry:
-    dependencies:
-      '@inversealtruism/csd-codec':
-        specifier: workspace:*
-        version: link:../codec
-      '@inversealtruism/csd-crypto':
-        specifier: workspace:*
-        version: link:../crypto
-
   packages/siwc:
     dependencies:
       '@inversealtruism/csd-codec':

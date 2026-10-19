@@ -5,14 +5,14 @@
 // (one version, two code states, the M4 accident class). What it does not: a hostile tarball crafted so that
 // npm's extraction differs from this reader, and any newly published version (only versions equal to the
 // workspace version are examined, so an attacker who can publish would publish a new one). The reader refuses
-// every archive shape `pnpm pack` does not emit for these packages (checked 2026-10-19 on all 10 registry
-// tarballs and fresh packs): each header is POSIX ustar ("ustar\0" + "00"), type "0", printable-ASCII name of
+// every archive shape `pnpm pack` does not emit for these packages (checked 2026-10-19 on the registry tarball
+// of every package and fresh packs): each header is POSIX ustar ("ustar\0" + "00"), type "0", printable-ASCII name of
 // at most 100 bytes with no prefix and no linkname, an 11-digit octal size and a 6-digit octal checksum in
 // their canonical terminations; every path is under package/, canonical, and unique when compared
 // case-insensitively (directory components included; names are ASCII, so no two Unicode spellings of one
 // path can occur); only zeros follow the end-of-archive block. A whole-tarball sha512 compare is not used because pnpm 10.32.1 orders the packed
 // package.json "dependencies" by which workspace:* resolution finishes first: packs of csd-tx matched the
-// registry 11 times in 15, csd-registry 3 in 10, csd-siwc and csd-light 9 in 10 (2026-10-19).
+// registry 11 times in 15, csd-siwc and csd-light 9 in 10 (2026-10-19).
 import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";

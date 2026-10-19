@@ -57,6 +57,10 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-registry removed (2026-10-19, Plan 85 P-5; no consensus-surface change)
+
+`packages/registry` is deleted from the workspace; 0.1.20 stays its last published version, and later publish windows drop it from their order.
+
 ## csd-codec 0.1.18, csd-tx 0.1.21, csd-client 0.1.18 and their dependents (2026-10-17, Plan 85 18.3; unreleased, publish window 2; reject-more except one content check) - input canon
 
 Every change but one refuses input that was accepted before. The exception is `verifyContentBytes`, which
