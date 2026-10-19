@@ -9,11 +9,17 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# No job needs to write: every job reads the repo and the public npm registry only.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0; version read from package.json "packageManager"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -34,6 +40,7 @@ jobs:
       - run: pnpm exec tsx test/security.test.ts
       - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
+      - run: pnpm exec tsx test/ci-workflow.test.ts   # this file: read-only token, no stored credentials, SHA pins, the secret scan
       - run: pnpm exec tsx test/dep-pins.test.ts   # every dependency exact or workspace:*, equal to what the lockfile resolves
       - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)
 
@@ -42,6 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0  # gitleaks scans the full history
       # Release binary checked against gitleaks_8.18.4_checksums.txt from the gitleaks GitHub release.
       # --diff-merges=first-parent: the default log shows no diff for a merge, so a secret added in a conflict resolution is missed.
@@ -62,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
