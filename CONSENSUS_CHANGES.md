@@ -1,6 +1,6 @@
 # Consensus changes
 
-This file tracks every released change to the **byte-level consensus surface** of the SDK —
+This file tracks every released change to the **byte-level consensus surface** of the SDK:
 anything that alters what bytes a transaction/sighash/header serializes to, what the LWMA or
 chainwork math computes, what a merkle proof accepts, or what the CairnX replay derives. If a
 release is not listed here, it did not touch consensus behavior.
@@ -13,14 +13,15 @@ their own; they need **not** share a version. Inter-package dependencies are pub
 versions** (no `^`/`~`: `workspace:*` is converted to the dependency's exact current version when the
 dependent publishes). A dependent published BEFORE its dependency moved keeps the old pin, so a dependency
 bump must bump every workspace dependent too. CI enforces `workspace:*`, published pins equal to the
-current workspace versions, and dist-freshness (`scripts/check-lockstep.mjs`); cross-package
+current workspace versions, a published version's tarball dist equal to this tree's build, and
+dist-freshness (`scripts/check-lockstep.mjs`); cross-package
 byte-identity is enforced separately by the conformance job (the REAL guard).
 
 **If you build on these packages, pin exact versions and let your lockfile resolve the matching
 inter-deps.** A lockfile that
 mixes, say, `csd-codec@0.1.4` under `csd-tx` with `csd-codec@0.1.6` under `csd-light` can sign
 with one byte-encoding and verify with another. The packages themselves can't fully prevent a
-consumer lockfile from holding two codec copies — uniform exact pins in *your* `package.json` do.
+consumer lockfile from holding two codec copies; uniform exact pins in *your* `package.json` do.
 
 ```json
 "dependencies": {
@@ -481,20 +482,20 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
   length-graded fee, and the V25/V26 sealed reservation/recapture. Those bumps were logged in their plan
   docs + handoffs rather than here; this entry re-establishes the per-gate History convention.)
 
-### 0.1.14 — quality/AI-slop pass (2026-06-20)
+### 0.1.14: quality/AI-slop pass (2026-06-20)
 - **No consensus-surface or runtime-behavior change** (the forward-codec + resolver differential vs the live
   node stays at 0; all suites byte-identical). Maintainability only: corrected over-claiming consensus comments
   to name what is *guarded* vs *asserted* (resolve.ts header, records.ts onlyKeys, conformance/README META-1);
   type hygiene (`verifyInputValues` typed input, `health(): RpcHealth`, generic `getJson<T>`, `txToNodeJson():
-  NodeTxJson`, `Signed.nodeJson` typed); added the `siwc` README. (Deferred: `TREASURY_ADDR` single-sourcing —
-  guarded by the new consts-parity check — and the 600-line `resolve.ts` structural split.)
+  NodeTxJson`, `Signed.nodeJson` typed); added the `siwc` README. (Deferred: `TREASURY_ADDR` single-sourcing,
+  guarded by the new consts-parity check, and the 600-line `resolve.ts` structural split.)
 
-### 0.1.13 — security remediation (2026-06-20)
-> Bytes differ from npm `0.1.12` by the entire Phase-1 remediation below — hence the version bump (M4:
+### 0.1.13: security remediation (2026-06-20)
+> Bytes differ from npm `0.1.12` by the entire Phase-1 remediation below, hence the version bump (M4:
 > never the same version with different bytes). Published lockstep; `cairn-sdk` exact-pins this version.
 - **Consensus-surface conformance hardening (no change to live acceptance, one reference correction):**
   - **C1 (reference correction):** the Python reference `cairnx_ref.py` validated the 6 schema regexes with
-    `re.match(…$)`, which accepts a trailing `\n` the JS `.test(/…$/)` rejects — a latent cross-language fork.
+    `re.match(…$)`, which accepts a trailing `\n` the JS `.test(/…$/)` rejects: a latent cross-language fork.
     Changed all to `re.fullmatch`. The authoritative JS resolver already rejected these, so **no live state
     changes**; this converges the reference to the live resolver. New `conformance/crosscheck-regex.mjs`
     (regex-vs-regex differential) + a parse-gate corpus pin it.
@@ -513,34 +514,34 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
   bits↔target byte-identical JS == Python == Rust). The vendored bundles (`cairn/public/vendor/csd-light.js`,
   `cairn-wallet/src/vendor/cairnx-spv.js`) were rebuilt from this dist (H6).
 
-### 0.1.6 – 0.1.11 (V16–V19 — height-gated CairnX convention bumps)
+### 0.1.6 – 0.1.11 (V16–V19: height-gated CairnX convention bumps)
 - **V16 (`V16_HEIGHT=33600`):** trade fee 1%→1.5% + maker rebate on the resting-liquidity lane (height-gated;
   pre-V16 replay byte-identical).
 - **V17 (`V17_HEIGHT=34000`):** open-ask claim-to-fill (payment-free first-claim exclusivity; height-gated).
 - **V18 (`V18_HEIGHT=40000`):** simplified 2-tier `.csd` name registration fee (≤4ch / ≥5ch; height-gated, dormant).
-- **V19 / nprofile (`V19_HEIGHT=36700`, ACTIVE on-chain):** ENS-class inline identity (`nprofile`) — owner-gated
+- **V19 / nprofile (`V19_HEIGHT=36700`, ACTIVE on-chain):** ENS-class inline identity (`nprofile`), owner-gated
   profile map, last-write-wins, cleared on transfer; tip-gated materialization (pre-V19 replay byte-identical).
   JS⇄Python byte-identical over 50k+ differential cases; now wired into `test:crosslang` + CI
   (`nprofile-crosslang.mjs` with cross-impl constant PARITY + the fuzzer emits nprofile).
 
-### 0.1.5 (unpublished lockstep — on `master`)
+### 0.1.5 (unpublished lockstep, on `master`)
 - **No consensus-surface changes.** `buildPropose`/`buildAttest` gained optional DvP value
-  outputs (new *capability*, existing byte encodings unchanged — an attest with value outputs
+  outputs (new *capability*, existing byte encodings unchanged; an attest with value outputs
   was always valid chain-side); client retries/types; light snapshots/batch. Existing vectors
   unchanged and green.
 - `@inversealtruism/cairnx-core` extracted as a package. Its replay-hash contract is pinned by
-  the CairnX conformance artifact (16 vectors + replay hashes) — any change to those is a
+  the CairnX conformance artifact (16 vectors + replay hashes); any change to those is a
   CairnX convention version bump (activation-height gated), never a silent edit.
 
 ### 0.1.4
 - **No consensus-surface changes.** Hardening only: `deserialize` MAX_TX guards (C-S1),
-  chainwork u128 clamp (A-S4) — both reject-more, never accept-different; `buildSend` refuses
-  >2^53 values it would previously have silently truncated (C-S2 — fail-loud on inputs that
+  chainwork u128 clamp (A-S4), both reject-more, never accept-different; `buildSend` refuses
+  >2^53 values it would previously have silently truncated (C-S2: fail-loud on inputs that
   could never have produced a valid tx).
 
 ### 0.1.3
 - **No consensus-surface changes.** u64 precision/negative guards + `canonicalJson`
-  undefined/DoS guards (reject-more), merkle root normalization (0x/case — accepts equivalent
+  undefined/DoS guards (reject-more), merkle root normalization (0x/case: accepts equivalent
   encodings of the *same* root).
 
 ### 0.1.2
@@ -554,7 +555,7 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
 
 ## Release checklist for a consensus-touching change
 
-1. Land the change with updated/extended golden vectors in `csd-vectors` — never change
+1. Land the change with updated/extended golden vectors in `csd-vectors`; never change
    behavior without a vector that pins it.
 2. Bump the package(s) you changed and every workspace package that depends on them (independent cadence:
    numbers need not match). A published version keeps the exact pins it shipped with, so an unbumped

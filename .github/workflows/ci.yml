@@ -24,20 +24,21 @@ jobs:
       # Every file:line citation in CONSENSUS_CHANGES.md must still point at the line it quotes.
       - run: node scripts/check-consensus-citations.mjs
       - run: pnpm -r --filter "./packages/*" build
-      - run: node scripts/check-lockstep.mjs   # workspace:* + published pins match workspace (queries npm) + dist-freshness (needs built dist/)
+      - run: node scripts/check-lockstep.mjs   # workspace:* + published pins and published dist equal this build (queries npm) + dist-freshness (needs built dist/)
       # Per-package conformance. The node-dependent suites (client/light) and the live oracle
       # skip cleanly when there is no CSD node (CI has none); the deterministic core
       # (codec/crypto/tx/vectors) + edge + the pure security checks run and gate every push.
       - run: pnpm -r --filter "./packages/*" test
       - run: pnpm exec tsx test/edge.test.ts
       - run: pnpm exec tsx test/security.test.ts
+      - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)
 
   conformance:
     # Cross-language byte-contract guard (JS ⇄ Python). The resolver, the record codec,
     # and SIWC each have a Python reference (conformance/*_ref.py); they MUST stay
     # byte-identical to the JS canonical impl or the chain forks across implementations.
-    # This is the REAL lockstep guard — it runs as its OWN job so it is enforced
+    # This is the REAL lockstep guard; it runs as its OWN job so it is enforced
     # independently of the version-lockstep check (check-lockstep.mjs) in `test`, which
     # passes and gates releases (it is NOT intentionally red).
     runs-on: ubuntu-latest
