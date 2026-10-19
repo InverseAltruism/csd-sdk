@@ -1,5 +1,12 @@
 // Compare a published npm tarball's dist/ with a local build, in memory (nothing from the tarball is written to
 // disk or executed). Used by check-lockstep.mjs for every package version that is already on npm.
+//
+// untar accepts only what `pnpm pack` emits for these packages (checked 2026-10-19 on all 10 registry tarballs
+// and fresh packs): POSIX ustar headers with a valid checksum, regular-file entries, all under `package/`.
+// It refuses, rather than interprets, anything an installer could read differently from this reader: PAX
+// extended headers, GNU long-name headers, links and other entry types, roots other than `package/`, paths
+// with empty, `.` or `..` segments, absolute paths, backslashes, two entries with the same install path,
+// and non-zero bytes after the end-of-archive block.
 import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -16,51 +23,55 @@ export function integrityOk(bytes, integrity) {
 }
 
 /**
- * The regular files of a gzipped tar, keyed by path. Throws on links, devices and any entry type it does not
- * know, so an unexpected archive fails the check instead of being compared partially.
+ * The regular files of a gzipped ustar archive, keyed by path (`package/...`). Throws on anything outside the
+ * rule in the header comment, so an unexpected archive fails the check instead of being compared partially.
  * @param {Uint8Array} tgz
  * @returns {Map<string, Uint8Array>}
  */
 export function untar(tgz) {
   const buf = gunzipSync(tgz);
-  const dec = new TextDecoder();
+  const dec = new TextDecoder("utf-8", { fatal: true });
   /** @param {Uint8Array} b */
   const cstr = (b) => { const z = b.indexOf(0); return dec.decode(z < 0 ? b : b.subarray(0, z)); };
+  /** @param {Uint8Array} b @param {string} what */
+  const octal = (b, what) => {
+    const t = cstr(b).trim();
+    if (!/^[0-7]+$/.test(t)) throw new Error(`tar: bad ${what} field`);
+    return parseInt(t, 8);
+  };
   /** @type {Map<string, Uint8Array>} */
   const files = new Map();
-  /** @type {string | null} */
-  let nextName = null;
+  /** @type {Set<string>} */
+  const seen = new Set();
   let off = 0;
   while (off + 512 <= buf.length) {
     const h = buf.subarray(off, off + 512);
-    if (h.every((b) => b === 0)) break;
-    if ((h[124] ?? 0) & 0x80) throw new Error("tar: base-256 size field not supported");
-    const size = parseInt(cstr(h.subarray(124, 136)).trim() || "0", 8);
-    if (!Number.isSafeInteger(size) || size < 0) throw new Error("tar: bad size field");
-    const posix = cstr(h.subarray(257, 263)) === "ustar" && h[262] === 0;
-    const prefix = posix ? cstr(h.subarray(345, 500)) : "";
-    const name = nextName ?? (prefix ? `${prefix}/${cstr(h.subarray(0, 100))}` : cstr(h.subarray(0, 100)));
-    nextName = null;
+    if (h.every((b) => b === 0)) {
+      if (!buf.subarray(off).every((b) => b === 0)) throw new Error("tar: data after the end-of-archive block");
+      break;
+    }
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 0x20 : (h[i] ?? 0);
+    if (octal(h.subarray(148, 156), "checksum") !== sum) throw new Error("tar: header checksum mismatch");
+    if (cstr(h.subarray(257, 263)) !== "ustar" || h[262] !== 0) throw new Error("tar: not a POSIX ustar header");
+    const size = octal(h.subarray(124, 136), "size");
+    const prefix = cstr(h.subarray(345, 500));
+    const raw = prefix ? `${prefix}/${cstr(h.subarray(0, 100))}` : cstr(h.subarray(0, 100));
     const type = String.fromCharCode(h[156] ?? 0);
     const body = buf.subarray(off + 512, off + 512 + size);
-    if (body.length !== size) throw new Error(`tar: truncated entry ${name}`);
+    if (body.length !== size) throw new Error(`tar: truncated entry ${raw}`);
     off += 512 + Math.ceil(size / 512) * 512;
-    if (type === "0" || type === "\0") files.set(name, Uint8Array.from(body));
-    else if (type === "5" || type === "g") continue;
-    else if (type === "L") nextName = cstr(body);
-    else if (type === "x") nextName = paxPath(dec.decode(body));
-    else throw new Error(`tar: entry type "${type}" (${name}) is not a regular file or directory`);
+    const isDir = type === "5";
+    if (!isDir && type !== "0" && type !== "\0") throw new Error(`tar: entry type "${type}" (${raw}) is not a regular file or directory`);
+    const path = isDir && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+    const segs = path.split("/");
+    if (path.includes("\\") || segs[0] !== "package" || (!isDir && segs.length < 2) || segs.some((g) => g === "" || g === "." || g === ".."))
+      throw new Error(`tar: path ${JSON.stringify(raw)} is not a canonical path under package/`);
+    if (seen.has(path)) throw new Error(`tar: two entries install to ${path}`);
+    seen.add(path);
+    if (!isDir) files.set(path, Uint8Array.from(body));
   }
   return files;
-}
-
-/** @param {string} pax */
-function paxPath(pax) {
-  for (const rec of pax.split("\n")) {
-    const m = /^\d+ path=(.*)$/.exec(rec);
-    if (m) return m[1] ?? null;
-  }
-  return null;
 }
 
 /**
