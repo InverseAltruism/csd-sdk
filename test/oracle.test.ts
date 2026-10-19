@@ -1,15 +1,15 @@
-// NON-SELF-FULFILLING SDK conformance — every assertion is checked against an INDEPENDENT
+// NON-SELF-FULFILLING SDK conformance: every assertion is checked against an INDEPENDENT
 // oracle (the live Rust node + real on-chain signatures created by other software), never
 // against the SDK's own output.
 //
-//   1. REAL SIGNATURE ORACLE  — for real on-chain txs, extract the (sig,pub) that the Rust
+//   1. REAL SIGNATURE ORACLE: for real on-chain txs, extract the (sig,pub) that the Rust
 //      node ALREADY ACCEPTED, recompute the sighash with the SDK, and verify the signature.
 //      If the SDK's sighash were wrong by one bit, real consensus signatures would NOT verify.
-//   2. NODE TEMPLATE ORACLE   — POST /tx/template/{propose,attest}: the node independently
+//   2. NODE TEMPLATE ORACLE: POST /tx/template/{propose,attest}: the node independently
 //      returns the signing_hash + unsigned_txid for a tx; the SDK must match both (zero cost).
-//   3. LWMA / CHAINWORK ORACLE — sync from genesis; every header's `bits` must equal the
+//   3. LWMA / CHAINWORK ORACLE: sync from genesis; every header's `bits` must equal the
 //      locally re-derived LWMA value AND the node's reported chainwork must match exactly.
-//   4. DESERIALIZE ORACLE     — real on-chain txs round-trip serialize(deserialize)==bytes.
+//   4. DESERIALIZE ORACLE: real on-chain txs round-trip serialize(deserialize)==bytes.
 import { serialize, deserialize, txid, sighash, headerHash, merkleRoot, hb, bytesToHex } from "@inversealtruism/csd-codec";
 import { verifyDigest, addrFromPub, hash160 } from "@inversealtruism/csd-crypto";
 import { CsdClient, rpcTxToTx, rpcHeaderToHeader } from "@inversealtruism/csd-client";
@@ -22,12 +22,12 @@ const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c 
 let reachable = false;
 if (BASE) try { reachable = (await fetch(`${BASE}/tip`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
 if (!BASE) { console.log("SKIP: oracle tests: CSD_RPC unset (live-node tests are opt-in; set CSD_RPC to a node RPC to run them)"); process.exit(0); }
-if (!reachable) { console.log(`(no node at ${BASE} — oracle tests require the live chain) SKIPPED`); process.exit(0); }
+if (!reachable) { console.log(`(no node at ${BASE}; oracle tests require the live chain) SKIPPED`); process.exit(0); }
 const c = new CsdClient({ baseUrl: BASE });
 const tip = await c.tip();
 
 // ── 1. REAL SIGNATURE ORACLE ──────────────────────────────────────────────────
-console.log("— real on-chain signature oracle (the node already accepted these sigs) —");
+console.log("real on-chain signature oracle (the node already accepted these sigs):");
 // scriptSig = 0x40 ‖ sig64 ‖ 0x21 ‖ pub33  (99 bytes)
 function parseScriptSig(ss: string): { sig: string; pub: string } | null {
   const b = hb(ss);
@@ -39,7 +39,7 @@ const seenTx = new Set<string>();
 async function verifyTxSigs(tx: ReturnType<typeof rpcTxToTx>, label: string) {
   const nonCoinbase = tx.inputs.filter((i) => !(i.prevTxid === "0x" + "00".repeat(32) && i.vout === 0xffffffff));
   if (!nonCoinbase.length) return;
-  const sh = sighash(tx); // SDK sighash of the (internally) stripped tx — INDEPENDENT of the on-chain sig
+  const sh = sighash(tx); // SDK sighash of the (internally) stripped tx; INDEPENDENT of the on-chain sig
   for (const inp of nonCoinbase) {
     const ps = parseScriptSig(inp.scriptSig);
     if (!ps) continue;
@@ -50,7 +50,7 @@ async function verifyTxSigs(tx: ReturnType<typeof rpcTxToTx>, label: string) {
     else console.log(`     SIG VERIFY FAILED ${label} ${tx.inputs[0]?.prevTxid.slice(0, 12)}`);
   }
 }
-// (a) known real spends from prior on-chain sessions — covers None / Attest / Propose / multi-input
+// (a) known real spends from prior on-chain sessions; covers None / Attest / Propose / multi-input
 const KNOWN = [
   "0x8adb0ae3bc24d451f53620247cdd0754ede1fa753958dfce4750266741328d03", // send (None)
   "0xebcac4c0f07ee9359b55d0421ae6152c4725be7e93c020bd10162ddae93f30f6", // support (Attest)
@@ -70,7 +70,7 @@ for (let h = tip.height; h > Math.max(1, tip.height - 300) && sigsChecked < 60; 
 ok(`real on-chain signatures verify against SDK-computed sighash (${sigsOk}/${sigsChecked})`, sigsChecked >= 4 && sigsOk === sigsChecked);
 
 // ── 2. NODE TEMPLATE ORACLE (propose + attest signing_hash) ─────────────────────
-console.log("\n— node /tx/template signing_hash oracle (independent node computation) —");
+console.log("\nnode /tx/template signing_hash oracle (independent node computation):");
 // need a real spendable input for the address (read-only; we never broadcast)
 const OPERATOR = "0x44d92872a5b65d37d60ed532f41efe7c5aed59ec";
 let templateTried = false;
@@ -96,10 +96,10 @@ try {
     } else console.log("     (template response had no signing_hash; shape:", JSON.stringify(tpl).slice(0, 120), ")");
   }
 } catch (e: any) { console.log("     template oracle skipped:", e?.message); }
-if (!templateTried) ok("template oracle skipped (no spendable UTXO) — covered by sig oracle", true);
+if (!templateTried) ok("template oracle skipped (no spendable UTXO); covered by sig oracle", true);
 
 // ── 3. LWMA / CHAINWORK ORACLE ──────────────────────────────────────────────────
-console.log("\n— LWMA bits + chainwork oracle (sync from genesis) —");
+console.log("\nLWMA bits + chainwork oracle (sync from genesis):");
 const N = Math.min(250, tip.height);
 const lc = new LightClient({ client: c });
 let lwErr = "";
@@ -110,7 +110,7 @@ const nodeAtN = await c.blockByHeight(N);
 ok("independently-accumulated chainwork == node chainwork @N", String(lc.chainwork) === String(nodeAtN.chainwork));
 
 // ── 4. DESERIALIZE ORACLE (real txs round-trip) ─────────────────────────────────
-console.log("\n— deserialize(serialize)==bytes for real on-chain txs (None/Propose/Attest) —");
+console.log("\ndeserialize(serialize)==bytes for real on-chain txs (None/Propose/Attest):");
 let rtChecked = 0, rtOk = 0;
 for (let h = tip.height; h > Math.max(1, tip.height - 20) && rtChecked < 30; h--) {
   const b = await c.blockByHeight(h);

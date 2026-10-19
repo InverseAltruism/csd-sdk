@@ -1,4 +1,4 @@
-// @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
+// @inversealtruism/csd-tx: builder + coin-selection conformance + adversarial guards.
 import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson, type Utxo } from "../src/index.js";
 import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
@@ -11,7 +11,7 @@ const ME = addrFromPriv(PRIV);
 const RCPT = "0x" + "cc".repeat(20);
 const utxo = (value: number, conf = 6, coinbase = false, i = 0) => ({ txid: "0x" + (i + 1).toString(16).padStart(64, "0"), vout: 0, value, confirmations: conf, coinbase });
 
-console.log("— coin selection (hardened) —");
+console.log("coin selection (hardened):");
 ok("selects largest-first to cover need", selectInputs([utxo(100, 6, false, 0), utxo(500, 6, false, 1)], 400)?.total === 500);
 ok("returns null when insufficient", selectInputs([utxo(100)], 400) === null);
 ok("ignores unconfirmed (confirmations<1)", selectInputs([utxo(1000, 0)], 100) === null);
@@ -20,7 +20,7 @@ ok("dedupes the same outpoint", selectInputs([utxo(100, 6, false, 0), utxo(100, 
 ok("rejects unsafe-magnitude value", selectInputs([{ ...utxo(0), value: Number.MAX_SAFE_INTEGER + 4 }], 1) === null);
 ok("prefers non-coinbase, falls back to coinbase", selectInputs([utxo(1000, 6, true, 9)], 100)?.total === 1000);
 
-console.log("\n— selectInputs `exclude` (0.1.16 upstream of the wallet's ghost-coin skip; mirrors cairn-wallet/test/selectinputs-parity.ts) —");
+console.log("\nselectInputs `exclude` (0.1.16 upstream of the wallet's ghost-coin skip; mirrors cairn-wallet/test/selectinputs-parity.ts):");
 {
   const key = (u: { txid: string; vout: number }) => `${u.txid.toLowerCase()}:${u.vout}`;
   const best = utxo(900, 6, false, 9), other = utxo(800, 6, false, 1); // best's txid ends …0a (carries a hex letter)
@@ -30,7 +30,7 @@ console.log("\n— selectInputs `exclude` (0.1.16 upstream of the wallet's ghost
   ok("2-arg call behavior unchanged (no exclude → best coin picked)", selectInputs([best, other], 700)?.inputs[0]?.txid === best.txid);
 }
 
-console.log("\n— buildSend —");
+console.log("\nbuildSend:");
 const send = buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1000)], priv: PRIV });
 ok("buildSend ok", send.ok === true);
 ok("change returns to sender", send.tx!.outputs.some((o) => o.scriptPubkey === ME && Number(o.value) === 890));
@@ -41,10 +41,10 @@ ok("txid recomputes", send.txid === txid(send.tx!));
 ok("rejects a bad recipient", buildSend({ outputs: [{ to: "0xnothex", value: 1 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === false);
 ok("rejects insufficient balance", buildSend({ outputs: [{ to: RCPT, value: 10_000 }], fee: 1, utxos: [utxo(100)], priv: PRIV }).ok === false);
 // node mempool requires feerate_ppm = fee*1e6/bytes ≥ 1; fee:0 builds a tx the node bounces
-ok("rejects fee:0 (below the node feerate floor — was a silent build-success/broadcast-fail)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 0, utxos: [utxo(1000)], priv: PRIV }).ok === false);
+ok("rejects fee:0 (below the node feerate floor; was a silent build-success/broadcast-fail)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 0, utxos: [utxo(1000)], priv: PRIV }).ok === false);
 ok("accepts fee:1 (a sub-MB tx needs only 1 base unit to clear the feerate floor)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 1, utxos: [utxo(1000)], priv: PRIV }).ok === true);
 
-console.log("\n— buildPropose / buildAttest —");
+console.log("\nbuildPropose / buildAttest:");
 const prop = buildPropose({ domain: "csd:test", payloadHash: "0x" + "ab".repeat(32), uri: "cairn:v1:abcdef", expiresEpoch: 9999, fee: MIN_FEE_PROPOSE, utxos: [utxo(MIN_FEE_PROPOSE * 2)], priv: PRIV });
 ok("buildPropose ok + app=Propose", prop.ok && prop.tx!.app.type === "Propose");
 ok("propose rejects sub-minimum fee", buildPropose({ domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 1, fee: 1, utxos: [utxo(1e8)], priv: PRIV }).ok === false);
@@ -54,7 +54,7 @@ ok("buildAttest accepts the CONF_TOKEN_FILL marker confidence=1_000_000", buildA
 ok("buildAttest REJECTS score ≥ 2^32 (no silent >>>0 wrap)", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 4294967296, confidence: 0, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV }).ok === false);
 ok("buildAttest REJECTS a negative confidence", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 0, confidence: -1, fee: 5_000_000, utxos: [utxo(1e7)], priv: PRIV }).ok === false);
 
-console.log("\n— node JSON shape —");
+console.log("\nnode JSON shape:");
 const nj = txToNodeJson(send.tx!);
 ok("nodeJson app is 'None' for a transfer", nj.app === "None");
 ok("nodeJson inputs carry byte-array prevout txid", Array.isArray(nj.inputs[0]!.prevout.txid) && nj.inputs[0]!.prevout.txid.length === 32);
@@ -62,7 +62,7 @@ ok("nodeJson outputs carry byte-array script_pubkey(20)", nj.outputs[0]!.script_
 const njp = txToNodeJson(prop.tx!);
 ok("nodeJson Propose is externally-tagged {Propose:{…}}", !!(njp.app as { Propose?: { payload_hash: unknown } }).Propose && Array.isArray((njp.app as { Propose: { payload_hash: unknown } }).Propose.payload_hash));
 
-console.log("\n— u64 submit-JSON faithfulness (regression: C-S2/A2 — no silent >2^53 truncation) —");
+console.log("\nu64 submit-JSON faithfulness (regression: C-S2/A2; no silent >2^53 truncation):");
 const throws = (n: string, fn: () => unknown) => { let t = false; try { fn(); } catch { t = true; } ok(n, t); };
 const baseTx = { version: 1, locktime: 0, app: { type: "None" } as const, inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [{ value: 1000, scriptPubkey: RCPT }] };
 ok("MAX_SAFE_INTEGER value round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: Number.MAX_SAFE_INTEGER, scriptPubkey: RCPT }] }).outputs[0]!.value === Number.MAX_SAFE_INTEGER);
@@ -72,7 +72,7 @@ throws("REFUSES negative output value", () => txToNodeJson({ ...baseTx, outputs:
 throws("REFUSES non-integer output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1.5, scriptPubkey: RCPT }] }));
 throws("REFUSES Propose expires_epoch > 2^53", () => txToNodeJson({ ...baseTx, app: { type: "Propose", domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 9007199254740993n } }));
 
-console.log("\n— DvP value outputs on Propose/Attest (consensus F4) —");
+console.log("\nDvP value outputs on Propose/Attest (consensus F4):");
 {
   const dvp = buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 100, confidence: 100, fee: 5_000_000,
     outputs: [{ to: RCPT, value: 40_000_000 }], utxos: [utxo(2e8)], priv: PRIV });
@@ -87,7 +87,7 @@ console.log("\n— DvP value outputs on Propose/Attest (consensus F4) —");
   ok("propose+fee-output builds (fee-bearing record shape)", dvpP.ok === true && dvpP.tx!.outputs.some((o) => o.value === 100_000_000));
 }
 
-console.log("\n— max-fee backstop (UTXO-VALUE-1: no silent fund-burn via absurd fee) —");
+console.log("\nmax-fee backstop (UTXO-VALUE-1: no silent fund-burn via absurd fee):");
 {
   // honest fees pass: a tiny transfer fee, and a fee-only Propose at its 0.25 CSD floor.
   ok("normal transfer fee passes the backstop", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1e9)], priv: PRIV }).ok === true);
@@ -101,19 +101,19 @@ console.log("\n— max-fee backstop (UTXO-VALUE-1: no silent fund-burn via absur
   // explicit override: a caller can deliberately authorize a higher fee.
   ok("maxFee override lets a deliberate high fee through", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 990_000_000, utxos: [utxo(1_000_000_100)], priv: PRIV, maxFee: 1_000_000_000 }).ok === true);
   ok("a too-low maxFee can also tighten the cap (rejects an otherwise-fine fee)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 200_000_000, utxos: [utxo(5_000_000_000)], priv: PRIV, maxFee: 50_000_000 }).ok === false);
-  // an attest's weight IS the user's deliberate stake — never blocked by the default backstop.
+  // an attest's weight IS the user's deliberate stake; never blocked by the default backstop.
   ok("attest weight (its fee) is honored even above the abs cap", buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 1, confidence: 1, fee: 300_000_000, utxos: [utxo(5e9)], priv: PRIV }).ok === true);
   ok("REFUSES a negative maxFee (range-guarded)", buildSend({ outputs: [{ to: RCPT, value: 100 }], fee: 10, utxos: [utxo(1e9)], priv: PRIV, maxFee: -1 }).ok === false);
 }
 
-console.log("\n— L4: hostile-RPC confirmations (NaN/Infinity bypass) —");
+console.log("\nL4: hostile-RPC confirmations (NaN/Infinity bypass):");
 const bad = (c: unknown) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value: 1000, confirmations: c as number });
 ok("L4: NaN confirmations is REJECTED (NaN<1 is false)", selectInputs([bad(NaN)], 100) === null);
 ok("L4: Infinity confirmations is REJECTED", selectInputs([bad(Infinity)], 100) === null);
 ok("L4: string 'abc' confirmations (→NaN) is REJECTED", selectInputs([bad("abc")], 100) === null);
 ok("L4: a real 6-conf coin is still accepted", selectInputs([bad(6)], 100)?.total === 1000);
 
-console.log("\n— H2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure) —");
+console.log("\nH2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure):");
 {
   const RCPT2 = "0x" + "cc".repeat(20);
   const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });
@@ -135,7 +135,7 @@ console.log("\n— H2: buildSendVerified (UTXO-VALUE-1 implicit-fee-burn cure) �
   ok("honest verify → ok, change from the (true) total", vh.ok === true && vh.change === 5_000_000_000 - 100 - 10_000_000);
 }
 
-console.log("\n— M1: buildSendVerified exclude-and-retry (a poison coin is excluded, not bricking the spend) —");
+console.log("\nM1: buildSendVerified exclude-and-retry (a poison coin is excluded, not bricking the spend):");
 {
   const RCPT = "0x" + "cc".repeat(20);
   // a poison coin (large; largest-first picks it first) + a good coin, distinct txids
@@ -159,13 +159,13 @@ console.log("\n— M1: buildSendVerified exclude-and-retry (a poison coin is exc
   const rb = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: coins, priv: PRIV, verify: async (inp) => { n++; return { ok: false as const, total: 0, badInput: inp[0]! }; } });
   ok("bounded: always-bad inputs fail closed at EXACTLY MAX_SELECT_ROUNDS (the cap, not selection failure)", rb.ok === false && n === 3 && /could not verify/.test(String(rb.error)));
   // the exclusion-aware shortfall message (Fable M1 QC): a remainder shortfall after exclusions must
-  // say WHY — a bare "insufficient confirmed balance" contradicts the user's displayed balance.
+  // say WHY: a bare "insufficient confirmed balance" contradicts the user's displayed balance.
   const dust = { txid: "0x" + "dd".repeat(32), vout: 0, value: 100, confirmations: 6, coinbase: false };
   const rs = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, dust], priv: PRIV, verify: async (inp) => inp.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase()) ? { ok: false as const, total: 0, badInput: { txid: poison.txid, vout: poison.vout } } : { ok: true as const, total: (inp as Utxo[]).reduce((a, i) => a + i.value, 0) } });
   ok("a short remainder after exclusion says WHY (verifiable, not confirmed)", rs.ok === false && /insufficient verifiable balance/.test(String(rs.error)) && /1 coin/.test(String(rs.error)));
 }
 
-console.log("\n— F9-C: buildProposeVerified / buildAttestVerified (money-out board-post builders fail-closed) —");
+console.log("\nF9-C: buildProposeVerified / buildAttestVerified (money-out board-post builders fail-closed):");
 {
   const u = (value: number) => ({ txid: "0x" + "ab".repeat(32), vout: 0, value, confirmations: 6, coinbase: false });
   const PH = "0x" + "ab".repeat(32), PID = "0x" + "cd".repeat(32);
