@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Sign in with CSD (SIWC) — audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
+  "description": "Sign in with CSD (SIWC): audience-bound, replay-resistant wallet auth for Compute Substrate (CAIP-122 / EIP-4361 style). Build / parse / digest / verify.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Compute Substrate light client — headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
+  "description": "Compute Substrate light client: headers-first sync with client-side PoW/LWMA/chainwork verification + merkle-inclusion proofs, behind a Helios-style verified-RPC facade with an honest trustLevel on every read.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

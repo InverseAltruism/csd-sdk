@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway) — tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
+  "description": "Typed HTTP RPC client for a Compute Substrate node (or the Cairn proxy / a discovered gateway): tip/block/tx/utxos/proposals/top/domains/mempool/submit/templates.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
