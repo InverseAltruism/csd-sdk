@@ -34,6 +34,7 @@ jobs:
       - run: pnpm exec tsx test/security.test.ts
       - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
+      - run: pnpm exec tsx test/dep-pins.test.ts   # every dependency exact or workspace:*, equal to what the lockfile resolves
       - run: pnpm exec tsx test/oracle.test.ts   # skips if no node (exit 0)
 
   secrets:
