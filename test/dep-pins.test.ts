@@ -69,6 +69,15 @@ ok("the parser read the root and every workspace package, with each one's depend
   Object.keys(lock).join(", "));
 ok("peer suffixes are stripped from the resolved version", lock["."]?.devDependencies?.tsup?.version === rootPkg.devDependencies?.tsup);
 
+// GHSA-g7r4-m6w7-qqqr (low; esbuild's dev server on Windows) affects esbuild >=0.27.3 <0.28.1. tsup 8 keeps its own
+// esbuild ^0.27 and its dist never calls esbuild's serve or context; tsup 9 moves to ^0.28.2. Every other copy is newer.
+const lockText = readFileSync(join(root, "pnpm-lock.yaml"), "utf8");
+const below = (v: string) => { const [a, b, c] = v.split(".").map(Number); return a! === 0 && (b! < 28 || (b === 28 && c! < 1)); };
+const esbuilds = [...new Set([...lockText.matchAll(/^  esbuild@(\d+\.\d+\.\d+):$/gm)].map((m) => m[1]!))];
+const tsup8Esbuild = /^  tsup@8\.[^\n]*:\n(?:    [^\n]*\n)*?      esbuild: (\S+)$/m.exec(lockText)?.[1];
+const old = esbuilds.filter(below).filter((v) => v !== tsup8Esbuild);
+ok("every esbuild in the lockfile is 0.28.1 or later, except the copy tsup 8 pins", esbuilds.length > 0 && old.length === 0, `esbuild ${esbuilds.join(", ")}; tsup 8 uses ${tsup8Esbuild}`);
+
 const caret = { ...rootPkg, devDependencies: { ...rootPkg.devDependencies, tsx: `^${rootPkg.devDependencies?.tsx}` } };
 ok("a caret range on a dev dependency is an offence", pinOffences(".", caret, lock["."]).some((l) => l.startsWith(". devDependencies.tsx:") && l.includes("not an exact version")));
 const stale = structuredClone(lock["."]!);
