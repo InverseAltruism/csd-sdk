@@ -103,7 +103,7 @@ Consensus-touching checklist (CONSENSUS_CHANGES.md): (1) land with golden vector
 
 ## Consumer footprint
 
-npm-pinning consumers: cairnx (trading service), cairn-cli, cairn-sdk, csd-indexer and the bridge relayer pin exact versions; `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins. A re-pinned package.json is INERT until that service restarts, so a coherent pin table is not the same as a coherent fleet: confirm each replayer by live query before a gate height, never by reading a manifest.
+npm-pinning consumers: cairnx (trading service), cairn-sdk, csd-indexer and the bridge relayer pin exact versions; `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins. A re-pinned package.json is INERT until that service restarts, so a coherent pin table is not the same as a coherent fleet: confirm each replayer by live query before a gate height, never by reading a manifest.
 
 Vendored consumers: the cairn website serves the packages server-side and ships PROVENANCE-pinned browser vendor bundles; cairn-wallet ships its own vendored SPV bundle whose PROVENANCE pins an exact csd-sdk version + commit, kept honest by each repo's check-vendor-fresh gate and the shared golden vectors. Each freshness gate compares BYTES, so a docs-only commit past that pin is a warning, not a failure, and the pin is refreshed by that repo's own `check-vendor-fresh.mjs --write` on its next vehicle. clarvis (the second-source resolver) runs cairnx-core and must ride every gate bump.
 
