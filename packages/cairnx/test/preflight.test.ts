@@ -13,7 +13,7 @@ import {
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN, epochOf,
-  type ChainEvent, type OfferState, type NameState,
+  type ChainEvent, type ProposeEvent, type OfferState, type NameState,
 } from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -22,7 +22,7 @@ let nextId = 1;
 const nid = () => "0x" + (nextId++).toString(16).padStart(64, "0");
 const A = "0x" + "aa".repeat(20), B = "0x" + "bb".repeat(20), C = "0x" + "cc".repeat(20);
 const T = TREASURY_ADDR;
-const prop = (who: string, rec: { uri: string; payloadHash: string }, h: number, paidTo: Record<string, string> = {}, pos = 1, exp = 9e15): ChainEvent =>
+const prop = (who: string, rec: { uri: string; payloadHash: string }, h: number, paidTo: Record<string, string> = {}, pos = 1, exp = 9e15): ProposeEvent =>
   ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos, expiresEpoch: exp, paidTo });
 const att = (who: string, proposalId: string, h: number, paidTo: Record<string, string> = {}, score = 100, pos = 1, confidence = 0): ChainEvent =>
   ({ kind: "attest", txid: nid(), proposalId, attester: who, score, confidence, height: h, pos, paidTo });
@@ -55,7 +55,7 @@ console.log("previewFill == resolver delivered `got` at the C3 zero-delivery bou
       prop(A, mint({ ticker: "RARE", amount: G.toString() }), h0 + 1),
       offEv,
     ], h0 + 3);
-    return st.offers[offEv.id];
+    return st.offers[offEv.id]!;
   };
   const o = freshOffer();
 
@@ -174,7 +174,7 @@ console.log("\nend-to-end: fillIsSafe refuses exactly the fill the resolver woul
     att(B, offEv.id, listH + 5, {}, SCORE_CLAIM, 0),   // B claims → wins
   ];
   const st = resolve(ev, listH + 6);
-  const o = st.offers[offEv.id];
+  const o = st.offers[offEv.id]!;
   // C (no claim) is about to fill → the preflight must refuse BEFORE C signs (matching the on-chain reject)
   ok("C is refused by fillIsSafe (no live claim) — the burn the resolver would take", fillIsSafe(o, C, val + reb, listH + 6).safe === false);
   ok("B (the live claimant) is allowed by fillIsSafe", fillIsSafe(o, B, val + reb, listH + 6).safe === true);
@@ -207,9 +207,9 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
     };
   };
   const { ev: probeEv, offId: probeId } = mkEvents({});
-  const openOffer = resolve(probeEv.slice(0, 5), H + 305).offers[probeId];
+  const openOffer = resolve(probeEv.slice(0, 5), H + 305).offers[probeId]!;
   const outs = requiredFillOutputs(openOffer, val)!;
-  ok("open-ask whole fill: 2 outputs (payto==seller ACCUMULATED with rebate, + treasury)", outs.length === 2 && outs[0].to === A && outs[0].value === val + reb && outs[1].to === T);
+  ok("open-ask whole fill: 2 outputs (payto==seller ACCUMULATED with rebate, + treasury)", outs.length === 2 && outs[0]!.to === A && outs[0]!.value === val + reb && outs[1]!.to === T);
   const filledAt = (paidTo: Record<string, string>): boolean => {
     const { ev, offId } = mkEvents(paidTo);
     return resolve(ev, H + 307).offers[offId]?.status === "filled";
@@ -221,7 +221,7 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   // whole-fill OVERPAY: previewFill clamps the effective pay to want (`pay: want`, fee on want), so a
   // payRaw above want sizes IDENTICAL outputs to par — this map can never make a taker overpay a leg
   const outsOver = requiredFillOutputs(openOffer, val * 3n)!;
-  ok("whole-fill overpay (payRaw = 3×want) clamps to want: outputs identical to par", outsOver.length === outs.length && outsOver.every((o, i) => o.to === outs[i].to && o.value === outs[i].value));
+  ok("whole-fill overpay (payRaw = 3×want) clamps to want: outputs identical to par", outsOver.length === outs.length && outsOver.every((o, i) => o.to === outs[i]!.to && o.value === outs[i]!.value));
   ok("previewFill pins the whole-fill clamp: pay == want, fee on want", (() => { const p = previewFill(openOffer, val * 3n); return p.deliverable && p.pay === val && p.fee === tradeFee(val, FEE_BPS_V16); })());
 
   // PARTIAL fill (taker-bound token offer): pay + fee(clamped), NO rebate leg
@@ -230,11 +230,11 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
     const dep = prop(A, deploy({ ticker: "PART", decimals: 0, supply: G2.toString(), mint: "issuer" }), H, { [T]: "100000000" });
     const mintEv = prop(A, mint({ ticker: "PART", amount: G2.toString() }), H + 1);
     const offEv = prop(A, offer({ give: { ticker: "PART", amount: G2.toString() }, want: { value: W2.toString() }, min: unit.toString(), taker: B }), H + 2, {});
-    return { o: resolve([dep, mintEv, offEv], H + 3).offers[offEv.id], base: [dep, mintEv, offEv], offId: offEv.id };
+    return { o: resolve([dep, mintEv, offEv], H + 3).offers[offEv.id]!, base: [dep, mintEv, offEv], offId: offEv.id };
   };
   const { o: po, base, offId } = partialOffer();
   const pouts = requiredFillOutputs(po, unit)!;
-  ok("partial fill: 2 outputs (clamped pay + fee), NO rebate leg", pouts.length === 2 && pouts[0].value === unit && pouts[1].to === T && pouts[1].value === tradeFee(unit, FEE_BPS_V16));
+  ok("partial fill: 2 outputs (clamped pay + fee), NO rebate leg", pouts.length === 2 && pouts[0]!.value === unit && pouts[1]!.to === T && pouts[1]!.value === tradeFee(unit, FEE_BPS_V16));
   const partialFills = (paidTo: Record<string, string>): boolean => {
     const st = resolve([...base, att(B, offId, H + 4, paidTo, SCORE_FILL, 2)], H + 5);
     return (st.offers[offId]?.fills?.length ?? 0) > 0;
@@ -250,7 +250,7 @@ console.log("\nrequiredFillOutputs — resolver-accepted at par, resolver-refuse
   ok("undeliverable (below min) → null", requiredFillOutputs(po, unit - 1n) === null);
   const freeEra: OfferState = { ...po, feeBps: 0 };
   const fouts = requiredFillOutputs(freeEra, unit)!;
-  ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0].to === A);
+  ok("feeBps=0 era → single pay output, no treasury leg", fouts.length === 1 && fouts[0]!.to === A);
 }
 
 // ── OVERPAY CLAMP on a partially-filled offer: payRaw beyond the REMAINDER is clamped by previewFill
@@ -267,13 +267,13 @@ console.log("\nrequiredFillOutputs — overpay clamped to the remainder (fee on 
   const offEv = prop(A, offer({ give: { ticker: "CLMP", amount: G3.toString() }, want: { value: W3.toString() }, min: unit3.toString(), taker: B }), H2 + 2, {});
   const first = 3n * unit3;   // 3 tokens already bought — 70 CSD remaining
   const base2 = [dep, mintEv, offEv, att(B, offEv.id, H2 + 3, { [A]: first.toString(), [T]: tradeFee(first, FEE_BPS_V16).toString() }, SCORE_FILL, 2)];
-  const o2 = resolve(base2, H2 + 4).offers[offEv.id];
+  const o2 = resolve(base2, H2 + 4).offers[offEv.id]!;
   const remaining = W3 - first;
   const over = requiredFillOutputs(o2, W3)!;   // payRaw = the FULL want, well over the remainder
-  ok("overpaid partial: pay leg = the clamped remainder, fee computed ON THE CLAMP (never on payRaw)", over.length === 2 && over[0].to === A && over[0].value === remaining && over[1].to === T && over[1].value === tradeFee(remaining, FEE_BPS_V16));
+  ok("overpaid partial: pay leg = the clamped remainder, fee computed ON THE CLAMP (never on payRaw)", over.length === 2 && over[0]!.to === A && over[0]!.value === remaining && over[1]!.to === T && over[1]!.value === tradeFee(remaining, FEE_BPS_V16));
   const p2 = previewFill(o2, W3);
   ok("previewFill guarantee: pay clamped to remaining, got = the 7 undelivered tokens", p2.deliverable && p2.pay === remaining && p2.got === 7n);
-  const after = (paidTo: Record<string, string>): OfferState => resolve([...base2, att(B, offEv.id, H2 + 5, paidTo, SCORE_FILL, 2)], H2 + 6).offers[offEv.id];
+  const after = (paidTo: Record<string, string>): OfferState => resolve([...base2, att(B, offEv.id, H2 + 5, paidTo, SCORE_FILL, 2)], H2 + 6).offers[offEv.id]!;
   const par = Object.fromEntries(over.map((x) => [x.to, x.value.toString()]));
   ok("resolver ACCEPTS exactly the clamped outputs — the offer completes (filled, all 10 delivered)", (() => { const o = after(par); return o.status === "filled" && o.delivered === G3.toString(); })());
   ok("one unit under on the fee leg (fee owed on the CLAMPED amount) → resolver REFUSES the fill", (after({ ...par, [T]: (tradeFee(remaining, FEE_BPS_V16) - 1n).toString() }).fills?.length ?? 0) === 1);

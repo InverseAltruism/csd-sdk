@@ -86,7 +86,7 @@ try {
     };
     const payloadHashHex = "0x" + "ab".repeat(32);
     // payload_hash is a 0x-hex STRING per TxTemplateProposeReq (not a byte array)
-    const tpl = await c.templatePropose({ tx: unsignedTx, domain: "csd:sdk-test", payload_hash: payloadHashHex, uri: "csd:test", expires_epoch: 999999 });
+    const tpl = await c.templatePropose({ tx: unsignedTx, domain: "csd:sdk-test", payload_hash: payloadHashHex, uri: "csd:test", expires_epoch: 999999 }) as { signing_hash?: string; unsigned_txid?: string } | null;
     if (tpl && tpl.signing_hash) {
       // build the SAME unsigned propose with the SDK and compare sighash + txid to the node's
       const sdkTx = { version: 1, locktime: 0, inputs: [{ prevTxid: x.txid, vout: x.vout, scriptSig: "0x" }], outputs: [], app: { type: "Propose" as const, domain: "csd:sdk-test", payloadHash: payloadHashHex, uri: "csd:test", expiresEpoch: 999999 } };

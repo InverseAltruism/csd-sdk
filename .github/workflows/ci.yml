@@ -20,6 +20,7 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck   # src and tests, strict + noUncheckedIndexedAccess
       # Every file:line citation in CONSENSUS_CHANGES.md must still point at the line it quotes.
       - run: node scripts/check-consensus-citations.mjs
       - run: pnpm -r --filter "./packages/*" build

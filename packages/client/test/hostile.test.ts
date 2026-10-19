@@ -16,7 +16,7 @@ const scripted = (...handlers: Handler[]) => {
   const f = Object.assign(
     async (_url: unknown, _init?: unknown): Promise<Response> => {
       f.calls++;
-      return handlers[Math.min(f.calls - 1, handlers.length - 1)]();
+      return handlers[Math.min(f.calls - 1, handlers.length - 1)]!();
     },
     { calls: 0 },
   );

@@ -37,9 +37,9 @@ ok("recent blocks: headerHash + merkleRoot reproduce from RPC JSON", blocksOk >=
 ok(`real txs round-trip rpcTxToTx→txid (${txOk}/${txsChecked})`, txsChecked > 0 && txOk === txsChecked);
 
 // reads
-const dom = await c.domains();
+const dom = (await c.domains()) as unknown as { domains?: unknown };   // the node serves an object; csd-client declares string[]
 ok("domains() returns a list", Array.isArray(dom.domains));
-const mp = await c.mempool();
+const mp = (await c.mempool()) as { tx_count?: unknown };
 ok("mempool() returns tx_count", typeof mp.tx_count === "number");
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

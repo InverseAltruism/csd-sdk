@@ -26,7 +26,7 @@ const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20);
 let n = 1; const nid = () => "0x" + (n++).toString(16).padStart(64, "0");
 const epochOf = (h: number) => Math.floor(h / EPOCH_LEN);
 type Ev = Parameters<typeof resolve>[0][number];
-const PE = (b: { uri: string; payloadHash: string }, h: number, who: string, ee: number, pos = 0, paidTo: Record<string, string> = {}, id = nid()): Ev =>
+const PE = (b: { uri: string; payloadHash: string }, h: number, who: string, ee: number, pos = 0, paidTo: Record<string, string> = {}, id = nid()): Extract<Ev, { kind: "propose" }> =>
   ({ kind: "propose", id, proposer: who, uri: b.uri, payloadHash: b.payloadHash, expiresEpoch: ee, height: h, pos, paidTo });
 const AE = (pid: string, who: string, h: number, paidTo: Record<string, string>, score = SCORE_FILL, confidence = 0, pos = 0): Ev =>
   ({ kind: "attest", txid: nid(), proposalId: pid, attester: who, score, confidence, height: h, pos, paidTo });

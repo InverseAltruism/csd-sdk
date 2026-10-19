@@ -365,11 +365,11 @@ if (inclBlock) {
   // forged min-difficulty child at height 44 (ground OFFLINE; see test/_regrind-genesis-poison.mjs).
   // time = parent + 120 so the H3 time rules PASS and the failure lands specifically on bits, not time.
   const POISON_NONCE_44 = 9039078;
-  const forged = { version: 1, prev: h43.hash, merkle: h44.header.merkle, time: h43.header.time + 120, bits: POW_LIMIT_BITS, nonce: POISON_NONCE_44 } as BlockHeader;
+  const forged = { version: 1, prev: h43.hash, merkle: h44.header.merkle, time: Number(h43.header.time) + 120, bits: POW_LIMIT_BITS, nonce: POISON_NONCE_44 } as BlockHeader;
   ok("MF-02: the baked min-difficulty poison header at 44 passes PoW (else: regrind the vector)", powOk(headerHashBytes(forged), POW_LIMIT_BITS));
   const honestExp44 = expectedBitsFromWindow(raw.slice(0, 44).map((e) => e.header), 44);
   ok("MF-02: the forged min-difficulty bits differ from the honest LWMA expectation at 44", POW_LIMIT_BITS !== honestExp44);
-  const malicious = { v: 1, baseHeight: 0, headers: [...raw.slice(0, 44), { height: 44, hash: headerHash(forged), header: forged, chainwork: "0", trusted: true }] };
+  const malicious = { v: 1 as const, baseHeight: 0, headers: [...raw.slice(0, 44), { height: 44, hash: headerHash(forged), header: forged, chainwork: "0", trusted: true }] };
   let threw = false, msg = "";
   try { LightClient.fromSnapshot(malicious); } catch (e: any) { threw = true; msg = e?.message ?? String(e); }
   ok("MF-02: a genesis-rooted snapshot with a forged trusted:true min-difficulty header at 44 is REJECTED on bits", threw && /bad bits/.test(msg));

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r --filter \"./packages/*\" build",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "pnpm -r --filter \"./packages/*\" test",
     "clean": "pnpm -r exec node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test:e2e": "tsx test/live-opt-in.test.ts && tsx test/oracle.test.ts && tsx test/edge.test.ts && tsx test/security.test.ts",
@@ -22,6 +23,7 @@
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.0",
+    "@types/node": "22.19.20",
     "@inversealtruism/csd-codec": "workspace:*",
     "@inversealtruism/csd-crypto": "workspace:*",
     "@inversealtruism/csd-tx": "workspace:*",

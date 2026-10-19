@@ -1,5 +1,5 @@
 // @inversealtruism/csd-tx — builder + coin-selection conformance + adversarial guards.
-import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson } from "../src/index.js";
+import { selectInputs, buildSend, buildSendVerified, buildPropose, buildAttest, buildProposeVerified, buildAttestVerified, signTx, txToNodeJson, type Utxo } from "../src/index.js";
 import { txid, sighash, MIN_FEE_PROPOSE } from "@inversealtruism/csd-codec";
 import { addrFromPriv, verifyDigest } from "@inversealtruism/csd-crypto";
 
@@ -57,16 +57,16 @@ ok("buildAttest REJECTS a negative confidence", buildAttest({ proposalId: "0x" +
 console.log("\n— node JSON shape —");
 const nj = txToNodeJson(send.tx!);
 ok("nodeJson app is 'None' for a transfer", nj.app === "None");
-ok("nodeJson inputs carry byte-array prevout txid", Array.isArray(nj.inputs[0].prevout.txid) && nj.inputs[0].prevout.txid.length === 32);
-ok("nodeJson outputs carry byte-array script_pubkey(20)", nj.outputs[0].script_pubkey.length === 20);
+ok("nodeJson inputs carry byte-array prevout txid", Array.isArray(nj.inputs[0]!.prevout.txid) && nj.inputs[0]!.prevout.txid.length === 32);
+ok("nodeJson outputs carry byte-array script_pubkey(20)", nj.outputs[0]!.script_pubkey.length === 20);
 const njp = txToNodeJson(prop.tx!);
-ok("nodeJson Propose is externally-tagged {Propose:{…}}", !!njp.app.Propose && Array.isArray(njp.app.Propose.payload_hash));
+ok("nodeJson Propose is externally-tagged {Propose:{…}}", !!(njp.app as { Propose?: { payload_hash: unknown } }).Propose && Array.isArray((njp.app as { Propose: { payload_hash: unknown } }).Propose.payload_hash));
 
 console.log("\n— u64 submit-JSON faithfulness (regression: C-S2/A2 — no silent >2^53 truncation) —");
 const throws = (n: string, fn: () => unknown) => { let t = false; try { fn(); } catch { t = true; } ok(n, t); };
 const baseTx = { version: 1, locktime: 0, app: { type: "None" } as const, inputs: [{ prevTxid: "0x" + "00".repeat(32), vout: 0, scriptSig: "0x" }], outputs: [{ value: 1000, scriptPubkey: RCPT }] };
-ok("MAX_SAFE_INTEGER value round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: Number.MAX_SAFE_INTEGER, scriptPubkey: RCPT }] }).outputs[0].value === Number.MAX_SAFE_INTEGER);
-ok("bigint value within safe range round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: 9007199254740991n, scriptPubkey: RCPT }] }).outputs[0].value === 9007199254740991);
+ok("MAX_SAFE_INTEGER value round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: Number.MAX_SAFE_INTEGER, scriptPubkey: RCPT }] }).outputs[0]!.value === Number.MAX_SAFE_INTEGER);
+ok("bigint value within safe range round-trips exactly", txToNodeJson({ ...baseTx, outputs: [{ value: 9007199254740991n, scriptPubkey: RCPT }] }).outputs[0]!.value === 9007199254740991);
 throws("REFUSES output value > 2^53 (would corrupt sign==submit) instead of Number()-truncating", () => txToNodeJson({ ...baseTx, outputs: [{ value: 9007199254740993n, scriptPubkey: RCPT }] }));
 throws("REFUSES negative output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: -1, scriptPubkey: RCPT }] }));
 throws("REFUSES non-integer output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1.5, scriptPubkey: RCPT }] }));
@@ -146,7 +146,7 @@ console.log("\n— M1: buildSendVerified exclude-and-retry (a poison coin is exc
     calls++;
     // the verifier names the poison coin as badInput while it's in the selection
     if (inputs.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase())) return { ok: false, total: 0, badInput: { txid: poison.txid, vout: poison.vout } };
-    return { ok: true, total: inputs.reduce((a, i) => a + i.value, 0) };
+    return { ok: true, total: (inputs as Utxo[]).reduce((a, i) => a + i.value, 0) };
   };
   const r = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, good], priv: PRIV, verify });
   ok("a poison coin is EXCLUDED and the spend still builds (not bricked)", r.ok === true && calls >= 2);
@@ -161,7 +161,7 @@ console.log("\n— M1: buildSendVerified exclude-and-retry (a poison coin is exc
   // the exclusion-aware shortfall message (Fable M1 QC): a remainder shortfall after exclusions must
   // say WHY — a bare "insufficient confirmed balance" contradicts the user's displayed balance.
   const dust = { txid: "0x" + "dd".repeat(32), vout: 0, value: 100, confirmations: 6, coinbase: false };
-  const rs = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, dust], priv: PRIV, verify: async (inp) => inp.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase()) ? { ok: false as const, total: 0, badInput: { txid: poison.txid, vout: poison.vout } } : { ok: true as const, total: inp.reduce((a, i) => a + i.value, 0) } });
+  const rs = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, dust], priv: PRIV, verify: async (inp) => inp.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase()) ? { ok: false as const, total: 0, badInput: { txid: poison.txid, vout: poison.vout } } : { ok: true as const, total: (inp as Utxo[]).reduce((a, i) => a + i.value, 0) } });
   ok("a short remainder after exclusion says WHY (verifiable, not confirmed)", rs.ok === false && /insufficient verifiable balance/.test(String(rs.error)) && /1 coin/.test(String(rs.error)));
 }
 

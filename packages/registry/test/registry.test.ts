@@ -241,7 +241,7 @@ test("M2: a malformed pub does not crash resolvePeers — the record is skipped,
     content: { t: "peer", peer_id: "12D3KooWPOISON", multiaddrs: ["/ip4/9.9.9.9/tcp/1"], pub: "0xZZZZ_not_hex_odd", sig: "nope" } as any,
     attestations: [],
   };
-  let out: ReturnType<typeof resolvePeers> | null = null;
+  let out = null as ReturnType<typeof resolvePeers> | null;
   assert.doesNotThrow(() => { out = resolvePeers(shuffle([honest, poison]), OPTS); }, "a malformed pub must not throw out of resolve");
   assert.ok(out !== null && out!.some((p) => p.peer_id === "12D3KooWHONEST"), "the honest peer still resolves");
   assert.ok(out!.every((p) => p.peer_id !== "12D3KooWPOISON"), "the malformed peer is skipped, not counted");
