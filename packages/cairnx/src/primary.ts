@@ -5,7 +5,7 @@
 // effectiveHeight, then ordinal (code-unit) comparison of claimId. Returns null if no name round-trips.
 //
 // This is the EXACT selection the V23 "unset" switches: an nset whose addr is the zero address clears
-// n.addr (resolve.ts), so the cleared name fails the `addr === a` round-trip and drops out of this set —
+// n.addr (`applyNset`, src/resolve/names.ts), so the cleared name fails the `addr === a` round-trip and drops out of this set;
 // the next-oldest self-pointing name becomes primary.
 //
 // NOT part of canonicalState (a bug here cannot fork the chain; it only mis-derives the reverse-resolution

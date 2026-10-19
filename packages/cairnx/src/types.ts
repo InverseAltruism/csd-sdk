@@ -152,7 +152,7 @@ export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blo
 // v2.2 (V22): REMOVE the offer/bid duration cap from consensus. Listing duration becomes a pure UI/product
 // policy (enforced in the trade UI, not the chain) — see cairn docs/Plans/47. For an offer/bid anchored at
 // height >= V22_HEIGHT the cap no longer applies (neither the creation reject NOR the lazy-sweep cap), so it
-// may rest until its raw expiresEpoch — bounded only by the Number.isSafeInteger fork-guard in resolve.ts.
+// may rest until its raw expiresEpoch, bounded only by the Number.isSafeInteger fork-guard in `applyOffer` / `applyBid` (src/resolve/market.ts).
 // RELAXATION (the HARD fork direction): keyed on the OFFER's ANCHOR height (ev.height), NOT the sweep height,
 // so every pre-V21 hash AND all of [V21,V22) stay BYTE-IDENTICAL (offers anchored < V22 keep the exact V21
 // behavior; only offers anchored >= V22 are un-capped). Every replayer (Granus cairnx, clarvis, the
@@ -281,7 +281,7 @@ export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same c
 // crosses V27_HEIGHT. First set at 52,500; pulled in to 46,520 on 2026-07-03 with V24 to V26, so it sits
 // 40 blocks after V26 and 80 after V25 (V23 at 52,000 is an independent rule). The redundancy proof needs
 // the sealed model active (V25 <= V27). Because V27 - V25 < COMMIT_MAX_BLOCKS, the relaxation could reach a
-// name claimed under the pre-V25 path; no such name existed on the chain (see the resolve.ts offer branch).
+// name claimed under the pre-V25 path; no such name existed on the chain (see `applyOffer`, src/resolve/market.ts).
 // MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles.
 export const V27_HEIGHT = 46_520;   // pulled in 2026-07-03 (was 52,500), same coordinated re-pin
 // v2.8 fclaim (§31). Operator-chosen activation height, set 2026-07-12, bumped 2026-07-13 (55,000 -> 60,000) for
@@ -337,7 +337,7 @@ export const claimWindowAt = (height: number): number =>
 export const FCLAIM_WINDOW_MIN = CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOCKS + 1;
 // Inverse for a STORED claimUntilHeight: a V20 claim has claimUntilHeight ≥ V20+40, and the
 // [V20+15, V20+40) range is unreachable, so this recovers the window baked into an existing claim
-// unambiguously. (Mirrors the resolver's era inverse — see resolve.ts claimGrace.)
+// unambiguously. (Mirrors the resolver's era inverse; see `claimGrace`, src/resolve/context.ts.)
 //
 // v2.8 (B6c / REBIND M6, fclaim-aware IN PLACE - mirrors claimGraceOf's claimTxid parameter): for an fclaim
 // hold (claimTxid set) the legacy 40-block inverse UNDER-derives the grant by 6..35 blocks, so a claim-depth
@@ -374,7 +374,7 @@ export const fclaimEpochFor = (tipHeight: number, offerExpiresEpoch: number): nu
   Math.min(epochOf(tipHeight + CLAIM_WINDOW_BLOCKS_V20 + CLAIM_FILL_GRACE_BLOCKS), offerExpiresEpoch);
 export const fclaimHoldEnd = (expiresEpoch: number): number => (expiresEpoch + 1) * EPOCH_LEN - 1;
 // The first height at which the resolver treats an offer/bid (anchored at `anchorHeight`, raw expiry epoch
-// `expiresEpoch`) as EXPIRED — the height projection of effExpiry + sweepExpired (resolve.ts). v2.1 (≥V21)
+// `expiresEpoch`) as EXPIRED: the height projection of effExpiry + sweepExpired (src/resolve/context.ts). v2.1 (≥V21)
 // caps the effective expiry at anchorEpoch + MAX_OFFER_EPOCHS; v2.2 (anchor >= V22) REMOVES the cap (raw
 // binds). Proven equivalent to the resolver's height-gated sweep; client-helpers.test.ts locks that
 // equivalence over a grid spanning V21 and V22.

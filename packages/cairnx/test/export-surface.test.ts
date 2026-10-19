@@ -4,7 +4,7 @@
 // longer carries it, and the miss would surface only at the consumer's compile - far from the cause.
 //
 // CONF_TOKEN_FILL is the one this rider was opened for: the 1_000_000 token-fill confidence sentinel
-// (resolve.ts requires ev.confidence === CONF_TOKEN_FILL for a token-debiting fill). Verified already
+// (`applyTokenFill` in src/resolve/attest.ts requires ev.confidence === CONF_TOKEN_FILL for a token-debiting fill). Verified already
 // exported at authoring time (types.ts `export *`); this test PINS it so it cannot regress unnoticed.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

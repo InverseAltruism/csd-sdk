@@ -39,7 +39,7 @@ console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length}
   assert.ok(evs.filter((e) => e.height >= V29_HEIGHT).length >= 700, "replay corpus must reach well past V29");
   for (const g of [V28_HEIGHT, V29_HEIGHT]) assert.ok(String(g) in pinned.hashes, `replay-hashes.json must pin the gate height ${g}`);
   // The V27 sale-embargo relaxation (240 -> 8 blocks) never reached a name claimed before V25: at the
-  // V27 height every live name was already past the 240-block bar (the resolve.ts offer-branch comment).
+  // V27 height every live name was already past the 240-block bar (the sale-embargo comment in `applyOffer`, src/resolve/market.ts).
   {
     const { V27_HEIGHT, COMMIT_MAX_BLOCKS } = await import("../src/index.js");
     const atV27 = resolve(corpus.events.filter((e: { height: number }) => e.height <= V27_HEIGHT), V27_HEIGHT);

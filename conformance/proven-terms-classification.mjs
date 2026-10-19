@@ -26,7 +26,7 @@ const DELIBERATELY_UNBOUND_WITH_REASON = {
   status: "resolver-derived lifecycle; NEVER trusted served - verifyFillSpv replays it from merkle-proven events",
   expiresEpoch: "hold/expiry timing is re-derived (fclaimHoldEnd + the replay); a served value is display-only",
   paid: "running fill state, not merkle-provable; binding it would false-refuse every partially-filled offer - the B6a sums seam binds the CONSEQUENCE (per-address payment sums vs the replayed state)",
-  delivered: "running fill state, same reason as paid (resolve.ts copies give verbatim and tracks delivered separately)",
+  delivered: "running fill state, same reason as paid (applyOffer in packages/cairnx/src/resolve/market.ts copies give verbatim; the fill handlers track delivered separately)",
   fills: "diagnostic history; excluded from what any payment sizes",
   claimedBy: "hold state; verifyFillSpv replays the grant (replayLiveHold) instead of trusting it",
   claimUntilHeight: "hold state; replayed, and claimWindowOf/claimGraceOf derive windows from it fclaim-aware (B6c)",

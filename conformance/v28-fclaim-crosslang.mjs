@@ -118,7 +118,7 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
   probe("s12 legacy hold live", st.offers[oL].claimedBy === B && st.offers[oL].claimUntilHeight === H0 + 37);
   probe("s12 g2/g3 granted, g4 denied by cap", st.offers[o2].claimTxid === g2.id && st.offers[o3].claimTxid === g3.id && st.offers[o4].claimTxid === undefined);
   both("mixed legacy+fclaim MAX_ACTIVE_CLAIMS cap", ev, H0 + 10); }
-// 13. deny ladder. resolve.ts declares TEN deny legs before the grant; this scenario asserts SEVEN of them.
+// 13. deny ladder. `applyFclaim` (packages/cairnx/src/resolve/market.ts) declares TEN deny legs before the grant; this scenario asserts SEVEN of them.
 //     The other three are covered elsewhere and deliberately not duplicated here: unknown-offer by
 //     scenario 4, anti-squat by scenario 10, and the MAX_ACTIVE_CLAIMS cap by scenario 12. All ten are
 //     individually mutation-proven (see the per-leg map in the B0a batch record).
@@ -202,7 +202,7 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
   both("partial fclaim fill completion", ev2, H0 + 20);
   both("Correction 1: offer-txid PARTIAL fill during hold rejected", [...roots, o, g, AE(oid, B, H0 + 10, partA)], H0 + 20); }
 // 16. lease-lapse freeze: DEFENSIVELY INERT, and PROVABLY UNREACHABLE at the consensus level, so there is no
-//     triggering differential to write. The offer handler's v1.5 guard (resolve.ts:50-51 / cairnx_ref.py) rejects
+//     triggering differential to write. The offer handler's v1.5 guard (`applyOffer` in packages/cairnx/src/resolve/market.ts / cairnx_ref.py) rejects
 //     any name offer with `paidThrough(n) < offer.expiresEpoch` ("the lease must outlive the offer window, so a
 //     fill can NEVER hit a lapsed name"), and the fclaim grant requires E <= effExpiry(offer) <= offer.expiresEpoch
 //     <= paidThrough. So the hold ends at holdEnd_epoch = E <= paidThrough, strictly before the lease lapses at
@@ -217,8 +217,8 @@ console.log(`v28 fclaim crosslang (V28=${H0}, EPOCH_LEN=${EPOCH_LEN}, holdEnd=${
 //     a bare continue and does not under deny(). That is a JS<->Python fork on the money path: the give is
 //     released and balances and feesPaid move on one side only. Revert cairnx_ref.py's rung to a bare continue
 //     and the dup leg below goes RED (Python "filled" vs JS "open"); the happy-path leg stays green either way.
-//     The JS side is symmetric and measured the same way (a scratch copy of the shipped dist with resolve.ts:631
-//     reverted to note()+continue gives JS "filled" vs Python "open"), so this leg guards BOTH implementations.
+//     The JS side is symmetric and measured the same way (a scratch copy of the shipped dist with the safe-integer rung of
+//     `applyFclaim` (packages/cairnx/src/resolve/market.ts) reverted to a bare note() gives JS "filled" vs Python "open"), so this leg guards BOTH implementations.
 { const oid = nid(), o = mkOffer(oid, H0 + 2);
   const FID = "0x" + "cc".repeat(32);                                             // ONE id, carried by BOTH fclaims
   const g1 = PE(fclaim({ offer: oid }), H0 + 3, B, E, 0, {}, FID);                // honest, GRANTS

@@ -17,9 +17,9 @@
 // and the site swapguard do. What IS true unconditionally: these helpers add NO new canonical state
 // and change NO serialization, so replay stays byte-identical (additive exports; no gate, no re-pin).
 //
-// The math mirrors resolve.ts EXACTLY (the partial-fill pro-rata floor at resolve.ts:640-668, the whole-fill
-// value gate at :672-728, the open-CSD claim gate `openFillReject` at :166-171, and the freeze arithmetic
-// behind registration finalize). The conformance vectors pin that they cannot drift (test/preflight.test.ts
+// The math mirrors the resolver EXACTLY (in src/resolve/attest.ts: the partial-fill pro-rata floor in
+// `applyPartialFill`, the whole-fill value gate in `applyFill`, the open-CSD claim gate `openFillReject`; in
+// src/resolve/names.ts: the freeze arithmetic behind registration finalize, `applyNfinalize`). The conformance vectors pin that they cannot drift (test/preflight.test.ts
 // asserts previewFill == the resolver's own delivered `got` at the C3 boundary).
 //
 // FETCH POSTURE (the caller's half of the contract, M-MKT-5): these helpers judge a record you HAND them,
@@ -66,7 +66,7 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
   // chain does not require. The `feeBps ? … : 0n` guards below mirror the resolver's falsy-means-free.
   const feeBps = offer.feeBps;
 
-  // ── partial CSD-priced token offer (resolve.ts:631-670) ──
+  // ── partial CSD-priced token offer (src/resolve/attest.ts applyPartialFill) ──
   if (offer.min !== undefined && !isNameGive(offer.give)) {
     const paidSoFar = BigInt(offer.paid ?? "0");
     const remaining = want - paidSoFar;
@@ -83,7 +83,7 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
     return { deliverable: true, reason: "ok", got: out, pay: x, fee, rebate: 0n };
   }
 
-  // ── whole fill (name or token), resolve.ts:672-728 ──
+  // ── whole fill (name or token), src/resolve/attest.ts applyFill ──
   if (pay < want) return { deliverable: false, reason: "below-min", got: 0n, pay, fee: 0n, rebate: 0n };
   const fee = feeBps ? tradeFee(want, feeBps) : 0n;
   // maker rebate — RESTING-LIQUIDITY lanes only (a taker-bound bid answer, or a v1.7 open ask)
@@ -94,8 +94,9 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
 }
 
 /** The exact CSD outputs a fill of `offer` paying `payRaw` must carry to clear the resolver's value
- *  gate — the addr→sum map of resolve.ts:699-712 (whole: payto + treasury fee + maker rebate) and
- *  :643-649 (partial: clamped payment + fee on the clamped amount, NO rebate), as a build-ready output
+ *  gate: the addr→sum map of `applyFill` (whole: payto + treasury fee + maker rebate) and the payment and
+ *  fee checks of `applyPartialFill` (partial: clamped payment + fee on the clamped amount, NO rebate), both in
+ *  src/resolve/attest.ts, as a build-ready output
  *  list. Amounts are ACCUMULATED per address (payto === seller is the common case; the resolver checks
  *  the per-address SUM, so two merged entries must merge here too), insertion order payto → treasury →
  *  seller, zero-value entries omitted (a 0 output is unbuildable and the resolver requires nothing).
@@ -140,7 +141,7 @@ export function requiredFillOutputs(
  *                      address). The normal CSD-priced case.
  *    "token-settled" - a token-priced offer: there are NO CSD outputs to build, and that is NOT the same
  *                      as "checked". The fill debits the ATTESTER's want-token balance and the attest MUST
- *                      carry `confidence` (= CONF_TOKEN_FILL, resolve.ts requires the explicit marker).
+ *                      carry `confidence` (= CONF_TOKEN_FILL; `applyTokenFill` in src/resolve/attest.ts requires the explicit marker).
  *                      Verify your token balance and terms yourself before signing.
  *    "undeliverable" - the resolver would reject this payment AFTER the CSD moved; do not sign.
  *  ADDITIVE and default-safe: requiredFillOutputs is unchanged in behavior (its `[]` is load-bearing in
@@ -188,19 +189,19 @@ export const buildFeeHeight = (tip: number): number => {
 };
 
 /** Is the offer an OPEN (untaken) CSD-priced offer subject to the v1.7 claim-to-fill gate at `tip`?
- *  Such an offer may be filled ONLY by the holder of a LIVE claim (resolve.ts openFillReject:166-171). */
+ *  Such an offer may be filled ONLY by the holder of a LIVE claim (`openFillReject`, src/resolve/attest.ts). */
 export function isOpenClaimLane(offer: OfferState, tip: number): boolean {
   return tip >= V13_HEIGHT && offer.taker === undefined && !isTokenWant(offer.want);
 }
 
-/** Does `me` currently hold a LIVE claim on `offer` at `tip`? Mirrors resolve.ts claimHeld + the
- *  who===claimedBy check (:160-169). For a pre-V17 open offer, open fills are banned entirely. */
+/** Does `me` currently hold a LIVE claim on `offer` at `tip`? Mirrors `claimHeld` (src/resolve/context.ts) + the
+ *  who===claimedBy check in `openFillReject` (src/resolve/attest.ts). For a pre-V17 open offer, open fills are banned entirely. */
 export function hasLiveClaim(offer: OfferState, me: string, tip: number): boolean {
   if (tip < V17_HEIGHT) return false;
   if (offer.claimedBy === undefined || offer.claimUntilHeight === undefined) return false;
   if (offer.claimedBy.toLowerCase() !== me.toLowerCase()) return false;
   // claimTxid-aware: an fclaim hold (V28+) has grace 0 (its L0 deadline IS holdEnd), so the client and the
-  // resolver agree on hold liveness. Passing offer.claimTxid keeps this in lockstep with resolve.ts claimGrace.
+  // resolver agree on hold liveness. Passing offer.claimTxid keeps this in lockstep with `claimGrace` (src/resolve/context.ts).
   const grace = claimGraceOf(offer.claimUntilHeight, offer.claimTxid);
   return tip < offer.claimUntilHeight + grace;
 }
@@ -260,8 +261,8 @@ export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string |
  *                       as "refuse" hard-blocks every honest token fill - the named B7f trap).
  *
  *  `opts.fillTargetId` is the proposal txid your attest will actually target. Pass it whenever you have
- *  it (= `fillTargetId(offer, tip)` for an honest builder). The v2.8 Correction-1 clause (resolve.ts
- *  openFillReject): during a live fclaim hold an attest on the OFFER txid is rejected while the payment
+ *  it (= `fillTargetId(offer, tip)` for an honest builder). The v2.8 Correction-1 clause (`openFillReject`,
+ *  src/resolve/attest.ts): during a live fclaim hold an attest on the OFFER txid is rejected while the payment
  *  still moves - the exact doomed fill the deprecated fillIsSafe endorses. If the offer carries a live
  *  fclaim-hold routing and no target is supplied, the endorsement fails CLOSED with instructions rather
  *  than guessing what your builder will attest. */
@@ -316,7 +317,7 @@ export function fillEndorsement(
  *  re-fetched) name record — never a cached one — as `nameState` (undefined = 404 / unregistered = loss).
  *
  *  Pass `tip` to ALSO gate the finalize WINDOW, both sides, mirroring the resolver's authoritative checks
- *  (resolve.ts nfinalize rejects unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when
+ *  (`applyNfinalize` in src/resolve/names.ts rejects unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when
  *  `ev.height > finalizeBy`) with the client-side FINALIZE_TIP_MARGIN band the site's finalizeReady applies:
  *  the tx signs at `tip` but mines at tip+1 or later, so the margin keeps a boundary-signed finalize from
  *  mining outside the window (too early: rejected as unfrozen; too late: past the deadline — either way the
@@ -339,7 +340,7 @@ export function finalizeWinnerCheck(
   // N-2: the finalize window, both sides. The window is derived PURELY from `eff` (= the caller's own
   // commitHeight, pinned by the effectiveHeight guard above), NOT from the resolver-supplied finalizeBy:
   // the true on-chain deadline is ALWAYS `eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
-  // (resolve.ts:335/:300 construct it that way), so a hostile/buggy resolver returning an inflated
+  // (`applyName` in src/resolve/names.ts constructs it that way, for reservations and recaptures), so a hostile/buggy resolver returning an inflated
   // finalizeBy cannot widen the safe band and walk the caller into a fee burn — this keeps the module's
   // "a deterministic function of record fields, no resolver boolean can induce a loss" invariant (S1).
   // The boundaries are byte-identical to the site's regstage freezeEnd for an honest record.

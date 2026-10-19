@@ -254,7 +254,7 @@ console.log("\nrequiredFillOutputs; resolver-accepted at par, resolver-refused o
 }
 
 // ── OVERPAY CLAMP on a partially-filled offer: payRaw beyond the REMAINDER is clamped by previewFill
-// (resolve.ts:647 `x = pay < remaining ? pay : remaining`, fee ON the clamp); the sized outputs carry
+// (`applyPartialFill` in src/resolve/attest.ts: `const x = X < remaining ? X : remaining`, fee ON the clamp); the sized outputs carry
 // exactly the remainder, the resolver ACCEPTS them (the offer completes), and the fee leg is refused
 // one unit under. NOTE what the clamp does NOT guarantee: a pay leg one unit under the remainder is
 // still >= effMin, so the resolver ACCEPTS it and just delivers less (offer left open one unit short);

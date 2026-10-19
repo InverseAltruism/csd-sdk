@@ -13,7 +13,8 @@ let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (d
 // intent is all a counter can capture here.
 // They are printed under a `gen:` prefix and deliberately NOT used as behavioural assertions: a
 // generation-side counter that is asserted is a test that cannot fail, which is the exact defect class this
-// batch exists to remove. Behavioural coverage of the deny ladder and of resolve.ts:799 is carried by the
+// batch exists to remove. Behavioural coverage of the deny ladder and of the legacy-claim rejection in `applyLegacyClaim`
+// (packages/cairnx/src/resolve/attest.ts) is carried by the
 // deterministic self-check at the bottom (which drives real sequences through resolve) and by the
 // state-derived cov.* counters. Caught at the B0a gate by Opus-B (B0a-R1/R2) after the first cut asserted
 // these; the PoC changed one token so the resolver never reached :799 while the counter still read 27.
@@ -202,8 +203,8 @@ function openFlow(h0) {
 // lapseFlow's far-future re-claims) but every one of those events was a `propose`, so not one attest ever
 // reached the gate. That made the fork guard on every later consensus change vacuous for V28.
 // This flow drives: grant, the fill routed through the fclaim txid, Correction 1 (an offer-txid fill during
-// a live hold must be rejected), the post-holdEnd lapse, and the legacy SCORE_CLAIM that resolve.ts:799
-// rejects outright from V28. Heights are forced around the gate.
+// a live hold must be rejected), the post-holdEnd lapse, and the legacy SCORE_CLAIM that `applyLegacyClaim`
+// (packages/cairnx/src/resolve/attest.ts) rejects outright from V28. Heights are forced around the gate.
 function fclaimFlow(h0) {
   const ev = [];
   const D = "0x" + "f0".repeat(20), B = "0x" + "fb".repeat(20), C = "0x" + "fc".repeat(20);
@@ -494,7 +495,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
 }
 // V28 self-check (REBIND B0a). The headline defect this batch closes: before it, NOT ONE attest in 20,000
 // generated sequences ever reached V28, so every v2.8 branch, grant, the fclaim fill routing, Correction 1,
-// and the legacy-SCORE_CLAIM rejection at resolve.ts:799, was unfuzzed, while V28 is the gate this
+// and the legacy-SCORE_CLAIM rejection in `applyLegacyClaim` (packages/cairnx/src/resolve/attest.ts), was unfuzzed, while V28 is the gate this
 // differential exists to guard. Deterministic, seed-independent, and it asserts the branches are REACHED,
 // not merely that the counters moved.
 {
@@ -512,7 +513,7 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   const fill = { kind: "attest", txid: nid(), proposalId: g.id, attester: B, score: 100, confidence: 0, height: holdEnd - 1, pos: 0, paidTo: pt };
   const held = resolve([dep, mnt, off, legacy, g], base + 5).offers[off.id];
   if (held.claimTxid !== g.id || held.claimedBy !== B.toLowerCase()) { console.error(`✗ v28 self-check FAILED, fclaim did not grant the hold (claimTxid=${held.claimTxid})`); process.exit(1); }
-  // resolve.ts:799 rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
+  // `applyLegacyClaim` (packages/cairnx/src/resolve/attest.ts) rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
   // the gate" would also pass if the attest were simply malformed or aimed at nothing, so pair it with a
   // BELOW-gate control built the same way: the identical claim must be GRANTED there. The pair is what makes
   // the gate the cause. (Opus-B, B0a-R2: an assertion that passes on absence is not an assertion.)
