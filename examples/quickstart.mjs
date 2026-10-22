@@ -1,10 +1,11 @@
 // Quickstart for the Compute Substrate SDK. Run against a node or the Cairn proxy:
 //   CSD_RPC=http://127.0.0.1:8790 node examples/quickstart.mjs
 //   CSD_RPC=https://cairn-substrate.com/api/rpc node examples/quickstart.mjs
+// It only reads the chain; the broadcast step is shown but not executed.
 import { payloadHash } from "@inversealtruism/csd-codec";
 import { keygen } from "@inversealtruism/csd-crypto";
-import { buildSend } from "@inversealtruism/csd-tx";
-import { CsdClient } from "@inversealtruism/csd-client";
+import { buildSendVerified } from "@inversealtruism/csd-tx";
+import { CsdClient, verifyInputValues } from "@inversealtruism/csd-client";
 import { LightClient } from "@inversealtruism/csd-light";
 
 const RPC = process.env.CSD_RPC || "http://127.0.0.1:8790";
@@ -14,24 +15,28 @@ const client = new CsdClient({ baseUrl: RPC });
 const me = keygen();
 console.log("address:", me.addr);
 
-// 2) Build + sign a transfer locally (change returns to you; coin selection is hardened).
-//    Pass real UTXOs from client.utxos(addr); here we illustrate with a sample.
-const send = buildSend({
-  outputs: [{ to: "0x" + "cc".repeat(20), value: 100_000 }], // 0.001 CSD (base units; 1 CSD = 1e8)
-  fee: 200_000,
-  utxos: [{ txid: "0x" + "ab".repeat(32), vout: 0, value: 1_000_000, confirmations: 6 }],
-  priv: me.priv,
-});
-console.log("built tx:", send.ok ? send.txid : send.error);
-// To broadcast a REAL one: const r = await client.submit(send.nodeJson)
-
-// 3) Content addressing: the on-chain payload_hash of an off-chain record
+// 2) Content addressing: the on-chain payload_hash of an off-chain record
 console.log("payload_hash:", payloadHash({ v: 1, title: "hello CSD", body: "gm" }));
 
-// 4) Read the chain
+// 3) Read the chain
 const tip = await client.tip().catch(() => null);
 if (!tip) { console.log(`(no node at ${RPC}; skipping live steps)`); process.exit(0); }
 console.log("tip height:", tip.height);
+
+// 4) Build + sign a transfer locally (change returns to you). buildSendVerified checks the real value of
+//    every selected input against its source tx, so an RPC that under-reports a coin cannot make the
+//    change too small and burn the difference as fee. A fresh key has no coins, so this prints an error.
+const { utxos } = await client.utxos(me.addr);
+const send = await buildSendVerified({
+  outputs: [{ to: "0x" + "cc".repeat(20), value: 100_000 }], // 0.001 CSD (base units; 1 CSD = 1e8)
+  fee: 200_000,
+  utxos,
+  priv: me.priv,
+  verify: (inputs) => verifyInputValues(client, inputs),
+});
+console.log("built tx:", send.ok ? send.txid : send.error);
+// To broadcast: if (send.ok) await client.submitOrThrow(send.nodeJson);
+// (submit() returns { ok: false, err } on a node rejection; submitOrThrow throws instead.)
 
 // 5) Light client: verify the chain yourself (PoW + LWMA + chainwork), no trust in the RPC.
 //    From a recent checkpoint so you don't fetch all of history:
