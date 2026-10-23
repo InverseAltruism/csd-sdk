@@ -1,7 +1,8 @@
 // Option canon of CsdClient: a non-finite maxResponseBytes or retries falls back to a safe value instead of
-// disabling the byte cap or the retry bound. Offline, scripted fetch.
+// disabling the byte cap or the retry bound; the default body parser keeps u64 literals exact. Offline, scripted fetch.
 import assert from "node:assert/strict";
-import { CsdClient, type ClientOptions } from "../src/index.js";
+import { txid, type Tx } from "@inversealtruism/csd-codec";
+import { CsdClient, rpcTxToTx, type ClientOptions } from "../src/index.js";
 
 let pass = 0;
 const check = async (name: string, fn: () => Promise<void>) => { await fn(); pass++; console.log(`  ok ${name}`); };
@@ -49,5 +50,35 @@ await check("finite retries keep their meaning: retries 2 rides out two failures
   assert.equal((await mk(f, { retries: 2 }).tip()).height, 7);
   assert.equal(f.calls, 3);
 });
+
+console.log("parseJson: the default keeps an integer above 2^53 exact (a Propose's expires_epoch is an unbounded u64)");
+{
+  const EE = 9007199254740993n;   // 2^53 + 1: JSON.parse reads it as 2^53
+  const tx: Tx = {
+    version: 1, locktime: 0,
+    inputs: [{ prevTxid: "0x" + "11".repeat(32), vout: 0, scriptSig: "0x" }],
+    outputs: [{ value: 25_000_000, scriptPubkey: "0x" + "22".repeat(20) }],
+    app: { type: "Propose", domain: "cairnx:v1", payloadHash: "0x" + "33".repeat(32), uri: "u", expiresEpoch: EE },
+  };
+  const id = txid(tx);
+  // the node's JSON shape, u64 written as a bare literal; `ratio` is a float literal the parse must leave alone
+  const body = `{"ok":true,"hash":"0x${"44".repeat(32)}","ratio":1e20,"half":0.5,"header":{"version":1,"prev":"0x${"00".repeat(32)}","merkle":"0x${"00".repeat(32)}","time":1,"bits":1,"nonce":0},` +
+    `"txs":[{"txid":"${id}","version":1,"locktime":0,"inputs":[{"prev_txid":"0x${"11".repeat(32)}","vout":0,"script_sig":"0x"}],` +
+    `"outputs":[{"value":25000000,"script_pubkey":"0x${"22".repeat(20)}"}],` +
+    `"app":{"type":"Propose","domain":"cairnx:v1","payload_hash":"0x${"33".repeat(32)}","uri":"u","expires_epoch":${EE}}}]}`;
+  const served = scripted(() => new Response(body, { status: 200 }));
+  await check("a block body read with the default parser re-derives the exact txid", async () => {
+    const b = await mk(served).blockByHash("0x" + "44".repeat(32));
+    assert.equal(b.txs[0]!.app.type === "Propose" && b.txs[0]!.app.expires_epoch, EE);
+    assert.equal(txid(rpcTxToTx(b.txs[0]!)), id);
+    assert.equal((b as unknown as { ratio: unknown }).ratio, 1e20);
+    assert.equal((b as unknown as { half: unknown }).half, 0.5);
+    assert.equal(b.txs[0]!.outputs[0]!.value, 25_000_000);
+  });
+  await check("a caller-supplied parseJson is still used", async () => {
+    const b = await mk(scripted(() => new Response(body, { status: 200 })), { parseJson: JSON.parse }).blockByHash("0x" + "44".repeat(32));
+    assert.throws(() => txid(rpcTxToTx(b.txs[0]!)), /unsafe number/);
+  });
+}
 
 console.log(`csd-client option canon: ${pass} passed`);

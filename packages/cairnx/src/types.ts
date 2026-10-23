@@ -55,6 +55,8 @@ export function expiredClaimFee(name: string, epochsPastGraceEnd: number, height
 }
 export const MAX_RECORD_BYTES = MAX_URI_BYTES; // records live in a Propose `uri`, so the node cap is the record cap
 export const MAX_AMOUNT = (1n << 96n) - 1n;
+/** The most decimals a token deploy may declare (parseRecord refuses a deploy above it). */
+export const MAX_TOKEN_DECIMALS = 8;
 export const SCORE_FILL = 100;
 export const SCORE_CANCEL = 0;
 // v1.7 claim-to-fill (gated at V17_HEIGHT). SCORE_CLAIM ∉ {SCORE_FILL, SCORE_CANCEL} → pre-V17 it hits

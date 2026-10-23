@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.2.2
+
+- `verifyFillSpv` fails closed when any id `offerEventIds` returns cannot be proven: `provenEvent` throws,
+  returns null, or returns an event under another id. It used to drop that event from the grant replay, so a
+  seller cancel whose block read failed replayed the offer as open. New refusal text: "an event on this offer
+  could not be merkle-proven (<id>) - refusing, the replay would miss it"; the offer and fclaim keep their
+  existing texts. The site's and the wallet's io return only ids they proved, so their honest fills do not move.
+- New root export `countOtherHoldsAtGrant(candidates, target, me, closed?)`: the buyer's live holds on other
+  offers at an fclaim's grant, the `myLiveHoldsAtGrant` count for `verifyFillSpv`. It counts only fclaims applied
+  before the target (height, then position in the block), distinct offers, holds live at the grant height, and
+  skips the `closed` set. The site and the wallet counted later fclaims too, so a buyer's fourth reservation
+  (denied on the cap) made every earlier granted hold unfillable. An earlier fclaim the resolver denied is still
+  counted (an over-count, which only refuses). It returns `HoldCount` (`{ ok: true, count }` or
+  `{ ok: false, reason }`, which a caller treats as unsafe). Its domain is grants at or above
+  `LEGACY_HOLD_SUNSET_HEIGHT` (exported, 60,044: the last legacy claim at V28 - 1 plus its window and grace);
+  below it a legacy SCORE_CLAIM hold can still count against the cap and the counter does not read those, so it
+  refuses ("this reservation was granted at <h>, before block 60044, while claims made before V28 could still
+  count against the cap; it cannot be checked here").
+- `finalizeWinnerCheck` refuses a supplied `tip` that is not a non-negative safe integer ("the chain tip given
+  (<tip>) is not a block height, so the finalize window cannot be checked"). A NaN, Infinity or fractional tip
+  used to skip or pass both window comparisons and return safe. An omitted or null tip keeps the winner-only check.
+- New root export `provenOfferRefusal(rec, { domain, height, expiresEpoch, seller })`: the admission check for a
+  merkle-proven offer Propose. It refuses a domain other than `cairnx:v1` ("not a cairnx:v1 Propose (domain
+  "<domain>")") and then returns the resolver's own creation note for every rule that needs no chain state
+  (v1.2 shape before activation, the V13 to V17 open CSD offer ban, a treasury payee, an expiry outside the safe
+  integer range or already past at the anchor, the V21 to V22 duration cap). `applyOffer` now reads those rules
+  from the same function (`offerEnvelopeRefusal` in `src/resolve/market.ts`), in the same order with the same
+  notes. The give's backing is chain state and is not checked.
+- `bindOfferTerms`'s wantType leg (on by default) also binds a token want's price: for a proven token want the
+  served `want.ticker` and `want.amount` must equal the record's, verbatim. `provenOfferTerms` carries them as
+  `wantTicker` and `wantAmount`. Before, a token-priced offer served with another ticker or amount passed, and
+  each caller (the site, cairn-sdk `preverifyOffer`) compared the price itself. Callers opting out with
+  `{ give: false, wantType: false }` keep the earlier verdict.
+- New root export `MAX_TOKEN_DECIMALS` (8), the bound `parseRecord` applies to a deploy's `decimals`; the parser
+  reads it, so a consumer validating a served token's decimals uses the same number.
+- `resolve()` and canonical state are byte-identical to 0.2.1.
+
 ## 0.2.1
 
 - Internal split, no behaviour change: `src/resolve.ts` keeps the replay loop and dispatches each record to

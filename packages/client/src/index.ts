@@ -10,9 +10,10 @@ export interface RpcTxJson {
   txid: string;
   version: number;
   inputs: { prev_txid: string; vout: number; script_sig: string; script_sig_text?: string | null }[];
-  outputs: { value: number; script_pubkey: string }[];
+  /** u64 fields arrive as bigint when above 2^53 (parseJsonExact). */
+  outputs: { value: number | bigint; script_pubkey: string }[];
   locktime: number;
-  app: { type: "None" } | { type: "Propose"; domain: string; payload_hash: string; uri: string; expires_epoch: number } | { type: "Attest"; proposal_id: string; score: number; confidence: number };
+  app: { type: "None" } | { type: "Propose"; domain: string; payload_hash: string; uri: string; expires_epoch: number | bigint } | { type: "Attest"; proposal_id: string; score: number; confidence: number };
 }
 export interface RpcBlock { ok: boolean; hash: string; height?: number; chainwork?: string; header: RpcHeaderJson; txs: RpcTxJson[] }
 export interface RpcTip { tip: string; height: number; chainwork: string }
@@ -22,7 +23,7 @@ export interface RpcSubmit { ok: boolean; txid: string; mempool_len?: number; er
 
 export interface RpcProposal {
   ok?: boolean; txid: string; domain: string; payload_hash: string; uri: string;
-  expires_epoch: number; proposer: string; height: number; attestations?: unknown[];
+  expires_epoch: number | bigint; proposer: string; height: number; attestations?: unknown[];
   [k: string]: unknown;
 }
 export interface RpcTxInfo { ok: boolean; txid: string; block_hash?: string; height?: number; time?: number; tx?: RpcTxJson; err?: string }
@@ -41,12 +42,22 @@ export interface ClientOptions {
    * path (audit M2). Default 16 MiB ≫ any real block; raise it for an unusually large block source.
    */
   maxResponseBytes?: number;
-  /**
-   * M1: optional JSON body parser (default `JSON.parse`). A verifier that must preserve u64 fields
-   * (e.g. a Propose's `expires_epoch`, unbounded on-chain) past 2^53 injects a source-preserving
-   * reviver here so the exact value survives to the txid recompute. The default is unchanged.
-   */
+  /** JSON body parser; default `parseJsonExact`, so a u64 above 2^53 survives to the txid recompute. */
   parseJson?: (text: string) => unknown;
+}
+
+// A node body writes u64 fields as bare integer literals, and a Propose's `expires_epoch` is unbounded on-chain:
+// JSON.parse rounds one above 2^53, and the codec then refuses it, so the block cannot be bound at all. Only
+// integer literals become bigint: a float literal (0.5, 1e20) passing through BigInt() would throw and fail every
+// read of a body that carries one. Where the runtime gives no source text the value is JSON.parse's.
+const exactIntReviver = (_key: string, value: unknown, context?: { source?: string }): unknown =>
+  typeof value === "number" && !Number.isSafeInteger(value) && typeof context?.source === "string" && /^-?\d+$/.test(context.source)
+    ? BigInt(context.source)
+    : value;
+
+/** JSON.parse, except that an integer literal outside the safe JS range is returned as an exact bigint. */
+export function parseJsonExact(text: string): unknown {
+  return JSON.parse(text, exactIntReviver as (this: unknown, key: string, value: unknown) => unknown);
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -65,7 +76,7 @@ export class CsdClient {
   constructor(opts: ClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
     this.maxBytes = Math.max(1, finiteOr(opts.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
-    this.parseJson = opts.parseJson ?? JSON.parse;
+    this.parseJson = opts.parseJson ?? parseJsonExact;
     // BIND the default global fetch to the global. In browsers `fetch` is branded: calling it as a
     // method of another object (`this.f(url)`) throws `TypeError: Illegal invocation`. Storing the bare
     // `globalThis.fetch` and invoking it via `this.f` did exactly that, so any browser consumer that

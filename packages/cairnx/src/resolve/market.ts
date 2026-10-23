@@ -13,33 +13,12 @@ import { paidThrough } from "./names.js";
 export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, who: string): void {
   const { tokens, names, offers, offerLock, openOffers, bids, bal, note } = c;
   const v11 = ev.height >= V11_HEIGHT;
-  const v12 = ev.height >= V12_HEIGHT;
   const v15 = ev.height >= V15_HEIGHT;
   const v16 = ev.height >= V16_HEIGHT;
   const wantIsToken = isTokenWant(rec.want);
-  // v1.2 shapes (token-priced want, partial-fill min, bid link) are non-retroactive
-  if ((wantIsToken || rec.min !== undefined || rec.bid !== undefined) && !v12) {
-    note(ev, ev.id, "offer", false, "v1.2 offer shape before activation"); return;
-  }
-  // v1.3: an open (non-taker-bound) CSD-priced offer is structurally unsafe — a lost
-  // same-block fill race forfeits the loser's ENTIRE payment (no escrow on the substrate).
-  // CSD buys go bid → taker-bound answer → race-free fill. Token⇄token stays open (no-op-safe).
-  // v1.3 banned open CSD offers (the lost-fill-race forfeits a payment); v1.7 RE-ALLOWS them, made
-  // race-safe by claim-to-fill (the fill is gated on a live claim below) — so the ban applies only
-  // in [V13, V17). Below V17 this is byte-identical to the original gate.
-  if (ev.height >= V13_HEIGHT && ev.height < V17_HEIGHT && !wantIsToken && rec.taker === undefined) {
-    note(ev, ev.id, "offer", false, "v1.3: CSD-priced offers must be taker-bound (use bid/RFQ)"); return;
-  }
+  const refusal = offerEnvelopeRefusal(rec, who, ev.height, ev.expiresEpoch);
+  if (refusal !== null) { note(ev, ev.id, "offer", false, refusal); return; }
   const payto = (rec.want.payto ?? who).toLowerCase();
-  if (payto === TREASURY_ADDR) { note(ev, ev.id, "offer", false, "payto cannot be the protocol treasury"); return; }
-  // expiresEpoch is an unbounded on-chain u64; one ≥ 2^53 is stored verbatim into the OPEN
-  // offer's canonical state and serializes as the JS-specific "1e+21"/loses precision —
-  // forking sha256(canonicalState) vs a u64/decimal resolver (audit M1). No live offer is
-  // anywhere near 2^53 (max ~1e5), so rejecting the unrepresentable range is replay-identical.
-  if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "offer", false, "expiresEpoch out of safe-integer range"); return; }
-  if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "offer", false, "already expired at anchor"); return; }
-  // v2.1 duration cap — gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
-  if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "offer", false, "v2.1: offer duration exceeds the max"); return; }
   const give: Give = rec.give;
   if (isNameGive(give)) {
     if (!v11) { note(ev, ev.id, "offer", false, "name offers need v1.1"); return; }
@@ -180,4 +159,30 @@ export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, 
   target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
   fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
   note(ev, ev.id, "fclaim", true);
+}
+
+// The offer rules that read only the record, its proposer, its inclusion height and the Propose's expires_epoch,
+// in applyOffer's order: the first refusal note, or null. Shared with the proven-offer client check
+// (provenOfferRefusal in src/admission.ts), so a client refuses exactly what this refuses.
+export function offerEnvelopeRefusal(rec: OfferRecord, who: string, height: number, expiresEpoch: number): string | null {
+  const wantIsToken = isTokenWant(rec.want);
+  // v1.2 shapes (token-priced want, partial-fill min, bid link) are non-retroactive
+  if ((wantIsToken || rec.min !== undefined || rec.bid !== undefined) && height < V12_HEIGHT) return "v1.2 offer shape before activation";
+  // v1.3: an open (non-taker-bound) CSD-priced offer is structurally unsafe: a lost
+  // same-block fill race forfeits the loser's ENTIRE payment (no escrow on the substrate).
+  // CSD buys go bid → taker-bound answer → race-free fill. Token⇄token stays open (no-op-safe).
+  // v1.3 banned open CSD offers (the lost-fill-race forfeits a payment); v1.7 RE-ALLOWS them, made
+  // race-safe by claim-to-fill (the fill is gated on a live claim), so the ban applies only
+  // in [V13, V17). Below V17 this is byte-identical to the original gate.
+  if (height >= V13_HEIGHT && height < V17_HEIGHT && !wantIsToken && rec.taker === undefined) return "v1.3: CSD-priced offers must be taker-bound (use bid/RFQ)";
+  if ((rec.want.payto ?? who).toLowerCase() === TREASURY_ADDR) return "payto cannot be the protocol treasury";
+  // expiresEpoch is an unbounded on-chain u64; one ≥ 2^53 is stored verbatim into the OPEN
+  // offer's canonical state and serializes as the JS-specific "1e+21"/loses precision,
+  // forking sha256(canonicalState) vs a u64/decimal resolver (audit M1). No live offer is
+  // anywhere near 2^53 (max ~1e5), so rejecting the unrepresentable range is replay-identical.
+  if (!Number.isSafeInteger(expiresEpoch)) return "expiresEpoch out of safe-integer range";
+  if (epochOf(height) > expiresEpoch) return "already expired at anchor";
+  // v2.1 duration cap, gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
+  if (height >= V21_HEIGHT && height < V22_HEIGHT && expiresEpoch - epochOf(height) > MAX_OFFER_EPOCHS) return "v2.1: offer duration exceeds the max";
+  return null;
 }

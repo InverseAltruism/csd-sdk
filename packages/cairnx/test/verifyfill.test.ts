@@ -13,7 +13,7 @@ import path from "node:path";
 import {
   deploy, mint, offer, fclaim, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
-  bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms,
+  bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms, provenOfferRefusal, parseRecord,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS,
   V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
   TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
@@ -154,6 +154,35 @@ const tipHolder = holdEnd - 5;
   const blind: FillSpvIo = { async tip() { return holdEnd - 5; }, async offerEventIds() { return []; }, async provenEvent() { return null; } };
   const v = await vfs(OID, fcTx, B, blind);
   ok(v.safe === false && /merkle-proven/.test(v.reason), `unprovable offer fails CLOSED (${v.reason})`);
+}
+
+// ── 7b. every ENUMERATED event must be proven: a seller cancel that the seam enumerates but fails to prove
+//    (a throw, a null, or another event under its id) must not drop out of the replay. Without it the fclaim
+//    mined after the cancel replays as granted and the fill would pay a cancelled offer. ──
+{
+  const cancelId = id("3c");
+  const cancel = AE(cancelId, OID, A, H0 + 3, {}, SCORE_CANCEL);
+  const fcAfter = id("f3");
+  const gAfter = PE(fcAfter, fclaim({ offer: OID }), H0 + 4, B, epochOf(H0 + 4) + 2);
+  const evs = [...base, cancel, gAfter];
+  const tip = fclaimHoldEnd(epochOf(H0 + 4) + 2) - 5;
+  const st = resolve(evs, tip);
+  ok(st.offers[OID]!.status === "cancelled" && st.fclaims[fcAfter] === undefined, "sanity: the cancel denies the later fclaim");
+  const honest = makeIo(evs, tip);
+  ok((await vfs(OID, fcAfter, B, honest)).safe === false, "every event proven: the fill is refused by the replay");
+  const withCancel = (prove: (e: ProvenEvent | null) => Promise<ProvenEvent | null>): FillSpvIo => ({
+    tip: honest.tip, offerEventIds: honest.offerEventIds,
+    async provenEvent(x: string) { const e = await honest.provenEvent(x); return x.toLowerCase() === cancelId ? prove(e) : e; },
+  });
+  const fclaimEv = await honest.provenEvent(fcAfter);
+  for (const [label, io] of [
+    ["the cancel's proof throws", withCancel(async () => { throw new Error("block fetch failed"); })],
+    ["the cancel's proof is empty", withCancel(async () => null)],
+    ["another event comes back under the cancel's id", withCancel(async () => fclaimEv)],
+  ] as const) {
+    const v = await vfs(OID, fcAfter, B, io);
+    ok(v.safe === false && /could not be merkle-proven/.test(v.reason), `${label}: refused (${v.reason})`);
+  }
 }
 
 // ── 8. earlier FILL-BASIS burial is ENFORCED (the partial tail-flip bound) ──
@@ -405,6 +434,32 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
     "MUTATION[give.name leg removed]: the name swap now PASSES -> the leg is the sole rejecter");
   ok(await withGuardRemoved("MUTATE_LEG_WANTTYPE", async (m) => m.bindOfferTerms(servedAsCsd, tTokWant, { wantType: true })) === false,
     "MUTATION[wantType leg removed]: proven-token served-as-CSD now PASSES -> the leg is the sole rejecter");
+  // the token price (triage B15): proven want BBB:5, served with another ticker or amount
+  const servedOtherPrice = [{ ticker: "CCC", amount: "5" }, { ticker: "BBB", amount: "999999" }];
+  for (const want of servedOtherPrice)
+    ok(bindOfferTerms({ ...servedAsTok, want }, tTokWant) === true, `token want served as ${want.ticker}:${want.amount} -> mismatch`);
+  ok(await withGuardRemoved("MUTATE_LEG_WANTTYPE", async (m) => m.bindOfferTerms({ ...servedAsTok, want: { ticker: "BBB", amount: "999999" } }, m.provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { ticker: "BBB", amount: "5" } } as never, H))) === false,
+    "MUTATION[want price leg removed]: an inflated token price now PASSES -> the leg is the sole rejecter");
+}
+
+// ── 13. provenOfferRefusal: the triage's B5 fixtures (wrong domain on the proven tx, a treasury payee, expired
+//    at its anchor) passed the site's content check; each refusal here is the resolver's own note. ──
+{
+  const H = H0 + 2;
+  const recOf = (built: { uri: string; payloadHash: string }) => parseRecord(built.uri, built.payloadHash) as never;
+  const honestRec = offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A } });
+  const tx = { domain: "cairnx:v1", height: H, expiresEpoch: epochOf(H) + 200, seller: A };
+  ok(provenOfferRefusal(recOf(honestRec), tx) === null, "provenOfferRefusal: the honest offer passes");
+  ok(/not a cairnx:v1 Propose/.test(provenOfferRefusal(recOf(honestRec), { ...tx, domain: "unrelated:v1" }) ?? ""), "provenOfferRefusal: another domain is refused");
+  ok(provenOfferRefusal(recOf(honestRec), { ...tx, expiresEpoch: 9007199254740993n }) === "expiresEpoch out of safe-integer range", "provenOfferRefusal: a u64 expiry above 2^53 is refused");
+  // the refusal is the note resolve() writes for the same record at the same height
+  const noteOf = (built: { uri: string; payloadHash: string }, ee: number) =>
+    resolve([base[0]!, base[1]!, PE(id("0e"), built, H, A, ee)], H + 10).events.find((e) => e.id === id("0e"))?.note;
+  const treasuryRec = offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: TREASURY_ADDR } });
+  for (const [label, built, ee] of [["a treasury payee", treasuryRec, epochOf(H) + 200], ["expired at its anchor", honestRec, epochOf(H) - 1]] as const) {
+    const r = provenOfferRefusal(recOf(built), { ...tx, expiresEpoch: ee });
+    ok(r !== null && r === noteOf(built, ee), `provenOfferRefusal: ${label} is refused with the resolver's note (${r})`);
+  }
 }
 
 console.log(`cairnx-core verifyfill B4 (fill-SPV fund boundary): ${pass} passed`);

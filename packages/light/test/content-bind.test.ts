@@ -9,7 +9,7 @@
 // is REJECTED — the re-derived id no longer matches the requested txid nor folds to the PoW-verified
 // root. The companion assertion shows the OLD server-reported-txid fold STILL succeeds on that same
 // forged block, so the re-derivation is exactly what closes the hole.
-import { LightClient } from "../src/index.js";
+import { LightClient, bindBlockBody } from "../src/index.js";
 import { rpcTxToTx, type RpcTxJson } from "@inversealtruism/csd-client";
 import { txid as codecTxid, merkleRoot, merkleBranch, verifyMerkleProof, type BlockHeader } from "@inversealtruism/csd-codec";
 
@@ -100,6 +100,50 @@ function clientWith(txs: RpcTxJson[]) {
   const res = await lc.verifyTxInclusion(proposeId);
   ok("FORGED body with a re-derived reported txid → REJECTED (requested id not in block)",
     !(res.included && res.trustLevel === "verified-inclusion"));
+}
+
+// 4) the block bind (bind.ts), shared by verifyTxInclusion and bindBlockBody.
+console.log("the block bind: repeated txid and exact u64");
+{
+  const attest: RpcTxJson = {
+    txid: "", version: 1,
+    inputs: [{ prev_txid: "0x" + "55".repeat(32), vout: 1, script_sig: "0x" + "33".repeat(10) }],
+    outputs: [{ value: 7, script_pubkey: "0x" + "44".repeat(20) }],
+    locktime: 0, app: { type: "Attest", proposal_id: proposeId, score: 1, confidence: 0 },
+  };
+  const attestId = codecTxid(rpcTxToTx(attest));
+  const root3 = merkleRoot([coinbaseId, proposeId, attestId]);
+  const header3: BlockHeader = { ...header, merkle: root3 };
+  const verified3 = { height: HEIGHT, hash: blockHash, header: header3, chainwork: 1n };
+  const repeated = [coinbase, proposeGenuine, attest, attest];
+  ok("premise: a body repeating its odd last tx hashes to the honest root (CVE-2012-2459)",
+    merkleRoot(repeated.map((t) => codecTxid(rpcTxToTx(t)))) === root3);
+  const lcOf = (txs: RpcTxJson[]) => {
+    const lc = new LightClient({ client: { tx: async () => ({ ok: true, txid: attestId, height: HEIGHT }), blockByHeight: async () => ({ ok: true, hash: blockHash, height: HEIGHT, header: header3, txs }) } as any });
+    lc.baseHeight = HEIGHT;
+    (lc.chain as any).push(verified3);
+    return lc;
+  };
+  const honestIncl = await lcOf([coinbase, proposeGenuine, attest]).verifyTxInclusion(attestId);
+  ok("verifyTxInclusion: the honest 3-tx block proves the attest", honestIncl.included && honestIncl.trustLevel === "verified-inclusion");
+  const repIncl = await lcOf(repeated).verifyTxInclusion(attestId);
+  ok("verifyTxInclusion: a body repeating a txid is refused", !repIncl.included && /repeats a txid/.test(repIncl.reason ?? ""));
+
+  // the raw-text entry: the node writes expires_epoch as a bare u64 literal, here 2^53 + 1
+  const EE = 9007199254740993n;
+  const bigTx = { ...proposeGenuine, app: { ...proposeGenuine.app, expires_epoch: EE } } as unknown as RpcTxJson;
+  const bigId = codecTxid(rpcTxToTx(bigTx));
+  const verifiedBig = { height: HEIGHT, hash: blockHash, header: { ...header, merkle: merkleRoot([coinbaseId, bigId]) }, chainwork: 1n };
+  const text = (txs: RpcTxJson[]) => JSON.stringify({ ok: true, hash: blockHash, height: HEIGHT, header, txs }, (_k, v) => (typeof v === "bigint" ? `@@${v}@@` : v)).replace(/"@@(\d+)@@"/g, "$1");
+  const honest = bindBlockBody(text([coinbase, bigTx]), verifiedBig);
+  ok("bindBlockBody: an honest body with a u64 above 2^53 binds, txids in block order",
+    honest.ok && honest.txs.map((t) => t.txid).join() === [coinbaseId, bigId].join() && honest.txs[1]!.pos === 1);
+  const { app: _dropped, ...coinbaseNoApp } = coinbase;
+  ok("bindBlockBody: a tx served without app binds as app None", bindBlockBody(text([coinbaseNoApp as RpcTxJson, bigTx]), verifiedBig).ok);
+  const rep = bindBlockBody(text([coinbase, proposeGenuine, attest, attest]), verified3);
+  ok("bindBlockBody: a body repeating a txid is refused as duplicate-txid", !rep.ok && rep.kind === "duplicate-txid");
+  const swapped = bindBlockBody(text([coinbase, { ...bigTx, outputs: [{ value: 8, script_pubkey: "0x" + "44".repeat(20) }] }]), verifiedBig);
+  ok("bindBlockBody: an altered body is refused as body-mismatch", !swapped.ok && swapped.kind === "body-mismatch");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

@@ -57,6 +57,43 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
+
+csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
+JS range (a Propose's `expires_epoch` is an unbounded u64) comes back as an exact bigint read from its source text,
+every other value as `JSON.parse` returns it, so a block holding such a value binds to its merkle root instead of
+failing the codec's u64 check. A float literal stays a number. A caller passing its own `parseJson` keeps it. The
+u64 fields of `RpcTxJson` and `RpcProposal` are typed `number | bigint`. csd-light bumps because it depends on
+csd-client.
+
+csd-light exports `bindBlockBody(text, verifiedHeader)`, the one block bind: the body parsed exactly, every txid
+re-derived from its body, a repeated txid refused before the merkle compare (a body repeating its odd last tx
+hashes to the honest root), and the set compared with the verified header's merkle root. Bound bodies type their
+scriptSigs `UnprovenScriptSig`. `verifyTxInclusion` runs through the same bind, so it now also refuses a body that
+repeats a txid. csd-crypto exports `authorOf(tx, prevoutScriptPubkey)`: the author is the owner of the coin input 0
+spends, returned only when input 0's scriptSig is that owner's valid signature over the sighash. The txid and
+sighash strip scriptSigs, so `recoverSigner` alone attributes a body re-signed by another key to that key; the node
+accepts an input only when hash160 of its pubkey equals the spent output's script_pubkey (compute-substrate
+`src/state/utxo.rs` `validate_tx_inputs_outputs`), and names the proposer from input 0's pubkey (`src/state/app_state.rs`
+`sender_h160_from_tx`), so that owner is the author. csd-tx and csd-siwc bump as dependents of csd-crypto.
+
+cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
+(client-side fill boundary; `resolve()` does not call it). New export `countOtherHoldsAtGrant`, the buyer's other
+holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`. It refuses grants
+below `LEGACY_HOLD_SUNSET_HEIGHT`, where a legacy claim from before V28 can still be live. `finalizeWinnerCheck`
+refuses a supplied tip that is not a non-negative safe integer. New export `provenOfferRefusal`, the proven-offer
+admission check (domain, then the offer's stateless creation rules). Those rules moved out of `applyOffer` into
+`offerEnvelopeRefusal` (`src/resolve/market.ts`), which `applyOffer` calls, in the same order with the same notes:
+the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byte-identical, and an old-against-new
+`resolve()` comparison over 1,056 offer records across the V12 to V22 boundaries (full state and event log)
+differed on none. Three citations in the MF-20 entry below moved with the code.
+`bindOfferTerms` binds a token want's ticker and amount under its wantType leg (reject-more; `scripts/seal-differential.mjs`
+passes, and `conformance/proven-terms-classification.mjs` now lists both fields as bound).
+`MAX_TOKEN_DECIMALS` (8) is exported from `types.ts` and read by `parseRecord`'s deploy branch in place of the literal;
+the parse is unchanged.
+
+No byte, txid, sighash, LWMA, chainwork or replay change.
+
 ## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; unreleased, publish window 3; no consensus-surface change) - shared route checks and script address
 
 csd-light adds `tipHeaderPowOk` and `contenderPlausible`, the checks cairn and csd-indexer each carry before a
@@ -188,13 +225,13 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
-The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :39 offer, :99 bid). MF-20 adds
+The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
 shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :167:
+`packages/cairnx/src/resolve/market.ts` :146:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
 

@@ -29,10 +29,10 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 | Package | Purpose |
 |---|---|
 | csd-codec | Consensus codec: bincode fixint-LE, txid, sighash CSD_SIG_V1 (sha256d over taggedHash + CHAIN_ID_HASH), 84-byte header, bits<->target, merkle root/branch/proof, canonicalJson/payloadHash. Only dep: @noble/hashes. |
-| csd-crypto | secp256k1 keygen/signDigest (low-S, RFC-6979)/verifyDigest (fail-closed), hash160 addresses, addrFromScriptPubkey (the node's address parser), buildScriptSig. Thin noble wrappers, no hand-rolled crypto. |
+| csd-crypto | secp256k1 keygen/signDigest (low-S, RFC-6979)/verifyDigest (fail-closed), hash160 addresses, addrFromScriptPubkey (the node's address parser), buildScriptSig, authorOf (a tx's author: the owner of the coin input 0 spends, when the scriptSig is that owner's signature). Thin noble wrappers, no hand-rolled crypto. |
 | csd-tx | Tx builder: selectInputs (dedupe, unconfirmed-drop, 512 cap), buildSendVerified (takes a verifier such as csd-client verifyInputValues and computes change from the verified input total), buildProposeVerified/buildAttestVerified (DvP value outputs), the deprecated buildSend and unverified buildPropose/buildAttest, signTx, txToNodeJson, feeCap helpers. |
-| csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport, plus verifyInputValues (recomputes each input's source txid). |
-| csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted); tipHeaderPowOk and contenderPlausible, the checks before a non-primary RPC backend may win routing. |
+| csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport, plus verifyInputValues (recomputes each input's source txid). Bodies parse with parseJsonExact by default (an integer above 2^53 stays an exact bigint). |
+| csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, bindBlockBody (the one block bind: exact parse, repeated-txid refusal, merkle compare to a verified header), syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted); tipHeaderPowOk and contenderPlausible, the checks before a non-primary RPC backend may win routing. |
 | csd-vectors | Golden conformance vectors from the node's frozen golden_vectors.rs + real on-chain data. Zero deps. |
 | cairnx-core (packages/cairnx) | `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 write-up) + portable vectors + replay-hashes. Modules below. |
 | cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
@@ -50,6 +50,8 @@ cairnx-core modules (`packages/cairnx/src/`):
 - `client.ts`: claim-burial depth helpers.
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
 - `fillclosed.ts`: whether a buyer's proven fill closed the offer behind its fclaim hold.
+- `holdcount.ts`: countOtherHoldsAtGrant, the buyer's other live holds at an fclaim's grant (verifyFillSpv's cap input).
+- `admission.ts`: provenOfferRefusal, the admission check for a merkle-proven offer Propose (domain plus the resolver's stateless offer rules).
 
 `conformance/`: cairnx_ref.py + siwc_ref.py (independent Python oracles, written from spec, kept independent), crosscheck*.mjs, fuzz-resolve.mjs, per-gate v2x-*-crosslang.mjs, and the report-only audit tooling: invariants.mjs (7 ledger-soundness invariants), money-safety.mjs (anchored-then-rejected burn detector), race-harness.mjs (adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1), AUDIT.md (method doc).
 

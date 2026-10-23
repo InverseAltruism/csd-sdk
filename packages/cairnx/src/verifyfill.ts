@@ -64,7 +64,8 @@ export interface FillSpvIo {
   // header/scan snapshot) for status events (cancel/expiry/consuming fill) + give-backing (deploy+mint, or the
   // name registration). Note the age asymmetry: hold/cooldown evidence is bounded by MAX_SCAN, but a cancel or
   // a consuming fill can be arbitrarily OLD (a V22+ offer may be weeks old), so the lifecycle scan is NOT
-  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan).
+  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan). Every id returned
+  // here must come back from provenEvent; one that does not fails the verdict closed.
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
   // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
   // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
@@ -129,7 +130,7 @@ export interface FillVerdict { safe: boolean; reason: string }
  * not-mine hold, a below-depth signing, a zero-delivery fill, a stranded past-deadline broadcast).
  *
  * `opts.myLiveHoldsAtGrant` (REQUIRED) is the buyer's count of OTHER live fclaim/legacy holds at the moment
- * THIS fclaim was granted, asserted by the authoring client (which signed its own claims). The lane-scoped
+ * THIS fclaim was granted, asserted by the authoring client (countOtherHoldsAtGrant computes it). The lane-scoped
  * replay cannot see the buyer's other-offer holds, and MAX_ACTIVE_CLAIMS is the one grant clause counted
  * across offers, so without this the surface would false-accept a cap-denied fclaim. `opts.pay` overrides the
  * payment (base units to want.payto) for a PARTIAL tail-fill; defaults to the offer's full want.value.
@@ -163,17 +164,21 @@ export async function verifyFillSpv(
   // burial) can never satisfy the depth gate with fewer real confirmations than the PoW chain shows.
   const depthOf = (ev: ProvenEvent): number => Math.min(Number(ev.depth), tip - Number(ev.height) + 1);
 
-  // 2. gather + MERKLE-PROVE the offer's event set; a missing/unprovable required event fails CLOSED.
+  // 2. gather + MERKLE-PROVE the offer's event set. Every enumerated id must come back proven and under its own
+  //    id: a dropped event (a cancel, a consuming fill, an earlier hold) replays the offer as more open than it is.
   let hintIds: string[];
   try { hintIds = await io.offerEventIds(offerId, fclaimTxid); } catch { return no("could not enumerate the offer's events"); }
   const want = new Set<string>([offerId.toLowerCase(), fclaimTxid.toLowerCase(), ...(hintIds ?? []).map((x) => String(x).toLowerCase())]);
+  const unproven = (wid: string): FillVerdict =>
+    wid === offerId.toLowerCase() ? no("offer not merkle-proven (no PoW-verified offer Propose)")
+      : wid === fclaimTxid.toLowerCase() ? no("fclaim not merkle-proven (no PoW-verified fclaim Propose)")
+        : no(`an event on this offer could not be merkle-proven (${wid}) - refusing, the replay would miss it`);
   const proven: ProvenEvent[] = [];
   for (const wid of want) {
     let ev: ProvenEvent | null;
-    try { ev = await io.provenEvent(wid); } catch { ev = null; }
-    // the seam MUST return the event for the id we asked for, so an off-contract id->event mapping cannot
-    // smuggle a wrong event past the requested-id set (the merkle proof already ties the body to the chain).
-    if (ev && (ev.kind === "propose" ? ev.id : ev.txid).toLowerCase() === wid) proven.push(ev);
+    try { ev = await io.provenEvent(wid); } catch { return unproven(wid); }
+    if (!ev || (ev.kind === "propose" ? ev.id : ev.txid).toLowerCase() !== wid) return unproven(wid);
+    proven.push(ev);
   }
 
   // 3. locate + STRUCTURALLY BIND (A1) the offer + fclaim Proposes. fail closed if either cannot be proven
@@ -300,9 +305,11 @@ export async function verifyFillSpv(
 //     must never be written here).
 //   wantType - "token" iff the proven want is token-priced (want.ticker), else "csd". The type pivot every
 //     payment path branches on; serving the opposite type re-routes the whole fill machinery (W1/W7 class).
+//   wantTicker/wantAmount - a token want's price, verbatim strings; absent for a CSD want (`value` carries it).
 export interface ProvenOfferTerms {
   height: number; feeBps: number; value?: string; taker?: string; bid?: string; min?: string;
   giveTicker?: string; giveAmount?: string; giveName?: string; wantType?: "csd" | "token";
+  wantTicker?: string; wantAmount?: string;
 }
 
 // ── the ProvenOfferTerms BRAND (B6a rider, LTS amendment: the G6 "different-file hand copy" cure) ──────
@@ -331,7 +338,7 @@ export const feeBpsAt = (height: number): number =>
 // BRANDED type - this function is the brand's sole minter. The pre-B6 fields are emitted bit-identically, so
 // bindOfferTerms with both legs opted out returns the pre-B6 verdict over this output.
 export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): MintedProvenOfferTerms {
-  const w = offerRec.want as { value?: string; ticker?: string };
+  const w = offerRec.want as { value?: string; ticker?: string; amount?: string };
   const g = offerRec.give as { ticker?: string; amount?: string; name?: string };
   return {
     height: Number(provenHeight),
@@ -344,6 +351,8 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): M
     giveAmount: g.amount !== undefined ? String(g.amount) : undefined,
     giveName: g.name !== undefined ? String(g.name) : undefined,
     wantType: isTokenWant(offerRec.want) ? "token" : "csd",
+    wantTicker: isTokenWant(offerRec.want) ? String(w.ticker) : undefined,
+    wantAmount: isTokenWant(offerRec.want) ? String(w.amount) : undefined,
   } as MintedProvenOfferTerms;
 }
 
@@ -373,7 +382,8 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): M
  *   wantType - the SYMMETRIC want-type refusal: the served offer's want type (token iff want.ticker is
  *              a string, the isTokenWant pivot) must equal the proven type. The value leg already
  *              catches proven-CSD-served-as-token (String(undefined) mismatches t.value); this closes
- *              the reverse, proven-token-served-as-CSD.
+ *              the reverse, proven-token-served-as-CSD. For a proven token want the served want.ticker
+ *              and want.amount must also equal the proven price, verbatim.
  */
 export interface BindTermsOpts { give?: boolean; wantType?: boolean }
 /** Both legs off: the pre-B6 verdict, for callers that hold hand-built (unminted) terms. */
@@ -381,7 +391,7 @@ export type LegacyBindOpts = { give: false; wantType: false };
 export function bindOfferTerms(servedOffer: unknown, t: MintedProvenOfferTerms, opts?: BindTermsOpts): boolean;
 export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts: LegacyBindOpts): boolean;
 export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?: BindTermsOpts): boolean {
-  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
+  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown; amount?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
   const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v).toLowerCase());
   if (Number(o?.height) !== t.height) return true;
   if (Number(o?.feeBps) !== t.feeBps) return true;
@@ -393,7 +403,9 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?:
   if (t.min !== undefined && String(om) !== t.min) return true;
   if (opts?.wantType !== false) {
     // terms without a wantType (minted before B6) mismatch under this leg: fail closed.
-    if (t.wantType === undefined || (typeof o?.want?.ticker === "string") !== (t.wantType === "token")) return true; // MUTATE_LEG_WANTTYPE
+    if (t.wantType === undefined) return true;
+    // a proven token want: the served want carries the same ticker and amount; a proven CSD want: no ticker
+    if (t.wantType === "token" ? String(o?.want?.ticker) !== t.wantTicker || String(o?.want?.amount) !== t.wantAmount : typeof o?.want?.ticker === "string") return true; // MUTATE_LEG_WANTTYPE
   }
   if (opts?.give !== false) {
     const g = o?.give;
