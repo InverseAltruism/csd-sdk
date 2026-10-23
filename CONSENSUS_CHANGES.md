@@ -88,6 +88,8 @@ the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byt
 differed on none. Three citations in the MF-20 entry below moved with the code.
 `bindOfferTerms` binds a token want's ticker and amount under its wantType leg (reject-more; `scripts/seal-differential.mjs`
 passes, and `conformance/proven-terms-classification.mjs` now lists both fields as bound).
+`MAX_TOKEN_DECIMALS` (8) is exported from `types.ts` and read by `parseRecord`'s deploy branch in place of the literal;
+the parse is unchanged.
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 

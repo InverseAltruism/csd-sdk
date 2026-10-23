@@ -1,7 +1,7 @@
 // CairnX record validation + builders (pure; no I/O).
 import { canonicalJson, payloadHash, isWellFormedUtf16 } from "@inversealtruism/csd-codec";
 import {
-  ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
+  ADDR_RE, AMOUNT_RE, HASH_RE, SALT_RE, MAX_AMOUNT, MAX_RECORD_BYTES, MAX_TOKEN_DECIMALS, NAME_RE, PKEY, PROFILE_MAX_KEYS, PROFILE_MAX_VALUE_BYTES, RESERVED_NAMES, TICKER_RE,
   type BidRecord, type CairnXRecord, type DeployRecord, type MintRecord, type NameCommitRecord,
   type NameFinalizeRecord, type NameProfileRecord, type NameRecord, type NameSetRecord, type NameRenewRecord, type TokenMetaRecord, type NameXferRecord, type OfferCancelAllRecord,
   type OfferRecord, type TransferRecord, type FclaimRecord,
@@ -101,7 +101,7 @@ export function parseRecord(uri: string, payloadHashHex: string): CairnXRecord |
       // `.length` = UTF-16 code units IS the consensus unit (CONVENTION A6): an astral codepoint is 2
       // units, so a port counting codepoints/bytes would fork at the 32-unit boundary. Keep `.length`.
       if (r.name !== undefined && (typeof r.name !== "string" || r.name.length > 32)) return null;
-      if (typeof r.decimals !== "number" || !Number.isInteger(r.decimals) || r.decimals < 0 || r.decimals > 8) return null;
+      if (typeof r.decimals !== "number" || !Number.isInteger(r.decimals) || r.decimals < 0 || r.decimals > MAX_TOKEN_DECIMALS) return null;
       if (parseAmount(r.supply) === null) return null;
       if (r.mint !== "open" && r.mint !== "issuer") return null;
       if (r.mint === "open" && parseAmount(r.mintLimit) === null) return null;

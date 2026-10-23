@@ -1,7 +1,8 @@
 // The record size bound: a record lives in a Propose `uri`, which the node caps at 512 bytes
 // (MAX_URI_BYTES). parseRecord must accept a canonical record of exactly 512 UTF-8 bytes and
 // no-op one of 513; a drift either way forks this resolver from the Python oracle and the chain.
-import { parseRecord } from "../src/index.js";
+// The token decimals bound: MAX_TOKEN_DECIMALS is what parseRecord enforces on a deploy.
+import { MAX_TOKEN_DECIMALS, parseRecord } from "../src/index.js";
 import { canonicalJson, payloadHash } from "@inversealtruism/csd-codec";
 
 let pass = 0;
@@ -27,4 +28,9 @@ ok("a 513-byte record is a no-op", parse(at513) === null);
 const wide = { ...at512, p: { ...at512.p, a: at512.p.a.slice(0, -2) + "é" + "x" } };
 ok("a record of 512 code units but 513 bytes is a no-op", canonicalJson(wide).length === 512 && bytes(canonicalJson(wide)) === 513 && parse(wide) === null);
 
-console.log(`cairnx-core record size bound: ${pass}/5`);
+const deployWith = (decimals: number) => parse({ v: 1, t: "deploy", ticker: "AAA", decimals, supply: "100", mint: "issuer" });
+ok("MAX_TOKEN_DECIMALS is 8", MAX_TOKEN_DECIMALS === 8);
+ok("a deploy with 0 or MAX_TOKEN_DECIMALS decimals parses", deployWith(0) !== null && deployWith(MAX_TOKEN_DECIMALS) !== null);
+ok("a deploy with MAX_TOKEN_DECIMALS + 1 decimals is a no-op", deployWith(MAX_TOKEN_DECIMALS + 1) === null);
+
+console.log(`cairnx-core record bounds: ${pass}/8`);

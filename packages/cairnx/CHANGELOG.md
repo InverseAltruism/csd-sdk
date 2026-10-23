@@ -28,6 +28,8 @@
   `wantTicker` and `wantAmount`. Before, a token-priced offer served with another ticker or amount passed, and
   each caller (the site, cairn-sdk `preverifyOffer`) compared the price itself. Callers opting out with
   `{ give: false, wantType: false }` keep the earlier verdict.
+- New root export `MAX_TOKEN_DECIMALS` (8), the bound `parseRecord` applies to a deploy's `decimals`; the parser
+  reads it, so a consumer validating a served token's decimals uses the same number.
 - `resolve()` and canonical state are byte-identical to 0.2.1.
 
 ## 0.2.1
