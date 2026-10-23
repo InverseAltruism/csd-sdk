@@ -86,6 +86,8 @@ admission check (domain, then the offer's stateless creation rules). Those rules
 the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byte-identical, and an old-against-new
 `resolve()` comparison over 1,056 offer records across the V12 to V22 boundaries (full state and event log)
 differed on none. Three citations in the MF-20 entry below moved with the code.
+`bindOfferTerms` binds a token want's ticker and amount under its wantType leg (reject-more; `scripts/seal-differential.mjs`
+passes, and `conformance/proven-terms-classification.mjs` now lists both fields as bound).
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 

@@ -305,9 +305,11 @@ export async function verifyFillSpv(
 //     must never be written here).
 //   wantType - "token" iff the proven want is token-priced (want.ticker), else "csd". The type pivot every
 //     payment path branches on; serving the opposite type re-routes the whole fill machinery (W1/W7 class).
+//   wantTicker/wantAmount - a token want's price, verbatim strings; absent for a CSD want (`value` carries it).
 export interface ProvenOfferTerms {
   height: number; feeBps: number; value?: string; taker?: string; bid?: string; min?: string;
   giveTicker?: string; giveAmount?: string; giveName?: string; wantType?: "csd" | "token";
+  wantTicker?: string; wantAmount?: string;
 }
 
 // ── the ProvenOfferTerms BRAND (B6a rider, LTS amendment: the G6 "different-file hand copy" cure) ──────
@@ -336,7 +338,7 @@ export const feeBpsAt = (height: number): number =>
 // BRANDED type - this function is the brand's sole minter. The pre-B6 fields are emitted bit-identically, so
 // bindOfferTerms with both legs opted out returns the pre-B6 verdict over this output.
 export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): MintedProvenOfferTerms {
-  const w = offerRec.want as { value?: string; ticker?: string };
+  const w = offerRec.want as { value?: string; ticker?: string; amount?: string };
   const g = offerRec.give as { ticker?: string; amount?: string; name?: string };
   return {
     height: Number(provenHeight),
@@ -349,6 +351,8 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): M
     giveAmount: g.amount !== undefined ? String(g.amount) : undefined,
     giveName: g.name !== undefined ? String(g.name) : undefined,
     wantType: isTokenWant(offerRec.want) ? "token" : "csd",
+    wantTicker: isTokenWant(offerRec.want) ? String(w.ticker) : undefined,
+    wantAmount: isTokenWant(offerRec.want) ? String(w.amount) : undefined,
   } as MintedProvenOfferTerms;
 }
 
@@ -378,7 +382,8 @@ export function provenOfferTerms(offerRec: OfferRecord, provenHeight: number): M
  *   wantType - the SYMMETRIC want-type refusal: the served offer's want type (token iff want.ticker is
  *              a string, the isTokenWant pivot) must equal the proven type. The value leg already
  *              catches proven-CSD-served-as-token (String(undefined) mismatches t.value); this closes
- *              the reverse, proven-token-served-as-CSD.
+ *              the reverse, proven-token-served-as-CSD. For a proven token want the served want.ticker
+ *              and want.amount must also equal the proven price, verbatim.
  */
 export interface BindTermsOpts { give?: boolean; wantType?: boolean }
 /** Both legs off: the pre-B6 verdict, for callers that hold hand-built (unminted) terms. */
@@ -386,7 +391,7 @@ export type LegacyBindOpts = { give: false; wantType: false };
 export function bindOfferTerms(servedOffer: unknown, t: MintedProvenOfferTerms, opts?: BindTermsOpts): boolean;
 export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts: LegacyBindOpts): boolean;
 export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?: BindTermsOpts): boolean {
-  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
+  const o = servedOffer as { height?: unknown; feeBps?: unknown; want?: { value?: unknown; ticker?: unknown; amount?: unknown }; taker?: unknown; bid?: unknown; min?: unknown; give?: { ticker?: unknown; amount?: unknown; name?: unknown } };
   const s = (v: unknown): string => (v === undefined || v === null ? "" : String(v).toLowerCase());
   if (Number(o?.height) !== t.height) return true;
   if (Number(o?.feeBps) !== t.feeBps) return true;
@@ -398,7 +403,9 @@ export function bindOfferTerms(servedOffer: unknown, t: ProvenOfferTerms, opts?:
   if (t.min !== undefined && String(om) !== t.min) return true;
   if (opts?.wantType !== false) {
     // terms without a wantType (minted before B6) mismatch under this leg: fail closed.
-    if (t.wantType === undefined || (typeof o?.want?.ticker === "string") !== (t.wantType === "token")) return true; // MUTATE_LEG_WANTTYPE
+    if (t.wantType === undefined) return true;
+    // a proven token want: the served want carries the same ticker and amount; a proven CSD want: no ticker
+    if (t.wantType === "token" ? String(o?.want?.ticker) !== t.wantTicker || String(o?.want?.amount) !== t.wantAmount : typeof o?.want?.ticker === "string") return true; // MUTATE_LEG_WANTTYPE
   }
   if (opts?.give !== false) {
     const g = o?.give;

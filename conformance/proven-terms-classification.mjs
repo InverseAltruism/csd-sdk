@@ -19,6 +19,8 @@ const BOUND = {
   "want.value": "bindOfferTerms value leg (proven-CSD offers)",
   "give.ticker": "bindOfferTerms give leg (default on)", "give.amount": "bindOfferTerms give leg (default on)",
   "give.name": "bindOfferTerms give leg (default on)",
+  "want.ticker": "bindOfferTerms wantType leg (default on): presence is the want type; for a proven token want, the verbatim ticker",
+  "want.amount": "bindOfferTerms wantType leg (default on): for a proven token want, the verbatim amount",
 };
 const DELIBERATELY_UNBOUND_WITH_REASON = {
   id: "the lookup key itself; the caller selects the offer BY id and verifyFillSpv merkle-binds the id to the on-chain Propose",
@@ -32,8 +34,6 @@ const DELIBERATELY_UNBOUND_WITH_REASON = {
   claimUntilHeight: "hold state; replayed, and claimWindowOf/claimGraceOf derive windows from it fclaim-aware (B6c)",
   claimTxid: "hold routing; replayed, and the Correction-1 target check (fillEndorsement/fillTargetId) consumes it",
   "want.payto": "bound via bindProvenOffer's payto derivation (record payto or proven author), not the terms comparator",
-  "want.ticker": "PRESENCE (the want TYPE) is bound by the B6a wantType leg; the VALUE is a token-fill concern the CSD comparator does not size - a token-want filler must bind it against the proven record (W1 consumer-side bind)",
-  "want.amount": "same as want.ticker: token-side settlement, outside the CSD payment comparator",
 };
 
 // ── a maximal fixture set: partial+filled+held, taker-bound, bid-answered, token-want, name-give ──

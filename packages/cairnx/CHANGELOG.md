@@ -23,6 +23,11 @@
   integer range or already past at the anchor, the V21 to V22 duration cap). `applyOffer` now reads those rules
   from the same function (`offerEnvelopeRefusal` in `src/resolve/market.ts`), in the same order with the same
   notes. The give's backing is chain state and is not checked.
+- `bindOfferTerms`'s wantType leg (on by default) also binds a token want's price: for a proven token want the
+  served `want.ticker` and `want.amount` must equal the record's, verbatim. `provenOfferTerms` carries them as
+  `wantTicker` and `wantAmount`. Before, a token-priced offer served with another ticker or amount passed, and
+  each caller (the site, cairn-sdk `preverifyOffer`) compared the price itself. Callers opting out with
+  `{ give: false, wantType: false }` keep the earlier verdict.
 - `resolve()` and canonical state are byte-identical to 0.2.1.
 
 ## 0.2.1

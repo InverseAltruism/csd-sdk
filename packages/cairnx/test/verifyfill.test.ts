@@ -434,6 +434,12 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
     "MUTATION[give.name leg removed]: the name swap now PASSES -> the leg is the sole rejecter");
   ok(await withGuardRemoved("MUTATE_LEG_WANTTYPE", async (m) => m.bindOfferTerms(servedAsCsd, tTokWant, { wantType: true })) === false,
     "MUTATION[wantType leg removed]: proven-token served-as-CSD now PASSES -> the leg is the sole rejecter");
+  // the token price (triage B15): proven want BBB:5, served with another ticker or amount
+  const servedOtherPrice = [{ ticker: "CCC", amount: "5" }, { ticker: "BBB", amount: "999999" }];
+  for (const want of servedOtherPrice)
+    ok(bindOfferTerms({ ...servedAsTok, want }, tTokWant) === true, `token want served as ${want.ticker}:${want.amount} -> mismatch`);
+  ok(await withGuardRemoved("MUTATE_LEG_WANTTYPE", async (m) => m.bindOfferTerms({ ...servedAsTok, want: { ticker: "BBB", amount: "999999" } }, m.provenOfferTerms({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { ticker: "BBB", amount: "5" } } as never, H))) === false,
+    "MUTATION[want price leg removed]: an inflated token price now PASSES -> the leg is the sole rejecter");
 }
 
 // ── 13. provenOfferRefusal: the triage's B5 fixtures (wrong domain on the proven tx, a treasury payee, expired
