@@ -103,7 +103,7 @@ function clientWith(txs: RpcTxJson[]) {
 }
 
 // 4) the block bind (bind.ts), shared by verifyTxInclusion and bindBlockBody.
-console.log("— the block bind: repeated txid and exact u64 —");
+console.log("the block bind: repeated txid and exact u64");
 {
   const attest: RpcTxJson = {
     txid: "", version: 1,
