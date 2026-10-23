@@ -130,7 +130,7 @@ export interface FillVerdict { safe: boolean; reason: string }
  * not-mine hold, a below-depth signing, a zero-delivery fill, a stranded past-deadline broadcast).
  *
  * `opts.myLiveHoldsAtGrant` (REQUIRED) is the buyer's count of OTHER live fclaim/legacy holds at the moment
- * THIS fclaim was granted, asserted by the authoring client (which signed its own claims). The lane-scoped
+ * THIS fclaim was granted, asserted by the authoring client (countOtherHoldsAtGrant computes it). The lane-scoped
  * replay cannot see the buyer's other-offer holds, and MAX_ACTIVE_CLAIMS is the one grant clause counted
  * across offers, so without this the surface would false-accept a cap-denied fclaim. `opts.pay` overrides the
  * payment (base units to want.payto) for a PARTIAL tail-fill; defaults to the offer's full want.value.

@@ -78,7 +78,8 @@ accepts an input only when hash160 of its pubkey equals the spent output's scrip
 `sender_h160_from_tx`), so that owner is the author. csd-tx and csd-siwc bump as dependents of csd-crypto.
 
 cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
-(client-side fill boundary; `resolve()` does not call it).
+(client-side fill boundary; `resolve()` does not call it). New export `countOtherHoldsAtGrant`, the buyer's other
+holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`.
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 

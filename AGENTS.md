@@ -50,6 +50,7 @@ cairnx-core modules (`packages/cairnx/src/`):
 - `client.ts`: claim-burial depth helpers.
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
 - `fillclosed.ts`: whether a buyer's proven fill closed the offer behind its fclaim hold.
+- `holdcount.ts`: countOtherHoldsAtGrant, the buyer's other live holds at an fclaim's grant (verifyFillSpv's cap input).
 
 `conformance/`: cairnx_ref.py + siwc_ref.py (independent Python oracles, written from spec, kept independent), crosscheck*.mjs, fuzz-resolve.mjs, per-gate v2x-*-crosslang.mjs, and the report-only audit tooling: invariants.mjs (7 ledger-soundness invariants), money-safety.mjs (anchored-then-rejected burn detector), race-harness.mjs (adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1), AUDIT.md (method doc).
 

@@ -7,6 +7,12 @@
   seller cancel whose block read failed replayed the offer as open. New refusal text: "an event on this offer
   could not be merkle-proven (<id>) - refusing, the replay would miss it"; the offer and fclaim keep their
   existing texts. The site's and the wallet's io return only ids they proved, so their honest fills do not move.
+- New root export `countOtherHoldsAtGrant(candidates, target, me, closed?)`: the buyer's live holds on other
+  offers at an fclaim's grant, the `myLiveHoldsAtGrant` count for `verifyFillSpv`. It counts only fclaims applied
+  before the target (height, then position in the block), distinct offers, holds live at the grant height, and
+  skips the `closed` set. The site and the wallet counted later fclaims too, so a buyer's fourth reservation
+  (denied on the cap) made every earlier granted hold unfillable. An earlier fclaim the resolver denied is still
+  counted (an over-count, which only refuses).
 - `resolve()` and canonical state are byte-identical to 0.2.1.
 
 ## 0.2.1
