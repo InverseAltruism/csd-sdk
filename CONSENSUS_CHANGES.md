@@ -79,7 +79,8 @@ accepts an input only when hash160 of its pubkey equals the spent output's scrip
 
 cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
 (client-side fill boundary; `resolve()` does not call it). New export `countOtherHoldsAtGrant`, the buyer's other
-holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`.
+holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`. `finalizeWinnerCheck`
+refuses a supplied tip that is not a non-negative safe integer.
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 

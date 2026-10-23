@@ -13,6 +13,9 @@
   skips the `closed` set. The site and the wallet counted later fclaims too, so a buyer's fourth reservation
   (denied on the cap) made every earlier granted hold unfillable. An earlier fclaim the resolver denied is still
   counted (an over-count, which only refuses).
+- `finalizeWinnerCheck` refuses a supplied `tip` that is not a non-negative safe integer ("the chain tip given
+  (<tip>) is not a block height, so the finalize window cannot be checked"). A NaN, Infinity or fractional tip
+  used to skip or pass both window comparisons and return safe. An omitted or null tip keeps the winner-only check.
 - `resolve()` and canonical state are byte-identical to 0.2.1.
 
 ## 0.2.1

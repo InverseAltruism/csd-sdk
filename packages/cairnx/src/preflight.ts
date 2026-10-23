@@ -323,7 +323,8 @@ export function fillEndorsement(
  *  mining outside the window (too early: rejected as unfrozen; too late: past the deadline — either way the
  *  fee burns). The window is derived purely from `eff` (never the resolver's `finalizeBy`), so a lying
  *  `finalizeBy` cannot widen it — but per the trust scope above, a lying `eff` still can for a caller that
- *  does not supply an independent `commitHeight`. `tip` is optional; without it the winner-only path runs. */
+ *  does not supply an independent `commitHeight`. `tip` is optional; without it the winner-only path runs. A
+ *  supplied `tip` that is not a non-negative safe integer is refused. */
 export function finalizeWinnerCheck(
   nameState: NameState | null | undefined,
   me: string,
@@ -344,8 +345,10 @@ export function finalizeWinnerCheck(
   // finalizeBy cannot widen the safe band and walk the caller into a fee burn — this keeps the module's
   // "a deterministic function of record fields, no resolver boolean can induce a loss" invariant (S1).
   // The boundaries are byte-identical to the site's regstage freezeEnd for an honest record.
-  if (tip !== undefined && tip !== null && Number.isFinite(Number(tip))) {
-    const t = Number(tip);
+  if (tip !== undefined && tip !== null) {
+    // A NaN or fractional tip would fail both window comparisons and pass as safe.
+    if (!Number.isSafeInteger(tip) || tip < 0) return { safe: false, reason: `the chain tip given (${String(tip)}) is not a block height, so the finalize window cannot be checked` };
+    const t = tip;
     const eff = Number(nameState.effectiveHeight);
     const freezeEnd = eff + REG_COMMIT_MAX_BLOCKS;
     const closeAt = eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS - FINALIZE_TIP_MARGIN;

@@ -143,6 +143,11 @@ console.log("\nfinalizeWinnerCheck; the C1 registration-finalize gate:");
   ok("N-2: tip at the close boundary → still safe", finalizeWinnerCheck(resv, A, commitHeight, closeAt).safe === true);
   const late = finalizeWinnerCheck(resv, A, commitHeight, closeAt + 1);
   ok("N-2: tip past the close boundary → NOT safe, 'window has closed'", late.safe === false && /closed/.test(late.reason));
+  // a supplied tip that is not a block height must not skip the window (it compared false both ways and passed)
+  for (const bad of [NaN, Infinity, -1, freezeGate + 0.5]) {
+    const v = finalizeWinnerCheck(resv, A, commitHeight, bad);
+    ok(`N-2: tip ${bad} → NOT safe (not a block height)`, v.safe === false && /not a block height/.test(v.reason));
+  }
   // records that predate a materialized finalizeBy fall back to the constant window
   const bare = finalizeWinnerCheck(mine, A, commitHeight, eff + REG_COMMIT_MAX_BLOCKS + FINALIZE_TIP_MARGIN);
   ok("N-2 fallback (no finalizeBy): freeze gate still enforced", bare.safe === false && /too early/.test(bare.reason));
