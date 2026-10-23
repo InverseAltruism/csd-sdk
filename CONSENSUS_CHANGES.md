@@ -79,7 +79,8 @@ accepts an input only when hash160 of its pubkey equals the spent output's scrip
 
 cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
 (client-side fill boundary; `resolve()` does not call it). New export `countOtherHoldsAtGrant`, the buyer's other
-holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`. `finalizeWinnerCheck`
+holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`. It refuses grants
+below `LEGACY_HOLD_SUNSET_HEIGHT`, where a legacy claim from before V28 can still be live. `finalizeWinnerCheck`
 refuses a supplied tip that is not a non-negative safe integer. New export `provenOfferRefusal`, the proven-offer
 admission check (domain, then the offer's stateless creation rules). Those rules moved out of `applyOffer` into
 `offerEnvelopeRefusal` (`src/resolve/market.ts`), which `applyOffer` calls, in the same order with the same notes:

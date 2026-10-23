@@ -12,7 +12,12 @@
   before the target (height, then position in the block), distinct offers, holds live at the grant height, and
   skips the `closed` set. The site and the wallet counted later fclaims too, so a buyer's fourth reservation
   (denied on the cap) made every earlier granted hold unfillable. An earlier fclaim the resolver denied is still
-  counted (an over-count, which only refuses).
+  counted (an over-count, which only refuses). It returns `HoldCount` (`{ ok: true, count }` or
+  `{ ok: false, reason }`, which a caller treats as unsafe). Its domain is grants at or above
+  `LEGACY_HOLD_SUNSET_HEIGHT` (exported, 60,044: the last legacy claim at V28 - 1 plus its window and grace);
+  below it a legacy SCORE_CLAIM hold can still count against the cap and the counter does not read those, so it
+  refuses ("this reservation was granted at <h>, before block 60044, while claims made before V28 could still
+  count against the cap; it cannot be checked here").
 - `finalizeWinnerCheck` refuses a supplied `tip` that is not a non-negative safe integer ("the chain tip given
   (<tip>) is not a block height, so the finalize window cannot be checked"). A NaN, Infinity or fractional tip
   used to skip or pass both window comparisons and return safe. An omitted or null tip keeps the winner-only check.

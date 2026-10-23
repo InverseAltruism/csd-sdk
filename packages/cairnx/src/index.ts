@@ -27,7 +27,7 @@ export * from "./primary.js";
 export * from "./verifyfill.js";
 export { paidToFromOutputs, burnedPayment } from "./paidto.js";
 export { myProvenFillClosedOffer } from "./fillclosed.js";
-export { countOtherHoldsAtGrant, type HoldCandidate, type HoldTarget } from "./holdcount.js";
+export { countOtherHoldsAtGrant, LEGACY_HOLD_SUNSET_HEIGHT, type HoldCandidate, type HoldCount, type HoldTarget } from "./holdcount.js";
 export { provenOfferRefusal, type ProvenOfferTx } from "./admission.js";
 // Re-export the csd-codec primitives the cairnx consumers need so the browser UI / wallet import a SINGLE
 // surface (cairnx-core) rather than re-typing canonicalJson or the reward/fee constants. (csd-codec stays

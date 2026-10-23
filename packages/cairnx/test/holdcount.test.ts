@@ -3,8 +3,9 @@
 // is mined after the first three, so it must not count against them (it did in both client counters).
 import assert from "node:assert/strict";
 import {
-  DEPLOY_FEE, MAX_ACTIVE_CLAIMS, TREASURY_ADDR, V29_HEIGHT, countOtherHoldsAtGrant, deploy, epochOf, fclaim, fclaimHoldEnd, mint, offer,
-  resolve, verifyFillSpv, type ChainEvent, type FillSpvIo, type HoldCandidate, type ProvenEvent, type ProposeEvent,
+  DEPLOY_FEE, LEGACY_HOLD_SUNSET_HEIGHT, MAX_ACTIVE_CLAIMS, SCORE_CLAIM, TREASURY_ADDR, V28_HEIGHT, V29_HEIGHT, countOtherHoldsAtGrant,
+  deploy, epochOf, fclaim, fclaimHoldEnd, mint, offer, resolve, verifyFillSpv,
+  type ChainEvent, type FillSpvIo, type HoldCandidate, type HoldCount, type ProvenEvent, type ProposeEvent,
 } from "../src/index.js";
 
 let pass = 0;
@@ -43,10 +44,11 @@ await t("premise: the resolver grants X, Y, Z and denies W on the cap", () => {
 });
 
 await t("the count at each grant is the number of earlier holds, in block then position order", () => {
-  assert.deepEqual([0, 1, 2, 3].map((i) => countOtherHoldsAtGrant(candidates, targetOf(i), ME)), [0, 1, 2, 3]);
+  assert.deepEqual([0, 1, 2, 3].map((i) => countOtherHoldsAtGrant(candidates, targetOf(i), ME)), [0, 1, 2, 3].map((count) => ({ ok: true, count })));
 });
 
-// verifyFillSpv over the lane of X (the production call shape: the count passed as myLiveHoldsAtGrant)
+// verifyFillSpv over the lane of X (the production call shape: the count passed as myLiveHoldsAtGrant, a refusal
+// failing closed)
 const idOf = (e: ChainEvent) => (e.kind === "propose" ? e.id : e.txid).toLowerCase();
 const io = (lane: ChainEvent[]): FillSpvIo => ({
   async tip() { return tip; },
@@ -54,16 +56,59 @@ const io = (lane: ChainEvent[]): FillSpvIo => ({
   async provenEvent(x: string) { const e = lane.find((y) => idOf(y) === x.toLowerCase()); return e ? ({ ...e, depth: tip - e.height + 1 } as ProvenEvent) : null; },
 });
 const laneOf = (i: number) => [events[0]!, events[1]!, events.find((e) => idOf(e) === offers[i])!, fcs[i]!];
+const verdict = async (hc: HoldCount, oid: string, fc: string, io_: FillSpvIo) =>
+  hc.ok ? verifyFillSpv(oid, fc, ME, io_, { myLiveHoldsAtGrant: hc.count }) : { safe: false, reason: hc.reason };
 
 await t("the earliest granted hold stays fillable after a later fourth fclaim", async () => {
-  const v = await verifyFillSpv(offers[0]!, fcs[0]!.id, ME, io(laneOf(0)), { myLiveHoldsAtGrant: countOtherHoldsAtGrant(candidates, targetOf(0), ME) });
+  const v = await verdict(countOtherHoldsAtGrant(candidates, targetOf(0), ME), offers[0]!, fcs[0]!.id, io(laneOf(0)));
   assert.equal(v.safe, true, v.reason);
 });
 
 await t("the cap-denied fourth fclaim is still refused", async () => {
-  const v = await verifyFillSpv(offers[3]!, fcs[3]!.id, ME, io(laneOf(3)), { myLiveHoldsAtGrant: countOtherHoldsAtGrant(candidates, targetOf(3), ME) });
+  const v = await verdict(countOtherHoldsAtGrant(candidates, targetOf(3), ME), offers[3]!, fcs[3]!.id, io(laneOf(3)));
   assert.equal(v.safe, false);
   assert.match(v.reason, /max active claims/);
 });
+
+// The V28 straddle (second review): three legacy SCORE_CLAIM holds granted at V28 - 1 are still live at V28, so the
+// resolver denies an fclaim there on the cap. The counter reads fclaims only, so below LEGACY_HOLD_SUNSET_HEIGHT it
+// must refuse instead of returning 0.
+{
+  const L0 = V28_HEIGHT - 10;
+  const lev: ChainEvent[] = [
+    PE(id("51"), deploy({ ticker: "LLL", decimals: 0, supply: "1000", mint: "issuer" }), L0 - 2, SELLER, 9e9, 0, { [TREASURY_ADDR]: String(DEPLOY_FEE) }),
+    PE(id("52"), mint({ ticker: "LLL", amount: "1000" }), L0 - 1, SELLER, 9e9),
+  ];
+  const loffers = ["61", "62", "63", "64"].map((n, i) => {
+    const o = PE(id(n), offer({ give: { ticker: "LLL", amount: "10" }, want: { value: V, payto: SELLER } }), L0, SELLER, epochOf(L0) + 200, i);
+    lev.push(o);
+    return o;
+  });
+  for (let i = 0; i < 3; i++)
+    lev.push({ kind: "attest", txid: id(["71", "72", "73"][i]!), proposalId: loffers[i]!.id, attester: ME, score: SCORE_CLAIM, confidence: 0, height: V28_HEIGHT - 1, pos: i, paidTo: {} });
+  const fc = PE(id("74"), fclaim({ offer: loffers[3]!.id }), V28_HEIGHT, ME, epochOf(V28_HEIGHT) + 2);
+  lev.push(fc);
+  const ltip = V28_HEIGHT + 10;
+  const lst = resolve(lev, ltip);
+  const target = { id: fc.id, height: fc.height, pos: fc.pos, offer: loffers[3]!.id };
+  const fcCand: HoldCandidate[] = [{ id: fc.id, height: fc.height, pos: fc.pos, proposer: ME, uri: fc.uri, payloadHash: fc.payloadHash, expiresEpoch: fc.expiresEpoch }];
+  const lane = [lev[0]!, lev[1]!, loffers[3]!, fc];
+  const lio: FillSpvIo = {
+    async tip() { return ltip; },
+    async offerEventIds() { return lane.map(idOf); },
+    async provenEvent(x: string) { const e = lane.find((y) => idOf(y) === x.toLowerCase()); return e ? ({ ...e, depth: ltip - e.height + 1 } as ProvenEvent) : null; },
+  };
+  await t("V28 straddle: the full replay denies the fclaim on the cap, and the fill verdict is unsafe", async () => {
+    assert.equal(lst.fclaims[fc.id], undefined);
+    assert.match(lst.events.find((e) => e.id === fc.id)?.note ?? "", new RegExp(`max ${MAX_ACTIVE_CLAIMS} live claims`));
+    const hc = countOtherHoldsAtGrant(fcCand, target, ME);
+    assert.equal(hc.ok, false);
+    assert.equal((await verdict(hc, target.offer, fc.id, lio)).safe, false);
+  });
+  await t("the refusal domain ends at LEGACY_HOLD_SUNSET_HEIGHT, the first height past the last legacy hold", () => {
+    assert.equal(countOtherHoldsAtGrant([], { ...target, height: LEGACY_HOLD_SUNSET_HEIGHT - 1 }, ME).ok, false);
+    assert.deepEqual(countOtherHoldsAtGrant([], { ...target, height: LEGACY_HOLD_SUNSET_HEIGHT }, ME), { ok: true, count: 0 });
+  });
+}
 
 console.log(`holdcount: ${pass} passed`);
