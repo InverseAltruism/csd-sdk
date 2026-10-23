@@ -80,7 +80,12 @@ accepts an input only when hash160 of its pubkey equals the spent output's scrip
 cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
 (client-side fill boundary; `resolve()` does not call it). New export `countOtherHoldsAtGrant`, the buyer's other
 holds at an fclaim's grant in apply order, for `verifyFillSpv`'s cap input; not read by `resolve()`. `finalizeWinnerCheck`
-refuses a supplied tip that is not a non-negative safe integer.
+refuses a supplied tip that is not a non-negative safe integer. New export `provenOfferRefusal`, the proven-offer
+admission check (domain, then the offer's stateless creation rules). Those rules moved out of `applyOffer` into
+`offerEnvelopeRefusal` (`src/resolve/market.ts`), which `applyOffer` calls, in the same order with the same notes:
+the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byte-identical, and an old-against-new
+`resolve()` comparison over 1,056 offer records across the V12 to V22 boundaries (full state and event log)
+differed on none. Three citations in the MF-20 entry below moved with the code.
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 
@@ -215,13 +220,13 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
-The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(ev.expiresEpoch)` guard its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :39 offer, :99 bid). MF-20 adds
+The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
 shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :167:
+`packages/cairnx/src/resolve/market.ts` :146:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
 

@@ -16,6 +16,13 @@
 - `finalizeWinnerCheck` refuses a supplied `tip` that is not a non-negative safe integer ("the chain tip given
   (<tip>) is not a block height, so the finalize window cannot be checked"). A NaN, Infinity or fractional tip
   used to skip or pass both window comparisons and return safe. An omitted or null tip keeps the winner-only check.
+- New root export `provenOfferRefusal(rec, { domain, height, expiresEpoch, seller })`: the admission check for a
+  merkle-proven offer Propose. It refuses a domain other than `cairnx:v1` ("not a cairnx:v1 Propose (domain
+  "<domain>")") and then returns the resolver's own creation note for every rule that needs no chain state
+  (v1.2 shape before activation, the V13 to V17 open CSD offer ban, a treasury payee, an expiry outside the safe
+  integer range or already past at the anchor, the V21 to V22 duration cap). `applyOffer` now reads those rules
+  from the same function (`offerEnvelopeRefusal` in `src/resolve/market.ts`), in the same order with the same
+  notes. The give's backing is chain state and is not checked.
 - `resolve()` and canonical state are byte-identical to 0.2.1.
 
 ## 0.2.1
