@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2
+
+- `verifyFillSpv` fails closed when any id `offerEventIds` returns cannot be proven: `provenEvent` throws,
+  returns null, or returns an event under another id. It used to drop that event from the grant replay, so a
+  seller cancel whose block read failed replayed the offer as open. New refusal text: "an event on this offer
+  could not be merkle-proven (<id>) - refusing, the replay would miss it"; the offer and fclaim keep their
+  existing texts. The site's and the wallet's io return only ids they proved, so their honest fills do not move.
+- `resolve()` and canonical state are byte-identical to 0.2.1.
+
 ## 0.2.1
 
 - Internal split, no behaviour change: `src/resolve.ts` keeps the replay loop and dispatches each record to

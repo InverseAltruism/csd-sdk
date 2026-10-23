@@ -57,7 +57,7 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
+## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
 
 csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
 JS range (a Propose's `expires_epoch` is an unbounded u64) comes back as an exact bigint read from its source text,
@@ -76,6 +76,9 @@ sighash strip scriptSigs, so `recoverSigner` alone attributes a body re-signed b
 accepts an input only when hash160 of its pubkey equals the spent output's script_pubkey (compute-substrate
 `src/state/utxo.rs` `validate_tx_inputs_outputs`), and names the proposer from input 0's pubkey (`src/state/app_state.rs`
 `sender_h160_from_tx`), so that owner is the author. csd-tx and csd-siwc bump as dependents of csd-crypto.
+
+cairnx-core: `verifyFillSpv` refuses when an enumerated event cannot be proven instead of replaying without it
+(client-side fill boundary; `resolve()` does not call it).
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 

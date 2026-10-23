@@ -64,7 +64,8 @@ export interface FillSpvIo {
   // header/scan snapshot) for status events (cancel/expiry/consuming fill) + give-backing (deploy+mint, or the
   // name registration). Note the age asymmetry: hold/cooldown evidence is bounded by MAX_SCAN, but a cancel or
   // a consuming fill can be arbitrarily OLD (a V22+ offer may be weeks old), so the lifecycle scan is NOT
-  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan).
+  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan). Every id returned
+  // here must come back from provenEvent; one that does not fails the verdict closed.
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
   // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
   // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
@@ -163,17 +164,21 @@ export async function verifyFillSpv(
   // burial) can never satisfy the depth gate with fewer real confirmations than the PoW chain shows.
   const depthOf = (ev: ProvenEvent): number => Math.min(Number(ev.depth), tip - Number(ev.height) + 1);
 
-  // 2. gather + MERKLE-PROVE the offer's event set; a missing/unprovable required event fails CLOSED.
+  // 2. gather + MERKLE-PROVE the offer's event set. Every enumerated id must come back proven and under its own
+  //    id: a dropped event (a cancel, a consuming fill, an earlier hold) replays the offer as more open than it is.
   let hintIds: string[];
   try { hintIds = await io.offerEventIds(offerId, fclaimTxid); } catch { return no("could not enumerate the offer's events"); }
   const want = new Set<string>([offerId.toLowerCase(), fclaimTxid.toLowerCase(), ...(hintIds ?? []).map((x) => String(x).toLowerCase())]);
+  const unproven = (wid: string): FillVerdict =>
+    wid === offerId.toLowerCase() ? no("offer not merkle-proven (no PoW-verified offer Propose)")
+      : wid === fclaimTxid.toLowerCase() ? no("fclaim not merkle-proven (no PoW-verified fclaim Propose)")
+        : no(`an event on this offer could not be merkle-proven (${wid}) - refusing, the replay would miss it`);
   const proven: ProvenEvent[] = [];
   for (const wid of want) {
     let ev: ProvenEvent | null;
-    try { ev = await io.provenEvent(wid); } catch { ev = null; }
-    // the seam MUST return the event for the id we asked for, so an off-contract id->event mapping cannot
-    // smuggle a wrong event past the requested-id set (the merkle proof already ties the body to the chain).
-    if (ev && (ev.kind === "propose" ? ev.id : ev.txid).toLowerCase() === wid) proven.push(ev);
+    try { ev = await io.provenEvent(wid); } catch { return unproven(wid); }
+    if (!ev || (ev.kind === "propose" ? ev.id : ev.txid).toLowerCase() !== wid) return unproven(wid);
+    proven.push(ev);
   }
 
   // 3. locate + STRUCTURALLY BIND (A1) the offer + fclaim Proposes. fail closed if either cannot be proven

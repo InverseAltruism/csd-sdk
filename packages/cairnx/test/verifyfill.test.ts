@@ -156,6 +156,35 @@ const tipHolder = holdEnd - 5;
   ok(v.safe === false && /merkle-proven/.test(v.reason), `unprovable offer fails CLOSED (${v.reason})`);
 }
 
+// ── 7b. every ENUMERATED event must be proven: a seller cancel that the seam enumerates but fails to prove
+//    (a throw, a null, or another event under its id) must not drop out of the replay. Without it the fclaim
+//    mined after the cancel replays as granted and the fill would pay a cancelled offer. ──
+{
+  const cancelId = id("3c");
+  const cancel = AE(cancelId, OID, A, H0 + 3, {}, SCORE_CANCEL);
+  const fcAfter = id("f3");
+  const gAfter = PE(fcAfter, fclaim({ offer: OID }), H0 + 4, B, epochOf(H0 + 4) + 2);
+  const evs = [...base, cancel, gAfter];
+  const tip = fclaimHoldEnd(epochOf(H0 + 4) + 2) - 5;
+  const st = resolve(evs, tip);
+  ok(st.offers[OID]!.status === "cancelled" && st.fclaims[fcAfter] === undefined, "sanity: the cancel denies the later fclaim");
+  const honest = makeIo(evs, tip);
+  ok((await vfs(OID, fcAfter, B, honest)).safe === false, "every event proven: the fill is refused by the replay");
+  const withCancel = (prove: (e: ProvenEvent | null) => Promise<ProvenEvent | null>): FillSpvIo => ({
+    tip: honest.tip, offerEventIds: honest.offerEventIds,
+    async provenEvent(x: string) { const e = await honest.provenEvent(x); return x.toLowerCase() === cancelId ? prove(e) : e; },
+  });
+  const fclaimEv = await honest.provenEvent(fcAfter);
+  for (const [label, io] of [
+    ["the cancel's proof throws", withCancel(async () => { throw new Error("block fetch failed"); })],
+    ["the cancel's proof is empty", withCancel(async () => null)],
+    ["another event comes back under the cancel's id", withCancel(async () => fclaimEv)],
+  ] as const) {
+    const v = await vfs(OID, fcAfter, B, io);
+    ok(v.safe === false && /could not be merkle-proven/.test(v.reason), `${label}: refused (${v.reason})`);
+  }
+}
+
 // ── 8. earlier FILL-BASIS burial is ENFORCED (the partial tail-flip bound) ──
 {
   const POID = id("0e");
