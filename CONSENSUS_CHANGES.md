@@ -57,14 +57,27 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-client 0.1.19, csd-light 0.1.25 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
+## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
 
 csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
 JS range (a Propose's `expires_epoch` is an unbounded u64) comes back as an exact bigint read from its source text,
 every other value as `JSON.parse` returns it, so a block holding such a value binds to its merkle root instead of
 failing the codec's u64 check. A float literal stays a number. A caller passing its own `parseJson` keeps it. The
 u64 fields of `RpcTxJson` and `RpcProposal` are typed `number | bigint`. csd-light bumps because it depends on
-csd-client. No byte, txid, sighash, LWMA, chainwork or replay change.
+csd-client.
+
+csd-light exports `bindBlockBody(text, verifiedHeader)`, the one block bind: the body parsed exactly, every txid
+re-derived from its body, a repeated txid refused before the merkle compare (a body repeating its odd last tx
+hashes to the honest root), and the set compared with the verified header's merkle root. Bound bodies type their
+scriptSigs `UnprovenScriptSig`. `verifyTxInclusion` runs through the same bind, so it now also refuses a body that
+repeats a txid. csd-crypto exports `authorOf(tx, prevoutScriptPubkey)`: the author is the owner of the coin input 0
+spends, returned only when input 0's scriptSig is that owner's valid signature over the sighash. The txid and
+sighash strip scriptSigs, so `recoverSigner` alone attributes a body re-signed by another key to that key; the node
+accepts an input only when hash160 of its pubkey equals the spent output's script_pubkey (compute-substrate
+`src/state/utxo.rs` `validate_tx_inputs_outputs`), and names the proposer from input 0's pubkey (`src/state/app_state.rs`
+`sender_h160_from_tx`), so that owner is the author. csd-tx and csd-siwc bump as dependents of csd-crypto.
+
+No byte, txid, sighash, LWMA, chainwork or replay change.
 
 ## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; unreleased, publish window 3; no consensus-surface change) - shared route checks and script address
 

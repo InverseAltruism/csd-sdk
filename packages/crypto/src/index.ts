@@ -6,7 +6,7 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { ripemd160 } from "@noble/hashes/ripemd160";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, randomBytes } from "@noble/hashes/utils";
-import { hb, hx, strip0x } from "@inversealtruism/csd-codec";
+import { hb, hx, sighash, strip0x, type Tx } from "@inversealtruism/csd-codec";
 
 /** hash160(x) = ripemd160(sha256(x)) → 0x-hex (20 bytes). */
 export function hash160(bytes: Uint8Array): string { return hx(ripemd160(sha256(bytes))); }
@@ -89,10 +89,8 @@ export function buildScriptSig(sig64: string, pub33: string): string {
 //     has already consensus-validated, so a sig check there is redundant CPU with new failure
 //     modes; changing tolerance would silently change historical attribution (the full-chain
 //     differential in conformance/ pins zero deltas before any consumer swap).
-//   recoverSigner: STRICT, the wallet/verifier contract (namespv): EXACT length AND the
-//     signature must verify against the caller-supplied digest (the merkle root commits the tx
-//     body but not the scriptSig, so without the sig check a lying node could re-attribute a
-//     record's author).
+//   recoverSigner: STRICT: EXACT length AND the signature must verify against the caller-supplied
+//     digest. It proves that some key signed that digest, not who authored the tx: authorOf below.
 
 export interface ParsedScriptSig { sig64: string; pub33: string }
 
@@ -135,4 +133,21 @@ export function recoverSigner(scriptSig: string | null | undefined, digestHex: s
     if (!verifyDigest(p.sig64, p.pub33, digestHex)) return null;
     return addrFromPub(p.pub33).toLowerCase();
   } catch { return null; }
+}
+
+/**
+ * The author of a mined tx: the owner of the coin its first input spends, returned only when the first input's
+ * scriptSig is a valid signature over sighash(tx) by that owner's key; null otherwise. The txid and sighash strip
+ * every scriptSig, so a body served with another key's valid signature still matches its merkle root; the node
+ * accepts the input only when hash160(pubkey) equals the spent output's script_pubkey, so the coin owner is the
+ * author. `prevoutScriptPubkey` must be read from the source tx after recomputing its txid (the txid commits it).
+ */
+export function authorOf(tx: Tx, prevoutScriptPubkey: string | null | undefined): string | null {
+  const in0 = tx.inputs?.[0];
+  if (!in0) return null;
+  const owner = addrFromScriptPubkey(prevoutScriptPubkey);
+  if (!owner) return null;
+  let digest: string;
+  try { digest = sighash(tx); } catch { return null; }   // a tx the codec cannot encode has no signer
+  return recoverSigner(in0.scriptSig, digest) === owner ? owner : null;
 }

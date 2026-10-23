@@ -1,7 +1,7 @@
 // @inversealtruism/csd-crypto conformance: address derivation, LOW-S determinism, verify, against the
 // node's funded key (block-21043 era) + property checks.
-import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig, parseScriptSig, signerAddrFromScriptSig, recoverSigner } from "../src/index.js";
-import { sighash } from "@inversealtruism/csd-codec";
+import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig, parseScriptSig, signerAddrFromScriptSig, recoverSigner, authorOf } from "../src/index.js";
+import { sighash, txid, merkleRoot, type Tx } from "@inversealtruism/csd-codec";
 import { GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
@@ -83,6 +83,30 @@ ok("keygen produces a valid self-consistent keypair", isValidPriv(g.priv) && add
     ok("uppercase hex normalizes in both contracts", signerAddrFromScriptSig(upper) === expectAddr && recoverSigner(upper, sh) === expectAddr);
   }
   ok("null/undefined refused", parseScriptSig(null) === null && signerAddrFromScriptSig(undefined) === null && recoverSigner(null, sh) === null);
+}
+
+// authorOf: a block-body provider can swap input 0's scriptSig for another key's valid signature over the same
+// sighash (txid and sighash strip scriptSigs, so the merkle root still matches). The author is the coin's owner.
+{
+  const owner = "0x" + "11".repeat(32), other = "0x" + "22".repeat(32);
+  const base: Tx = {
+    version: 1, locktime: 0,
+    inputs: [{ prevTxid: "0x" + "ab".repeat(32), vout: 0, scriptSig: "0x" }],
+    outputs: [{ value: 25_000_000n, scriptPubkey: "0x" + "cd".repeat(20) }],
+    app: { type: "Propose", domain: "cairnx:v1", payloadHash: "0x" + "ef".repeat(32), uri: "u", expiresEpoch: 5000n },
+  };
+  const signedBy = (priv: string): Tx => {
+    const { sig64, pub33 } = signDigest(sighash(base), priv);
+    return { ...base, inputs: [{ ...base.inputs[0]!, scriptSig: buildScriptSig(sig64, pub33) }] };
+  };
+  const honest = signedBy(owner), swapped = signedBy(other);
+  const ownerSpk = addrFromPriv(owner);   // the node JSON form of the spent output's script_pubkey
+  ok("authorOf: a swapped body has the same txid and merkle root",
+    txid(honest) === txid(swapped) && merkleRoot([txid(honest)]) === merkleRoot([txid(swapped)]));
+  ok("authorOf: recoverSigner alone attributes the swapped body to the swapper",
+    recoverSigner(swapped.inputs[0]!.scriptSig, sighash(swapped)) === addrFromPriv(other).toLowerCase());
+  ok("authorOf: the honest body's author is the coin owner", authorOf(honest, ownerSpk) === ownerSpk.toLowerCase());
+  ok("authorOf: the swapped body has no author (signer does not own the spent coin)", authorOf(swapped, ownerSpk) === null);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
