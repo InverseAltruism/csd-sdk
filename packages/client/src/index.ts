@@ -21,13 +21,31 @@ export interface RpcUtxo { txid: string; vout: number; value: number; height: nu
 export interface RpcUtxos { ok: boolean; addr20: string; count: number; confirmed_balance: number; utxos: RpcUtxo[] }
 export interface RpcSubmit { ok: boolean; txid: string; mempool_len?: number; err?: string | null }
 
-export interface RpcProposal {
-  ok?: boolean; txid: string; domain: string; payload_hash: string; uri: string;
-  expires_epoch: number | bigint; proposer: string; height: number; attestations?: unknown[];
-  [k: string]: unknown;
+// The shapes below are the node's handlers (compute-substrate src/api/mod.rs): proposal_get, all_proposals_by_domain
+// (RecentProposalsResp), domains_list (DomainsResp) and health (HealthResp).
+export interface RpcProposalRecord {
+  proposal_id: string; domain: string; payload_hash: string; uri: string; proposer: string;
+  created_height: number; created_epoch: number; fee: number | bigint; expires_epoch: number | bigint;
 }
+/** `/proposal/:id`. An unknown id answers `{ ok: false, err }`, which `proposal()` throws. */
+export interface RpcProposal { ok: boolean; proposal: RpcProposalRecord; err?: string }
+/** One row of `/proposals/:domain/:limit`; the feed names no proposer. */
+export interface RpcProposalItem {
+  proposal_id: string; txid: string; block_hash: string; height: number; time: number;
+  domain: string; payload_hash: string; uri: string; expires_epoch: number | bigint;
+}
+export interface RpcProposals { ok: boolean; tip: string; height: number; scanned_blocks: number; count: number; proposals: RpcProposalItem[] }
+export interface RpcDomain { domain: string; proposals: number; attestations: number }
+export interface RpcDomains { ok: boolean; tip: string; height: number; count: number; domains: RpcDomain[] }
 export interface RpcTxInfo { ok: boolean; txid: string; block_hash?: string; height?: number; time?: number; tx?: RpcTxJson; err?: string }
-export interface RpcHealth { ok: boolean; height?: number; peers?: number; mempool_len?: number; [k: string]: unknown }
+/** `ok` is false while a node task has stopped. The last three are null until known and absent on nodes before
+ *  overlay 0.1.7. */
+export interface RpcHealth {
+  ok: boolean; tip: string; height: number; chainwork: string; peer_count: number; known_peers: number;
+  mempool_tx_count: number; mempool_spent_outpoints: number; mempool_bytes: number;
+  mempool_min_feerate_ppm: number | null; mempool_max_feerate_ppm: number | null;
+  best_peer_height?: number | null; blocks_behind?: number | null; secs_since_tip_activity?: number | null;
+}
 export interface WaitForTxResult { txid: string; height: number; confirmations: number }
 
 export interface ClientOptions {
@@ -180,9 +198,9 @@ export class CsdClient {
   // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get — its
   // {ok:false} is a documented VALID "not yet in a block" state that waitForTx/verifyInputValues handle.)
   proposal(id: string): Promise<RpcProposal> { return this.getOk(`/proposal/${id}`); }
-  proposals(domain: string, limit = 40): Promise<RpcProposal[]> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
+  proposals(domain: string, limit = 40): Promise<RpcProposals> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
   topDomain(domain: string, epoch?: number): Promise<unknown> { return this.get(epoch == null ? `/top/${encodeURIComponent(domain)}` : `/top/${encodeURIComponent(domain)}/${epoch}`); }
-  domains(): Promise<string[]> { return this.get("/domains"); }
+  domains(): Promise<RpcDomains> { return this.get("/domains"); }
   mempool(): Promise<unknown> { return this.get("/mempool"); }
 
   /**

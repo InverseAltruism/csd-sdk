@@ -178,5 +178,20 @@ console.log("verifyInputValues badInput naming (M1):");
   }
 }
 
+console.log("the node's answer shapes (compute-substrate src/api/mod.rs; captured from a node 2026-10-24):");
+{
+  // /proposal/:id nests the record under `proposal`; a flat type made every consumer cast around it
+  const body = '{"ok":true,"proposal":{"created_epoch":3432,"created_height":102965,"domain":"cairnx:v1","expires_epoch":8432,"fee":25000000,"payload_hash":"0x2d66d8389fb07a331557aae1c80498f3db61d2f9b1267760c68e177488e9c626","proposal_id":"0xe4d15365d6e8e1aba6ee21c6abf9621336c17f9a220b80a8934c2778da323cb4","proposer":"0x3328969eecc36971148ef319d17d466b1289ed19","uri":"{\\"decimals\\":8,\\"mint\\":\\"issuer\\",\\"name\\":\\"Bitcoin Cash\\",\\"supply\\":\\"2100000000000000\\",\\"t\\":\\"deploy\\",\\"ticker\\":\\"BCH\\",\\"v\\":1}"}}';
+  const p = await mk(scripted(() => new Response(body))).proposal("0x" + "e4".repeat(32));
+  ok("proposal() types the nested record the node sends", p.proposal.domain === "cairnx:v1" && p.proposal.proposer === "0x3328969eecc36971148ef319d17d466b1289ed19"
+    && p.proposal.expires_epoch === 8432 && p.proposal.created_height === 102965);
+  const h = await mk(scripted(() => json({ ok: true, tip: "0x" + "0".repeat(64), height: 9, chainwork: "1", peer_count: 22, known_peers: 128,
+    mempool_tx_count: 2, mempool_spent_outpoints: 6, mempool_bytes: 1026, mempool_min_feerate_ppm: null, mempool_max_feerate_ppm: null,
+    best_peer_height: null, blocks_behind: null, secs_since_tip_activity: 1 }))).health();
+  ok("health() types peer_count and mempool_tx_count, the fields the node sends", h.peer_count + h.mempool_tx_count === 24 && h.best_peer_height === null);
+  const d = await mk(scripted(() => json({ ok: true, tip: "0x" + "0".repeat(64), height: 9, count: 1, domains: [{ domain: "cairnx:v1", proposals: 3, attestations: 4 }] }))).domains();
+  ok("domains() types the object the node sends", d.domains[0]?.domain === "cairnx:v1" && d.count === 1);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
