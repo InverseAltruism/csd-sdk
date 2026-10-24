@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.3
+
+- `provenOfferRefusal` refuses the two record-only activation gates it lacked. An offer anchored below
+  `ACTIVATION_HEIGHT` (29,860), where `resolve()` skips every event, is refused with "anchored before CairnX
+  activation (block 29860)"; a name offer anchored below `V11_HEIGHT` (29,960) with the resolver's own note "name
+  offers need v1.1". Before, a canonical name offer proven at 29,959 returned no refusal. Correction to 0.2.2: its
+  entry said `provenOfferRefusal` returns the resolver's note "for every rule that needs no chain state"; it covered
+  only the rules in `offerEnvelopeRefusal`, without these two.
+- The name-offer v1.1 rule moved from `applyOffer` into `offerEnvelopeRefusal`, after the rules already there, which
+  is where `applyOffer` checked it. New root export `beforeActivation(height)`, which `resolve()` reads to skip
+  events below `ACTIVATION_HEIGHT` and `provenOfferRefusal` reads to refuse them.
+- `resolve()` and canonical state are byte-identical to 0.2.2.
+
 ## 0.2.2
 
 - `verifyFillSpv` fails closed when any id `offerEventIds` returns cannot be proven: `provenEvent` throws,

@@ -11,11 +11,11 @@ import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import {
-  deploy, mint, offer, fclaim, requiredFillOutputs, resolve,
+  deploy, mint, offer, fclaim, nameClaim, nameRegFee, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
   bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms, provenOfferRefusal, parseRecord,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS,
-  V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
+  ACTIVATION_HEIGHT, V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
   TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
 } from "../src/index.js";
 import type { ChainEvent, ProvenEvent, ProvenPropose, FillSpvIo } from "../src/index.js";
@@ -460,6 +460,22 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
     const r = provenOfferRefusal(recOf(built), { ...tx, expiresEpoch: ee });
     ok(r !== null && r === noteOf(built, ee), `provenOfferRefusal: ${label} is refused with the resolver's note (${r})`);
   }
+  // the two activation gates (register row 110): a name offer below V11 and any offer below ACTIVATION_HEIGHT
+  const nameOffer = offer({ give: { name: "alice" }, want: { value: "500000000", payto: A } });
+  const preV11 = V11_HEIGHT - 1, preAct = ACTIVATION_HEIGHT - 1;
+  const atPre = (h: number) => ({ ...tx, height: h, expiresEpoch: epochOf(h) + 200 });
+  const rName = provenOfferRefusal(recOf(nameOffer), atPre(preV11));
+  ok(rName === "name offers need v1.1" && rName === resolve([PE(id("0e"), nameOffer, preV11, A, epochOf(preV11) + 200)], preV11 + 10).events.find((e) => e.id === id("0e"))?.note,
+    `provenOfferRefusal: a name offer at ${preV11} is refused with the resolver's note (${rName})`);
+  const rPre = provenOfferRefusal(recOf(honestRec), atPre(preAct));
+  ok(rPre !== null && resolve([PE(id("0e"), honestRec, preAct, A, epochOf(preAct) + 200)], preAct + 10).events.length === 0,
+    `provenOfferRefusal: an offer at ${preAct}, which resolve() skips, is refused (${rPre})`);
+  // honest path at the boundaries: an owned name offered at V11 and a CSD-priced offer at activation pass
+  const regV11 = PE(id("0d"), nameClaim({ name: "alice" }), V11_HEIGHT, A, epochOf(V11_HEIGHT) + 400, 0, { [TREASURY_ADDR]: nameRegFee("alice", V11_HEIGHT).toString() });
+  const atV11 = resolve([regV11, PE(id("0e"), nameOffer, V11_HEIGHT, A, epochOf(V11_HEIGHT) + 200, 1)], V11_HEIGHT + 10);
+  ok(atV11.offers[id("0e")]?.status === "open" && provenOfferRefusal(recOf(nameOffer), atPre(V11_HEIGHT)) === null,
+    "provenOfferRefusal: an owned name offered at V11, which resolve() admits, passes");
+  ok(provenOfferRefusal(recOf(honestRec), atPre(ACTIVATION_HEIGHT)) === null, "provenOfferRefusal: an offer at ACTIVATION_HEIGHT passes");
 }
 
 console.log(`cairnx-core verifyfill B4 (fill-SPV fund boundary): ${pass} passed`);

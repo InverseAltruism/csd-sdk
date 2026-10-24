@@ -9,7 +9,7 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { parseRecord } from "./records.js";
 import {
-  ACTIVATION_HEIGHT, TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, epochOf,
+  TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, beforeActivation, epochOf,
   type BalanceState, type BidState, type CairnXState, type ChainEvent, type NameState, type OfferState, type ProposeEvent,
   type TokenState,
 } from "./types.js";
@@ -63,7 +63,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   const applyPendingCancels = () => { for (const f of c.pendingCancels) f(); c.pendingCancels = []; };
 
   for (const ev of applied) {
-    if (ev.height < ACTIVATION_HEIGHT) continue;
+    if (beforeActivation(ev.height)) continue;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
     sweepExpired(ev.height);
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;

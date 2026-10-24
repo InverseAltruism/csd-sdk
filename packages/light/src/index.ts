@@ -25,7 +25,7 @@ import { expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 
 export { expectedBits, expectedBitsFromWindow, powOkMemo, workForBitsMemo } from "./lwma.js";
 export { tipHeaderPowOk, contenderPlausible, type ContenderPlausibleOpts } from "./route.js";
-export { bindBlockBody, type BlockBind, type BoundTx, type BoundTxBody, type UnprovenScriptSig } from "./bind.js";
+export { bindBlockBody, bindBlockTxs, type BlockBind, type BoundTx, type BoundTxBody, type UnprovenScriptSig } from "./bind.js";
 import { bindBlockTxs } from "./bind.js";
 
 /** Cumulative chainwork add, saturating at u128: matches the node's `chainwork.saturating_add` (A-S4). */

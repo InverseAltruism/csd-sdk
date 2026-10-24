@@ -32,7 +32,7 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 | csd-crypto | secp256k1 keygen/signDigest (low-S, RFC-6979)/verifyDigest (fail-closed), hash160 addresses, addrFromScriptPubkey (the node's address parser), buildScriptSig, authorOf (a tx's author: the owner of the coin input 0 spends, when the scriptSig is that owner's signature). Thin noble wrappers, no hand-rolled crypto. |
 | csd-tx | Tx builder: selectInputs (dedupe, unconfirmed-drop, 512 cap), buildSendVerified (takes a verifier such as csd-client verifyInputValues and computes change from the verified input total), buildProposeVerified/buildAttestVerified (DvP value outputs), the deprecated buildSend and unverified buildPropose/buildAttest, signTx, txToNodeJson, feeCap helpers. |
 | csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport, plus verifyInputValues (recomputes each input's source txid). Bodies parse with parseJsonExact by default (an integer above 2^53 stays an exact bigint). |
-| csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, bindBlockBody (the one block bind: exact parse, repeated-txid refusal, merkle compare to a verified header), syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted); tipHeaderPowOk and contenderPlausible, the checks before a non-primary RPC backend may win routing. |
+| csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, bindBlockBody (the one block bind: exact parse, repeated-txid refusal, merkle compare to a verified header; bindBlockTxs is the same bind over txs the caller already parsed exactly), syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted); tipHeaderPowOk and contenderPlausible, the checks before a non-primary RPC backend may win routing. |
 | csd-vectors | Golden conformance vectors from the node's frozen golden_vectors.rs + real on-chain data. Zero deps. |
 | cairnx-core (packages/cairnx) | `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 write-up) + portable vectors + replay-hashes. Modules below. |
 | cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
@@ -51,7 +51,7 @@ cairnx-core modules (`packages/cairnx/src/`):
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
 - `fillclosed.ts`: whether a buyer's proven fill closed the offer behind its fclaim hold.
 - `holdcount.ts`: countOtherHoldsAtGrant, the buyer's other live holds at an fclaim's grant (verifyFillSpv's cap input).
-- `admission.ts`: provenOfferRefusal, the admission check for a merkle-proven offer Propose (domain plus the resolver's stateless offer rules).
+- `admission.ts`: provenOfferRefusal, the admission check for a merkle-proven offer Propose (domain, the activation height, and the resolver's stateless offer rules, each read from its resolver home).
 
 `conformance/`: cairnx_ref.py + siwc_ref.py (independent Python oracles, written from spec, kept independent), crosscheck*.mjs, fuzz-resolve.mjs, per-gate v2x-*-crosslang.mjs, and the report-only audit tooling: invariants.mjs (7 ledger-soundness invariants), money-safety.mjs (anchored-then-rejected burn detector), race-harness.mjs (adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1), AUDIT.md (method doc).
 
@@ -110,11 +110,12 @@ Packaging (enforced by `scripts/check-lockstep.mjs`):
 
 Publishing:
 
-- pnpm publish, never npm publish. Every package's prepublishOnly runs `scripts/publish-guard.mjs`, which refuses a non-pnpm client (raw npm once shipped unresolved `workspace:*`).
-- Every package's prepack runs its build, so a packed tarball carries a dist built from the tree. pnpm runs prepublishOnly before prepack, so the guard's tests see the dist that existed; the dist-freshness leg covers that gap.
+- A window publishes through `scripts/npm-window.mjs`, never by hand. Check mode (the default) lists every workspace version not yet on npm, dependencies first, packs each with `pnpm pack` (prepack builds dist/), runs the publish guard on each (`pnpm run prepublishOnly`: lockstep, the package suite, test:crosslang for cairnx-core) and `scripts/verify-tarball.mjs` on each tarball (the manifest is the tree's with `workspace:*` resolved to the workspace versions, every other file is the tree's, dist/ is the tree's build), and writes SHA1SUMS and SHA256SUMS. `--out <dir> --run --token-file <path>` also needs a clean tree whose HEAD is on a remote branch and a typed `publish`, then runs `npm publish <tgz>` per package and compares each registry `dist.shasum` and `dist.integrity` with the tarball (`test/npm-window.test.ts`).
+- `npm publish <tgz>` runs no package hook, so the prepublishOnly guard does not run on the window path; the script runs it. As a hook, `scripts/publish-guard.mjs` covers a publish from a package directory and refuses a non-pnpm client there (raw npm once shipped unresolved `workspace:*`).
+- Every package's prepack runs its build, so a packed tarball carries a dist built from the tree.
 - Independent versioning (strict lockstep deliberately abandoned; do not re-litigate): bump the packages you changed and every workspace package that depends on them, because a published version keeps the exact pins it shipped with. Numbers need not match.
 - Consumers pin exact versions; a lockfile never resolves two different csd-codec copies (sign with one encoding, verify with another).
-- npm tokens are not stored: a maintainer supplies a one-time token per publish (temp gitignored .npmrc, deleted and revoked immediately; redact npm_* in any output).
+- npm tokens are not stored: the maintainer supplies a one-time token per window in a mode-600 file outside the repo; the window script copies it into a userconfig in a private temporary directory, passes npm only that path, redacts it from npm's output and removes the userconfig on exit. The maintainer deletes the file and revokes the token after the window.
 - Do not republish for docs alone; docs changes ride the next real release.
 
 ## How we work (contributor ground rules)
@@ -123,7 +124,7 @@ Publishing:
 2. Security fixes must not regress UX (no hot-path latency or declines; warn over hard-block).
 3. No em dashes in any doc; `grep -cP '\x{2014}' <file>` must print 0 before committing (`pnpm check:dashes-paths` checks every tracked doc in CI).
 4. Run `pnpm run audit:all` before merging any change to packages/cairnx/src/* or a new gate. test:crosslang only proves the two implementations agree; they can agree and both be unsound.
-5. Releases are maintainer-only: tags and `pnpm publish` happen on maintainer say-so, never speculatively.
+5. Releases are maintainer-only: tags and npm windows happen on maintainer say-so, never speculatively.
 
 ## Dev workflow
 
@@ -139,6 +140,7 @@ pnpm test:live                   # needs CSD_RPC: the oracle and the client and 
 pnpm test:crosslang              # full JS<->Python differential: the fork gate
 pnpm run audit:all               # check-consensus-citations (hard) + invariants + money-safety + race harness
 node scripts/check-lockstep.mjs
+node scripts/npm-window.mjs            # the npm window in check mode: pack, guard, verify-tarball; publishes nothing
 node scripts/check-consumer-pins.mjs   # cross-repo pin coherence; expects sibling consumer
                                        # checkouts under the same parent dir, skips absent ones
 ```
@@ -178,7 +180,7 @@ Consensus-touching checklist (CONSENSUS_CHANGES.md):
 1. Land with golden vectors.
 2. Bump changed packages and their workspace dependents.
 3. Add a CONSENSUS_CHANGES entry describing exactly what bytes or math changed.
-4. Run the full suite against a live node, then `pnpm publish` per package, dependencies before dependents (one-time maintainer token).
+4. Run the full suite against a live node, then the npm window (`node scripts/npm-window.mjs`, check mode first; one-time maintainer token).
 
 For a new gate or fee tier follow the V28+ rollout checklist. Vendored consumers (cairn website bundle, wallet SPV bundle) carry PROVENANCE.json regenerated by their own check-vendor-fresh.mjs --write; their CI is red between a core merge here and their re-vendor commit, so land re-vendors promptly.
 
