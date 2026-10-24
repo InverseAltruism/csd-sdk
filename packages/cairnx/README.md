@@ -316,7 +316,7 @@ is a silent chain fork, the exact bug class the shared-core de-dup (`cairn/docs/
 **To make a consensus change:** edit `src/` here **and** `conformance/cairnx_ref.py`; add a height-gated
 `V*_HEIGHT` (never reinterpret history) + a vector; `pnpm build && pnpm test && pnpm test:crosslang`
 (all green); **bump the version** (`node scripts/check-lockstep.mjs` fails until you do: it compares the
-published tarball of the current version with this build); `pnpm publish`; **rebuild + recommit
+published tarball of the current version with this build); the npm window (`node scripts/npm-window.mjs`); **rebuild + recommit
 the two vendored bundles**; re-pin every consumer and deploy them **between** activation heights, not
 across one (below the gate the output is byte-identical, so the rollout is fork-free).
 

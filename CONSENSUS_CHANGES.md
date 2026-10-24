@@ -669,7 +669,7 @@ mechanical refresh. In order:
    DELIBERATELY_UNBOUND_WITH_REASON - classify it in the SAME change. This is the executable
    tripwire against the 2026-07-19 theme (a served field nothing binds and nobody decided about:
    the W1/W2/W3/W7/W10 class).
-3. Bump `packages/cairnx` version, `pnpm -r build`, `pnpm publish` (publish-guard enforces pnpm).
+3. Bump `packages/cairnx` version, `pnpm -r build`, then the npm window `node scripts/npm-window.mjs` (it runs the publish guard and verify-tarball on each tarball).
 4. Re-pin the npm consumers: cairnx svc + cairn-sdk package.json, `node scripts/check-consumer-pins.mjs`,
    reinstall, restart the cairnx service off-peak (never during a gate crossing).
 5. Re-vendor the bundled consumers: wallet `bash scripts/build-spv-vendor.sh` +

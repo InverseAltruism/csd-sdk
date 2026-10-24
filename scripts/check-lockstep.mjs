@@ -15,18 +15,14 @@
 // not yet on npm: publish-guard runs this script and the package tests before prepack rebuilds, so
 // those tests run on the dist that exists. Cross-package byte-identity is enforced separately by the conformance job,
 // CI's "REAL lockstep guard". Exits 1 with a report on violation.
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { integrityOk, untar, diffDist } from "./published-dist.mjs";
+import { registryVersion, workspacePackages } from "./workspace.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const pkgsDir = join(root, "packages");
-const pkgs = readdirSync(pkgsDir)
-  .map((d) => {
-    try { return Object.assign(JSON.parse(readFileSync(join(pkgsDir, d, "package.json"), "utf8")), { __dir: d }); }
-    catch { return null; }
-  })
-  .filter(Boolean);
+const pkgs = workspacePackages(root);
 
 const errors = [];
 
@@ -72,10 +68,9 @@ for (const p of pkgs) {
 // without a crypto bump, so consumers resolved two codecs while every check above passed.
 const workspaceVersion = new Map(pkgs.map((p) => [p.name, p.version]));
 await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
-  const res = await fetch(`https://registry.npmjs.org/${p.name.replace("/", "%2f")}/${p.version}`);
-  if (res.status === 404) return; // not published yet: pnpm pins the current workspace versions at publish
-  if (!res.ok) { errors.push(`${p.name}@${p.version}: npm registry returned HTTP ${res.status}`); return; }
-  const meta = await res.json();
+  const { status, meta } = await registryVersion(p.name, p.version);
+  if (status === 404) return; // not published yet: pnpm pins the current workspace versions at publish
+  if (status !== 200) { errors.push(`${p.name}@${p.version}: npm registry returned HTTP ${status}`); return; }
   for (const [dep, pinned] of Object.entries(meta.dependencies ?? {})) {
     const current = workspaceVersion.get(dep);
     if (current !== undefined && pinned !== current) {
