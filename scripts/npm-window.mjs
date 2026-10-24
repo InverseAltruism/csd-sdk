@@ -8,7 +8,7 @@
 //       suite, test:crosslang for cairnx-core) and verify-tarball.mjs on the packed tarball; SHA1SUMS and
 //       SHA256SUMS. Without --out the tarballs go to a temporary directory that is removed.
 //   node scripts/npm-window.mjs --out <dir> --run --token-file <path>
-//       the same checks, which must all pass, on a clean tree whose HEAD is on a remote branch; then a typed
+//       the same checks, which must all pass, on a clean tree whose HEAD is on origin/master; then a typed
 //       confirmation, `npm whoami`, `npm publish <tgz>` per package in order, and each registry dist.shasum and
 //       dist.integrity compared with the tarball. <dir> must be new or empty; it keeps the tarballs and the logs.
 // The token file is the owner's one-time token, a file of mode 600 owned by the caller. Its content is copied into
@@ -135,11 +135,85 @@ export async function publishWindow(o) {
   return { ok: failures.length === 0, published, failures };
 }
 
-/** @param {string} cmd @param {string[]} args @param {string} cwd */
+/** @typedef {(cmd: string, args: string[], cwd: string) => { ok: boolean, out: string }} Sh */
+
+/** @type {Sh} */
 const sh = (cmd, args, cwd) => {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 };
+
+/**
+ * Whether HEAD is reachable from origin/master as last fetched: the release ships merged code only, so a pushed topic
+ * branch does not qualify.
+ * @param {string} root
+ * @param {Sh} [run]
+ */
+export function headOnOriginMaster(root, run = sh) {
+  return run("git", ["merge-base", "--is-ancestor", "HEAD", "origin/master"], root).ok;
+}
+
+/**
+ * Every check of a window, logged, in order: the tree and HEAD, the plan, then per package pack, publish guard and
+ * verify-tarball on the packed bytes. A failed check is logged and returned in `fails`; the caller refuses on any.
+ * `sh`, `registry`, `verify` and `env` default to the real ones; a test stands in for them.
+ * @param {{ root: string, out: string, run: boolean, log: (line: string) => void, sh?: Sh, registry?: RegistryRead,
+ *   verify?: typeof verifyTarball, env?: Record<string, string | undefined> }} o
+ * @returns {Promise<{ fails: string[], order: any[], tarballs: Tarball[] }>}
+ */
+export async function checkWindow(o) {
+  const { root, out, log } = o;
+  const exec = o.sh ?? sh;
+  const registry = o.registry ?? registryVersion;
+  const verify = o.verify ?? verifyTarball;
+  /** @type {string[]} */
+  const fails = [];
+  /** @type {Tarball[]} */
+  const tarballs = [];
+  const chk = (/** @type {string} */ what, /** @type {boolean} */ c, detail = "") => {
+    log(`  ${c ? "pass" : "FAIL"}: ${what}`); if (!c) { fails.push(what); if (detail) log(detail.trimEnd().split("\n").slice(-20).map((l) => `    ${l}`).join("\n")); }
+  };
+  log(`== npm window ${o.run ? "run" : "check"} at ${exec("git", ["rev-parse", "--short", "HEAD"], root).out.trim()} (${new Date().toISOString()})`);
+  chk("the tree has no local change", exec("git", ["status", "--porcelain"], root).out.trim() === "");
+  chk("HEAD is on origin/master", headOnOriginMaster(root, exec));
+  chk("CSD_PUBLISH_SKIP_TESTS is not set (the guard runs the suites)", (o.env ?? process.env).CSD_PUBLISH_SKIP_TESTS === undefined);
+
+  log("\n== plan");
+  /** @type {any[]} */
+  const todo = [];
+  for (const p of workspacePackages(root).filter((x) => !x.private)) {
+    const { status } = await registry(p.name, p.version);
+    if (status === 404) todo.push(p);
+    else chk(`${p.name}@${p.version} is already on npm (registry HTTP ${status})`, status === 200);
+  }
+  const order = publishOrder(todo);
+  if (!order.length) { log("  nothing to publish: every workspace version is on npm"); return { fails, order, tarballs }; }
+  for (const p of order) log(`  ${p.name}@${p.version}`);
+
+  log("\n== pack, guard, verify");
+  const versions = workspaceVersions(root);
+  for (const p of order) {
+    const dir = join(root, "packages", p.__dir);
+    const file = join(out, `${p.name.replace("@", "").replace("/", "-")}-${p.version}.tgz`);
+    const packed = exec("pnpm", ["pack", "--pack-destination", out], dir);
+    chk(`${p.name}: pnpm pack`, packed.ok && existsSync(file), packed.out);
+    tarballs.push({ name: p.name, version: p.version, path: file });
+  }
+  for (const p of order) {
+    const g = exec("pnpm", ["run", "prepublishOnly"], join(root, "packages", p.__dir));
+    chk(`${p.name}: publish guard (lockstep, tests${p.name.endsWith("/cairnx-core") ? ", test:crosslang" : ""})`, g.ok, g.out);
+  }
+  for (const [i, p] of order.entries()) {
+    const tb = tarballs[i];
+    if (!tb || !existsSync(tb.path)) continue;
+    const v = verify(new Uint8Array(readFileSync(tb.path)), join(root, "packages", p.__dir), versions);
+    chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
+  }
+  const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => existsSync(tb.path))
+    .map((tb) => `${sha(alg, new Uint8Array(readFileSync(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");
+  writeFileSync(join(out, "SHA1SUMS"), sums("sha1")); writeFileSync(join(out, "SHA256SUMS"), sums("sha256"));
+  return { fails, order, tarballs };
+}
 
 async function main() {
   const a = process.argv.slice(2);
@@ -159,53 +233,9 @@ async function main() {
   } else out = mkdtempSync(join(tmpdir(), "csd-npm-window-check-"));
   const logFile = join(out, "window.log");
   const log = (/** @type {string} */ s) => { console.log(s); if (keep) appendFileSync(logFile, `${s}\n`); };
-  /** @type {string[]} */
-  const fails = [];
-  const chk = (/** @type {string} */ what, /** @type {boolean} */ c, detail = "") => {
-    log(`  ${c ? "pass" : "FAIL"}: ${what}`); if (!c) { fails.push(what); if (detail) log(detail.trimEnd().split("\n").slice(-20).map((l) => `    ${l}`).join("\n")); }
-  };
   try {
-    log(`== npm window ${run ? "run" : "check"} at ${sh("git", ["rev-parse", "--short", "HEAD"], root).out.trim()} (${new Date().toISOString()})`);
-    chk("the tree has no local change", sh("git", ["status", "--porcelain"], root).out.trim() === "");
-    chk("HEAD is on a remote branch", sh("git", ["branch", "-r", "--contains", "HEAD"], root).out.trim() !== "");
-    chk("CSD_PUBLISH_SKIP_TESTS is not set (the guard runs the suites)", process.env.CSD_PUBLISH_SKIP_TESTS === undefined);
-
-    log("\n== plan");
-    /** @type {any[]} */
-    const todo = [];
-    for (const p of workspacePackages(root).filter((x) => !x.private)) {
-      const { status } = await registryVersion(p.name, p.version);
-      if (status === 404) todo.push(p);
-      else chk(`${p.name}@${p.version} is already on npm (registry HTTP ${status})`, status === 200);
-    }
-    const order = publishOrder(todo);
-    if (!order.length) { log("  nothing to publish: every workspace version is on npm"); return fails.length ? 1 : 0; }
-    for (const p of order) log(`  ${p.name}@${p.version}`);
-
-    log("\n== pack, guard, verify");
-    /** @type {Tarball[]} */
-    const tarballs = [];
-    const versions = workspaceVersions(root);
-    for (const p of order) {
-      const dir = join(root, "packages", p.__dir);
-      const file = join(out, `${p.name.replace("@", "").replace("/", "-")}-${p.version}.tgz`);
-      const packed = sh("pnpm", ["pack", "--pack-destination", out], dir);
-      chk(`${p.name}: pnpm pack`, packed.ok && existsSync(file), packed.out);
-      tarballs.push({ name: p.name, version: p.version, path: file });
-    }
-    for (const p of order) {
-      const g = sh("pnpm", ["run", "prepublishOnly"], join(root, "packages", p.__dir));
-      chk(`${p.name}: publish guard (lockstep, tests${p.name.endsWith("/cairnx-core") ? ", test:crosslang" : ""})`, g.ok, g.out);
-    }
-    for (const [i, p] of order.entries()) {
-      const tb = tarballs[i];
-      if (!tb || !existsSync(tb.path)) continue;
-      const v = verifyTarball(new Uint8Array(readFileSync(tb.path)), join(root, "packages", p.__dir), versions);
-      chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
-    }
-    const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => existsSync(tb.path))
-      .map((tb) => `${sha(alg, new Uint8Array(readFileSync(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");
-    writeFileSync(join(out, "SHA1SUMS"), sums("sha1")); writeFileSync(join(out, "SHA256SUMS"), sums("sha256"));
+    const { fails, order, tarballs } = await checkWindow({ root, out, run, log });
+    if (!order.length) return fails.length ? 1 : 0;
 
     if (!run || fails.length) {
       log(`\n${fails.length ? `REFUSED: ${fails.length} check(s) failed: ${fails.join("; ")}` : "check: every step passed"}${run ? "; nothing was published" : " (check mode, nothing published)"}`);

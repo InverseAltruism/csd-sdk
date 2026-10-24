@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
-import { publishWindow } from "../scripts/npm-window.mjs";
+import { checkWindow, headOnOriginMaster, publishWindow } from "../scripts/npm-window.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -52,6 +52,50 @@ console.log("verify-tarball on the bytes the window publishes:");
     writeFileSync(join(d, "package.json"), JSON.stringify(m, null, 2));
   });
   ok("a script the tree does not declare is refused", hook.some((f) => /script "postinstall"/.test(f)), hook.join("; "));
+}
+
+console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
+{
+  const CRYPTO = "@inversealtruism/csd-crypto";
+  const window = async (o: { guard?: boolean; onMaster?: boolean; verify?: typeof verifyTarball } = {}) => {
+    const out = mkdtempSync(join(work, "win-"));
+    const sh = (cmd: string, args: string[], cwd: string) => {
+      if (cmd === "git") return { ok: args[0] === "merge-base" ? (o.onMaster ?? true) : true, out: "" };
+      if (args[0] === "run" && args[1] === "prepublishOnly") return { ok: o.guard ?? true, out: "stand-in publish guard" };
+      if (args[0] === "pack") {
+        try { execFileSync(cmd, args, { cwd, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" }); return { ok: true, out: "" }; }
+        catch (e) { return { ok: false, out: String(e) }; }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    };
+    const registry = async (name: string) => ({ status: name === CRYPTO ? 404 : 200, meta: null });
+    const lines: string[] = [];
+    const r = await checkWindow({ root, out, run: false, log: (l) => lines.push(l), sh, registry, verify: o.verify ?? verifyTarball, env: {} });
+    return { ...r, lines: lines.join("\n") };
+  };
+
+  const honest = await window();
+  ok("honest: csd-crypto is the one package to publish and every check passes", honest.fails.length === 0 && honest.order.map((p) => p.name).join() === CRYPTO && honest.tarballs.every((t) => existsSync(t.path)), honest.fails.join("; "));
+  const guard = await window({ guard: false });
+  ok("a failing publish guard fails the window, and nothing else does", guard.fails.length === 1 && /publish guard/.test(guard.fails[0]!), guard.fails.join("; "));
+  const verify = await window({ verify: () => ["dist/index.js differs from the local build"] });
+  ok("a failing verify-tarball fails the window, and nothing else does", verify.fails.length === 1 && /verify-tarball/.test(verify.fails[0]!), verify.fails.join("; "));
+  const off = await window({ onMaster: false });
+  ok("a HEAD that is not on origin/master fails the window, and nothing else does", off.fails.length === 1 && /origin\/master/.test(off.fails[0]!), off.fails.join("; "));
+}
+
+console.log("HEAD on origin/master (real git):");
+{
+  const repo = mkdtempSync(join(work, "repo-"));
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" });
+  git("init", "-q", "-b", "master");
+  git("commit", "-q", "--allow-empty", "-m", "merged");
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
+  ok("a commit that is origin/master passes", headOnOriginMaster(repo));
+  git("checkout", "-q", "-b", "topic");
+  git("commit", "-q", "--allow-empty", "-m", "unmerged");
+  git("update-ref", "refs/remotes/origin/topic", "HEAD");
+  ok("a commit pushed on a topic branch, not merged, is refused", !headOnOriginMaster(repo) && git("branch", "-r", "--contains", "HEAD").trim() !== "");
 }
 
 console.log("publish step (stand-in npm and registry):");
