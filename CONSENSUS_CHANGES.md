@@ -57,6 +57,18 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.3 (2026-10-24, Plan 85 23.1; unreleased, npm window 5; no consensus-surface change) - the admission check's two activation gates
+
+`provenOfferRefusal` refuses an offer anchored below `ACTIVATION_HEIGHT` (29,860) and a name offer anchored below
+`V11_HEIGHT` (29,960), the two record-only rules it lacked (client-side; `resolve()` does not call it). Each rule has
+one home that both read: the new export `beforeActivation(height)` (`src/types.ts`), which the replay loop in
+`src/resolve.ts` calls in place of its `ev.height < ACTIVATION_HEIGHT` compare, and `offerEnvelopeRefusal`
+(`src/resolve/market.ts`), which now ends with the name-offer v1.1 rule that `applyOffer` checked right after calling
+it, with the same note. No state change sits between the two, so the first refusal note is unchanged for every
+record: the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byte-identical, and an
+old-against-new `resolve()` comparison over 3,500 offer records at heights 29,858 to 41,302 (every gate from
+activation to V22, plus or minus two blocks; full output and canonical state) differed on none.
+
 ## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
 
 csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
@@ -226,12 +238,12 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :182 offer, :77 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
 shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :146:
+`packages/cairnx/src/resolve/market.ts` :145:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
 
