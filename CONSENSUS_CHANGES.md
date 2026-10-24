@@ -76,7 +76,9 @@ returns `{ ok, proposal: RpcProposalRecord }` (`proposal_get`; the record carrie
 (`DomainsResp`) instead of `string[]`, and `RpcHealth` lists `HealthResp`'s fields (`peer_count` and
 `mempool_tx_count`; `peers` and `mempool_len` never existed). Types only: the requests and the parse are unchanged,
 so code that cast around the old types keeps working, and code that read the old field names compiled against
-fields the node never sent. csd-light bumps as a dependent of csd-client.
+fields the node never sent. csd-light bumps as a dependent of csd-client and exports `bindBlockTxs`, the block bind
+`bindBlockBody` and `verifyTxInclusion` already run, for a caller that parses the body with its own exact parser;
+no behaviour change.
 
 ## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
 

@@ -9,8 +9,8 @@
 // is REJECTED — the re-derived id no longer matches the requested txid nor folds to the PoW-verified
 // root. The companion assertion shows the OLD server-reported-txid fold STILL succeeds on that same
 // forged block, so the re-derivation is exactly what closes the hole.
-import { LightClient, bindBlockBody } from "../src/index.js";
-import { rpcTxToTx, type RpcTxJson } from "@inversealtruism/csd-client";
+import { LightClient, bindBlockBody, bindBlockTxs } from "../src/index.js";
+import { parseJsonExact, rpcTxToTx, type RpcTxJson } from "@inversealtruism/csd-client";
 import { txid as codecTxid, merkleRoot, merkleBranch, verifyMerkleProof, type BlockHeader } from "@inversealtruism/csd-codec";
 
 let pass = 0, fail = 0;
@@ -138,6 +138,10 @@ console.log("the block bind: repeated txid and exact u64");
   const honest = bindBlockBody(text([coinbase, bigTx]), verifiedBig);
   ok("bindBlockBody: an honest body with a u64 above 2^53 binds, txids in block order",
     honest.ok && honest.txs.map((t) => t.txid).join() === [coinbaseId, bigId].join() && honest.txs[1]!.pos === 1);
+  // the parsed entry, for a caller that reads the body with its own exact parser (the wallet)
+  const parsed = bindBlockTxs((parseJsonExact(text([coinbase, bigTx])) as { txs: unknown }).txs, verifiedBig);
+  ok("bindBlockTxs: the parsed body binds as the text entry does",
+    parsed.ok && honest.ok && parsed.txs.map((t) => t.txid).join() === honest.txs.map((t) => t.txid).join());
   const { app: _dropped, ...coinbaseNoApp } = coinbase;
   ok("bindBlockBody: a tx served without app binds as app None", bindBlockBody(text([coinbaseNoApp as RpcTxJson, bigTx]), verifiedBig).ok);
   const rep = bindBlockBody(text([coinbase, proposeGenuine, attest, attest]), verified3);
