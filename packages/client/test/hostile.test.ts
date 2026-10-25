@@ -4,7 +4,7 @@
 // never submit), the readCapped byte ceiling (content-length up-front, mid-stream abort, and the
 // UTF-16-vs-bytes fallback subtlety), waitForTx's reorg/stale-sighting discipline, and
 // verifyInputValues fail-closed behavior on forged/unreachable sources.
-import { CsdClient, verifyInputValues } from "../src/index.js";
+import { CsdClient, verifyInputValues, type RpcHealth } from "../src/index.js";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -189,6 +189,13 @@ console.log("the node's answer shapes (compute-substrate src/api/mod.rs; capture
     mempool_tx_count: 2, mempool_spent_outpoints: 6, mempool_bytes: 1026, mempool_min_feerate_ppm: null, mempool_max_feerate_ppm: null,
     best_peer_height: null, blocks_behind: null, secs_since_tip_activity: 1 }))).health();
   ok("health() types peer_count and mempool_tx_count, the fields the node sends", h.peer_count + h.mempool_tx_count === 24 && h.best_peer_height === null);
+  // the node's feerate fields are Option<u64>; the default parser keeps an integer above 2^53 exact as a bigint
+  const raw = (min: string, max: string) => `{"ok":true,"tip":"0x${"0".repeat(64)}","height":9,"chainwork":"1","peer_count":1,"known_peers":1,"mempool_tx_count":1,"mempool_spent_outpoints":1,"mempool_bytes":1,"mempool_min_feerate_ppm":${min},"mempool_max_feerate_ppm":${max}}`;
+  const big: RpcHealth["mempool_max_feerate_ppm"] = (await mk(scripted(() => new Response(raw("1", "10000000000000000")))).health()).mempool_max_feerate_ppm;
+  const small = await mk(scripted(() => new Response(raw("1", "250")))).health();
+  const none = await mk(scripted(() => new Response(raw("null", "null")))).health();
+  ok("health() keeps a feerate above 2^53 as an exact bigint, a normal one as a number, an unknown one as null",
+    big === 10000000000000000n && small.mempool_min_feerate_ppm === 1 && small.mempool_max_feerate_ppm === 250 && none.mempool_min_feerate_ppm === null && none.mempool_max_feerate_ppm === null);
   const d = await mk(scripted(() => json({ ok: true, tip: "0x" + "0".repeat(64), height: 9, count: 1, domains: [{ domain: "cairnx:v1", proposals: 3, attestations: 4 }] }))).domains();
   ok("domains() types the object the node sends", d.domains[0]?.domain === "cairnx:v1" && d.count === 1);
 }

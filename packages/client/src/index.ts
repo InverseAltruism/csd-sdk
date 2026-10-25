@@ -43,7 +43,7 @@ export interface RpcTxInfo { ok: boolean; txid: string; block_hash?: string; hei
 export interface RpcHealth {
   ok: boolean; tip: string; height: number; chainwork: string; peer_count: number; known_peers: number;
   mempool_tx_count: number; mempool_spent_outpoints: number; mempool_bytes: number;
-  mempool_min_feerate_ppm: number | null; mempool_max_feerate_ppm: number | null;
+  mempool_min_feerate_ppm: number | bigint | null; mempool_max_feerate_ppm: number | bigint | null;
   best_peer_height?: number | null; blocks_behind?: number | null; secs_since_tip_activity?: number | null;
 }
 export interface WaitForTxResult { txid: string; height: number; confirmations: number }
