@@ -18,20 +18,24 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { integrityOk } from "./published-dist.mjs";
 import { verifyTarball, workspaceVersions } from "./verify-tarball.mjs";
 import { registryVersion, workspacePackages } from "./workspace.mjs";
 
 const USAGE = `usage: node scripts/npm-window.mjs [--out <dir>]
        node scripts/npm-window.mjs --out <dir> --run --token-file <path>`;
 
-/** @typedef {{ name: string, version: string, path: string }} Tarball */
+/**
+ * `sha1` and `integrity` (sha512 SRI) are the digests of the bytes verify-tarball checked; publishWindow publishes
+ * only bytes that match them.
+ * @typedef {{ name: string, version: string, path: string, sha1?: string, integrity?: string }} Tarball
+ */
 /** @typedef {(name: string, version: string) => Promise<{ status: number, meta: any }>} RegistryRead */
 
 const sha = (/** @type {string} */ alg, /** @type {Uint8Array} */ b) => createHash(alg).update(b).digest("hex");
+const sriOf = (/** @type {Uint8Array} */ b) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
 
 /**
  * Packages in an order where each comes after the workspace packages it depends on; ties by name.
@@ -72,6 +76,8 @@ export function readTokenFile(path) {
 /**
  * Publish checked tarballs with a one-time token and compare each registry entry with the tarball. Every step after
  * the confirmation is logged; a publish failure stops the rest. The userconfig is removed on every exit path.
+ * Each tarball is copied into the private directory and checked against the digests recorded at verification before
+ * any npm call; npm publishes that copy, and the registry is compared with the recorded digests, never the path.
  * @param {{ tarballs: Tarball[], tokenFile: string, confirm: (question: string) => Promise<string>,
  *   log: (line: string) => void, npm?: string, registry?: RegistryRead, waitMs?: number, pollMs?: number }} o
  * @returns {Promise<{ ok: boolean, published: string[], failures: string[] }>}
@@ -90,6 +96,7 @@ export async function publishWindow(o) {
 
   const dir = mkdtempSync(join(tmpdir(), "csd-npm-window-"));
   const rc = join(dir, "npmrc");
+  const staged = tarballs.map((tb, i) => join(dir, `${i}-${basename(tb.path)}`));
   // npm reads npm_config_* from the environment (pnpm sets several when it runs a script); none may steer this run
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^npm_config_/i.test(k)));
   const run = (/** @type {string[]} */ args) => {
@@ -102,13 +109,27 @@ export async function publishWindow(o) {
   };
   const onSignal = () => { scrub(); process.exit(130); };
   process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
+  /** @param {number} i the refusal when the bytes at staged[i] are not the verified ones, or "" */
+  const drift = (i) => {
+    const tb = /** @type {Tarball} */ (tarballs[i]);
+    const b = new Uint8Array(readFileSync(/** @type {string} */ (staged[i])));
+    return sha("sha1", b) === tb.sha1 && sriOf(b) === tb.integrity ? "" : `${tb.name}@${tb.version}: the tarball is not the bytes that were verified; nothing was published`;
+  };
   try {
+    for (const [i, tb] of tarballs.entries()) {
+      if (!tb.sha1 || !tb.integrity) return { ok: false, published, failures: [`${tb.name}@${tb.version}: no digest was recorded at verification; nothing was published`] };
+      writeFileSync(/** @type {string} */ (staged[i]), readFileSync(tb.path), { mode: 0o600 });
+      const d = drift(i);
+      if (d) return { ok: false, published, failures: [d] };
+    }
     writeFileSync(rc, `registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=${t.token}\n`, { mode: 0o600 });
     const who = run(["whoami"]);
     log(`npm whoami: ${who.text}`);
     if (!who.ok) return { ok: false, published, failures: ["npm whoami failed; nothing was published"] };
-    for (const tb of tarballs) {
-      const r = run(["publish", tb.path, "--access", "public", "--ignore-scripts"]);
+    for (const [i, tb] of tarballs.entries()) {
+      const d = drift(i);
+      if (d) { failures.push(d); break; }
+      const r = run(["publish", /** @type {string} */ (staged[i]), "--access", "public", "--ignore-scripts"]);
       log(`${new Date().toISOString()} publish ${tb.name}@${tb.version} exit ${r.ok ? 0 : 1} ${r.text.split("\n").at(-1) ?? ""}`);
       if (!r.ok) { failures.push(`npm publish ${tb.name}@${tb.version} failed: ${r.text}`); break; }
       published.push(`${tb.name}@${tb.version}`);
@@ -122,13 +143,12 @@ export async function publishWindow(o) {
 
   const waitMs = o.waitMs ?? 600_000, pollMs = o.pollMs ?? 15_000;
   for (const tb of tarballs.slice(0, published.length)) {
-    const bytes = new Uint8Array(readFileSync(tb.path));
-    const local = sha("sha1", bytes);
+    const local = /** @type {string} */ (tb.sha1);
     const end = Date.now() + waitMs;
     let got = await registry(tb.name, tb.version);
     while (got.status !== 200 && Date.now() < end) { await new Promise((r) => setTimeout(r, pollMs)); got = await registry(tb.name, tb.version); }
     if (got.status !== 200) { failures.push(`${tb.name}@${tb.version}: not on the registry after ${waitMs / 1000} s (HTTP ${got.status})`); continue; }
-    const match = got.meta?.dist?.shasum === local && integrityOk(bytes, got.meta?.dist?.integrity);
+    const match = got.meta?.dist?.shasum === local && got.meta?.dist?.integrity === tb.integrity;
     log(`${tb.name}@${tb.version} registry ${got.meta?.dist?.shasum} local ${local} ${match ? "MATCH" : "MISMATCH"}`);
     if (!match) failures.push(`${tb.name}@${tb.version}: the registry entry is not the packed tarball`);
   }
@@ -203,14 +223,19 @@ export async function checkWindow(o) {
     const g = exec("pnpm", ["run", "prepublishOnly"], join(root, "packages", p.__dir));
     chk(`${p.name}: publish guard (lockstep, tests${p.name.endsWith("/cairnx-core") ? ", test:crosslang" : ""})`, g.ok, g.out);
   }
+  /** @type {Map<string, Uint8Array>} the bytes each verification read, the only source of the digests */
+  const verified = new Map();
   for (const [i, p] of order.entries()) {
     const tb = tarballs[i];
     if (!tb || !existsSync(tb.path)) continue;
-    const v = verify(new Uint8Array(readFileSync(tb.path)), join(root, "packages", p.__dir), versions);
+    const bytes = new Uint8Array(readFileSync(tb.path));
+    const v = verify(bytes, join(root, "packages", p.__dir), versions);
     chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
+    tb.sha1 = sha("sha1", bytes); tb.integrity = sriOf(bytes);
+    verified.set(tb.path, bytes);
   }
-  const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => existsSync(tb.path))
-    .map((tb) => `${sha(alg, new Uint8Array(readFileSync(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");
+  const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => verified.has(tb.path))
+    .map((tb) => `${sha(alg, /** @type {Uint8Array} */ (verified.get(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");
   writeFileSync(join(out, "SHA1SUMS"), sums("sha1")); writeFileSync(join(out, "SHA256SUMS"), sums("sha256"));
   return { fails, order, tarballs };
 }

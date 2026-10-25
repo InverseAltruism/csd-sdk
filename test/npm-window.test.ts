@@ -76,6 +76,8 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
 
   const honest = await window();
   ok("honest: csd-crypto is the one package to publish and every check passes", honest.fails.length === 0 && honest.order.map((p) => p.name).join() === CRYPTO && honest.tarballs.every((t) => existsSync(t.path)), honest.fails.join("; "));
+  ok("checkWindow records the digests of the packed bytes it verified on each tarball",
+    honest.tarballs.length === 1 && honest.tarballs.every((t) => { const b = readFileSync(t.path); return t.sha1 === createHash("sha1").update(b).digest("hex") && t.integrity === "sha512-" + createHash("sha512").update(b).digest("base64"); }));
   const guard = await window({ guard: false });
   ok("a failing publish guard fails the window, and nothing else does", guard.fails.length === 1 && /publish guard/.test(guard.fails[0]!), guard.fails.join("; "));
   const verify = await window({ verify: () => ["dist/index.js differs from the local build"] });
@@ -108,18 +110,21 @@ console.log("publish step (stand-in npm and registry):");
   const npm = join(work, "fake-npm.mjs");
   writeFileSync(npm, `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 const a = process.argv.slice(2), rc = a[a.indexOf("--userconfig") + 1];
 const authed = readFileSync(rc, "utf8").includes("_authToken=${TOKEN}");
-appendFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: a, rc, authed }) + "\\n");
+const pub = a[0] === "publish" ? readFileSync(a[1]) : null;
+const published = pub ? { published: createHash("sha1").update(pub).digest("hex"), integrity: "sha512-" + createHash("sha512").update(pub).digest("base64") } : {};
+appendFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: a, rc, authed, ...published }) + "\\n");
 if (a[0] === "whoami") console.log("owner");
 if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOKEN}"); process.exit(1); } console.log("+ " + a[1]); }
 `);
   chmodSync(npm, 0o755);
   const mkTgz = (name: string) => { const p = join(work, name); writeFileSync(p, `bytes of ${name}`); return p; };
-  const tb = [
-    { name: "@x/a", version: "1.0.0", path: mkTgz("a.tgz") },
-    { name: "@x/b", version: "1.0.0", path: mkTgz("b.tgz") },
-  ];
+  // the digests checkWindow records from the bytes verify-tarball read
+  const digests = (path: string) => { const b = readFileSync(path); return { sha1: createHash("sha1").update(b).digest("hex"), integrity: "sha512-" + createHash("sha512").update(b).digest("base64") }; };
+  const entry = (name: string, file: string) => { const path = mkTgz(file); return { name, version: "1.0.0", path, ...digests(path) }; };
+  const tb = [entry("@x/a", "a.tgz"), entry("@x/b", "b.tgz")];
   const meta = (path: string, shasumOverride?: string) => {
     const b = readFileSync(path);
     return { dist: { shasum: shasumOverride ?? createHash("sha1").update(b).digest("hex"), integrity: "sha512-" + createHash("sha512").update(b).digest("base64") } };
@@ -154,7 +159,7 @@ if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOK
   const lr = await run({ tokenFile: loose });
   ok("a token file others can read is refused before anything runs", !lr.r.ok && lr.calls.length === 0 && /readable by others/.test(lr.r.failures.join()));
 
-  const failing = await run({ tarballs: [tb[0]!, { name: "@x/fail", version: "1.0.0", path: mkTgz("fail.tgz") }, tb[1]!] });
+  const failing = await run({ tarballs: [tb[0]!, entry("@x/fail", "fail.tgz"), tb[1]!] });
   ok("a failed publish stops the rest, names what is unpublished and redacts the token from npm's output",
     !failing.r.ok && failing.calls.filter((c) => c.argv[0] === "publish").length === 2 && failing.r.published.join() === "@x/a@1.0.0"
       && /not published: @x\/fail@1.0.0, @x\/b@1.0.0/.test(failing.r.failures.join()) && !failing.r.failures.join().includes(TOKEN)
@@ -162,6 +167,29 @@ if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOK
 
   const mism = await run({ bad: "@x/b" });
   ok("a registry entry that is not the packed tarball fails the window", !mism.r.ok && mism.lines.some((l) => l.startsWith("@x/b@1.0.0") && l.endsWith("MISMATCH")));
+
+  // a tarball replaced after verification (another process repacking into the directory during the confirmation)
+  const swap = async (o: { during: "confirm" | "publish" }) => {
+    rmSync(record, { force: true });
+    const t = [entry("@x/s", `s-${o.during}.tgz`)];
+    const verifiedSha1 = t[0]!.sha1;
+    const replace = () => writeFileSync(t[0]!.path, "replaced after verification");
+    // the registry serves what npm was handed, as the real one does; for "publish" the path is swapped once npm has run
+    const lines: string[] = [];
+    const registry = async () => {
+      const p = calls().find((c) => c.published);
+      return p ? { status: 200, meta: { dist: { shasum: p.published, integrity: p.integrity } } } : { status: 404, meta: null };
+    };
+    const r = await publishWindow({ tarballs: t, tokenFile, npm, registry, waitMs: 0, pollMs: 0, log: (s: string) => { lines.push(s); if (o.during === "publish" && / publish @x\/s@/.test(s)) replace(); },
+      confirm: async () => { if (o.during === "confirm") replace(); return "publish"; } });
+    return { r, lines, verifiedSha1, publishedSha1: calls().find((c) => c.published)?.published as string | undefined, npmRan: calls().length };
+  };
+  const during = await swap({ during: "confirm" });
+  ok("a tarball replaced during the confirmation is refused before npm runs, never published",
+    !during.r.ok && during.npmRan === 0 && during.publishedSha1 === undefined && /not the bytes that were verified/.test(during.r.failures.join()), JSON.stringify({ r: during.r, published: during.publishedSha1 }));
+  const after = await swap({ during: "publish" });
+  ok("the registry is compared with the digests recorded at verification, not a re-read of the path: the verified bytes published, MATCH",
+    after.r.ok && after.publishedSha1 === after.verifiedSha1 && after.lines.some((l) => l.endsWith("MATCH")), JSON.stringify({ r: after.r, lines: after.lines }));
 }
 
 rmSync(work, { recursive: true, force: true });
