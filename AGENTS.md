@@ -2,7 +2,7 @@
 
 > Onboarding briefing for coding agents and contributors. `AGENTS.md` is the canonical briefing; `CLAUDE.md` is a symlink to it. Production and operations specifics (hosts, services, deploy cadence) are intentionally out of scope here and maintained privately.
 
-The L0 SDK monorepo for the CSD (Compute Substrate) chain: a pnpm + tsup TypeScript workspace publishing 9 npm packages under `@inversealtruism/*` (public repo InverseAltruism/csd-sdk). It is the single canonical TypeScript implementation of the chain's byte-level consensus surface (serialization, txid, sighash, header/PoW/LWMA math, merkle) and of the CairnX application convention (tokens, .csd names / CNS, DvP trades) via `cairnx-core`. Everything it produces must be byte-for-byte identical to the official Rust node (`compute-substrate`), checked against the node's golden vectors and real mainnet data.
+The L0 SDK monorepo for the CSD (Compute Substrate) chain: a pnpm + tsup TypeScript workspace publishing 8 npm packages under `@inversealtruism/*` (public repo InverseAltruism/csd-sdk). It is the single canonical TypeScript implementation of the chain's byte-level consensus surface (serialization, txid, sighash, header/PoW/LWMA math, merkle) and of the CairnX application convention (tokens, .csd names / CNS, DvP trades) via `cairnx-core`. Everything it produces must be byte-for-byte identical to the official Rust node (`compute-substrate`), checked against the node's golden vectors and real mainnet data.
 
 There are two implementations of the consensus surface: this shipped TypeScript core, imported or deterministically vendored by every consumer (wallet, website UI and server, cairnx service, indexer, cairn-sdk, second-source resolvers), and one independent Python oracle (`conformance/cairnx_ref.py`) used only for cross-language differential testing. Runtime deps are only @noble/curves + @noble/hashes; zero Buffer (MV3/browser-safe).
 
@@ -37,7 +37,6 @@ Workspace: `pnpm-workspace.yaml` = packages/*. Root package.json is private; `pa
 | cairnx-core (packages/cairnx) | `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 write-up) + portable vectors + replay-hashes. Modules below. |
 | cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
 | csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
-| csd-indexwire | csd-indexer REST wire contract as types + runtime guards. |
 
 cairnx-core modules (`packages/cairnx/src/`):
 

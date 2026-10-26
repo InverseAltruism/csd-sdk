@@ -84,8 +84,6 @@ importers:
         specifier: workspace:*
         version: link:../vectors
 
-  packages/indexwire: {}
-
   packages/light:
     dependencies:
       '@inversealtruism/csd-client':
