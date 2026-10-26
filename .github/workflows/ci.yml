@@ -41,6 +41,7 @@ jobs:
       - run: pnpm exec tsx test/security.test.ts
       - run: pnpm exec tsx test/live-opt-in.test.ts   # offline: live suites skip by name, and fail against a refused loopback port
       - run: pnpm exec tsx test/published-dist.test.ts
+      - run: pnpm exec tsx test/npm-window.test.ts   # the npm window: verify-tarball on a real pack, the publish step against a stand-in npm
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
       - run: pnpm exec tsx test/ci-workflow.test.ts   # this file: read-only token, no stored credentials, SHA pins, the secret scan
       - run: pnpm exec tsx test/check-dashes-paths.test.ts

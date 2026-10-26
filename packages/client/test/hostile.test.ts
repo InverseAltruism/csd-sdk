@@ -4,7 +4,7 @@
 // never submit), the readCapped byte ceiling (content-length up-front, mid-stream abort, and the
 // UTF-16-vs-bytes fallback subtlety), waitForTx's reorg/stale-sighting discipline, and
 // verifyInputValues fail-closed behavior on forged/unreachable sources.
-import { CsdClient, verifyInputValues } from "../src/index.js";
+import { CsdClient, verifyInputValues, type RpcHealth } from "../src/index.js";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -176,6 +176,28 @@ console.log("verifyInputValues badInput naming (M1):");
     );
     ok("branch: total overflow → names the offending (second) coin", names(r, { txid: idB, vout: 0 }));
   }
+}
+
+console.log("the node's answer shapes (compute-substrate src/api/mod.rs; captured from a node 2026-10-24):");
+{
+  // /proposal/:id nests the record under `proposal`; a flat type made every consumer cast around it
+  const body = '{"ok":true,"proposal":{"created_epoch":3432,"created_height":102965,"domain":"cairnx:v1","expires_epoch":8432,"fee":25000000,"payload_hash":"0x2d66d8389fb07a331557aae1c80498f3db61d2f9b1267760c68e177488e9c626","proposal_id":"0xe4d15365d6e8e1aba6ee21c6abf9621336c17f9a220b80a8934c2778da323cb4","proposer":"0x3328969eecc36971148ef319d17d466b1289ed19","uri":"{\\"decimals\\":8,\\"mint\\":\\"issuer\\",\\"name\\":\\"Bitcoin Cash\\",\\"supply\\":\\"2100000000000000\\",\\"t\\":\\"deploy\\",\\"ticker\\":\\"BCH\\",\\"v\\":1}"}}';
+  const p = await mk(scripted(() => new Response(body))).proposal("0x" + "e4".repeat(32));
+  ok("proposal() types the nested record the node sends", p.proposal.domain === "cairnx:v1" && p.proposal.proposer === "0x3328969eecc36971148ef319d17d466b1289ed19"
+    && p.proposal.expires_epoch === 8432 && p.proposal.created_height === 102965);
+  const h = await mk(scripted(() => json({ ok: true, tip: "0x" + "0".repeat(64), height: 9, chainwork: "1", peer_count: 22, known_peers: 128,
+    mempool_tx_count: 2, mempool_spent_outpoints: 6, mempool_bytes: 1026, mempool_min_feerate_ppm: null, mempool_max_feerate_ppm: null,
+    best_peer_height: null, blocks_behind: null, secs_since_tip_activity: 1 }))).health();
+  ok("health() types peer_count and mempool_tx_count, the fields the node sends", h.peer_count + h.mempool_tx_count === 24 && h.best_peer_height === null);
+  // the node's feerate fields are Option<u64>; the default parser keeps an integer above 2^53 exact as a bigint
+  const raw = (min: string, max: string) => `{"ok":true,"tip":"0x${"0".repeat(64)}","height":9,"chainwork":"1","peer_count":1,"known_peers":1,"mempool_tx_count":1,"mempool_spent_outpoints":1,"mempool_bytes":1,"mempool_min_feerate_ppm":${min},"mempool_max_feerate_ppm":${max}}`;
+  const big: RpcHealth["mempool_max_feerate_ppm"] = (await mk(scripted(() => new Response(raw("1", "10000000000000000")))).health()).mempool_max_feerate_ppm;
+  const small = await mk(scripted(() => new Response(raw("1", "250")))).health();
+  const none = await mk(scripted(() => new Response(raw("null", "null")))).health();
+  ok("health() keeps a feerate above 2^53 as an exact bigint, a normal one as a number, an unknown one as null",
+    big === 10000000000000000n && small.mempool_min_feerate_ppm === 1 && small.mempool_max_feerate_ppm === 250 && none.mempool_min_feerate_ppm === null && none.mempool_max_feerate_ppm === null);
+  const d = await mk(scripted(() => json({ ok: true, tip: "0x" + "0".repeat(64), height: 9, count: 1, domains: [{ domain: "cairnx:v1", proposals: 3, attestations: 4 }] }))).domains();
+  ok("domains() types the object the node sends", d.domains[0]?.domain === "cairnx:v1" && d.count === 1);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

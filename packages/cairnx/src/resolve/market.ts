@@ -21,7 +21,6 @@ export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, wh
   const payto = (rec.want.payto ?? who).toLowerCase();
   const give: Give = rec.give;
   if (isNameGive(give)) {
-    if (!v11) { note(ev, ev.id, "offer", false, "name offers need v1.1"); return; }
     const n = names.get(give.name);
     if (!n || n.owner !== who) { note(ev, ev.id, "offer", false, "you don't own this name"); return; }
     if (n.pending) { note(ev, ev.id, "offer", false, "name reservation not yet finalized"); return; }
@@ -184,5 +183,6 @@ export function offerEnvelopeRefusal(rec: OfferRecord, who: string, height: numb
   if (epochOf(height) > expiresEpoch) return "already expired at anchor";
   // v2.1 duration cap, gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
   if (height >= V21_HEIGHT && height < V22_HEIGHT && expiresEpoch - epochOf(height) > MAX_OFFER_EPOCHS) return "v2.1: offer duration exceeds the max";
+  if (isNameGive(rec.give) && height < V11_HEIGHT) return "name offers need v1.1";
   return null;
 }

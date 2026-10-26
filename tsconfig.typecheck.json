@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "noEmit": true, "declaration": false, "types": ["node"], "resolveJsonModule": true, "allowJs": true, "checkJs": true },
-  "include": ["packages/*/src", "packages/*/test/**/*.ts", "test/*.ts", "scripts/published-dist.mjs"]
+  "include": ["packages/*/src", "packages/*/test/**/*.ts", "test/*.ts", "scripts/published-dist.mjs", "scripts/workspace.mjs", "scripts/verify-tarball.mjs", "scripts/npm-window.mjs"]
 }

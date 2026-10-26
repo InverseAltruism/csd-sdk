@@ -5,6 +5,8 @@ import { EPOCH_LEN, MAX_URI_BYTES, epochOf } from "@inversealtruism/csd-codec";
 
 export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
+/** True below ACTIVATION_HEIGHT, where resolve() skips every event without a note. */
+export const beforeActivation = (height: number): boolean => height < ACTIVATION_HEIGHT;
 export const V11_HEIGHT = 29_960;             // names + protocol fees activate here (non-retroactive)
 export const V12_HEIGHT = 30_300;             // token⇄token swaps + partial fills + bids (non-retroactive)
 // v1.3 = CSD-priced offers must be taker-bound (the open CSD-quoted fill race can lose a buyer

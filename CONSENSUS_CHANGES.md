@@ -57,6 +57,29 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.3, csd-client 0.1.20, csd-light 0.1.26 (2026-10-24, Plan 85 23.1; unreleased, npm window 5; no consensus-surface change) - the admission check's two activation gates, the node's answer types
+
+`provenOfferRefusal` refuses an offer anchored below `ACTIVATION_HEIGHT` (29,860) and a name offer anchored below
+`V11_HEIGHT` (29,960), the two record-only rules it lacked (client-side; `resolve()` does not call it). Each rule has
+one home that both read: the new export `beforeActivation(height)` (`src/types.ts`), which the replay loop in
+`src/resolve.ts` calls in place of its `ev.height < ACTIVATION_HEIGHT` compare, and `offerEnvelopeRefusal`
+(`src/resolve/market.ts`), which now ends with the name-offer v1.1 rule that `applyOffer` checked right after calling
+it, with the same note. No state change sits between the two, so the first refusal note is unchanged for every
+record: the 76 vectors, the 21 pinned replay heights and the 1,500-sequence fuzz are byte-identical, and an
+old-against-new `resolve()` comparison over 3,500 offer records at heights 29,858 to 41,302 (every gate from
+activation to V22, plus or minus two blocks; full output and canonical state) differed on none.
+
+csd-client types four answers as the node sends them (compute-substrate `src/api/mod.rs` at 0eca9e0): `proposal()`
+returns `{ ok, proposal: RpcProposalRecord }` (`proposal_get`; the record carries `proposal_id`, `created_height`,
+`created_epoch` and `fee`, and no `txid`, `height` or `attestations`), `proposals()` returns `RpcProposals`
+(`RecentProposalsResp`, rows without a proposer) instead of an array, `domains()` returns `RpcDomains`
+(`DomainsResp`) instead of `string[]`, and `RpcHealth` lists `HealthResp`'s fields (`peer_count` and
+`mempool_tx_count`; `peers` and `mempool_len` never existed). Types only: the requests and the parse are unchanged,
+so code that cast around the old types keeps working, and code that read the old field names compiled against
+fields the node never sent. csd-light bumps as a dependent of csd-client and exports `bindBlockTxs`, the block bind
+`bindBlockBody` and `verifyTxInclusion` already run, for a caller that parses the body with its own exact parser;
+no behaviour change.
+
 ## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
 
 csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
@@ -226,12 +249,12 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :182 offer, :77 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
 shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :146:
+`packages/cairnx/src/resolve/market.ts` :145:
 
     if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
 
@@ -646,7 +669,7 @@ mechanical refresh. In order:
    DELIBERATELY_UNBOUND_WITH_REASON - classify it in the SAME change. This is the executable
    tripwire against the 2026-07-19 theme (a served field nothing binds and nobody decided about:
    the W1/W2/W3/W7/W10 class).
-3. Bump `packages/cairnx` version, `pnpm -r build`, `pnpm publish` (publish-guard enforces pnpm).
+3. Bump `packages/cairnx` version, `pnpm -r build`, then the npm window `node scripts/npm-window.mjs` (it runs the publish guard and verify-tarball on each tarball).
 4. Re-pin the npm consumers: cairnx svc + cairn-sdk package.json, `node scripts/check-consumer-pins.mjs`,
    reinstall, restart the cairnx service off-peak (never during a gate crossing).
 5. Re-vendor the bundled consumers: wallet `bash scripts/build-spv-vendor.sh` +
