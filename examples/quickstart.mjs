@@ -1,7 +1,8 @@
 // Quickstart for the Compute Substrate SDK. Run against a node or the Cairn proxy:
 //   CSD_RPC=http://127.0.0.1:8790 node examples/quickstart.mjs
 //   CSD_RPC=https://cairn-substrate.com/api/rpc node examples/quickstart.mjs
-// It only reads the chain; the broadcast step is shown but not executed.
+// It only reads the chain; the broadcast step is shown but not executed. For step 5 pin a checkpoint you got from a
+// source other than CSD_RPC: CSD_CHECKPOINT=<height>:<block hash>.
 import { payloadHash } from "@inversealtruism/csd-codec";
 import { keygen } from "@inversealtruism/csd-crypto";
 import { buildSendVerified } from "@inversealtruism/csd-tx";
@@ -38,12 +39,15 @@ console.log("built tx:", send.ok ? send.txid : send.error);
 // To broadcast: if (send.ok) await client.submitOrThrow(send.nodeJson);
 // (submit() returns { ok: false, err } on a node rejection; submitOrThrow throws instead.)
 
-// 5) Light client: verify the chain yourself (PoW + LWMA + chainwork), no trust in the RPC.
-//    From a recent checkpoint so you don't fetch all of history:
+// 5) Light client: verify every header after a checkpoint yourself (PoW + LWMA + chainwork). The checkpoint is the
+//    one input it trusts, so it comes from CSD_CHECKPOINT, which you pin. Without it this demo asks CSD_RPC for one,
+//    and every verdict below then rests on that RPC's answer.
 const light = new LightClient({ client });
-const cpH = Math.max(46, tip.height - 20);
-const cpBlock = await client.blockByHeight(cpH);
-await light.syncFromCheckpoint(cpH, cpBlock.hash); // trusts the pinned checkpoint, verifies forward
+const [pinH, pinHash] = (process.env.CSD_CHECKPOINT ?? "").split(":");
+const cpH = pinHash ? Number(pinH) : Math.max(46, tip.height - 20);
+const cpHash = pinHash ?? (await client.blockByHeight(cpH)).hash;
+if (!pinHash) console.log(`checkpoint ${cpH} taken from ${RPC} (set CSD_CHECKPOINT to pin your own)`);
+await light.syncFromCheckpoint(cpH, cpHash); // trusts the checkpoint, verifies forward
 await light.sync(tip.height);
 console.log("light tip verified:", light.tip.hash === tip.tip, "(fullyVerified:", light.fullyVerified, ")");
 
