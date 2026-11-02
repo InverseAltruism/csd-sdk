@@ -57,6 +57,13 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; unreleased; no consensus-surface change) - records, tests and docs
+
+Client-side and docs only: `resolve()`, canonical state and every `verifyFillSpv` verdict are unchanged (the
+vectors, the 21 pinned replay heights and the fuzz are byte-identical). `verifyFillSpv`'s contract says what its
+window replay decides and names the known limits below the window; reading that history (design b') is a Plan 87
+later item.
+
 ## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
 
 `verifyDigest` passes `format: "compact"` to noble's `secp256k1.verify`, so the 64 signature bytes are read as

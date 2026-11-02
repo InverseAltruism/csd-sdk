@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.4
+
+- `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted
+  in the `GAP_NEEDED` (104) blocks before it and on the proposer's live holds on other offers, so a window decides an
+  fclaim only when its low end is quiet. The comments no longer say a proven event "only moves the replay toward
+  truth" or that the replayed `paid` is the chain's, and they name the known limits below the window: aged fills
+  (an honest tail below `min` is refused; for a coarse give the delivery check can disagree with the chain's, so a
+  caller refuses a payment its served offer computes as undeliverable), the deflate leg (a withheld fill and a lower
+  served `paid`, host-only) and the inflate leg (a second-order hold chain or a third party's cap, host-only).
+  Reading that history (design b') is a Plan 87 later item. CONVENTION.md section 31's client policy says the same
+  and gives `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
+- `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
+
 ## 0.2.3
 
 - `provenOfferRefusal` refuses the two record-only activation gates it lacked. An offer anchored below

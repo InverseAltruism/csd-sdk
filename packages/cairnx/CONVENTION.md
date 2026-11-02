@@ -1134,10 +1134,13 @@ audit flags such a burn.
 **Client policy (not consensus, does not affect canonical state).** A filler waits a value-scaled
 `requiredClaimDepth` (§20 reorg note) on BOTH the offer and the fclaim (and, for a partial tail-fill, on the
 offer's earlier fill-basis events) before signing, and refuses to broadcast a fill within `FILL_TIP_MARGIN`
-(`= 2`) blocks of `holdEnd` (a stranded no-op, never a fund risk), computed from the fclaim's actual confirmed
-height and `expires_epoch`. A clean-start SPV scan must cover
-`GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS` (`= 104`) blocks so it can
-never false-accept a denied fclaim.
+(`= 4`) blocks of `holdEnd` (a stranded no-op, never a fund risk), computed from the fclaim's actual confirmed
+height and `expires_epoch`. Whether an fclaim was granted depends on the holds granted in the
+`GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS` (`= 104`) blocks before it and on
+its proposer's live holds on other offers. A client replaying a window of blocks it read completely therefore
+decides an fclaim only when the window reaches `GAP_NEEDED` below it and the fclaims in that span are decided as
+well; an fclaim in the window's lowest `GAP_NEEDED` blocks, and a fill older than the window, are not decided by
+it. cairnx-core's `verifyFillSpv` replays such a window and names these as known limits.
 
 - **Adoption note:** at/above V28 the fill's referenced proposal changes (offer id becomes fclaim txid) and
   `SCORE_CLAIM` is rejected, so v2.8 is BOTH a relaxation (an fclaim fill a fresh core accepts, a stale core
