@@ -8,4 +8,4 @@
   the verdict of the node's crate (secp256k1 0.29.1) on it. A1 and A2 are compact low-S signatures whose bytes are
   also DER-shaped (accepted); B is a valid 64-byte DER signature (refused). csd-crypto's test checks `verifyDigest`,
   `recoverSigner` and `authorOf` against them.
-- The package description no longer carries an em dash.
+- The package description names the signature vectors as a third source and no longer carries an em dash.

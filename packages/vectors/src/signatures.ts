@@ -1,17 +1,30 @@
 // Signature-encoding vectors: which 64 bytes the node's verify_sig accepts (compute-substrate src/crypto/mod.rs:
-// Signature::from_compact, so r || s only, then low S). Each spends one coin of `owner` (hash160(pub33)) in the same
-// cairnx:v1 Propose, with input 0's scriptSig = 0x40 || sig64 || 0x21 || pub33. The bytes were chosen and the key
-// solved for (P = r^-1 (sR - hG), or d = (s k - h) / r for the DER one); `nodeAccepts` is the verdict of the node's
-// crate (secp256k1 0.29.1, verify_sig's steps) on (sig64, pub33, expectedSighash).
+// Signature::from_compact, so r || s only, then low S). Each spends one coin of `owner` in the same cairnx:v1 Propose,
+// input 0's scriptSig = 0x40 || sig64 || 0x21 || pub33. The bytes were chosen and the key solved for
+// (P = r^-1 (sR - hG); for the DER one d = (s k - h) / r).
+//
+// How `nodeAccepts` was produced (no harness is committed): a Rust program on secp256k1 0.29.1, the version in the
+// node's Cargo.lock, ran verify_sig's steps after the sighash on (sig64, pub33, expectedSighash):
+// Message::from_digest_slice(expectedSighash), PublicKey::from_slice(pub33), Signature::from_compact(sig64), refuse
+// when normalize_s() changes the signature, then Secp256k1::verification_only().verify_ecdsa. It printed ok for A1 and
+// A2 and "signature failed verification" for B (2026-11-02).
 import type { VTx } from "./index.js";
 
 export interface SigVector {
+  /** Short label (A1, A2, B). */
   name: string;
+  /** The signed tx: a cairnx:v1 Propose whose input 0 carries 0x40 || sig64 || 0x21 || pub33. */
   tx: VTx;
+  /** sighash(tx), the 32-byte digest sig64 signs (scriptSigs are stripped before hashing). */
   expectedSighash: string;
+  /** The 64 signature bytes in input 0's scriptSig. */
   sig64: string;
+  /** The 33-byte compressed public key in input 0's scriptSig. */
   pub33: string;
+  /** hash160(pub33): the addr20 of the coin input 0 spends, the value to pass to authorOf as its script_pubkey. */
   owner: string;
+  /** verify_sig's verdict on (sig64, pub33, expectedSighash), from the node's crate. A signature verdict only, not
+   *  acceptance of the tx: its input 0 spends a made-up outpoint (prevTxid 0xabab..ab). */
   nodeAccepts: boolean;
 }
 

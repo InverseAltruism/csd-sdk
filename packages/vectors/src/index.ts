@@ -1,10 +1,11 @@
-// @inversealtruism/csd-vectors — the golden conformance contract.
+// @inversealtruism/csd-vectors: the golden conformance contract, from three sources.
 //
 // These fixtures are transcribed verbatim from the Compute Substrate node's frozen test
 // suite at /opt/substrate_miner/src/compute-substrate/tests/golden_vectors.rs (the canonical
 // source of truth) plus the consensus params. Any @inversealtruism/csd-* codec/crypto/header impl whose
 // output diverges from these is wrong. `live.ts` holds additional real on-chain fixtures
-// pulled from the node (regenerate with scripts/gen-live-vectors.ts).
+// pulled from the node (regenerate with scripts/gen-live-vectors.ts). `signatures.ts` holds signature
+// encodings, each with the verdict of the node's secp256k1 crate (how it was produced is recorded there).
 //
 // Self-contained (no @inversealtruism/csd-codec import) so the dependency graph is a clean DAG: codec
 // depends on vectors for its conformance test, never the reverse. VTx is structurally
