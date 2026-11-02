@@ -66,7 +66,9 @@ may hold `MAX_ACTIVE_CLAIMS` elsewhere) is replayed both kept and removed, and t
 replay agrees; otherwise the seam reads further down, at most 512 extra heights. A refusal at the delivery gate
 (or a coarse-give payment whose delivery depends on `paid`) reads the ranges the served offer's earlier fills need.
 Without the seam every verdict's `safe` and `reason` are unchanged; refusals gain a `code`. Consumers take it when
-the site re-vendors and the wallet re-vendors (they also wire the seam).
+the site re-vendors and the wallet re-vendors (they also wire the seam). New vectors (`cases-rules.json`) pin four
+existing resolver rules in JS and Python (the within-block order, the canonical uri, the same-ticker offer); no rule
+changed. New export `offerFillTooLate`, the offer-id lanes' expiry predicate.
 
 ## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
 

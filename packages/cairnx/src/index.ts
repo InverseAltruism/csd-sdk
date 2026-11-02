@@ -10,7 +10,7 @@
 //   resolve  — THE pure deterministic resolver: (events, tipHeight) → CairnXState
 //   types    — constants (activation heights, fees, lease parameters) + state/record types + the pure
 //              client selectors (claimWindowAt/Of, claimGraceOf, offerExpiryHeightOf, epochOf, fee math)
-//   client   — reorg-safety helpers a client must apply before paying (requiredClaimDepth)
+//   client   - the claim-burial depth a client waits for before paying, sized against a minority miner (requiredClaimDepth)
 export * from "./types.js";
 export * from "./records.js";
 export { resolve, canonicalState, ptAmt } from "./resolve.js";
