@@ -417,7 +417,8 @@ const pj = JSON.parse(py.stdout).resolve;
 let diverged = 0, jsThrows = 0;
 const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
 for (let i = 0; i < N; i++) {
-  if (js[i].startsWith("JS_THROW:")) { jsThrows++; continue; } // a JS throw is fine IF Python also can't produce (both fail closed) — flag separately
+  // A throw fails the run: every replayer would stop at that sequence's block, whatever Python answers.
+  if (js[i].startsWith("JS_THROW:")) { if (++jsThrows <= 5) console.error(`✗ seq #${i} JS resolve() threw: ${js[i].slice(9, 200)}`); continue; }
   // coverage: confirm the fuzzer actually reaches the high-risk paths
   try {
     const st = JSON.parse(js[i]);
@@ -576,4 +577,4 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   if (!cov.recaptureFinalized) { console.error("✗ recaptureFinalized coverage is 0, the fuzz never reached the v2.6 sealed-recapture accept path"); process.exit(1); }
   console.log(`✓ v26 recapture self-check: commit→payment-free reveal→nfinalize hands a lapsed name to the recapturer (premium once, not viaFill); fuzz finalized ${cov.recaptureFinalized} recapture(s)`);
 }
-process.exit(diverged ? 1 : 0);
+process.exit(diverged || jsThrows ? 1 : 0);
