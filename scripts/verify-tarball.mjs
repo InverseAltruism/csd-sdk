@@ -2,12 +2,13 @@
 // The publish gate over the tarball itself: `npm publish <tgz>` runs no package hook, so publish-guard.mjs does not
 // see these bytes. A tarball passes when, read with published-dist.mjs's reader (which refuses every archive shape
 // `pnpm pack` does not emit):
-//   - package/package.json names the tree's package and version, carries no "workspace:" specifier, pins each
-//     workspace dependency at its current workspace version and every other dependency as the tree declares it,
-//     keeps the tree's other fields, and keeps only scripts the tree declares with the same text;
-//   - every other file is one git tracks in the package directory (`git ls-files`; an ignored or untracked file
-//     pnpm packed is not part of the commit) and equals the tree's file at the same path, and dist/ equals the
-//     tree's build file for file (both directions);
+//   - package/package.json names the committed manifest's package and version (the package directory's
+//     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at its current
+//     workspace version and every other dependency as that manifest declares it, keeps its other fields, and keeps
+//     only scripts it declares with the same text;
+//   - every other file outside dist/ is the HEAD commit's file at that path, byte for byte (`git ls-tree` and
+//     `git cat-file`), so an ignored, untracked or skip-worktree file pnpm packed fails; dist/ equals the tree's
+//     build file for file (both directions);
 //   - every `files` entry that exists in the tree is in the tarball.
 // The pack is not byte-reproducible (published-dist.mjs says why), so files are compared, not a tarball hash.
 //
@@ -25,14 +26,39 @@ const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "opti
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
   ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
 
-/** Paths git tracks under `pkgDir`, relative to it; null when git cannot list them. @param {string} pkgDir */
-function trackedFiles(pkgDir) {
+/**
+ * The HEAD commit's regular files among `rels` (paths relative to `pkgDir`): path -> bytes, a path HEAD lacks absent.
+ * null when git cannot read HEAD there (not a checkout, no commit, git missing): the caller refuses the tarball.
+ * @param {string} pkgDir @param {string[]} rels @returns {Map<string, Buffer> | null}
+ */
+function headFiles(pkgDir, rels) {
+  /** @param {string[]} args @param {string} [input] */
+  const git = (args, input) => execFileSync("git", args, { cwd: pkgDir, input, maxBuffer: 1 << 28, stdio: ["pipe", "pipe", "pipe"] });
+  /** @type {Map<string, string>} */
+  const oids = new Map();
   try {
-    const out = execFileSync("git", ["ls-files", "-z", "--", "."], { cwd: pkgDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return new Set(out.split("\0").filter(Boolean));
+    for (const e of git(["ls-tree", "-r", "-z", "HEAD", "--", "."]).toString("utf8").split("\0")) {
+      const m = /^(?:100644|100755) blob ([0-9a-f]+)\t(.+)$/s.exec(e);
+      if (m) oids.set(/** @type {string} */ (m[2]), /** @type {string} */ (m[1]));
+    }
   } catch {
-    return null;   // not a git checkout, or git missing: the caller refuses the tarball
+    return null;
   }
+  const want = rels.filter((r) => oids.has(r));
+  /** @type {Map<string, Buffer>} */
+  const out = new Map();
+  if (!want.length) return out;
+  let raw;
+  try { raw = git(["cat-file", "--batch"], want.map((r) => oids.get(r)).join("\n") + "\n"); } catch { return null; }
+  let at = 0;
+  for (const r of want) {   // each answer is "<oid> blob <size>\n<bytes>\n", in request order
+    const nl = raw.indexOf(10, at);
+    const [oid, type, size] = raw.subarray(at, nl).toString("utf8").split(" ");
+    if (oid !== oids.get(r) || type !== "blob") return null;
+    out.set(r, raw.subarray(nl + 1, nl + 1 + Number(size)));
+    at = nl + 2 + Number(size);
+  }
+  return out;
 }
 
 /**
@@ -47,33 +73,33 @@ export function verifyTarball(tgz, pkgDir, versions) {
   let files;
   try { files = untar(tgz); } catch (e) { return [`unreadable tarball (${e instanceof Error ? e.message : e})`]; }
   const out = [];
-  const tree = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+  const rels = [...files.keys()].filter((p) => !p.startsWith("package/dist/")).map((p) => p.slice("package/".length));
+  const head = headFiles(pkgDir, rels.includes("package.json") ? rels : [...rels, "package.json"]);
+  if (!head) out.push("git cannot read the package at HEAD, so the tarball cannot be checked against the commit");
+  else if (!head.has("package.json")) out.push("package.json is not in the commit (HEAD)");
+  const tree = JSON.parse((head?.get("package.json") ?? readFileSync(join(pkgDir, "package.json"))).toString("utf8"));
   const raw = files.get("package/package.json");
   if (!raw) return ["package/package.json is missing"];
   const text = new TextDecoder().decode(raw);
   if (text.includes("workspace:")) out.push("package.json carries a workspace: specifier");
   const packed = JSON.parse(text);
   if (packed.name !== tree.name || packed.version !== tree.version)
-    out.push(`package.json is ${packed.name}@${packed.version}, the tree is ${tree.name}@${tree.version}`);
+    out.push(`package.json is ${packed.name}@${packed.version}, the commit's is ${tree.name}@${tree.version}`);
   for (const f of DEP_FIELDS) {
     const want = Object.fromEntries(Object.entries(tree[f] ?? {}).map(([d, spec]) =>
       [d, String(spec).startsWith("workspace:") ? versions.get(d) ?? `(no workspace package ${d})` : spec]));
     if (canon(packed[f] ?? {}) !== canon(want)) out.push(`package.json ${f} ${canon(packed[f] ?? {})}, expected ${canon(want)}`);
   }
   for (const [k, v] of Object.entries(packed.scripts ?? {}))
-    if (tree.scripts?.[k] !== v) out.push(`package.json script "${k}" is not the tree's`);
+    if (tree.scripts?.[k] !== v) out.push(`package.json script "${k}" is not the commit's`);
   const rest = (/** @type {Record<string, unknown>} */ m) =>
     canon(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "scripts" && !DEP_FIELDS.includes(k))));
-  if (rest(packed) !== rest(tree)) out.push("package.json fields other than scripts and dependencies differ from the tree's");
-  const tracked = trackedFiles(pkgDir);
-  if (!tracked) out.push("git cannot list the package's tracked files, so the tarball cannot be checked against the commit");
+  if (rest(packed) !== rest(tree)) out.push("package.json fields other than scripts and dependencies differ from the commit's");
   for (const [p, b] of files) {
-    if (p === "package/package.json" || p.startsWith("package/dist/")) continue;
-    const rel = p.slice("package/".length);
-    const local = join(pkgDir, rel);
-    if (!existsSync(local)) out.push(`${p} is not in the tree`);
-    else if (tracked && !tracked.has(rel)) out.push(`${p} is not a file git tracks (ignored or untracked), so it is not in the commit`);
-    else if (Buffer.compare(Buffer.from(b), readFileSync(local)) !== 0) out.push(`${p} differs from the tree's`);
+    if (!head || p === "package/package.json" || p.startsWith("package/dist/")) continue;
+    const committed = head.get(p.slice("package/".length));
+    if (!committed) out.push(`${p} is not in the commit (HEAD): an ignored or untracked file`);
+    else if (Buffer.compare(Buffer.from(b), committed) !== 0) out.push(`${p} differs from the commit's (HEAD)`);
   }
   out.push(...diffDist(files, join(pkgDir, "dist")));
   for (const f of tree.files ?? []) {

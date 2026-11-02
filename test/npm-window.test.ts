@@ -54,7 +54,7 @@ console.log("verify-tarball on the bytes the window publishes:");
   ok("a script the tree does not declare is refused", hook.some((f) => /script "postinstall"/.test(f)), hook.join("; "));
 }
 
-console.log("verify-tarball against what git tracks (real git and pnpm pack):");
+console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
 {
   // As packages/cairnx ships test/vectors: a "files" directory under a repo-root ignore rule, which pnpm does not read
   const repo = mkdtempSync(join(work, "tracked-"));
@@ -80,17 +80,32 @@ console.log("verify-tarball against what git tracks (real git and pnpm pack):");
   writeFileSync(join(pkg, "vectors", "stray-key.json"), "{}\n");
   const ignored = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the stray file is not ignored"];
   ok("an ignored file inside a packed directory (git status clean) is refused",
-    ignored.some((f) => f.includes("package/vectors/stray-key.json") && /tracked/.test(f)), ignored.join("; "));
+    ignored.some((f) => f.includes("package/vectors/stray-key.json") && /not in the commit/.test(f)), ignored.join("; "));
   rmSync(join(pkg, "vectors", "stray-key.json"));
   writeFileSync(join(pkg, "vectors", "new.json"), "{}\n");
   const untracked = packAndVerify();
-  ok("an untracked file inside a packed directory is refused", untracked.some((f) => f.includes("package/vectors/new.json") && /tracked/.test(f)), untracked.join("; "));
+  ok("an untracked file inside a packed directory is refused", untracked.some((f) => f.includes("package/vectors/new.json") && /not in the commit/.test(f)), untracked.join("; "));
   rmSync(join(pkg, "vectors", "new.json"));
-  // the same package outside any git checkout: membership cannot be checked, so the tarball is refused
+  // a committed file rewritten on disk under skip-worktree: git status stays clean and pnpm packs the new bytes
+  git("update-index", "--skip-worktree", "pkg/vectors/cases.json");
+  writeFileSync(join(pkg, "vectors", "cases.json"), "[\"not the commit\"]\n");
+  const hidden = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the rewrite shows in git status"];
+  ok("a committed file rewritten under skip-worktree (git status clean) is refused",
+    hidden.some((f) => f.includes("package/vectors/cases.json") && /differs from the commit/.test(f)), hidden.join("; "));
+  writeFileSync(join(pkg, "vectors", "cases.json"), "[]\n");
+  git("update-index", "--no-skip-worktree", "pkg/vectors/cases.json");
+  git("update-index", "--skip-worktree", "pkg/package.json");
+  const manifest = readFileSync(join(pkg, "package.json"), "utf8");
+  writeFileSync(join(pkg, "package.json"), manifest.replace('"1.0.0"', '"1.0.0", "description": "not the commit"'));
+  const hiddenManifest = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the rewrite shows in git status"];
+  ok("a committed package.json rewritten under skip-worktree is refused", hiddenManifest.some((f) => /package\.json fields .* differ from the commit/.test(f)), hiddenManifest.join("; "));
+  writeFileSync(join(pkg, "package.json"), manifest);
+  git("update-index", "--no-skip-worktree", "pkg/package.json");
+  // the same package outside any git checkout: HEAD cannot be read, so the tarball is refused
   const plain = join(mkdtempSync(join(work, "plain-")), "pkg");
   cpSync(pkg, plain, { recursive: true });
   const noGit = verifyTarball(pack(), plain, new Map());
-  ok("a package directory git cannot list is refused", noGit.some((f) => /git cannot list/.test(f)), noGit.join("; "));
+  ok("a package directory outside a git checkout is refused", noGit.some((f) => /git cannot read/.test(f)), noGit.join("; "));
 }
 
 console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
