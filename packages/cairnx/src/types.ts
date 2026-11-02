@@ -1,5 +1,5 @@
 // CairnX shared types. The convention is CONVENTION.md; these mirror it 1:1.
-// v1   = tokens (deploy/mint/transfer) + offers/fills (atomic DvP).
+// v1   = tokens (deploy/mint/transfer) + offers/fills (payment and record in one tx; the replay decides delivery).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
 import { EPOCH_LEN, MAX_URI_BYTES, epochOf } from "@inversealtruism/csd-codec";
 

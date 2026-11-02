@@ -28,6 +28,10 @@
 - `requiredClaimDepth`'s doc and `CLAIM_ATTACKER_Q`'s comment no longer call the dominant block producer trusted or
   the wait reorg-safe: the depth makes a reorg by a minority miner (20% of the hashrate) unlikely, and the external
   pool that produces most blocks is outside the model. The depths are unchanged.
+- Docs (README, CONVENTION.md's overview and section 4.5 heading, MAKERS.md, the package description) no longer call
+  a fill atomic delivery-versus-payment or say a buyer cannot lose more than the anchor fee. One transaction pays and
+  records a fill and the replay decides delivery: a CSD-paid fill it refuses keeps the payment; a token-for-token
+  fill is atomic.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3

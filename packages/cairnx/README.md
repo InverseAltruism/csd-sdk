@@ -1,7 +1,7 @@
 # @inversealtruism/cairnx-core
 
 **CairnX** is the application layer of [Compute Substrate](https://cairn-substrate.com/docs) (CSD): an
-on-chain **name service (CNS / `.csd`)**, **tokens**, and **atomic delivery-versus-payment trades**, implemented as a **pure deterministic convention** over the chain's native `Propose`/`Attest`
+on-chain **name service (CNS / `.csd`)**, **tokens**, and **trades** (one transaction pays and records a fill; the replay decides delivery), implemented as a **pure deterministic convention** over the chain's native `Propose`/`Attest`
 transactions. No fork, no smart contracts, no custodian. The same trust class as Bitcoin
 Ordinals/Runes/BRC-20, stated plainly, and engineered to be byte-for-byte reproducible.
 
@@ -42,17 +42,19 @@ the operator's resolver does, and disagreement is detectable.
 └───────────────▲────────────────────────────────────────────────────────────────┘
                 │ events (Propose/Attest) + block headers
 ┌───────────────┴────────────────────────────────────────────────────────────────┐
-│  COMPUTE SUBSTRATE (base chain)   PoW · records & orders txs · enforces same-tx  │
-│                                   payment atomicity & expiry - decides NOTHING   │
+│  COMPUTE SUBSTRATE (base chain)   PoW · records & orders txs · pays every output │
+│                                   it mines, enforces expiry - decides NOTHING    │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **The safety consequence of "overlay":** CairnX names and tokens have **no native-CSD backing**. A bug,
 an over-mint, or even a fully-lying indexer can only fork the *overlay view* of whoever trusts it, it
-**cannot move CSD**. CSD moves *only* via real same-transaction payment outputs, which the chain makes
-atomic with the fill and which a buyer's wallet verifies against the offer's terms before paying. This
-single decision bounds the blast radius of every overlay bug and is why the names/tokens alpha is
-funds-safe.
+**cannot move CSD**. CSD moves *only* via real payment outputs in the fill's own transaction. The chain pays them
+whenever it mines the transaction; CairnX then decides delivery by replay, and a CSD-paid fill it refuses (an expired
+offer, a wrong target, an underpaid leg, a denied reservation) keeps the payment. So a buyer's wallet and the site
+check the fill against the offer's merkle-proven terms and the reservation before signing. An overlay bug can
+therefore not create or move CSD on its own; it can make a fill a buyer signs deliver nothing, which those checks
+exist to refuse.
 
 ```mermaid
 flowchart TD
@@ -192,11 +194,14 @@ can never touch CSD.
 
 ---
 
-## 4 · Atomic delivery-versus-payment (DvP) trades
+## 4 · Trades: one transaction pays and records the fill
 
-Sell a token **or a name** for CSD or another token, atomically. The offer locks the give-side in the
-resolver; the fill is an `Attest` whose **same transaction carries the payment outputs:** the chain makes
-payment and delivery one indivisible step. No escrow, no custodian, no "the other side didn't pay."
+Sell a token **or a name** for CSD or another token. The offer locks the give-side in the resolver; the fill is an
+`Attest` whose **same transaction carries the payment outputs**, so the chain records the payment and the fill
+together, and CairnX decides delivery by replay. A token-for-token fill is atomic: the replay moves both sides or
+neither. A CSD-paid fill the replay refuses keeps the payment (a CSD output is final when its transaction mines),
+so the buyer's client checks the offer's proven terms, the reservation and the amount before signing
+(`verifyFillSpv`, `fillEndorsement`). No escrow, no custodian.
 
 ```mermaid
 sequenceDiagram
@@ -206,8 +211,8 @@ sequenceDiagram
   Maker->>Chain: offer { give: alice.csd or token, want: 100 CSD, payto }  (locks the give)
   Note over Chain: open CSD offers use claim-to-fill (v1.7):<br/>the FIRST claimer is reserved before paying, no race
   Taker->>Chain: fill (Attest) + SAME-TX outputs · 100 CSD to payto, fee to treasury, rebate to maker
-  Chain-->>Chain: resolve(): payment satisfies want? deliver give to taker, else NO-OP
-  Note over Maker,Taker: invariant (v1.3+v1.4) · a buyer can never lose more than the anchor fee
+  Chain-->>Chain: resolve(): payment satisfies want? deliver give to taker, else no delivery
+  Note over Maker,Taker: a refused CSD-paid fill keeps the payment · check before signing
 ```
 
 Highlights: partial fills (pro-rata, maker-favoring), bids (RFQ buy-side intents), `ocancel` (maker's mass
@@ -240,7 +245,7 @@ is bounded in the light client, not the chain.
 |---|---|---|
 | v1.0 / 1.1 | 29 860 / 29 960 | tokens · **names (CNS)** + protocol fees |
 | v1.2 | 30 300 | token⇄token swaps · partial fills · bids (RFQ) · `ocancel` |
-| v1.3 / 1.4 | 31 100 / 31 400 | CSD-priced offers taker-bound · fill-before-cancel, *buyer can't lose more than the anchor fee* |
+| v1.3 / 1.4 | 31 100 / 31 400 | CSD-priced offers taker-bound · fill-before-cancel (a same-block fill beats a cancel) |
 | v1.5 | 32 000 | **name leasing** (renew / grace / decaying-premium recapture) · `tmeta` |
 | v1.6 | 33 600 | taker fee 1% → 1.5% + maker rebate on resting liquidity |
 | v1.7 | 34 000 | claim-to-fill, race-safe open CSD offers |
@@ -279,7 +284,7 @@ import { buildPropose } from "@inversealtruism/csd-tx";
 const built = offer({ give: { ticker: "CAIRN", amount: "5000000000" },
                       want: { value: "100000000" }, min: "10000000", taker: buyerAddr });
 
-// ANCHOR it (the record IS the uri; same-tx outputs can pay fees/sellers, atomic DvP)
+// ANCHOR it (the record IS the uri; outputs in the same tx pay fees and sellers)
 const tx = buildPropose({ domain: DOMAIN, uri: built.uri, payloadHash: built.payloadHash,
   expiresEpoch, fee: 25_000_000, utxos, priv });
 
