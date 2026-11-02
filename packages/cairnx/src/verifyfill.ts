@@ -150,10 +150,13 @@ export interface FillVerdict { safe: boolean; reason: string }
  * MERKLE-PROVEN and bound to their on-chain commitment (A1), both (and any earlier fill-basis) buried
  * `>= requiredClaimDepth`, the grant REPLAYED to a live hold that is mine and routes to THIS fclaim, the
  * fill delivering `>= 1` unit, and a FILL_TIP_MARGIN deadline cushion. Fails CLOSED on any unmet condition.
- * Over a window that holds the offer's history it accepts every honest fill (the holder, live hold, buried,
- * offer+fclaim proven, delivery >= 1) and refuses only the doomed/forged cases (a denied fclaim a lying resolver
- * calls "granted", a cancelled/lapsed or not-mine hold, a below-depth signing, a zero-delivery fill, a stranded
- * past-deadline broadcast). Over a window that lacks part of it, see "Known limits" below.
+ * Over a window that holds the offer's history it refuses the doomed/forged cases (a denied fclaim a lying
+ * resolver calls "granted", a cancelled/lapsed or not-mine hold, a below-depth signing, a zero-delivery fill, a
+ * stranded past-deadline broadcast) and one honest case on purpose: the cap count. `opts.myLiveHoldsAtGrant`, as
+ * countOtherHoldsAtGrant computes it, counts the buyer's earlier fclaims on other offers whether or not the chain
+ * granted them (a denial is not visible to it), so a buyer whose three such fclaims were all denied is refused a
+ * later fill the chain granted. Over-counting refuses; under-counting would let a cap-denied fill burn. Over a
+ * window that lacks part of the history, see "Known limits" below.
  *
  * `opts.myLiveHoldsAtGrant` (REQUIRED) is the buyer's count of OTHER live fclaim/legacy holds at the moment
  * THIS fclaim was granted, asserted by the authoring client (countOtherHoldsAtGrant computes it). The lane-scoped

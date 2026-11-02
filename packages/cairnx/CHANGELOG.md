@@ -5,8 +5,9 @@
 - `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted
   in the `GAP_NEEDED` (104) blocks before it and on the proposer's live holds on other offers, so a window decides an
   fclaim only when its low end is quiet. The comments no longer say a proven event "only moves the replay toward
-  truth" or that the replayed `paid` is the chain's, and its doc says it accepts every honest fill and refuses only
-  doomed or forged ones over a window that holds the offer's history. A "Known limits" list names, by step, what a
+  truth" or that the replayed `paid` is the chain's, and its doc lists what it refuses over a window that holds the
+  offer's history, including one honest case: the cap count includes the buyer's earlier fclaims on other offers the
+  chain denied, so three denied ones refuse a later fill the chain granted. A "Known limits" list names, by step, what a
   window without it gets wrong, first for a caller that uses only `verifyFillSpv` and then with the site's and the
   wallet's own checks: the grant replay (a hold chain from below the window can grant the caller's own fclaim the
   chain denied, with an honest resolver; the site's served-hold check and the wallet's second-source read bound it),
