@@ -15,7 +15,7 @@
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
   author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
   a fill to another address. The site's and the wallet's seams already bind it.
-- `test/vectors/cases-rules.json` (5 vectors, `conformance/gen-rule-vectors.mjs`), replayed by `test/vectors.test.ts`
+- `test/vectors/cases-rules.json` (5 vectors pinning 3 rules, `conformance/gen-rule-vectors.mjs`), replayed by `test/vectors.test.ts`
   and against the Python oracle by `conformance/crosscheck-resolve.mjs`: a same-block fclaim fill (the fill at the
   lower position and in the natural order) and a same-block seller cancel at the lower position (proposals apply
   before attests within a block), a deploy whose uri is not its canonical JSON but whose payload hash is the

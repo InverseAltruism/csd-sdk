@@ -22,8 +22,8 @@ this directory, only the JS implementation existed, so the contract was asserted
 - **`crosscheck-resolve.mjs`:** feeds the shipping JS resolver and the Python port the SAME
   language-neutral vectors (`packages/cairnx/test/vectors/cases.json`, and `cases-rules.json`) and asserts
   `canonicalState(JS.resolve) === Python.resolve === JSON.stringify(expectedState)` for every case.
-  `cases-rules.json` (`gen-rule-vectors.mjs`, its own file so the frozen `cases.json` keeps its bytes) pins four
-  rules nothing else decided: a fill or a seller cancel in the block of the record it attests applies after it
+  `cases-rules.json` (`gen-rule-vectors.mjs`, its own file so the frozen `cases.json` keeps its bytes) pins, in
+  five vectors, three rules nothing else decided: a fill or a seller cancel in the block of the record it attests applies after it
   (proposals before attests), a uri that is not its canonical JSON is invalid even with the canonical hash, and a
   token offer cannot give and want one ticker.
   Real-chain co-sign: `cairnx/scripts/conformance-crosslang.mjs` scans the live indexer and replays

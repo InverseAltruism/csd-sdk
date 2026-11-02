@@ -1,5 +1,6 @@
-// Generator for the rule vectors: four resolver rules that move canonical state and that no other vector, replay hash
-// or differential decides. expectedState is derived from the SHIPPING JS resolver (the built dist); the Python oracle
+// Generator for the rule vectors: five vectors pinning three resolver rules that move canonical state and that no other
+// vector, replay hash or differential decides (the within-block order, vectors 1 to 3; the canonical uri, 4; the
+// same-ticker offer, 5). expectedState is derived from the SHIPPING JS resolver (the built dist); the Python oracle
 // replays the same events in crosscheck-resolve.mjs. Re-runnable: rewrites the whole cases-rules.json each run.
 // Run: node conformance/gen-rule-vectors.mjs (after building packages/cairnx).
 //
