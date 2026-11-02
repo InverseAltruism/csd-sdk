@@ -247,12 +247,13 @@ Amounts named "base" are base units (CSD has 8 decimals). Defaults are those of 
 | `MM_FEE_BUDGET` | `1000000000` | Base CSD per UTC day of fees that bought nothing back. Live and filled answers are not counted; answers that expired unfilled are. Past half of it, addresses with no prior fill on CairnX are answered only for bids of at least `MM_FRESH_MIN_CSD` (reason `budget-fresh-min`); past all of it the bot posts nothing of its own and answers returning buyers only (`budget-returning-only`). Answers to returning buyers are bounded by `MM_MAX_BID_ANSWERS` and `MM_MIN_FLOAT_HARD`, not by this budget. |
 | `MM_FRESH_MIN_CSD`, `MM_FRESH_SLOTS` | `2000000000`, `16` | A bid below the minimum from an address with no prior fill is "fresh small" (in Sunrise the answer price is compared, not the bid). Such answers hold at most `MM_FRESH_SLOTS` of the `MM_MAX_BID_ANSWERS` slots (reason `fresh-slots`). |
 | `MM_BID_MIN`, `MM_BID_MARGIN_BPS`, `MM_MAX_BID_ANSWERS` | `200000000`, `200`, `24` | Bid dust floor (2 CSD), accept margin over the reference, and outstanding-answer cap. |
+| `MM_MAX_BALANCE_READS` | `20` | Bidder balances one answer pass reads from the node (each `/utxos` read walks the node's UTXO set). The checks that need no balance run first; a balance is cached per address and tip, and one read insolvent is not read again for 3 blocks. Returning bidders are read first, then addresses never read, then re-reads, each resuming where the last capped pass stopped; a bid whose turn is a later pass is skipped that pass as `balance-unknown`. At least 1. |
 | `MM_LOCK_FRAC` | `2500` | Token locked in open answers is at most this many bps of inventory. |
 | `MM_DAY_SELL_CAIRN`, `MM_DAY_SELL_CSD` | `3000000000000`, `50000000000` | Daily sell caps in base units (30,000 CAIRN at 8 decimals, 500 CSD): today's fills plus live answers. In Sunrise an answer whose taker can no longer pay for it is not reserved against them; `MM_LOCK_FRAC`, inventory and `MM_SUNRISE_E` still count every live answer. |
 | `MM_EXCLUDE_ADDRS` | the CairnX treasury address | Comma list; excluded from the reference, from answers and from fills. |
 | `MM_BID_SPREAD_BPS`, `MM_BID_SIZE`, `MM_MAX_OPEN_BIDS` | `800`, `2000000000`, `2` | Thin bid side (Reservoir only). The bid reference is collared at the ask reference so the book cannot cross. `MM_MAX_OPEN_BIDS=0` stops new posts only, not fills of existing bids. |
 | `MM_BID_LEVELS` | `[]` | `[[spreadBps, sizeCsd],...]`; empty means a single `MM_BID_SPREAD_BPS` bid. |
-| `MM_FILL_BIDS` | `1` | `0` stops fills of answers to the maker's bids and new bid posts; cancels still run. The buy side runs only in the Reservoir: the Sunrise posts no bids. Must be 0 or 1. |
+| `MM_FILL_BIDS` | `0` | `1` turns on fills of answers to the maker's bids and new bid posts; at `0` cancels still run, so a start without the setting buys nothing. With `1` and `MM_VERIFY_INCLUSION` off the bot starts, alerts at boot and publishes `build.fillsWithoutInclusion` in its health and quotes files: its fills would pay on what the indexer serves. The buy side runs only in the Reservoir: the Sunrise posts no bids. Must be 0 or 1. |
 | `MM_DAY_BUY_CSD`, `MM_BID_EXPIRY` | `10000000000`, `24` | An absolute ceiling on the day's bid-side CSD (100 CSD); the buy-back guards below set the working limit. Bid life in epochs; bids are cancellable. |
 | `MM_BUY_SALE_BPS` | `1000` | All-in buybacks over the trailing 7 days at most this share of the maker's 7-day sale proceeds. No recent sales, no buying. |
 | `MM_BUY_LIFE_BPS` | `500` | Buybacks since the start tip at most this share of the sale proceeds since then. |
@@ -275,8 +276,10 @@ Amounts named "base" are base units (CSD has 8 decimals). Defaults are those of 
 | `MM_SUNRISE_E`, `MM_SUNRISE_DAY_QUOTA`, `MM_SUNRISE_MAX_EPOCHS` | `100000`, `5000`, `2160` | Scheduled emission (display units), per-UTC-day quota with no accrual, and the epoch cap after which the schedule graduates. |
 | `MM_SUNRISE_MAX_ORDER` | `60000` | Largest single Sunrise answer in display units; the day quota caps it too. Published as `sunrise.maxOrder` in base units. |
 | `MM_SUNRISE_BID_BUFFER_BPS` | `200` | Buffer a Swap UI adds to a Sunrise bid above the rung; the answer asks the maker's price, so this is the buyer's tolerance. At most 2000. |
+| `MM_SUNRISE_START_TIP` | `0` | The tip a Sunrise record starts at when the bot creates one (`0`: the current tip). Pin it to the launch tip, so a state file lost with its marker re-derives the sale, its clock and its price from the chain since the pin instead of restarting at P0. A whole number. |
 | `MM_SUNRISE_TARGET_DEPTH_BPS` | `500` | Part of the float target behind `sunrise.skimmable`: this many bps of the remaining Sunrise value. |
-| `MM_ISSUER_ADDR`, `MM_SKIM_LEDGER` | empty, `~/.config/cairn/mm-skim.jsonl` | Skim destination and ledger. The bot never sends CSD itself; see "Skimming CSD". |
+| `MM_ISSUER_ADDR`, `MM_SKIM_LEDGER` | empty, `~/.config/cairn/mm-skim.jsonl` | The issuer address the quotes file publishes (`issuer`), and the skim ledger. The bot never sends CSD itself; see "Skimming CSD". |
+| `MM_SKIM_TO` | empty | The one address a live skim may send to. The skim script refuses a live run without it or with another `--to`; the bot does not read it. |
 
 `MM_SUNRISE_PRICE_LOCK_BLOCKS` and `MM_SUNRISE_PRICE_LOCK_LOOKBACK` are not read any more.
 
@@ -373,7 +376,7 @@ if that is the floor you want. Graduation is not a claim that the market is liqu
 ### Skimming CSD
 
 Excess CSD is moved out with an operator script (`scripts/mm-skim.mjs` in the reference repo). `--dry` is the default and
-`--live` submits. It refuses amounts above the quotes file's `sunrise.skimmable`: the float above a target of `MM_SUNRISE_TARGET_DEPTH_BPS` of the remaining Sunrise value plus 30 days of `MM_FEE_BUDGET`, never less than twice `MM_MIN_FLOAT`, and only when the float exceeds 1.5 times that target. The
+`--live` submits, only to `MM_SKIM_TO`, which `--to` must repeat. It refuses amounts above the quotes file's `sunrise.skimmable`: the float above a target of `MM_SUNRISE_TARGET_DEPTH_BPS` of the remaining Sunrise value plus 30 days of `MM_FEE_BUDGET`, never less than twice `MM_MIN_FLOAT`, and only when the float exceeds 1.5 times that target. The
 ledger is `MM_SKIM_LEDGER` (mode 600).
 
 ## Honest limits
