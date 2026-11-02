@@ -76,9 +76,11 @@ export interface FillSpvIo {
   // verifyFillSpv's `opts.sums`. Every id returned here must come back from provenEvent; one that does not fails
   // the verdict closed.
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
-  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
-  // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
-  // inclusion alone; it yields only the merkle-proven record body bound to its on-chain payload_hash.
+  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact (the caller
+  // fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim inclusion alone; it
+  // yields only the merkle-proven record body bound to its on-chain payload_hash. `proposer` and `attester` are
+  // the prevout-bound author (csd-crypto authorOf over the proven body and the coin its input 0 spends), never the
+  // signer read from the scriptSig, which the txid does not commit; an event whose author cannot be bound is null.
   provenEvent(id: string): Promise<ProvenEvent | null>;
 }
 

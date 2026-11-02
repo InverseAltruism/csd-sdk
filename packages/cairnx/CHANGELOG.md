@@ -11,6 +11,10 @@
   served `paid`, host-only) and the inflate leg (a second-order hold chain or a third party's cap, host-only).
   Reading that history (design b') is a Plan 87 later item. CONVENTION.md section 31's client policy says the same
   and gives `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
+- The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
+  `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
+  author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
+  a fill to another address. The site's and the wallet's seams already bind it.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3
