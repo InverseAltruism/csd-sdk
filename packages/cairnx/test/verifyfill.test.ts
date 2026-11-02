@@ -11,12 +11,12 @@ import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import {
-  deploy, mint, offer, fclaim, nameClaim, nameRegFee, requiredFillOutputs, resolve,
+  deploy, mint, offer, fclaim, nameClaim, nameRegFee, requiredClaimDepth, requiredFillOutputs, resolve,
   verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
   bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms, provenOfferRefusal, parseRecord,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS,
   ACTIVATION_HEIGHT, V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
-  TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, epochOf, fclaimHoldEnd,
+  TREASURY_ADDR, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, FILL_TIP_MARGIN, epochOf, fclaimHoldEnd,
 } from "../src/index.js";
 import type { ChainEvent, ProvenEvent, ProvenPropose, FillSpvIo } from "../src/index.js";
 
@@ -476,6 +476,39 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   ok(atV11.offers[id("0e")]?.status === "open" && provenOfferRefusal(recOf(nameOffer), atPre(V11_HEIGHT)) === null,
     "provenOfferRefusal: an owned name offered at V11, which resolve() admits, passes");
   ok(provenOfferRefusal(recOf(honestRec), atPre(ACTIVATION_HEIGHT)) === null, "provenOfferRefusal: an offer at ACTIVATION_HEIGHT passes");
+}
+
+// ── 15. four guards no other case reaches: the depth clamp to the PoW tip, the claim depth's value scaling, the
+//    zero-delivery refusal and the FILL_TIP_MARGIN deadline ──
+{
+  const honest = makeIo([...base, grant], H0 + 4);   // the fclaim (H0 + 3) is buried 2 at this tip
+  const deeper: FillSpvIo = {
+    tip: honest.tip, offerEventIds: honest.offerEventIds,
+    async provenEvent(x: string) { const e = await honest.provenEvent(x); return e ? { ...e, depth: 100 } : e; },
+  };
+  const vDeep = await vfs(OID, fcTx, B, deeper);
+  ok(vDeep.safe === false && /not buried deep enough/.test(vDeep.reason), `a seam reporting depth 100 at a burial of 2 is held to the PoW tip (${vDeep.reason})`);
+
+  ok(requiredClaimDepth(100_000_000n, H0).depth === 3 && requiredClaimDepth(1_000_000_000_000n, H0).depth === 4
+    && requiredClaimDepth(10_000_000_000_000n, H0).depth === 5, "requiredClaimDepth: 1 CSD needs 3, 10,000 CSD 4, 100,000 CSD 5");
+  const BIG = id("b1"), bigOffer = PE(BIG, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "1000000000000", payto: A } }), H0 + 2, A, 9e9);
+  const bigFc = PE(id("b2"), fclaim({ offer: BIG }), H0 + 3, B, E);
+  const bigEvents = [base[0]!, base[1]!, bigOffer, bigFc];
+  const vShallow = await vfs(BIG, id("b2"), B, makeIo(bigEvents, H0 + 5));   // the fclaim buried 3
+  ok(vShallow.safe === false && /not buried deep enough/.test(vShallow.reason), `a 10,000 CSD fill waits for depth 4 (${vShallow.reason})`);
+  ok((await vfs(BIG, id("b2"), B, makeIo(bigEvents, H0 + 6))).safe === true, "and passes at depth 4");
+
+  // a partial offer of 10 units for 5 CSD: 0.1 CSD buys floor(10 * 0.1 / 5) = 0 units
+  const ZOID = id("0c"), zOffer = PE(ZOID, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "500000000", payto: A }, min: "1000000" }), H0 + 2, A, 9e9);
+  const zFc = PE(id("f9"), fclaim({ offer: ZOID }), H0 + 3, B, E);
+  const zIo = makeIo([base[0]!, base[1]!, zOffer, zFc], holdEnd - 5);
+  const vZero = await vfs(ZOID, id("f9"), B, zIo, { pay: "10000000" });
+  ok(vZero.safe === false && /deliver 0 units/.test(vZero.reason), `a payment that floors to 0 units is refused (${vZero.reason})`);
+  ok((await vfs(ZOID, id("f9"), B, zIo, { pay: "50000000" })).safe === true, "a payment worth one unit passes");
+
+  const vLate = await vfs(OID, fcTx, B, makeIo([...base, grant], holdEnd - 3));
+  ok(vLate.safe === false && /too close to the hold deadline/.test(vLate.reason), `a fill 3 blocks before the hold ends is refused (${vLate.reason})`);
+  ok((await vfs(OID, fcTx, B, makeIo([...base, grant], holdEnd - FILL_TIP_MARGIN))).safe === true, `${FILL_TIP_MARGIN} blocks before it passes`);
 }
 
 console.log(`cairnx-core verifyfill B4 (fill-SPV fund boundary): ${pass} passed`);
