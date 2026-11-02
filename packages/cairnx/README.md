@@ -70,7 +70,7 @@ flowchart TD
   TX --> CORE
   CORE --> W & G & CL
   G --> UIN & UIT
-  W -. "self-verifies, never trusts a server" .-> UIN
+  W -. "self-verifies; an unprovable name shows the served address with a caution" .-> UIN
 ```
 
 ---
@@ -350,7 +350,9 @@ light-client + `namespv.ts`, the wallet `core/csdtx.ts` tx-codec twin, the porta
   SPV/signer/prevout-bound), weaker against *withholding* until a genuinely independent second source runs.
   The 2nd-indexer canonical-hash comparator is designed but parked until that exists.
 - **`verifyInclusion` (merkle-binding the indexer's decoded outputs) is OFF by default** and is a hard
-  prerequisite before any lane treats received CSD as spendable. The overlay model is what keeps the
-  names/tokens alpha funds-safe regardless.
+  prerequisite before any lane treats received CSD as spendable. The overlay model keeps an overlay bug from
+  creating or moving CSD by itself; it does not make every payment safe. A CSD-paid fill CairnX refuses keeps the
+  payment, `verifyFillSpv`'s "Known limits" (in `src/verifyfill.ts`) list when a buyer's client can still sign one,
+  and a `.csd` send to a name the wallet cannot prove goes to the served address after a caution (section 2.4).
 
 MIT · the same trust class as Ordinals/Runes, engineered for byte-for-byte reproducible replay.
