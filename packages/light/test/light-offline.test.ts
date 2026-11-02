@@ -4,7 +4,7 @@
 // rejection) was UNTESTED in CI. Real headers are used so PoW/LWMA are genuine, not synthetic.
 import { LightClient, expectedBitsFromWindow, type HeaderProvider } from "../src/index.js";
 import { LWMA_WINDOW, verifyMerkleProof, merkleBranch, headerHash, headerHashBytes, powOk,
-  POW_LIMIT_BITS, GENESIS_HASH, type BlockHeader } from "@inversealtruism/csd-codec";
+  POW_LIMIT_BITS, INITIAL_BITS, GENESIS_HASH, type BlockHeader } from "@inversealtruism/csd-codec";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -483,6 +483,51 @@ if (inclBlock) {
   ok("drift: a header exactly 2 h ahead of the clock passes the time rules (fails later, on PoW)", atLimit !== "" && !/time/.test(atLimit) && /PoW/.test(atLimit));
   ok("drift: a header 2 h + 1 s ahead of the clock is rejected as too far in the future", /future/.test(ingestAt(t - 2 * 60 * 60 - 1)));
   ok("drift: the real tip header still ingests after the probes", errOf(() => lcB.ingest(FX.tip, victim.header, victim.hash)) === "");
+}
+
+// ── The forward-sync path (ingest, tryReorg), where SPV fill and inclusion verdicts get their headers: the bits,
+//    prev-link, max-work and genesis rules each refuse alone (the restore-path tests above go through restoreOne) ──
+{
+  console.log("\nforward sync: bits, prev link, max work, genesis");
+  const errOf = (f: () => unknown): string => { try { f(); return ""; } catch (e: any) { return e?.message ?? String(e); } };
+  const lcF = new LightClient({ headerProvider: provider });
+  lcF.seedTrusted(seed, cpHash);
+  await lcF.sync(FX.tip - 1);
+  const tip = byH.get(FX.tip)!;
+  // section 6's baked min-difficulty poison: PoW-valid at POW_LIMIT_BITS on the tip's bytes, so only bits refuse it
+  const poison = { ...tip.header, bits: POW_LIMIT_BITS, nonce: 6926799 } as BlockHeader;
+  ok("ingest: a min-difficulty header with valid PoW is refused on the LWMA bits",
+    powOk(headerHashBytes(poison), POW_LIMIT_BITS) && /bad bits/.test(errOf(() => lcF.ingest(FX.tip, poison, headerHash(poison)))));
+  const orphan = { ...tip.header, prev: "0x" + "de".repeat(32) } as BlockHeader;
+  ok("ingest: a header whose prev is not its parent's hash is refused", /prev link/.test(errOf(() => lcF.ingest(FX.tip, orphan, headerHash(orphan)))));
+  ok("ingest: the real tip header still ingests after the refusals", errOf(() => lcF.ingest(FX.tip, tip.header, tip.hash)) === "");
+
+  // max work: our own last five headers offered again tie, four of them are less work; a client that stopped two
+  // short adopts the five (more work than its tip)
+  const run = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, k) => { const r = byH.get(a + k)!; return { height: a + k, header: r.header, hash: r.hash }; });
+  const from = FX.tip - 4;
+  const equal = lcF.tryReorg(run(from, FX.tip));
+  ok("tryReorg: an equal-work branch is refused", !equal.adopted && /current/.test(equal.reason ?? ""));
+  const lower = lcF.tryReorg(run(from, FX.tip - 1));
+  ok("tryReorg: a lower-work branch is refused", !lower.adopted && /current/.test(lower.reason ?? ""));
+  const lcShort = new LightClient({ headerProvider: provider });
+  lcShort.seedTrusted(seed, cpHash);
+  await lcShort.sync(FX.tip - 2);
+  const longer = lcShort.tryReorg(run(from, FX.tip));
+  ok("tryReorg: a branch with more work is adopted", longer.adopted && longer.newTip === FX.tip && longer.rolledBack === 3 && lcShort.tip!.hash === tip.hash);
+
+  // genesis: a height-0 header at INITIAL_BITS that is not the genesis (the other genesis check, bits, passes)
+  const g = gByH.get(0)!;
+  const foreign = { ...g.header, nonce: (g.header.nonce ^ 1) >>> 0 } as BlockHeader;
+  const one = (h: BlockHeader) => ({ v: 1, baseHeight: 0, headers: [{ height: 0, hash: headerHash(h), header: h, chainwork: "0", trusted: false }] });
+  ok("genesis setup: the foreign header keeps INITIAL_BITS and is not the genesis hash",
+    foreign.bits === INITIAL_BITS && headerHash(foreign).toLowerCase() !== GENESIS_HASH.toLowerCase());
+  ok("ingest: a foreign height-0 header at INITIAL_BITS is refused as a foreign genesis",
+    /foreign genesis/.test(errOf(() => new LightClient({ headerProvider: provider }).ingest(0, foreign, headerHash(foreign)))));
+  ok("restore: a snapshot rooted at a foreign height-0 header at INITIAL_BITS is refused as a foreign genesis",
+    /foreign genesis/.test(errOf(() => LightClient.fromSnapshot(one(foreign) as any))));
+  ok("the real genesis ingests and restores",
+    errOf(() => new LightClient({ headerProvider: provider }).ingest(0, g.header, g.hash)) === "" && errOf(() => LightClient.fromSnapshot(one(g.header) as any)) === "");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
