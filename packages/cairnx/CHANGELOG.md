@@ -10,8 +10,9 @@
   window without it gets wrong: aged fills at delivery (an honest tail below `min` is refused; for a coarse give the
   delivery check can disagree with the chain's, so a caller refuses a payment its served offer computes as
   undeliverable), the deflate leg at the sums bind (a withheld fill and a lower served `paid`, host-only) and the
-  inflate leg at the grant replay (a second-order hold chain or a third party's cap, host-only). Reading the history
-  below the window is not implemented. CONVENTION.md section 31's client policy says the same and gives
+  inflate leg at the grant replay (a second-order hold chain or a third party's cap, host-only). The `FillSpvIo`
+  contract names the offer and its give-backing among the events the replay needs. Reading the history below the
+  window is not implemented. CONVENTION.md section 31's client policy says the same and gives
   `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
 - The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose

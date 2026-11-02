@@ -67,7 +67,14 @@ export interface FillSpvIo {
   // SEAM OBLIGATION THE PURE LAYER CANNOT VERIFY, and it holds per window: the ids are every lane event (the
   // offer, its fclaims, ocancels, attests on the offer or its fclaims) of the heights [fclaimHeight - MAX_SCAN,
   // tip], read completely from PoW-verified BLOCK BODIES (the swapguard scan model), never a bare resolver hint
-  // list. Each id is MERKLE-PROVEN via provenEvent. Inside such a window a real event moves the replay toward the
+  // list. Beside them the replay needs what resolve() needs to admit the offer: the offer Propose itself (proven
+  // at its own height when it predates the window) and its give-backing, which predates any window: for a token
+  // give, the ticker's deploy and the mint or transfers that leave the seller at least the given amount
+  // available; for a name give, the records that leave the seller owning the name, finalized and unlocked.
+  // Without them the offer does not resolve and the verdict refuses. A seam that cannot read the backing may
+  // synthesize it from the proven offer record, as the site and the wallet do; the backing then decides only
+  // that the offer resolves and what it can deliver, never the grant, and it is resolver-trusted.
+  // Each id is MERKLE-PROVEN via provenEvent. Inside such a window a real event moves the replay toward the
   // chain's state; a real event added alone (an fclaim proven without the holds before it) can make the replay
   // grant what the chain denied, and the fclaims in the window's lowest GAP_NEEDED blocks are not decided by it
   // (the GAP_NEEDED note). OMITTING a real event is the attack: a withheld cancel, a consuming prior fill, or a
