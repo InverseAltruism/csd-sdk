@@ -21,8 +21,8 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { verifyTarball, workspaceVersions } from "./verify-tarball.mjs";
-import { registryVersion, workspacePackages } from "./workspace.mjs";
+import { verifyTarball } from "./verify-tarball.mjs";
+import { registryVersion, versionMap, workspacePackagesAtHead } from "./workspace.mjs";
 
 const USAGE = `usage: node scripts/npm-window.mjs [--out <dir>]
        node scripts/npm-window.mjs --out <dir> --run --token-file <path>`;
@@ -199,9 +199,14 @@ export async function checkWindow(o) {
   chk("CSD_PUBLISH_SKIP_TESTS is not set (the guard runs the suites)", (o.env ?? process.env).CSD_PUBLISH_SKIP_TESTS === undefined);
 
   log("\n== plan");
+  // versions come from HEAD: a manifest rolled back on disk under skip-worktree would drop its package from the
+  // window while its dependents publish pinning the rolled-back version
+  /** @type {any[]} */
+  let pkgs = [];
+  try { pkgs = workspacePackagesAtHead(root); } catch (e) { chk(`the workspace manifests at HEAD are readable (${e instanceof Error ? e.message : e})`, false); }
   /** @type {any[]} */
   const todo = [];
-  for (const p of workspacePackages(root).filter((x) => !x.private)) {
+  for (const p of pkgs.filter((x) => !x.private)) {
     const { status } = await registry(p.name, p.version);
     if (status === 404) todo.push(p);
     else chk(`${p.name}@${p.version} is already on npm (registry HTTP ${status})`, status === 200);
@@ -211,7 +216,7 @@ export async function checkWindow(o) {
   for (const p of order) log(`  ${p.name}@${p.version}`);
 
   log("\n== pack, guard, verify");
-  const versions = workspaceVersions(root);
+  const versions = versionMap(pkgs);
   for (const p of order) {
     const dir = join(root, "packages", p.__dir);
     const file = join(out, `${p.name.replace("@", "").replace("/", "-")}-${p.version}.tgz`);

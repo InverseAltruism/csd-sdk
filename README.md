@@ -37,11 +37,19 @@ const tx = await buildSendVerified({
 if (!tx.ok) throw new Error(tx.error);
 await client.submitOrThrow(tx.nodeJson); // throws if the node rejects the transaction
 
-// 2) don't trust the server: verify your transaction is really in the chain
-const light = new LightClient({ client });
-const tip = await client.tip();
-await light.syncFromCheckpoint(tip.height - 20, (await client.blockByHeight(tip.height - 20)).hash);
-await light.sync(tip.height);
+// 2) don't take the server's word for inclusion: check the headers yourself, forward from a checkpoint.
+//    The checkpoint is the one input the light client trusts: pin a recent block height and hash that you
+//    verified yourself (your own node, or a value you audited), not one this server gave you. Headers come in
+//    batches of up to 512 from a /headers endpoint; every row is checked, so the endpoint is not trusted either.
+const CHECKPOINT = { height: Number(process.env.CP_HEIGHT), hash: process.env.CP_HASH };
+const headersBatchProvider = async (from, count) => {
+  const res = await fetch(`https://cairn-substrate.com/api/headers/${from}/${count}`);
+  if (!res.ok) throw new Error(`headers ${from}+${count}: HTTP ${res.status}`); // a 429 or 502 names itself
+  return (await res.json()).headers;
+};
+const light = new LightClient({ client, headersBatchProvider });
+await light.syncFromCheckpoint(CHECKPOINT.height, CHECKPOINT.hash);
+await light.sync((await client.tip()).height);
 const inc = await light.verifyTxInclusion(tx.txid); // { trustLevel: "verified-inclusion", … }
 ```
 
@@ -64,7 +72,7 @@ Runnable walkthrough (read-only, it never broadcasts): [`examples/quickstart.mjs
 | `@inversealtruism/csd-crypto` | Make keys and addresses; sign and verify with secp256k1 (low-S, RFC 6979, the same rules consensus enforces). |
 | `@inversealtruism/csd-tx` | Pick coins and build ready-to-broadcast `send`, `propose` and `attest` transactions, signed locally. |
 | `@inversealtruism/csd-client` | A typed client for reading the chain and broadcasting (point it at a node, a hosted proxy, or a gateway), plus `verifyInputValues`. |
-| `@inversealtruism/csd-light` | A light client: sync block headers, check the proof-of-work and difficulty yourself, and prove a transaction is included, so an untrusted RPC cannot lie to you. |
+| `@inversealtruism/csd-light` | A light client: sync block headers from a checkpoint you pin, check the proof-of-work and difficulty yourself, and prove a transaction is included, so an inclusion above that checkpoint rests on proof-of-work, not on the RPC's word. |
 | `@inversealtruism/csd-siwc` | Sign in with CSD: audience-bound, replay-resistant wallet sign-in (an EIP-4361 / CAIP-122 analogue). |
 | `@inversealtruism/cairnx-core` | CairnX, the application layer: tokens, `.csd` names and atomic delivery-versus-payment trades as a pure deterministic replay of on-chain records. Ships the normative `CONVENTION.md`. |
 | `@inversealtruism/csd-vectors` | The shared test fixtures that pin every package to the official node's behaviour. |
@@ -76,9 +84,15 @@ downloads block headers and checks them itself: each header links to the previou
 valid, and its difficulty is exactly what the network's rules require. Then it proves your transaction belongs
 to a verified block with a merkle proof, so the answer rests on proof-of-work rather than on the server's word.
 
+It starts from a checkpoint (`syncFromCheckpoint`): a block height and hash it takes as given. It checks that
+the headers it fetches link up to that hash, and every header after it, but nothing it fetches can vouch for the
+hash itself, so pin it from a source other than the server you are checking; a server that chose the checkpoint
+could also choose the chain after it. `sync` from genesis trusts only the genesis hash the SDK ships, at the
+cost of fetching every header.
+
 What it can and cannot prove:
 
-- Inclusion: "this transaction is in the chain" is fully provable.
+- Inclusion: "this transaction is in the chain" is provable for any block above the checkpoint.
 - Balance: a header chain cannot prove a coin is still unspent (CSD headers do not commit to the coin set), so
   balance reads are marked `rpc-trusted`. Every result carries its trust level.
 
@@ -104,10 +118,11 @@ CSD_RPC=<node url> pnpm test:live  # the live checks above, against a node you c
 
 Published on npm as `@inversealtruism/*`, verified against live mainnet. The light client has two known limits:
 
-- The node serves headers only inside full blocks, so syncing all of history block by block is slow. Pass a
-  `headersBatchProvider` (for example one that reads a `/headers/{from}/{count}` endpoint such as
-  `https://cairn-substrate.com/api/headers/{from}/{count}`; every row is still verified), or start from a
-  recent checkpoint with `syncFromCheckpoint`.
+- The node serves headers only inside full blocks, so without a batch source the light client fetches one full
+  block per header. Pass a `headersBatchProvider` as the example above does (a `/headers/{from}/{count}`
+  endpoint such as `https://cairn-substrate.com/api/headers/{from}/{count}`, up to 512 headers a request; every
+  row is still verified), and start from a recent checkpoint you verified yourself with `syncFromCheckpoint`:
+  every header after the checkpoint is fetched and checked, so an old one makes a long sync.
 - Balances are `rpc-trusted` (see above).
 
 MIT licensed.

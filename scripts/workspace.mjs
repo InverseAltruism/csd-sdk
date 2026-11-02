@@ -1,6 +1,8 @@
-// The workspace packages and their npm registry entries, read by check-lockstep.mjs and npm-window.mjs.
+// The workspace packages and their npm registry entries, read by check-lockstep.mjs, npm-window.mjs and
+// verify-tarball.mjs.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { headTree, readBlobs } from "./git-head.mjs";
 
 export const REGISTRY = "https://registry.npmjs.org";
 
@@ -22,6 +24,24 @@ export function workspacePackages(root) {
   }
   return out;
 }
+
+/**
+ * Every packages/<dir>/package.json of the HEAD commit, parsed, with `__dir` set to <dir>: the manifests a release
+ * publishes, whatever the working copy holds. Throws when git cannot read HEAD under packages/.
+ * @param {string} root
+ * @returns {Array<Record<string, any> & { __dir: string }>}
+ */
+export function workspacePackagesAtHead(root) {
+  const pkgsDir = join(root, "packages");
+  const tree = headTree(pkgsDir);
+  const rels = tree ? [...tree.keys()].filter((r) => /^[^/]+\/package\.json$/.test(r)) : [];
+  const blobs = tree && readBlobs(pkgsDir, rels.map((r) => /** @type {string} */ (tree.get(r))));
+  if (!blobs) throw new Error(`git cannot read the workspace manifests at HEAD under ${pkgsDir}`);
+  return rels.map((r, i) => Object.assign(JSON.parse(/** @type {Buffer} */ (blobs[i]).toString("utf8")), { __dir: r.split("/")[0] }));
+}
+
+/** Package name -> version. @param {Array<Record<string, any>>} pkgs @returns {Map<string, string>} */
+export const versionMap = (pkgs) => new Map(pkgs.map((p) => [p.name, p.version]));
 
 /**
  * The registry document of one published version: `{ status, meta }`, `meta` null unless the status is 200.
