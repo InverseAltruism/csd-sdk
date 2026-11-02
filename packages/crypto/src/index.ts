@@ -72,7 +72,7 @@ export function verifyDigest(sig64: string, pub33: string, digestHex: string): b
     const s = hb(sig64), p = hb(pub33), d = hb(digestHex);
     if (s.length !== 64 || p.length !== 33 || d.length !== 32) return false;
     if (secp256k1.Signature.fromCompact(s).hasHighS()) return false;
-    // Without a format noble tries DER first, and 64 bytes can be both (DER-shape vectors in crypto.test.ts).
+    // Without a format noble tries DER first, and 64 bytes can be both (csd-vectors SIG_VECTORS).
     return secp256k1.verify(s, d, p, { lowS: true, format: "compact" });
   } catch { return false; }
 }

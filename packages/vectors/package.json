@@ -1,8 +1,8 @@
 {
   "name": "@inversealtruism/csd-vectors",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "engines": { "node": ">=18" },
-  "description": "Golden conformance vectors for Compute Substrate \u2014 the contract every @inversealtruism/csd-* impl must match. Sourced from the Rust node's frozen tests/golden_vectors.rs + real on-chain data.",
+  "description": "Golden conformance vectors for Compute Substrate: the contract every @inversealtruism/csd-* impl must match. Sourced from the Rust node's frozen tests/golden_vectors.rs + real on-chain data.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -16,7 +16,8 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

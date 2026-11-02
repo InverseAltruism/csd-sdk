@@ -150,3 +150,4 @@ export const HEADER_VECTORS: HeaderVector[] = [GOLDEN_HEADER];
 export const TX_VECTORS: TxVector[] = [GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX];
 
 export * from "./live.js";
+export * from "./signatures.js";

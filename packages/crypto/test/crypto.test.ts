@@ -2,7 +2,7 @@
 // node's funded key (block-21043 era) + property checks.
 import { hash160, pubFromPriv, addrFromPriv, addrFromPub, isValidAddr, isValidPriv, keygen, signDigest, verifyDigest, buildScriptSig, parseScriptSig, signerAddrFromScriptSig, recoverSigner, authorOf } from "../src/index.js";
 import { sighash, txid, merkleRoot, type Tx } from "@inversealtruism/csd-codec";
-import { GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX } from "@inversealtruism/csd-vectors";
+import { GOLDEN_TX, GOLDEN_PROPOSE_TX, GOLDEN_ATTEST_TX, SIG_VECTORS } from "@inversealtruism/csd-vectors";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -133,36 +133,17 @@ const withScriptSig = (tx: Tx, scriptSig: string, i = 0): Tx =>
 }
 
 // The node reads the 64 signature bytes as compact r || s only (crypto/mod.rs verify_sig, Signature::from_compact)
-// and requires low S. Fixed vectors over sighash(base), built by choosing the bytes and solving for the key; the
-// node's crate (secp256k1 0.29.1, verify_sig's steps) returns ok for A1 and A2 and "signature failed verification"
-// for B.
-{
-  const DIGEST = "0x388d3773d75bede6c1f89ca79e3a593fd8556e3dd38a95a93a0c256e56f53338";
-  ok("DER-shape vectors: sighash(base) is the digest they were built over", sighash(base) === DIGEST);
-  // Compact low-S signatures whose bytes are also DER-shaped: 30 3e 02 L <L bytes> 02 (58 - L) <58 - L bytes>.
-  // A1 (L = 20) has an s integer too wide for the curve; A2 (L = 32) reads as DER into another in-range pair.
-  const compactValid = [
-    ["A1", "0x303e02147bf05397ac95dc9ab603c7896caf09c686c0b65b02263504e050e16252f13603d35a2051522a50f14f572a922ad0eedee26eb2398009eb62bcad669b",
-      "0x028eb8a2807c2905b0520fa36656def108b69ee5d20547d669130c18c4f1ee57d9", "0x8bf866f3335bdf3e0c9ef90742043686d86fdcad"],
-    ["A2", "0x303e0220210a5337f8df3171a6c06c7e5b78915f1c2e62ac732ed16ef081a25401da0a04021a079244ee8095b0ce396bd6b456148b6c7ad05fb7098c8cfd3b92",
-      "0x02e12d0185bc0518bd203d50fe266085cbf12dea388f54a4f74ca7a064d9a67c79", "0x611ee0b4575a026f20934e3412cd085e584daa35"],
-  ] as const;
-  for (const [name, sig64, pub33, owner] of compactValid) {
-    const ss = buildScriptSig(sig64, pub33);
-    ok(`${name}: hash160(pub33) is the vector's owner`, addrFromPub(pub33) === owner);
-    ok(`${name}: verifyDigest accepts the node-valid compact signature`, verifyDigest(sig64, pub33, DIGEST));
-    ok(`${name}: recoverSigner names its signer`, recoverSigner(ss, DIGEST) === owner);
-    ok(`${name}: authorOf names the coin owner`, authorOf(withScriptSig(base, ss), owner) === owner);
-  }
-  // B: a valid 64-byte DER signature 30 3e 02 20 <r 32> 02 1a <s 26>; its compact reading is no signature.
-  const derSig = "0x303e02202c0e65d00bb81ca65be239b50a9741b987c5c77078ae5e2910938df83a7f9d05021a1fdf47c2a27bf6607ebf8a6a7e5bf00c158f860bc35e1215ade2";
-  const derPub = "0x02962d3549a3b73677e8fe9831f24141b84948d116927b85a96b483cf8563993fa";
-  const derOwner = "0x41d9c3cd30ea9e5567c003f5f9328786f3108012";
-  const derSs = buildScriptSig(derSig, derPub);
-  ok("B: hash160(pub33) is the vector's owner", addrFromPub(derPub) === derOwner);
-  ok("B: verifyDigest refuses a DER signature the node refuses", !verifyDigest(derSig, derPub, DIGEST));
-  ok("B: recoverSigner names no signer", recoverSigner(derSs, DIGEST) === null);
-  ok("B: authorOf names no author", authorOf(withScriptSig(base, derSs), derOwner) === null);
+// and requires low S. csd-vectors' SIG_VECTORS carry the node crate's verdict on each: two compact signatures whose
+// bytes are also DER-shaped (accepted) and one 64-byte DER signature (refused). Each identity primitive must agree.
+ok("SIG_VECTORS hold signatures the node accepts and one it refuses", SIG_VECTORS.some((v) => v.nodeAccepts) && SIG_VECTORS.some((v) => !v.nodeAccepts));
+for (const v of SIG_VECTORS) {
+  const ss = v.tx.inputs[0]!.scriptSig;
+  const author = v.nodeAccepts ? v.owner : null;
+  const verdict = v.nodeAccepts ? "accepts" : "refuses";
+  ok(`${v.name}: the vector's sighash and owner re-derive`, sighash(v.tx as Tx) === v.expectedSighash && addrFromPub(v.pub33) === v.owner);
+  ok(`${v.name}: verifyDigest ${verdict} as the node does`, verifyDigest(v.sig64, v.pub33, v.expectedSighash) === v.nodeAccepts);
+  ok(`${v.name}: recoverSigner names ${author ? "the signer" : "no signer"}`, recoverSigner(ss, v.expectedSighash) === author);
+  ok(`${v.name}: authorOf names ${author ? "the coin owner" : "no author"}`, authorOf(v.tx as Tx, v.owner) === author);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
