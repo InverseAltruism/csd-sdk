@@ -23,16 +23,20 @@
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
   author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
   a fill to another address. The site's and the wallet's seams already bind it.
-- `test/vectors/cases-rules.json` (5 vectors pinning 3 rules, `conformance/gen-rule-vectors.mjs`), replayed by `test/vectors.test.ts`
-  and against the Python oracle by `conformance/crosscheck-resolve.mjs`: a same-block fclaim fill (the fill at the
-  lower position and in the natural order) and a same-block seller cancel at the lower position (proposals apply
-  before attests within a block), a deploy whose uri is not its canonical JSON but whose payload hash is the
-  canonical form's (invalid), and a token offer giving and wanting one ticker (invalid). Removing or reversing the
-  order key, the canonical-uri check or the same-ticker refusal, in either implementation, now fails them.
-- New root export `offerFillTooLate(expiresAt, tip)`, beside `offerExpiryHeightOf`: whether a fill signed at `tip`
-  can no longer mine by the offer's last live block (`expiresAt - 1 < tip + FILL_TIP_MARGIN`), where the node refuses
-  the attest and the fill strands. It was the wallet's own predicate; the wallet, the site and cairn-sdk import this
-  one. `fillEndorsement` was already a root export; both are now pinned in the export-surface test.
+- `test/vectors/cases-rules.json` (5 vectors pinning 3 rules, `conformance/gen-rule-vectors.mjs`), replayed by
+  `test/vectors.test.ts` and against the Python oracle by `conformance/crosscheck-resolve.mjs`: a same-block fclaim
+  fill (the fill at the lower position and in the natural order) and a same-block seller cancel at the lower position
+  (proposals apply before attests within a block), a deploy whose uri is not its canonical JSON but whose payload
+  hash is the canonical form's (invalid), and a token offer giving and wanting one ticker (invalid). Removing or
+  reversing the order key, the canonical-uri check or the same-ticker refusal, in either implementation, now fails them.
+- New root export `offerFillTooLate(expiresAt, tip)`, beside `offerExpiryHeightOf`: a policy refusal once fewer than
+  `FILL_TIP_MARGIN` (4) blocks of cushion remain before the offer's last live block (`expiresAt - 1 < tip +
+  FILL_TIP_MARGIN`). It does not mean the fill cannot mine (expiry 100, tip 96 returns true; inclusion at 97 to 99 is
+  possible). A fill not mined by that block is refused by the node: for an offer anchored at V22 or later it strands
+  and moves no payment; for one anchored before V22 whose expiry the v2.1 cap shortened, the resolver expires it while
+  the node still mines its attests, so a late fill there pays and delivers nothing. It was the wallet's own
+  predicate; the wallet, the site and cairn-sdk import this one. `fillEndorsement` was already a root export; both
+  are now pinned in the export-surface test.
 - `requiredClaimDepth`'s doc and `CLAIM_ATTACKER_Q`'s comment no longer call the dominant block producer trusted or
   the wait reorg-safe: the depth makes a reorg by a minority miner (20% of the hashrate) unlikely, and the external
   pool that produces most blocks is outside the model. The depths are unchanged.
