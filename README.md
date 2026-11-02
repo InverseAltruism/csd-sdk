@@ -74,7 +74,7 @@ Runnable walkthrough (read-only, it never broadcasts): [`examples/quickstart.mjs
 | `@inversealtruism/csd-client` | A typed client for reading the chain and broadcasting (point it at a node, a hosted proxy, or a gateway), plus `verifyInputValues`. |
 | `@inversealtruism/csd-light` | A light client: sync block headers from a checkpoint you pin, check the proof-of-work and difficulty yourself, and prove a transaction is included, so an inclusion above that checkpoint rests on proof-of-work, not on the RPC's word. |
 | `@inversealtruism/csd-siwc` | Sign in with CSD: audience-bound, replay-resistant wallet sign-in (an EIP-4361 / CAIP-122 analogue). |
-| `@inversealtruism/cairnx-core` | CairnX, the application layer: tokens, `.csd` names and atomic delivery-versus-payment trades as a pure deterministic replay of on-chain records. Ships the normative `CONVENTION.md`. |
+| `@inversealtruism/cairnx-core` | CairnX, the application layer: tokens, `.csd` names and trades as a pure deterministic replay of on-chain records. A fill's payment and its record share one transaction and the replay decides delivery: a CSD-paid fill it refuses keeps the payment, and a token-for-token fill is atomic. Ships the normative `CONVENTION.md`. |
 | `@inversealtruism/csd-vectors` | The shared test fixtures that pin every package to the official node's behaviour. |
 
 ## Why the light client matters

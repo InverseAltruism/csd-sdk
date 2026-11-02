@@ -37,7 +37,8 @@ Since v1.3 (`V13_HEIGHT = 31,100`) the CSD-priced market is an RFQ loop:
 2. A maker answers with a taker-bound offer: `give` is X, `want` is N CSD, `taker` is the bidder, and the record
    carries `bid: <bidId>`. Only that bidder can fill it, so there is no same-block fill race and a losing buyer can
    never forfeit a payment.
-3. The bidder fills it. One atomic transaction pays the maker and delivers X, or nothing happens.
+3. The bidder fills it. One transaction pays the maker and records the fill; CairnX delivers X when the fill matches
+   the offer. A CSD-paid fill it refuses (expired, underpaid) keeps the payment, so the bidder's wallet checks first.
 
 Open (non-taker-bound) CSD offers are rejected by consensus in `[v1.3, v1.7)`, which is why making is RFQ. From v1.7
 (`V17_HEIGHT = 34,000`) open CSD asks are allowed again and are made race-safe a second way; see "Open asks and the

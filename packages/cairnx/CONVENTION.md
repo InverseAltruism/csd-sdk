@@ -22,7 +22,7 @@ replayer gates each rule on its own height constant, never on "version X implies
 > it is the one that must never lag the code. Keep the two in lockstep when editing.
 
 CairnX is a meta-asset and exchange convention on Compute Substrate (CSD). It defines fungible
-tokens and atomic delivery-versus-payment trades using **only** the chain's existing `Propose`
+tokens and trades, one transaction paying and recording each fill, using **only** the chain's existing `Propose`
 and `Attest` transactions: no fork, no new transaction types, no custodian. Token semantics are
 enforced by a **pure, deterministic resolver** that any party can run; independent resolvers
 replaying the same chain converge on identical state.
@@ -149,7 +149,7 @@ CairnX meaning for deploys. The **deployer** is the anchoring proposer.
 - `memo` (64 UTF-16 units max) and `ts` are optional free fields with the same rules as
   `transfer` (4.3); `ts` MUST be a JS-safe integer (A8).
 
-### 4.5 `fill`: atomic delivery-versus-payment (an Attest, not a Propose)
+### 4.5 `fill`: payment and record in one transaction (an Attest, not a Propose)
 
 A fill is an **`Attest` transaction** referencing the offer's proposal id with **`score = 100`**,
 whose **own outputs** pay the seller:

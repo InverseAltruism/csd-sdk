@@ -1,5 +1,5 @@
-// @inversealtruism/cairnx-core — the CairnX convention, as a library: tokens, atomic
-// delivery-versus-payment trades, and a leased name registry for Compute Substrate, carried
+// @inversealtruism/cairnx-core: the CairnX convention, as a library: tokens, trades (one transaction pays and
+// records a fill; the replay decides delivery), and a leased name registry for Compute Substrate, carried
 // entirely in the chain's Propose/Attest `uri` payloads (the Ordinals/Runes trust class,
 // stated plainly). CONVENTION.md in this package is the normative spec; test/vectors/ is the
 // conformance bar — an independent implementation is conformant iff it reproduces every
