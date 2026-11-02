@@ -159,10 +159,11 @@ whose **own outputs** pay the seller:
 - `Σ(outputs of the attesting tx paying want.payto) ≥ want.value`;
 - on apply: the locked `give.amount` moves to the **attester**, the offer closes.
 
-Because payment outputs and the attestation are one transaction (C2), **delivery-versus-payment
-is atomic at consensus level**: the buyer cannot pay without (the chain recording the basis for)
-receiving, and the seller's tokens were already convention-locked. The fill costs only the
-attest fee floor (0.05 CSD) plus the payment.
+Because payment outputs and the attestation are one transaction (C2), **one transaction pays and
+records the fill**, and the replay then decides delivery by the rules above. A CSD-paid fill the replay
+refuses keeps the payment: a CSD output is final when its transaction mines. A token-for-token fill
+(§11) is atomic: the replay moves both sides or neither. The seller's tokens were already
+convention-locked. The fill costs only the attest fee floor (0.05 CSD) plus the payment.
 
 The **first valid fill in apply order wins**. For a **CSD-priced** fill `confidence` is ignored
 (set 100); a **token-priced** fill (§11) additionally requires the `confidence = 1 000 000` opt-in
