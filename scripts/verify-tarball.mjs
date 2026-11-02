@@ -5,12 +5,14 @@
 //   - package/package.json names the tree's package and version, carries no "workspace:" specifier, pins each
 //     workspace dependency at its current workspace version and every other dependency as the tree declares it,
 //     keeps the tree's other fields, and keeps only scripts the tree declares with the same text;
-//   - every other file equals the tree's file at the same path, and dist/ equals the tree's build file for file
-//     (both directions);
+//   - every other file is one git tracks in the package directory (`git ls-files`; an ignored or untracked file
+//     pnpm packed is not part of the commit) and equals the tree's file at the same path, and dist/ equals the
+//     tree's build file for file (both directions);
 //   - every `files` entry that exists in the tree is in the tarball.
 // The pack is not byte-reproducible (published-dist.mjs says why), so files are compared, not a tarball hash.
 //
 // Usage: node scripts/verify-tarball.mjs <package dir> <tarball>      exit 0 = these bytes may be published
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -22,6 +24,16 @@ const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "opti
 /** @param {unknown} v @returns {string} JSON with object keys sorted, so key order does not count */
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
   ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+
+/** Paths git tracks under `pkgDir`, relative to it; null when git cannot list them. @param {string} pkgDir */
+function trackedFiles(pkgDir) {
+  try {
+    const out = execFileSync("git", ["ls-files", "-z", "--", "."], { cwd: pkgDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return new Set(out.split("\0").filter(Boolean));
+  } catch {
+    return null;   // not a git checkout, or git missing: the caller refuses the tarball
+  }
+}
 
 /**
  * Why the tarball is not the package at `pkgDir` as pnpm would pack it; empty when it is.
@@ -53,10 +65,14 @@ export function verifyTarball(tgz, pkgDir, versions) {
   const rest = (/** @type {Record<string, unknown>} */ m) =>
     canon(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "scripts" && !DEP_FIELDS.includes(k))));
   if (rest(packed) !== rest(tree)) out.push("package.json fields other than scripts and dependencies differ from the tree's");
+  const tracked = trackedFiles(pkgDir);
+  if (!tracked) out.push("git cannot list the package's tracked files, so the tarball cannot be checked against the commit");
   for (const [p, b] of files) {
     if (p === "package/package.json" || p.startsWith("package/dist/")) continue;
-    const local = join(pkgDir, p.slice("package/".length));
+    const rel = p.slice("package/".length);
+    const local = join(pkgDir, rel);
     if (!existsSync(local)) out.push(`${p} is not in the tree`);
+    else if (tracked && !tracked.has(rel)) out.push(`${p} is not a file git tracks (ignored or untracked), so it is not in the commit`);
     else if (Buffer.compare(Buffer.from(b), readFileSync(local)) !== 0) out.push(`${p} differs from the tree's`);
   }
   out.push(...diffDist(files, join(pkgDir, "dist")));

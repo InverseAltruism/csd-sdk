@@ -1,7 +1,7 @@
 // Offline checks of the npm window (scripts/npm-window.mjs, scripts/verify-tarball.mjs). The window publishes with
 // `npm publish <tgz>`, which runs no package hook, so these are the checks on that path: the tarball gate on a real
 // `pnpm pack` of csd-crypto (needs a built dist, as CI has) and the publish step against a stand-in npm and registry.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -52,6 +52,45 @@ console.log("verify-tarball on the bytes the window publishes:");
     writeFileSync(join(d, "package.json"), JSON.stringify(m, null, 2));
   });
   ok("a script the tree does not declare is refused", hook.some((f) => /script "postinstall"/.test(f)), hook.join("; "));
+}
+
+console.log("verify-tarball against what git tracks (real git and pnpm pack):");
+{
+  // As packages/cairnx ships test/vectors: a "files" directory under a repo-root ignore rule, which pnpm does not read
+  const repo = mkdtempSync(join(work, "tracked-"));
+  const pkg = join(repo, "pkg");
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" });
+  mkdirSync(join(pkg, "vectors"), { recursive: true });
+  mkdirSync(join(pkg, "dist"));
+  writeFileSync(join(repo, ".gitignore"), "**/*key*.json\ndist/\n");
+  writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@x/fixture", version: "1.0.0", files: ["dist", "vectors"] }, null, 2));
+  writeFileSync(join(pkg, "dist", "index.js"), "export {};\n");
+  writeFileSync(join(pkg, "vectors", "cases.json"), "[]\n");
+  git("init", "-q", "-b", "master");
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "fixture");
+  const pack = () => {
+    const out = mkdtempSync(join(work, "pack-"));
+    execFileSync("pnpm", ["pack", "--pack-destination", out], { cwd: pkg, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+    return new Uint8Array(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!)));
+  };
+  const packAndVerify = () => verifyTarball(pack(), pkg, new Map());
+  const clean = packAndVerify();
+  ok("a pack of a committed package with a tracked vector passes", clean.length === 0, clean.join("; "));
+  writeFileSync(join(pkg, "vectors", "stray-key.json"), "{}\n");
+  const ignored = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the stray file is not ignored"];
+  ok("an ignored file inside a packed directory (git status clean) is refused",
+    ignored.some((f) => f.includes("package/vectors/stray-key.json") && /tracked/.test(f)), ignored.join("; "));
+  rmSync(join(pkg, "vectors", "stray-key.json"));
+  writeFileSync(join(pkg, "vectors", "new.json"), "{}\n");
+  const untracked = packAndVerify();
+  ok("an untracked file inside a packed directory is refused", untracked.some((f) => f.includes("package/vectors/new.json") && /tracked/.test(f)), untracked.join("; "));
+  rmSync(join(pkg, "vectors", "new.json"));
+  // the same package outside any git checkout: membership cannot be checked, so the tarball is refused
+  const plain = join(mkdtempSync(join(work, "plain-")), "pkg");
+  cpSync(pkg, plain, { recursive: true });
+  const noGit = verifyTarball(pack(), plain, new Map());
+  ok("a package directory git cannot list is refused", noGit.some((f) => /git cannot list/.test(f)), noGit.join("; "));
 }
 
 console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
