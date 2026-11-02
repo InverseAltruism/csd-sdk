@@ -38,10 +38,13 @@ if (!tx.ok) throw new Error(tx.error);
 await client.submitOrThrow(tx.nodeJson); // throws if the node rejects the transaction
 
 // 2) don't take the server's word for inclusion: check the headers yourself, forward from a checkpoint.
-//    The checkpoint is the one input the light client trusts, so pin its height and block hash from a source
-//    other than this server (your own node, or a value you audited).
-const CHECKPOINT = { height: 115403, hash: "0x<the block hash at that height>" };
-const light = new LightClient({ client });
+//    The checkpoint is the one input the light client trusts: pin a recent block height and hash that you
+//    verified yourself (your own node, or a value you audited), not one this server gave you. Headers come in
+//    batches of up to 512 from a /headers endpoint; every row is checked, so the endpoint is not trusted either.
+const CHECKPOINT = { height: Number(process.env.CP_HEIGHT), hash: process.env.CP_HASH };
+const headersBatchProvider = async (from, count) =>
+  (await (await fetch(`https://cairn-substrate.com/api/headers/${from}/${count}`)).json()).headers;
+const light = new LightClient({ client, headersBatchProvider });
 await light.syncFromCheckpoint(CHECKPOINT.height, CHECKPOINT.hash);
 await light.sync((await client.tip()).height);
 const inc = await light.verifyTxInclusion(tx.txid); // { trustLevel: "verified-inclusion", … }
@@ -112,10 +115,11 @@ CSD_RPC=<node url> pnpm test:live  # the live checks above, against a node you c
 
 Published on npm as `@inversealtruism/*`, verified against live mainnet. The light client has two known limits:
 
-- The node serves headers only inside full blocks, so syncing all of history block by block is slow. Pass a
-  `headersBatchProvider` (for example one that reads a `/headers/{from}/{count}` endpoint such as
-  `https://cairn-substrate.com/api/headers/{from}/{count}`; every row is still verified), or start from a
-  recent checkpoint with `syncFromCheckpoint`.
+- The node serves headers only inside full blocks, so without a batch source the light client fetches one full
+  block per header. Pass a `headersBatchProvider` as the example above does (a `/headers/{from}/{count}`
+  endpoint such as `https://cairn-substrate.com/api/headers/{from}/{count}`, up to 512 headers a request; every
+  row is still verified), and start from a recent checkpoint you verified yourself with `syncFromCheckpoint`:
+  every header after the checkpoint is fetched and checked, so an old one makes a long sync.
 - Balances are `rpc-trusted` (see above).
 
 MIT licensed.

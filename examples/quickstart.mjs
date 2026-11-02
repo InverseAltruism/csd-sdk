@@ -41,7 +41,8 @@ console.log("built tx:", send.ok ? send.txid : send.error);
 
 // 5) Light client: verify every header after a checkpoint yourself (PoW + LWMA + chainwork). The checkpoint is the
 //    one input it trusts, so it comes from CSD_CHECKPOINT, which you pin. Without it this demo asks CSD_RPC for one,
-//    and every verdict below then rests on that RPC's answer.
+//    and every verdict below then rests on that RPC's answer. Pin a recent block: this example has no batch header
+//    source, so it fetches one full block per header after the checkpoint (see headersBatchProvider in README.md).
 const light = new LightClient({ client });
 const [pinH, pinHash] = (process.env.CSD_CHECKPOINT ?? "").split(":");
 const cpH = pinHash ? Number(pinH) : Math.max(46, tip.height - 20);
