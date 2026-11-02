@@ -2,6 +2,8 @@
 
 secp256k1 keygen / sign (LOW-S, RFC6979) / verify, and hash160 address derivation for Compute Substrate.
 
+`verifyDigest` reads the 64 signature bytes as compact r || s only, the node's rule (`verify_sig`), never as DER.
+
 Part of the [Compute Substrate SDK](https://github.com/InverseAltruism/csd-sdk) (L0). Zero `Buffer`, runs in Node, browsers, and MV3 service workers. Deps: `@noble/*` only.
 
 ```
