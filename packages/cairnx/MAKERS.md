@@ -279,7 +279,7 @@ Amounts named "base" are base units (CSD has 8 decimals). Defaults are those of 
 | `MM_SUNRISE_START_TIP` | `0` | The tip a Sunrise record starts at when the bot creates one (`0`: the current tip). Pin it to the launch tip, so a state file lost with its marker re-derives the sale, its clock and its price from the chain since the pin instead of restarting at P0. A whole number. |
 | `MM_SUNRISE_TARGET_DEPTH_BPS` | `500` | Part of the float target behind `sunrise.skimmable`: this many bps of the remaining Sunrise value. |
 | `MM_ISSUER_ADDR`, `MM_SKIM_LEDGER` | empty, `~/.config/cairn/mm-skim.jsonl` | The issuer address the quotes file publishes (`issuer`), and the skim ledger. The bot never sends CSD itself; see "Skimming CSD". |
-| `MM_SKIM_TO` | empty | The one address a live skim may send to. The skim script refuses a live run without it or with another `--to`; the bot does not read it. |
+| `MM_SKIM_TO` | empty | The one address a live skim may send to. The skim script refuses a live run without it or with another `--to`; the bot's loader parses it and no pass reads it. |
 
 `MM_SUNRISE_PRICE_LOCK_BLOCKS` and `MM_SUNRISE_PRICE_LOCK_LOOKBACK` are not read any more.
 
