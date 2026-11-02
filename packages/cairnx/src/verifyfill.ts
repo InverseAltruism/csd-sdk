@@ -41,7 +41,10 @@ import { parseRecord } from "./records.js";
 // denied on its holds elsewhere, crediting that party's fill. These are known limits, reachable only when the
 // primary resolver serves the matching state (host-only); deciding them needs the history below the window
 // (design b', a Plan 87 later item).
-export const GAP_NEEDED = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS;
+// The longest fclaim hold (89 with the current constants): a fill is mined at most this far above the fclaim it
+// attests, so a fill at height f has its fclaim in [f - FCLAIM_MAX_HOLD_SPAN, f].
+export const FCLAIM_MAX_HOLD_SPAN = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1;
+export const GAP_NEEDED = FCLAIM_MAX_HOLD_SPAN + CLAIM_COOLDOWN_BLOCKS;
 // The scan headroom: round GAP_NEEDED up with a full-epoch margin so a boundary off-by-one can never
 // under-scan. A caller doing a clean-start scan syncs at least this many blocks back from the fclaim.
 export const SCAN_MARGIN = EPOCH_LEN;

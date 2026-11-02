@@ -63,8 +63,8 @@ Client-side and docs only: `resolve()`, canonical state and every `verifyFillSpv
 vectors, the 21 pinned replay heights and the fuzz are byte-identical). `verifyFillSpv`'s contract says what its
 window replay decides and names the known limits below the window; reading that history (design b') is a Plan 87
 later item. New vectors (`cases-rules.json`) pin four existing resolver rules in JS and Python (the within-block
-order, the canonical uri, the same-ticker offer); no rule changed. New export `offerFillTooLate`, the offer-id
-lanes' expiry predicate.
+order, the canonical uri, the same-ticker offer); no rule changed. New exports `offerFillTooLate`, the offer-id
+lanes' expiry predicate, and `FCLAIM_MAX_HOLD_SPAN` (89, the longest fclaim hold; `GAP_NEEDED` keeps its value).
 
 ## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
 

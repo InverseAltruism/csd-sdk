@@ -44,6 +44,10 @@
   off until set; with 1 and `MM_VERIFY_INCLUSION` off the bot alerts and publishes `build.fillsWithoutInclusion`),
   and new rows for `MM_MAX_BALANCE_READS` (20 bidder balance reads a pass), `MM_SUNRISE_START_TIP` and
   `MM_SKIM_TO` (the one address a live skim may send to; `MM_ISSUER_ADDR` is not the skim destination).
+- New root export `FCLAIM_MAX_HOLD_SPAN` (89): the longest fclaim hold, so a fill at height f has its fclaim in
+  `[f - FCLAIM_MAX_HOLD_SPAN, f]`. `GAP_NEEDED` is now written as `FCLAIM_MAX_HOLD_SPAN + CLAIM_COOLDOWN_BLOCKS`, same
+  value (104). The site's refusal before the reservation fee needs it to tell which listed fills may lie below the
+  window its fill check reads; the wallet held a copy of it.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3

@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import {
   deploy, mint, offer, fclaim, nameClaim, nameRegFee, requiredClaimDepth, requiredFillOutputs, resolve,
-  verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN,
+  verifyFillSpv, replayLiveHold, GAP_NEEDED, MAX_SCAN, FCLAIM_MAX_HOLD_SPAN,
   bindOfferTerms, provenOfferTerms, bindProvenOffer, feeBpsAt, unsafeMintProvenOfferTerms, provenOfferRefusal, parseRecord,
   V28_HEIGHT, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, MAX_ACTIVE_CLAIMS,
   ACTIVATION_HEIGHT, V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16,
@@ -67,6 +67,7 @@ const eeMax = epochOf(firstOfEpoch) + FCLAIM_MAX_EPOCH_AHEAD;
 const holdEndMax = fclaimHoldEnd(eeMax);
 ok(holdEndMax === firstOfEpoch + EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1, "holdEnd(first-of-epoch, ee+2) = h + 89 (the 90-block inclusive span)");
 ok(holdEndMax - firstOfEpoch === 89, "the max hold spans exactly 89 blocks past the grant (inclusive last minable height)");
+ok(FCLAIM_MAX_HOLD_SPAN === holdEndMax - firstOfEpoch, "FCLAIM_MAX_HOLD_SPAN is that span");
 // the deepest prior grant that still denies (via cooldown) a fclaim at h_fc sits at h_fc - GAP_NEEDED.
 
 // ── 1. HONEST fill PASSES (no false refusal) ──
