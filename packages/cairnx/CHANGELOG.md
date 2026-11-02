@@ -32,6 +32,10 @@
   a fill atomic delivery-versus-payment or say a buyer cannot lose more than the anchor fee. One transaction pays and
   records a fill and the replay decides delivery: a CSD-paid fill it refuses keeps the payment; a token-for-token
   fill is atomic.
+- README: the registration lifecycle and records table describe the v2.5 sealed reservation (a payment-free reveal
+  within 8 blocks, the fee at `nfinalize`), the open lane is the v2.8 `fclaim` reservation, the version table gains
+  v2.8 and v2.9 and drops a stale "pending" note, the conformance steps name every vector file, and cairn-cli
+  (deprecated) and the indexer's storage backend are no longer described.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3
