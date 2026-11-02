@@ -3,22 +3,23 @@
 // see these bytes. A tarball passes when, read with published-dist.mjs's reader (which refuses every archive shape
 // `pnpm pack` does not emit):
 //   - package/package.json names the committed manifest's package and version (the package directory's
-//     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at its current
-//     workspace version and every other dependency as that manifest declares it, keeps its other fields, and keeps
-//     only scripts it declares with the same text;
+//     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at the version its
+//     package.json at HEAD names (workspaceVersions) and every other dependency as that manifest declares it, keeps
+//     its other fields, and keeps only scripts it declares with the same text;
 //   - every other file outside dist/ is the HEAD commit's file at that path, byte for byte (`git ls-tree` and
 //     `git cat-file`), so an ignored, untracked or skip-worktree file pnpm packed fails; dist/ equals the tree's
 //     build file for file (both directions);
-//   - every `files` entry that exists in the tree is in the tarball.
+//   - every committed file a `files` entry covers is in the tarball, and an entry HEAD holds nothing under (dist)
+//     that exists in the tree is in the tarball.
 // The pack is not byte-reproducible (published-dist.mjs says why), so files are compared, not a tarball hash.
 //
 // Usage: node scripts/verify-tarball.mjs <package dir> <tarball>      exit 0 = these bytes may be published
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { headTree, readBlobs } from "./git-head.mjs";
 import { diffDist, untar } from "./published-dist.mjs";
-import { workspacePackages } from "./workspace.mjs";
+import { versionMap, workspacePackagesAtHead } from "./workspace.mjs";
 
 const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
@@ -27,45 +28,10 @@ const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" &&
   ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
 
 /**
- * The HEAD commit's regular files among `rels` (paths relative to `pkgDir`): path -> bytes, a path HEAD lacks absent.
- * null when git cannot read HEAD there (not a checkout, no commit, git missing): the caller refuses the tarball.
- * @param {string} pkgDir @param {string[]} rels @returns {Map<string, Buffer> | null}
- */
-function headFiles(pkgDir, rels) {
-  /** @param {string[]} args @param {string} [input] */
-  const git = (args, input) => execFileSync("git", args, { cwd: pkgDir, input, maxBuffer: 1 << 28, stdio: ["pipe", "pipe", "pipe"] });
-  /** @type {Map<string, string>} */
-  const oids = new Map();
-  try {
-    for (const e of git(["ls-tree", "-r", "-z", "HEAD", "--", "."]).toString("utf8").split("\0")) {
-      const m = /^(?:100644|100755) blob ([0-9a-f]+)\t(.+)$/s.exec(e);
-      if (m) oids.set(/** @type {string} */ (m[2]), /** @type {string} */ (m[1]));
-    }
-  } catch {
-    return null;
-  }
-  const want = rels.filter((r) => oids.has(r));
-  /** @type {Map<string, Buffer>} */
-  const out = new Map();
-  if (!want.length) return out;
-  let raw;
-  try { raw = git(["cat-file", "--batch"], want.map((r) => oids.get(r)).join("\n") + "\n"); } catch { return null; }
-  let at = 0;
-  for (const r of want) {   // each answer is "<oid> blob <size>\n<bytes>\n", in request order
-    const nl = raw.indexOf(10, at);
-    const [oid, type, size] = raw.subarray(at, nl).toString("utf8").split(" ");
-    if (oid !== oids.get(r) || type !== "blob") return null;
-    out.set(r, raw.subarray(nl + 1, nl + 1 + Number(size)));
-    at = nl + 2 + Number(size);
-  }
-  return out;
-}
-
-/**
  * Why the tarball is not the package at `pkgDir` as pnpm would pack it; empty when it is.
  * @param {Uint8Array} tgz
  * @param {string} pkgDir
- * @param {Map<string, string>} versions every workspace package name -> its workspace version
+ * @param {Map<string, string>} versions every workspace package name -> the version HEAD's manifest names
  * @returns {string[]}
  */
 export function verifyTarball(tgz, pkgDir, versions) {
@@ -73,8 +39,12 @@ export function verifyTarball(tgz, pkgDir, versions) {
   let files;
   try { files = untar(tgz); } catch (e) { return [`unreadable tarball (${e instanceof Error ? e.message : e})`]; }
   const out = [];
-  const rels = [...files.keys()].filter((p) => !p.startsWith("package/dist/")).map((p) => p.slice("package/".length));
-  const head = headFiles(pkgDir, rels.includes("package.json") ? rels : [...rels, "package.json"]);
+  const committed = headTree(pkgDir);
+  const want = committed ? [...files.keys()].map((p) => p.slice("package/".length)).filter((r) => committed.has(r)) : [];
+  if (committed && !want.includes("package.json") && committed.has("package.json")) want.push("package.json");
+  const blobs = committed && readBlobs(pkgDir, want.map((r) => /** @type {string} */ (committed.get(r))));
+  /** @type {Map<string, Buffer> | null} the HEAD bytes of every tarball path HEAD holds, and of package.json */
+  const head = blobs ? new Map(want.map((r, i) => [r, /** @type {Buffer} */ (blobs[i])])) : null;
   if (!head) out.push("git cannot read the package at HEAD, so the tarball cannot be checked against the commit");
   else if (!head.has("package.json")) out.push("package.json is not in the commit (HEAD)");
   const tree = JSON.parse((head?.get("package.json") ?? readFileSync(join(pkgDir, "package.json"))).toString("utf8"));
@@ -97,20 +67,26 @@ export function verifyTarball(tgz, pkgDir, versions) {
   if (rest(packed) !== rest(tree)) out.push("package.json fields other than scripts and dependencies differ from the commit's");
   for (const [p, b] of files) {
     if (!head || p === "package/package.json" || p.startsWith("package/dist/")) continue;
-    const committed = head.get(p.slice("package/".length));
-    if (!committed) out.push(`${p} is not in the commit (HEAD): an ignored or untracked file`);
-    else if (Buffer.compare(Buffer.from(b), committed) !== 0) out.push(`${p} differs from the commit's (HEAD)`);
+    const bytes = head.get(p.slice("package/".length));
+    if (!bytes) out.push(`${p} is not in the commit (HEAD): an ignored or untracked file`);
+    else if (Buffer.compare(Buffer.from(b), bytes) !== 0) out.push(`${p} differs from the commit's (HEAD)`);
   }
   out.push(...diffDist(files, join(pkgDir, "dist")));
-  for (const f of tree.files ?? []) {
-    if (!existsSync(join(pkgDir, f))) continue;
-    if (![...files.keys()].some((p) => p === `package/${f}` || p.startsWith(`package/${f}/`))) out.push(`"files" entry ${f} is not in the tarball`);
+  for (const entry of tree.files ?? []) {
+    const f = String(entry).replace(/\/+$/, "");
+    const under = committed ? [...committed.keys()].filter((r) => r === f || r.startsWith(`${f}/`)) : [];
+    // the other direction: every committed file a "files" entry covers ships (one deleted on disk under
+    // skip-worktree would not); an entry HEAD holds nothing under (dist/, a build output) must still ship something
+    for (const r of under) if (!files.has(`package/${r}`)) out.push(`package/${r} is in the commit (HEAD) but not in the tarball`);
+    if (!under.length && existsSync(join(pkgDir, f)) && ![...files.keys()].some((p) => p === `package/${f}` || p.startsWith(`package/${f}/`)))
+      out.push(`"files" entry ${f} is not in the tarball`);
   }
   return out;
 }
 
-/** Workspace name -> version for the repo at `root`. @param {string} root */
-export const workspaceVersions = (root) => new Map(workspacePackages(root).map((p) => [p.name, p.version]));
+/** Workspace name -> the version HEAD's manifest names, for the repo at `root`; throws when git cannot read HEAD.
+ *  @param {string} root */
+export const workspaceVersions = (root) => versionMap(workspacePackagesAtHead(root));
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [pkgDir, tgz] = process.argv.slice(2);

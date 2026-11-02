@@ -3,7 +3,7 @@
 // `pnpm pack` of csd-crypto (needs a built dist, as CI has) and the publish step against a stand-in npm and registry.
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,7 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@x/fixture", version: "1.0.0", files: ["dist", "vectors"] }, null, 2));
   writeFileSync(join(pkg, "dist", "index.js"), "export {};\n");
   writeFileSync(join(pkg, "vectors", "cases.json"), "[]\n");
+  writeFileSync(join(pkg, "vectors", "more.json"), "{}\n");
   git("init", "-q", "-b", "master");
   git("add", ".");
   git("commit", "-q", "--no-verify", "-m", "fixture");
@@ -101,11 +102,59 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   ok("a committed package.json rewritten under skip-worktree is refused", hiddenManifest.some((f) => /package\.json fields .* differ from the commit/.test(f)), hiddenManifest.join("; "));
   writeFileSync(join(pkg, "package.json"), manifest);
   git("update-index", "--no-skip-worktree", "pkg/package.json");
+  // a committed file deleted on disk under skip-worktree: pnpm packs the rest of its directory without it
+  git("update-index", "--skip-worktree", "pkg/vectors/cases.json");
+  rmSync(join(pkg, "vectors", "cases.json"));
+  const dropped = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the deletion shows in git status"];
+  ok("a committed file missing from the tarball (deleted on disk under skip-worktree) is refused",
+    dropped.some((f) => f.includes("package/vectors/cases.json") && /not in the tarball/.test(f)), dropped.join("; "));
+  writeFileSync(join(pkg, "vectors", "cases.json"), "[]\n");
+  git("update-index", "--no-skip-worktree", "pkg/vectors/cases.json");
   // the same package outside any git checkout: HEAD cannot be read, so the tarball is refused
   const plain = join(mkdtempSync(join(work, "plain-")), "pkg");
   cpSync(pkg, plain, { recursive: true });
   const noGit = verifyTarball(pack(), plain, new Map());
   ok("a package directory outside a git checkout is refused", noGit.some((f) => /git cannot read/.test(f)), noGit.join("; "));
+}
+
+console.log("workspace versions from the HEAD commit (fixture workspace, real git and pnpm):");
+{
+  const ws = mkdtempSync(join(work, "ws-"));
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: ws, encoding: "utf8" });
+  const put = (rel: string, body: string) => { mkdirSync(dirname(join(ws, rel)), { recursive: true }); writeFileSync(join(ws, rel), body); };
+  put("pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+  put("package.json", JSON.stringify({ name: "fixture-ws", private: true }));
+  put(".gitignore", "node_modules/\npnpm-lock.yaml\n");
+  put("packages/a/package.json", JSON.stringify({ name: "@x/a", version: "1.0.1", files: ["index.js"] }, null, 2));
+  put("packages/b/package.json", JSON.stringify({ name: "@x/b", version: "1.0.0", files: ["index.js"], dependencies: { "@x/a": "workspace:*" } }, null, 2));
+  put("packages/a/index.js", "export {};\n");
+  put("packages/b/index.js", "export {};\n");
+  git("init", "-q", "-b", "master");
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "fixture");
+  execFileSync("pnpm", ["install", "--offline"], { cwd: ws, stdio: "ignore" });   // links the workspace; no registry
+  const b = join(ws, "packages", "b");
+  const packB = () => {
+    const out = mkdtempSync(join(work, "pack-"));
+    execFileSync("pnpm", ["pack", "--pack-destination", out], { cwd: b, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+    return new Uint8Array(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!)));
+  };
+  const honest = verifyTarball(packB(), b, workspaceVersions(ws));
+  ok("b packed pinning a at the version HEAD names passes", honest.length === 0, honest.join("; "));
+  // a's version rolled back on disk under skip-worktree: git status stays clean and pnpm pins the disk version
+  const aManifest = join(ws, "packages", "a", "package.json");
+  git("update-index", "--skip-worktree", "packages/a/package.json");
+  writeFileSync(aManifest, readFileSync(aManifest, "utf8").replace('"1.0.1"', '"1.0.0"'));
+  const rolled = git("status", "--porcelain") === "" ? verifyTarball(packB(), b, workspaceVersions(ws)) : ["fixture: the rollback shows in git status"];
+  ok("a workspace pin resolved from a manifest rolled back on disk is refused",
+    rolled.some((f) => /dependencies/.test(f) && f.includes("1.0.1")), rolled.join("; "));
+  // the window's plan: a@1.0.0 is on the stand-in registry, a@1.0.1 (the version HEAD names) is not
+  const lines: string[] = [];
+  const plan = await checkWindow({ root: ws, out: mkdtempSync(join(work, "wsout-")), run: false, log: (l) => lines.push(l), env: {},
+    sh: (cmd) => (cmd === "git" ? { ok: true, out: "" } : { ok: false, out: "stand-in: not run" }),
+    registry: async (name: string, version: string) => ({ status: name === "@x/a" && version === "1.0.0" ? 200 : 404, meta: null }) });
+  const planned = plan.order.map((p) => `${p.name}@${p.version}`).join();
+  ok("the window plans the versions HEAD names (a@1.0.1 and b), not a@1.0.0 from disk", planned === "@x/a@1.0.1,@x/b@1.0.0", planned);
 }
 
 console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
