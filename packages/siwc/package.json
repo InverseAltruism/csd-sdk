@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-siwc",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "engines": {
     "node": ">=18"
   },
@@ -24,7 +24,8 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

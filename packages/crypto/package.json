@@ -1,8 +1,8 @@
 {
   "name": "@inversealtruism/csd-crypto",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "engines": { "node": ">=18" },
-  "description": "Compute Substrate crypto primitives \u2014 secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
+  "description": "Compute Substrate crypto primitives: secp256k1 keygen/sign(lowS)/verify, hash160 address derivation. Thin wrappers over @noble.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -16,7 +16,8 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

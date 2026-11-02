@@ -57,6 +57,21 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
+
+`verifyDigest` passes `format: "compact"` to noble's `secp256k1.verify`, so the 64 signature bytes are read as
+r || s only, as the node reads them (compute-substrate `src/crypto/mod.rs` `verify_sig`: `Signature::from_compact`,
+low S, `verify_ecdsa`). Without a format, noble 1.9.7 tries a DER parse first and falls back to compact only on a DER
+structure error, so two kinds of 64 bytes got a verdict other than the node's: a valid compact low-S signature whose
+bytes are also DER-shaped (`30 3e 02 L`, L bytes, `02`, 58 - L, the rest) was refused, and `recoverSigner` and
+`authorOf` returned null for a tx the node mined; a valid 64-byte DER signature, whose compact reading is no
+signature, was accepted. Both now get the node's verdict. `packages/crypto/test/crypto.test.ts` pins two vectors of
+the first kind and one of the second; the node's crate (secp256k1 0.29.1, `verify_sig`'s steps) returns ok, ok and
+"signature failed verification" on them. Signatures from `signDigest` are compact by construction and verify as
+before. csd-siwc and csd-tx bump as dependents of csd-crypto; `verifySiwc` takes the same acceptance set. The site
+and wallet bundles take the change when re-vendored, cairnx and cairn-sdk when re-pinned. Publish order (pnpm only):
+(1) `csd-crypto`; (2) `csd-tx`, `csd-siwc`. No byte, txid, sighash, LWMA, chainwork or replay change.
+
 ## cairnx-core 0.2.3, csd-client 0.1.20, csd-light 0.1.26 (2026-10-24, Plan 85 23.1; unreleased, npm window 5; no consensus-surface change) - the admission check's two activation gates, the node's answer types
 
 `provenOfferRefusal` refuses an offer anchored below `ACTIVATION_HEIGHT` (29,860) and a name offer anchored below

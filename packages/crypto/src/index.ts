@@ -62,7 +62,8 @@ export function signDigest(digestHex: string, priv: string): { sig64: string; pu
   return { sig64: hx(sig.toCompactRawBytes()), pub33: pubFromPriv(priv) };
 }
 
-/** Verify a compact-64 LOW-S signature over a digest. Rejects high-S (malleability). */
+/** Verify a compact-64 LOW-S signature over a digest under the node's rule (crypto/mod.rs verify_sig): the 64 bytes
+ *  are read as r || s only, never as DER. Rejects high-S (malleability). */
 export function verifyDigest(sig64: string, pub33: string, digestHex: string): boolean {
   // Whole body fail-closed: hb() throws on malformed hex, so an attacker-supplied bad sig/pubkey/digest
   // must return false, not throw (it is reachable unauthenticated via verifySiwc; audit M1). Also enforce the
@@ -71,7 +72,8 @@ export function verifyDigest(sig64: string, pub33: string, digestHex: string): b
     const s = hb(sig64), p = hb(pub33), d = hb(digestHex);
     if (s.length !== 64 || p.length !== 33 || d.length !== 32) return false;
     if (secp256k1.Signature.fromCompact(s).hasHighS()) return false;
-    return secp256k1.verify(s, d, p, { lowS: true });
+    // Without a format noble tries DER first, and 64 bytes can be both (DER-shape vectors in crypto.test.ts).
+    return secp256k1.verify(s, d, p, { lowS: true, format: "compact" });
   } catch { return false; }
 }
 
