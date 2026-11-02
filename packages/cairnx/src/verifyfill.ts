@@ -72,9 +72,13 @@ export interface FillSpvIo {
   // give, the ticker's deploy and the mint or transfers that leave the seller at least the given amount
   // available; for a name give, the records that leave the seller owning the name, finalized and unlocked.
   // Without them the offer does not resolve and the verdict refuses. A seam that cannot read the backing may
-  // synthesize it from the proven offer record, as the site and the wallet do; the backing then decides only
-  // that the offer resolves and what it can deliver, never the grant, and it is resolver-trusted.
-  // Each id is MERKLE-PROVEN via provenEvent. Inside such a window a real event moves the replay toward the
+  // synthesize it from the proven offer record, as the site and the wallet do. Synthetic events are not
+  // merkle-proven: they assume the chain admitted the offer, and that assumption reaches the grant. An offer whose
+  // seller lacked the backing was never created on chain, so the resolver denies every fclaim on it ("unknown
+  // offer"), while synthetic backing materializes it in the replay, which can then grant the fclaim and return
+  // safe:true. A verdict over synthetic backing is conditional on that resolver-trusted admission (the served offer
+  // existing and open).
+  // Every other id is MERKLE-PROVEN via provenEvent. Inside such a window a real event moves the replay toward the
   // chain's state; a real event added alone (an fclaim proven without the holds before it) can make the replay
   // grant what the chain denied, and the fclaims in the window's lowest GAP_NEEDED blocks are not decided by it
   // (the GAP_NEEDED note). OMITTING a real event is the attack: a withheld cancel, a consuming prior fill, or a

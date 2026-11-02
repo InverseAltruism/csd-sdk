@@ -14,8 +14,10 @@
   with the chain's either way, so a caller refuses a payment its served offer computes as undeliverable) and the
   sums bind (a served offer that omits such a fill and serves a lower `paid` passes it; for the site and the wallet
   that needs the project's resolver to lie). The `FillSpvIo` contract names the offer and its give-backing among the
-  events the replay needs. Reading the history below the window is not implemented. CONVENTION.md section 31's client policy says the same and gives
-  `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
+  events the replay needs, and says backing a seam synthesizes (the site and the wallet do) is not proven and makes
+  the grant verdict conditional on the offer's resolver-trusted admission. Reading the history below the window is
+  not implemented. CONVENTION.md section 31's client policy says the same and gives `FILL_TIP_MARGIN` as 4 (it
+  said 2). Comments and docs only.
 - The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
   author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
