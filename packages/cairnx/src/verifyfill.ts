@@ -9,8 +9,9 @@
 // the D2 service alias deliberately asserts "granted" to carry stale wallets. So this surface re-derives
 // the ENTIRE fclaim grant + hold outcome ITSELF with the authoritative resolver over PoW-buried,
 // MERKLE-PROVEN offer + fclaim events (the SG-CONTENT-BIND-1 bind is structural here), and MUST NOT trust
-// fclaim inclusion alone or any served "granted" flag. Every rejection is either L0-co-enforced-unreachable,
-// attacker-authored, buyer-self-authored, or the deep-reorg finality residual every CSD payment carries.
+// fclaim inclusion alone or any served "granted" flag. Over a window that holds the offer's history, every
+// rejection is either L0-co-enforced-unreachable, attacker-authored, buyer-self-authored, or the deep-reorg
+// finality residual every CSD payment carries; over one that does not, see the known limits in verifyFillSpv's doc.
 import { payloadHash } from "@inversealtruism/csd-codec";
 import {
   V28_HEIGHT, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, EPOCH_LEN, FILL_TIP_MARGIN, SCORE_FILL, MAX_ACTIVE_CLAIMS,
@@ -23,19 +24,28 @@ import { requiredClaimDepth } from "./client.js";
 import { hasLiveClaim, previewFill, requiredFillOutputs } from "./preflight.js";
 import { parseRecord } from "./records.js";
 
-// ── GAP_NEEDED: the clean-start SPV scan bound (FUND-SAFETY, not latency) ──────────────────────────────
-// To re-derive whether THIS fclaim was granted, the replay must include any PRIOR hold whose window +
-// cooldown still bears on the grant (a live prior hold denies via `!claimHeld`; a just-lapsed same-holder
-// hold denies via the cooldown). A grant at the FIRST block of an epoch with `ee = epochOf(h)+2` holds the
-// LONGEST: claimUntilHeight = (ee+1)*EPOCH_LEN, so holdEnd = (ee+1)*EPOCH_LEN - 1 = h + EPOCH_LEN*3 - 1 =
-// h + 89 (a 90-block half-open span; the "-1" is the inclusive last minable height). The cooldown then runs
-// CLAIM_COOLDOWN_BLOCKS past claimUntilHeight, so the deepest prior grant that still denies a fclaim at h_fc
-// sits at h_fc - (EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD+1) - 1 + CLAIM_COOLDOWN_BLOCKS). A one-block under-scan
-// would MISS that prior grant and FALSE-ACCEPT a denied fclaim = a burn, so this is derived symbolically and
-// rounded UP with a full-epoch cushion (never a round number that could drift under a constant change).
+// ── GAP_NEEDED: the hold evidence below an fclaim, and what a window decides ───────────────────────────
+// Whether an fclaim at h_fc was granted depends on every PRIOR hold whose window + cooldown still bears on it (a
+// live prior hold denies via `!claimHeld`; a just-lapsed same-holder hold denies via the cooldown) and on the
+// proposer's live holds on other offers (MAX_ACTIVE_CLAIMS). A grant at the FIRST block of an epoch with
+// `ee = epochOf(h)+2` holds the LONGEST: claimUntilHeight = (ee+1)*EPOCH_LEN, so holdEnd = (ee+1)*EPOCH_LEN - 1 =
+// h + EPOCH_LEN*3 - 1 = h + 89 (a 90-block half-open span; the "-1" is the inclusive last minable height). The
+// cooldown then runs CLAIM_COOLDOWN_BLOCKS past claimUntilHeight, so the deepest prior grant that still denies an
+// fclaim at h_fc sits at h_fc - GAP_NEEDED. Derived symbolically, never a round number that could drift:
 //   GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS
 //              = 30*(2 + 1) - 1 + 15 = 90 - 1 + 15 = 104   (with the current constants)
-export const GAP_NEEDED = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS;
+// A replay over a window read completely decides the grant at h_fc only when the window's low end is quiet: the
+// window reaches GAP_NEEDED below h_fc AND the fclaims in that span are decided too. An fclaim in the window's own
+// lowest GAP_NEEDED blocks is not, because its deciding holds lie below the window. So a hold chain that starts
+// below the window (X below it denies Y inside it; Y, replayed as granted, then denies Z, which the chain granted
+// and which denies the buyer) can replay a grant the chain denied, and so can a third party's fclaim the cap
+// denied on its holds elsewhere, crediting that party's fill. These are known limits; verifyFillSpv's "Known
+// limits" says which checks outside it bound them. Deciding them needs the history below the window; reading it
+// is not implemented.
+// The longest fclaim hold (89 with the current constants): a fill is mined at most this far above the fclaim it
+// attests, so a fill at height f has its fclaim in [f - FCLAIM_MAX_HOLD_SPAN, f].
+export const FCLAIM_MAX_HOLD_SPAN = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1;
+export const GAP_NEEDED = FCLAIM_MAX_HOLD_SPAN + CLAIM_COOLDOWN_BLOCKS;
 // The scan headroom: round GAP_NEEDED up with a full-epoch margin so a boundary off-by-one can never
 // under-scan. A caller doing a clean-start scan syncs at least this many blocks back from the fclaim.
 export const SCAN_MARGIN = EPOCH_LEN;
@@ -54,22 +64,37 @@ export interface FillSpvIo {
   // The PoW-VERIFIED tip height. Never a resolver-asserted tip (a forged tip would inflate burial depth).
   tip(): Promise<number>;
   // The event ids that bear on this offer's fill-safety, for the grant replay to run over. COMPLETENESS IS A
-  // SEAM OBLIGATION THE PURE LAYER CANNOT VERIFY: each id is MERKLE-PROVEN via provenEvent (so a lie can only
-  // ADD a real on-chain event, which only moves the replay toward truth), but OMITTING a real event is the
-  // attack. A withheld cancel, a consuming prior fill, or a give-draining transfer makes the replay see the
-  // offer as MORE open than it is, so the replay grants/routes/holds and returns safe:true while the
-  // authoritative resolver DENIED = a pay-without-delivery burn. So this MUST be derived from PoW-verified
-  // BLOCK BODIES (the swapguard scan model), NOT a bare resolver hint list, and MUST cover: [fclaimHeight -
-  // MAX_SCAN, tip] for hold/cooldown evidence AND the offer's FULL lifecycle (anchor to tip, via a persistent
-  // header/scan snapshot) for status events (cancel/expiry/consuming fill) + give-backing (deploy+mint, or the
-  // name registration). Note the age asymmetry: hold/cooldown evidence is bounded by MAX_SCAN, but a cancel or
-  // a consuming fill can be arbitrarily OLD (a V22+ offer may be weeks old), so the lifecycle scan is NOT
-  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan). Every id returned
-  // here must come back from provenEvent; one that does not fails the verdict closed.
+  // SEAM OBLIGATION THE PURE LAYER CANNOT VERIFY, and it holds per window: the ids are every lane event (the
+  // offer, its fclaims, ocancels, attests on the offer or its fclaims) of the heights [fclaimHeight - MAX_SCAN,
+  // tip], read completely from PoW-verified BLOCK BODIES (the swapguard scan model), never a bare resolver hint
+  // list. Beside them the replay needs what resolve() needs to admit the offer: the offer Propose itself (proven
+  // at its own height when it predates the window) and its give-backing, which predates any window: for a token
+  // give, the ticker's deploy and the mint or transfers that leave the seller at least the given amount
+  // available; for a name give, the records that leave the seller owning the name, finalized and unlocked.
+  // Without them the offer does not resolve and the verdict refuses. A seam that cannot read the backing may
+  // synthesize it from the proven offer record, as the site and the wallet do. Synthetic events are not
+  // merkle-proven: they assume the chain admitted the offer, and that assumption reaches the grant. An offer whose
+  // seller lacked the backing was never created on chain, so the resolver denies every fclaim on it ("unknown
+  // offer"), while synthetic backing materializes it in the replay, which can then grant the fclaim and return
+  // safe:true. A verdict over synthetic backing is conditional on that resolver-trusted admission (the served offer
+  // existing and open).
+  // Every other id is MERKLE-PROVEN via provenEvent. Inside such a window a real event moves the replay toward the
+  // chain's state; a real event added alone (an fclaim proven without the holds before it) can make the replay
+  // grant what the chain denied, and the fclaims in the window's lowest GAP_NEEDED blocks are not decided by it
+  // (the GAP_NEEDED note). OMITTING a real event is the attack: a withheld cancel, a consuming prior fill, or a
+  // give-draining transfer makes the replay see the offer as MORE open than it is, so the replay
+  // grants/routes/holds and returns safe:true while the authoritative resolver DENIED = a pay-without-delivery
+  // burn. History older than the window is not replayed: a cancel or a consuming fill can be arbitrarily OLD (a
+  // V22+ offer may be weeks old), and so can an earlier partial fill, so the replayed `paid`/`delivered` lack
+  // every fill whose fclaim lies below the window. Those are known limits, listed with the checks outside
+  // verifyFillSpv that bound them in its "Known limits". Every id returned here must come back from provenEvent;
+  // one that does not fails the verdict closed.
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
-  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
-  // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
-  // inclusion alone; it yields only the merkle-proven record body bound to its on-chain payload_hash.
+  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact (the caller
+  // fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim inclusion alone; it
+  // yields only the merkle-proven record body bound to its on-chain payload_hash. `proposer` and `attester` are
+  // the prevout-bound author (csd-crypto authorOf over the proven body and the coin its input 0 spends), never the
+  // signer read from the scriptSig, which the txid does not commit; an event whose author cannot be bound is null.
   provenEvent(id: string): Promise<ProvenEvent | null>;
 }
 
@@ -125,9 +150,13 @@ export interface FillVerdict { safe: boolean; reason: string }
  * MERKLE-PROVEN and bound to their on-chain commitment (A1), both (and any earlier fill-basis) buried
  * `>= requiredClaimDepth`, the grant REPLAYED to a live hold that is mine and routes to THIS fclaim, the
  * fill delivering `>= 1` unit, and a FILL_TIP_MARGIN deadline cushion. Fails CLOSED on any unmet condition.
- * Accepts every honest fill (the holder, live hold, buried, offer+fclaim proven, delivery >= 1); it only
- * refuses the doomed/forged cases (a denied fclaim a lying resolver calls "granted", a cancelled/lapsed or
- * not-mine hold, a below-depth signing, a zero-delivery fill, a stranded past-deadline broadcast).
+ * Over a window that holds the offer's history it refuses the doomed/forged cases (a denied fclaim a lying
+ * resolver calls "granted", a cancelled/lapsed or not-mine hold, a below-depth signing, a zero-delivery fill, a
+ * stranded past-deadline broadcast) and one honest case on purpose: the cap count. `opts.myLiveHoldsAtGrant`, as
+ * countOtherHoldsAtGrant computes it, counts the buyer's earlier fclaims on other offers whether or not the chain
+ * granted them (a denial is not visible to it), so a buyer whose three such fclaims were all denied is refused a
+ * later fill the chain granted. Over-counting refuses; under-counting would let a cap-denied fill burn. Over a
+ * window that lacks part of the history, see "Known limits" below.
  *
  * `opts.myLiveHoldsAtGrant` (REQUIRED) is the buyer's count of OTHER live fclaim/legacy holds at the moment
  * THIS fclaim was granted, asserted by the authoring client (countOtherHoldsAtGrant computes it). The lane-scoped
@@ -139,13 +168,38 @@ export interface FillVerdict { safe: boolean; reason: string }
  * without it there is nothing to bind. A caller that omits it keeps the overpay exposure described next.
  * `opts.sums` (OPT-IN, B6a / REBIND W3; default OFF = byte-identical verdicts for existing callers) binds the
  * caller's PLANNED per-address CSD payment sums to the PROVEN offer state: requiredFillOutputs is re-run over
- * the merkle-proven, replayed offer (so `paid`/`delivered` are the chain's, not a served lie) and the caller's
- * map must match it EXACTLY, address for address. This closes the W3 overpay: a resolver serving `paid:"0"`
- * for a 90%-filled partial made callers size the FULL want while the chain credits only the remainder - the
- * difference was permanently overpaid. Pass the SAME per-address sums you will build (the wallet's need-map
+ * the merkle-proven, replayed offer and the caller's map must match it EXACTLY, address for address. The
+ * replayed `paid`/`delivered` are the chain's only inside the window the seam read: a fill whose fclaim lies
+ * below it is not replayed. Inside the window this closes the W3 overpay: a resolver serving `paid:"0"` for a
+ * 90%-filled partial made callers size the FULL want while the chain credits only the remainder. Pass the SAME
+ * per-address sums you will build (the wallet's need-map
  * shape: payto + treasury fee + maker rebate, MERGED per address - `payto === seller` merges the rebate leg).
  * DELIBERATELY NOT the scalar `dp.pay !== pay` form: that refuses honest fills on both live callers (the
  * wallet's per-address sum includes the maker rebate when payto === seller; the site passes no pay at all).
+ *
+ * Known limits: the replay sees only the window the seam read, and reading the history below it is not
+ * implemented. verifyFillSpv takes no served offer and decides from the proven window alone, so each limit says
+ * first what holds for a caller that uses only verifyFillSpv (with an honest resolver unless stated), then what
+ * the checks of the site and the wallet add. A third-party caller has only the first unless it adds such checks.
+ *  - The grant replay (step 5): an fclaim the window does not decide (the GAP_NEEDED note) can replay as
+ *    granted. A hold chain that starts below the window can make verifyFillSpv grant the caller's own fclaim
+ *    that the chain denied, and the whole fill burns, with an honest resolver. A caller closes it by signing only
+ *    while the served offer names its own fclaim as the current hold: the site fills only when the served claim
+ *    state is the buyer's, so for the site it needs a resolver that serves the false hold; the wallet refuses when
+ *    its second-source offer read reports another reservation holding the offer through the buyer's hold. A third
+ *    party's fclaim the cap denied can also replay as granted with its fill credited, raising the replayed
+ *    `paid`: against sums sized from an honest served offer that only refuses, and it pays wrong only when the
+ *    served `paid` matches the raised one.
+ *  - Delivery (step 6), aged fills: a fill whose fclaim lies below the window is not replayed, so the replayed
+ *    `paid` is too low, with an honest resolver. A tail below the offer's `min` replays as below-min and an honest
+ *    buy is refused. For a coarse give (a payment worth less than one unit, `give * pay < want`) the delivery
+ *    check can disagree with the chain's in either direction: it can refuse an honest buy, or accept a payment the
+ *    chain refuses after it moved. A caller refuses a payment its served offer computes as undeliverable
+ *    (previewFill) instead of relying on this check for it.
+ *  - The sums bind (step 6b): it passes a payment sized from a served offer that omits such a fill and serves the
+ *    matching lower `paid`, and the payment overpays. That needs the resolver the caller sizes from to omit the
+ *    fill; for the site and the wallet that is the project's own resolver (host-only), and the wallet's
+ *    second-source offer read bounds it.
  */
 export async function verifyFillSpv(
   offerId: string,

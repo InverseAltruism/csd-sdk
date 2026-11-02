@@ -1,7 +1,7 @@
 # @inversealtruism/cairnx-core
 
 **CairnX** is the application layer of [Compute Substrate](https://cairn-substrate.com/docs) (CSD): an
-on-chain **name service (CNS / `.csd`)**, **tokens**, and **atomic delivery-versus-payment trades**, implemented as a **pure deterministic convention** over the chain's native `Propose`/`Attest`
+on-chain **name service (CNS / `.csd`)**, **tokens**, and **trades** (one transaction pays and records a fill; the replay decides delivery), implemented as a **pure deterministic convention** over the chain's native `Propose`/`Attest`
 transactions. No fork, no smart contracts, no custodian. The same trust class as Bitcoin
 Ordinals/Runes/BRC-20, stated plainly, and engineered to be byte-for-byte reproducible.
 
@@ -32,27 +32,29 @@ the operator's resolver does, and disagreement is detectable.
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  APP SURFACES        CNS UI (/names)   ·   Market (/trade)   ·   Cairn Wallet  │
-│                      Explorer          ·   cairn-cli         ·   3rd-party dApps│
+│                      Explorer          ·   3rd-party dApps                     │
 └───────────────▲───────────────────────────────────────────────▲──────────────┘
                 │ read derived state                              │ build + sign records
 ┌───────────────┴───────────────────────────────────────────────┴──────────────┐
 │  cairnX OVERLAY  =  resolve(events, tip) → state   (THIS PACKAGE)               │
 │  every replayer runs the SAME pure function and gets the SAME bytes:            │
-│     wallet (SPV, in-browser)  ·  reference resolver  ·  clarvis  ·  cli         │
+│     wallet (SPV, in-browser)  ·  reference resolver  ·  clarvis                 │
 └───────────────▲────────────────────────────────────────────────────────────────┘
                 │ events (Propose/Attest) + block headers
 ┌───────────────┴────────────────────────────────────────────────────────────────┐
-│  COMPUTE SUBSTRATE (base chain)   PoW · records & orders txs · enforces same-tx  │
-│                                   payment atomicity & expiry - decides NOTHING   │
+│  COMPUTE SUBSTRATE (base chain)   PoW · records & orders txs · pays every output │
+│                                   it mines, enforces expiry - decides NOTHING    │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **The safety consequence of "overlay":** CairnX names and tokens have **no native-CSD backing**. A bug,
 an over-mint, or even a fully-lying indexer can only fork the *overlay view* of whoever trusts it, it
-**cannot move CSD**. CSD moves *only* via real same-transaction payment outputs, which the chain makes
-atomic with the fill and which a buyer's wallet verifies against the offer's terms before paying. This
-single decision bounds the blast radius of every overlay bug and is why the names/tokens alpha is
-funds-safe.
+**cannot move CSD**. CSD moves *only* via real payment outputs in the fill's own transaction. The chain pays them
+whenever it mines the transaction; CairnX then decides delivery by replay, and a CSD-paid fill it refuses (an expired
+offer, a wrong target, an underpaid leg, a denied reservation) keeps the payment. So a buyer's wallet and the site
+check the fill against the offer's merkle-proven terms and the reservation before signing. An overlay bug can
+therefore not create or move CSD on its own; it can make a fill a buyer signs deliver nothing, which those checks
+exist to refuse.
 
 ```mermaid
 flowchart TD
@@ -63,13 +65,12 @@ flowchart TD
   W["Cairn Wallet<br/>in-browser SPV replayer"]
   G["reference resolver svc :8794"]
   CL["clarvis · 2nd source"]
-  CLI["cairn-cli"]
   UIN["CNS UI /names"]
   UIT["Market /trade"]
   TX --> CORE
-  CORE --> W & G & CL & CLI
+  CORE --> W & G & CL
   G --> UIN & UIT
-  W -. "self-verifies, never trusts a server" .-> UIN
+  W -. "self-verifies; an unprovable name shows the served address with a caution" .-> UIN
 ```
 
 ---
@@ -85,14 +86,16 @@ plain on-chain records, all resolvable by replay.
 - **The `.csd` suffix is presentation, not consensus.** The on-chain record stores the *bare* name
   (`alice`); the UI renders `alice.csd`. The CNS rebrand and any display-suffix change are **UI-only**,   they do not touch the resolver or chain history.
 - **Reserved names** (`csd`, `treasury`, `admin`, `official`, `root`, `www`, `support`) can never be
-  registered, anti-impersonation, enforced in consensus.
+  registered, anti-impersonation. The convention's parse rule refuses them (`isName`, `src/records.ts`), so every
+  replayer agrees; the chain itself does not read names.
 
 ### 2.1 · Lifecycle
 
 ```mermaid
 stateDiagram-v2
   [*] --> Committed: ncommit · hash(name+salt+owner)
-  Committed --> Active: name (reveal within ~8h) · pays the fee, starts a 1-year lease
+  Committed --> Reserved: name (reveal within 8 blocks, ~16 min) · payment-free reservation
+  Reserved --> Active: nfinalize (once the contest froze) · pays the fee, starts a 1-year lease
   Active --> Active: nrenew · nset (point to addr) · nprofile (identity) · nxfer (transfer) · sell (offer/fill)
   Active --> Grace: lease term ends (~1 year)
   Grace --> Active: nrenew · OWNER ONLY, ~30-day window
@@ -101,10 +104,12 @@ stateDiagram-v2
   Active --> [*]
 ```
 
-1. **Commit → Reveal (registration).** You first publish `ncommit`, a hash of `{name, salt, owner}`.
-   Then within ~8 hours you publish the `name` record revealing the name. The resolver **back-dates** the
-   registration to the commit height, so a front-runner who copies your reveal loses the ownership race.
-   Standard commit-reveal, enforced deterministically.
+1. **Commit → Reveal → Finalize (registration, v2.5 sealed reservation, `CONVENTION.md` section 28).** You
+   first publish `ncommit`, a hash of `{name, salt, owner}`. Within 8 blocks (~16 min) you publish the `name`
+   record revealing the name; the reveal pays nothing and makes a reservation. The resolver **back-dates** it to
+   the commit height, so a front-runner who copies your reveal loses the race. Once the displacement contest has
+   frozen, the winner publishes `nfinalize`, which pays the fee and starts the lease; a reservation not finalized
+   in time lapses. Recapture of a lapsed name runs through the same machinery (v2.6, section 29).
 2. **Active lease (~1 year).** You own the name: point it at an address (`nset`), set an identity profile
    (`nprofile`), transfer it (`nxfer`), renew it (`nrenew`), or list it for sale.
 3. **Grace (~30 days).** When the term ends, **only the current owner** may renew during a grace window,    your name is never sniped out from under you while you still hold it.
@@ -118,7 +123,8 @@ stateDiagram-v2
 | Record | What it does |
 |---|---|
 | `ncommit` | Commit to a name (hash of name+salt+owner), opens the front-run-safe reveal window |
-| `name` | Reveal + claim (registration), pays the fee, starts/refreshes the lease |
+| `name` | Reveal (registration): a payment-free reservation, back-dated to the commit |
+| `nfinalize` | Finalize the reservation: pays the registration fee, starts the lease |
 | `nrenew` | Extend the lease (owner-only in grace) |
 | `nxfer` | Transfer ownership to another address |
 | `nset` | Set the forward address record (`alice.csd → 0x…`) |
@@ -137,9 +143,9 @@ stateDiagram-v2
 ### 2.4 · How a name resolves, and what's actually *verified*
 
 This is what makes CNS trust-minimized rather than "ask a server." When the wallet resolves `alice.csd`
-to choose a send recipient, it does **not** trust the resolver's answer, it independently SPV-verifies
-every relevant record into the proof-of-work chain it built itself, replays them, and only trusts the
-deterministically-recomputed winner.
+to choose a send recipient, it does **not** take the resolver's answer as the address: it SPV-verifies every
+relevant record into the proof-of-work chain it built itself, replays them, and sends to the recomputed winner
+when the replay proves one. When it cannot prove one, it says so and leaves the decision to the user.
 
 ```mermaid
 sequenceDiagram
@@ -153,17 +159,21 @@ sequenceDiagram
   Wallet->>SPV: merkle-verify each record into the PoW-verified headers
   Note over Wallet,SPV: union of sources: a source can only ADD real,<br/>signer-authenticated, prevout-bound events (never fabricate)
   Wallet->>Wallet: resolve() the verified events to a deterministic owner + addr
-  alt recomputed addr matches and fully provable
-    Wallet-->>U: verified, show address, allow send
-  else mismatch or unprovable
-    Wallet-->>U: fail closed, show caution, do not auto-trust
+  alt the replay proves an address
+    Wallet-->>U: verified: send to the proven address (warn if a source stated another)
+  else nothing provable, or the sources prove different addresses
+    Wallet-->>U: not chain-verified: show the served address with a caution, the user decides
   end
 ```
 
-- **Forward resolution (`name → address`, the funds path) is SPV-verified and fail-closed.** The wallet
-  treats the resolver as untrusted, merkle-binds each record to a PoW header, replays, and refuses the
-  send if its recomputed answer disagrees or can't be proven. It re-checks again at signing time and
-  refuses both an address change and a verification-status regression.
+- **Forward resolution (`name → address`, the funds path) is SPV-verified, and a disagreement is a warning.**
+  The wallet treats the resolver as untrusted, merkle-binds each record to a PoW header and replays. When a
+  source states another address than the replay proves, the send goes to the proven address with a "sources
+  disagree" warning; when nothing can be proven, the name is shown as not chain-verified, with the served
+  address and a caution, and the user decides. Every `.csd` send carries the name-service caution. It refuses
+  a name that does not resolve or whose lease lapsed, and at signing it re-checks and refuses an address change
+  or a drop from verified to not verified. The wallet's `SECURITY.md` ("What happens when the sources
+  disagree") is the full list.
 - **Reverse resolution (`address → primary name`, a display label) is server-trusted.** It is never a send
   target, an identity badge only, so it is cheaper and clearly bounded as "unverified label."
 - **Ownership has an unambiguous total order:** lowest `(effectiveHeight, position, ordinal-id)` wins, with
@@ -171,7 +181,7 @@ sequenceDiagram
 
 > **Note on bought names:** a name you *register* is fully SPV-verifiable today. A name acquired via a
 > *market fill* is displacement-immune and correctly resolved, but its forward resolution currently shows
-> a caution rather than a green check (the wallet fails *closed* on this class) pending a resolver change
+> a caution rather than a green check (the wallet never shows it as verified) pending a resolver change
 > that makes name-fills name-local. Registration, the alpha's primary flow, is unaffected.
 
 ---
@@ -192,11 +202,14 @@ can never touch CSD.
 
 ---
 
-## 4 · Atomic delivery-versus-payment (DvP) trades
+## 4 · Trades: one transaction pays and records the fill
 
-Sell a token **or a name** for CSD or another token, atomically. The offer locks the give-side in the
-resolver; the fill is an `Attest` whose **same transaction carries the payment outputs:** the chain makes
-payment and delivery one indivisible step. No escrow, no custodian, no "the other side didn't pay."
+Sell a token **or a name** for CSD or another token. The offer locks the give-side in the resolver; the fill is an
+`Attest` whose **same transaction carries the payment outputs**, so the chain records the payment and the fill
+together, and CairnX decides delivery by replay. A token-for-token fill is atomic: the replay moves both sides or
+neither. A CSD-paid fill the replay refuses keeps the payment: CairnX rejecting the fill does not undo or refund
+the transaction's CSD outputs (only a chain reorganization can drop the transaction), so the buyer's client checks the offer's proven terms, the reservation and the amount before signing
+(`verifyFillSpv`, `fillEndorsement`). No escrow, no custodian.
 
 ```mermaid
 sequenceDiagram
@@ -204,16 +217,16 @@ sequenceDiagram
   participant Chain as Compute Substrate
   participant Taker
   Maker->>Chain: offer { give: alice.csd or token, want: 100 CSD, payto }  (locks the give)
-  Note over Chain: open CSD offers use claim-to-fill (v1.7):<br/>the FIRST claimer is reserved before paying, no race
+  Note over Chain: an open CSD offer is reserved first (fclaim, v2.8):<br/>only the holder's fill delivers, no race
   Taker->>Chain: fill (Attest) + SAME-TX outputs · 100 CSD to payto, fee to treasury, rebate to maker
-  Chain-->>Chain: resolve(): payment satisfies want? deliver give to taker, else NO-OP
-  Note over Maker,Taker: invariant (v1.3+v1.4) · a buyer can never lose more than the anchor fee
+  Chain-->>Chain: resolve(): payment satisfies want? deliver give to taker, else no delivery
+  Note over Maker,Taker: a refused CSD-paid fill keeps the payment · check before signing
 ```
 
 Highlights: partial fills (pro-rata, maker-favoring), bids (RFQ buy-side intents), `ocancel` (maker's mass
-kill-switch), a 1.5% taker fee + maker rebate on resting liquidity (v1.6), and the **claim-to-fill** open
-lane (v1.7) that reserves an untaken CSD offer for the first claimer so two buyers can't race into a burned
-payment. Listing duration is a **UI policy** (consensus places no cap as of v2.2), long-rester inventory
+kill-switch), a 1.5% taker fee + maker rebate on resting liquidity (v1.6), and the reservation lane for open CSD
+offers: a short-expiry `fclaim` proposal reserves an untaken offer and the fill attests it (v2.8, `CONVENTION.md`
+section 31, which replaced v1.7's claim attest), so two buyers can't race into a refused payment. Listing duration is a **UI policy** (consensus places no cap as of v2.2), long-rester inventory
 is bounded in the light client, not the chain.
 
 ---
@@ -232,18 +245,21 @@ is bounded in the light client, not the chain.
   mixed-version fleet can't fork during a rollout.
 - **The determinism contract is *enforced*, not asserted.** An independent Python reference
   (`conformance/cairnx_ref.py`) runs the same corpus and a 1500-iteration JS↔Python differential fuzzer on
-  every CI run, plus 60 language-neutral vectors and pinned live-chain replay hashes.
+  every CI run, plus the language-neutral vectors in `test/vectors/` and pinned live-chain replay hashes.
 
 ### Version history (activation heights are consensus-grade, never reinterpret history)
+
+Each row's normative statement is its section of `CONVENTION.md` (v2.5 to v2.9 are sections 28 to 32); the heights
+live in `src/types.ts`.
 
 | Version | Height | What |
 |---|---|---|
 | v1.0 / 1.1 | 29 860 / 29 960 | tokens · **names (CNS)** + protocol fees |
 | v1.2 | 30 300 | token⇄token swaps · partial fills · bids (RFQ) · `ocancel` |
-| v1.3 / 1.4 | 31 100 / 31 400 | CSD-priced offers taker-bound · fill-before-cancel, *buyer can't lose more than the anchor fee* |
+| v1.3 / 1.4 | 31 100 / 31 400 | CSD-priced offers taker-bound · fill-before-cancel (a same-block fill beats a cancel) |
 | v1.5 | 32 000 | **name leasing** (renew / grace / decaying-premium recapture) · `tmeta` |
 | v1.6 | 33 600 | taker fee 1% → 1.5% + maker rebate on resting liquidity |
-| v1.7 | 34 000 | claim-to-fill, race-safe open CSD offers |
+| v1.7 | 34 000 | claim-to-fill, race-safe open CSD offers (claim attests rejected from v2.8) |
 | v1.9 | 36 700 | `nprofile`, ENS-class identity on a name |
 | v2.0 | 38 400 | bounded claim grace (the late-fill fix) |
 | v1.8 | 40 000 | flat two-tier name fee (6.7 / 3 CSD) |
@@ -253,7 +269,9 @@ is bounded in the light client, not the chain.
 | v2.5 | 46 440 | sealed-reservation registration: payment-free reveal, winner-only fee at `nfinalize` |
 | v2.6 | 46 480 | sealed-reservation recapture (lapsed-name premium paid by the settled winner only) |
 | v2.7 | 46 520 | young-name sale embargo shrinks 240 → 8 blocks |
-| v2.3 | 52 000 | `nset` to the zero address CLEARS the pointer (*still pending as of 2026-07-06, tip ~48 300*) |
+| v2.3 | 52 000 | `nset` to the zero address CLEARS the pointer |
+| v2.8 | 60 000 | `fclaim`: the open-lane reservation becomes a short-expiry proposal the fill attests |
+| v2.9 | 88 000 | replay-feed de-duplication; the concurrent-claim cap counts open holds only |
 
 v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (49 200 / 51 000 / 51 200 /
 52 500); see the re-pin history note in `CONVENTION.md` and `CONSENSUS_CHANGES.md` 0.1.33.
@@ -261,13 +279,13 @@ v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (4
 ### Package layout
 
 `src/resolve.ts` + `src/resolve/` (the ledger: the replay loop and its per-record handlers) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
-height-gated client selectors) · `src/client.ts` (reorg-safety helpers a payer applies) · `src/preflight.ts`
+height-gated client selectors) · `src/client.ts` (the claim-burial depth a payer waits for, sized against a minority miner) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
 `primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
 `@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
 order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
-(normative spec, §1–§30) · `test/vectors/` (portable conformance corpus).
+(normative spec, §1–§32) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
 
@@ -279,7 +297,7 @@ import { buildPropose } from "@inversealtruism/csd-tx";
 const built = offer({ give: { ticker: "CAIRN", amount: "5000000000" },
                       want: { value: "100000000" }, min: "10000000", taker: buyerAddr });
 
-// ANCHOR it (the record IS the uri; same-tx outputs can pay fees/sellers, atomic DvP)
+// ANCHOR it (the record IS the uri; outputs in the same tx pay fees and sellers)
 const tx = buildPropose({ domain: DOMAIN, uri: built.uri, payloadHash: built.payloadHash,
   expiresEpoch, fee: 25_000_000, utxos, priv });
 
@@ -290,9 +308,10 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 
 ### Write a conformant resolver in another language
 
-1. Implement `CONVENTION.md` §1–§30 (apply order, every record type, the `V*_HEIGHT` activations (using
+1. Implement `CONVENTION.md` §1–§32 (apply order, every record type, the `V*_HEIGHT` activations (using
    the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data surface only).
-2. Replay `test/vectors/cases.json`: your canonical state must equal `expectedState` **byte-for-byte**.
+2. Replay `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json`: your canonical state must equal
+   `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare `sha256(canonicalState)` against `test/vectors/replay-hashes.json`.
 
 ---
@@ -310,7 +329,6 @@ is a silent chain fork, the exact bug class the shared-core de-dup (`cairn/docs/
 | **cairnx svc** (`cairnx/`, the live resolver `:8794`) | npm pin → re-export shim | svc replay-hash conformance |
 | **cairn /trade + /names UI** (browser) | `public/vendor/cairnx-core.js` (esbuild of this dist) | `vendor-cairnx-parity.test.mjs` + `check-vendor-fresh.mjs` |
 | **cairn-wallet** (MV3, fund custody) | `src/vendor/cairnx-spv.js` (esbuild, `export *`) | `test/cairnx.ts` + `check-vendor-fresh.mjs` + `PROVENANCE.json` |
-| **cairn-cli** | npm pin → imports regexes/limits | `test/cairnx.mjs` |
 | **the Python oracle** `conformance/cairnx_ref.py` | INDEPENDENT re-implementation (the differential, **KEEP**) | `test:crosslang` (JS⇄Python) |
 
 **To make a consensus change:** edit `src/` here **and** `conformance/cairnx_ref.py`; add a height-gated
@@ -331,11 +349,10 @@ light-client + `namespv.ts`, the wallet `core/csdtx.ts` tx-codec twin, the porta
   2-source name union whose two defaults share one apex, strong against *fabrication* (every event is
   SPV/signer/prevout-bound), weaker against *withholding* until a genuinely independent second source runs.
   The 2nd-indexer canonical-hash comparator is designed but parked until that exists.
-- **The indexer ships on SQLite by default.** A Postgres backend is fully built (`csd-indexer/src/db.ts`)
-  and is a documented env-flip + from-genesis-replay cutover (`RUNBOOK-HOST.md §8.3`), the scale path, not
-  yet the running default.
 - **`verifyInclusion` (merkle-binding the indexer's decoded outputs) is OFF by default** and is a hard
-  prerequisite before any lane treats received CSD as spendable. The overlay model is what keeps the
-  names/tokens alpha funds-safe regardless.
+  prerequisite before any lane treats received CSD as spendable. The overlay model keeps an overlay bug from
+  creating or moving CSD by itself; it does not make every payment safe. A CSD-paid fill CairnX refuses keeps the
+  payment, `verifyFillSpv`'s "Known limits" (in `src/verifyfill.ts`) list when a buyer's client can still sign one,
+  and a `.csd` send to a name the wallet cannot prove goes to the served address after a caution (section 2.4).
 
 MIT · the same trust class as Ordinals/Runes, engineered for byte-for-byte reproducible replay.

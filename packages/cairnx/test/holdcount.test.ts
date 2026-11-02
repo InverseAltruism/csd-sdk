@@ -111,4 +111,16 @@ await t("the cap-denied fourth fclaim is still refused", async () => {
   });
 }
 
+// The lapse boundary: an fclaim hold is live through its holdEnd ((E + 1) * EPOCH_LEN - 1; the resolver keeps it while
+// height < claimUntilHeight = holdEnd + 1), so a grant at exactly holdEnd counts it and the next height does not.
+await t("a hold ending exactly at the grant height counts; one ending a block earlier does not", () => {
+  const x = fcs[0]!, end = fclaimHoldEnd(x.expiresEpoch);
+  const rival = PE(id("c9"), fclaim({ offer: offers[0]! }), end, SELLER, epochOf(end) + 1);
+  const st2 = resolve([...events.slice(0, 7), rival], end + 1);
+  assert.match(st2.events.find((e) => e.id === rival.id)?.note ?? "", /hold live/, "premise: the resolver still holds the offer at holdEnd");
+  const one = [candidates[0]!];
+  assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 1 });
+  assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end + 1, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 0 });
+});
+
 console.log(`holdcount: ${pass} passed`);

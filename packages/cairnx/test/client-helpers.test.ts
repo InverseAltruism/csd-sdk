@@ -18,6 +18,9 @@ import {
   fclaim,
   fclaimEpochFor,
   offerExpiryHeightOf,
+  offerFillTooLate,
+  FILL_TIP_MARGIN,
+  SCORE_FILL,
   claimWindowAt,
   claimGraceOf,
   claimWindowOf,
@@ -82,6 +85,26 @@ expiryCase("E raw lands ~V21", V21_HEIGHT - 600, epochOf(V21_HEIGHT) - 1);
 // and the resolver rests the offer to that raw expiry even when the duration far exceeds the old 168-epoch cap.
 expiryCase("F >=V22 long duration uncapped (rests to raw)", V22_HEIGHT + 100, epochOf(V22_HEIGHT + 100) + 1000);
 expiryCase("G >=V22 modest duration (still raw)", V22_HEIGHT + 100, epochOf(V22_HEIGHT + 100) + 50);
+
+// ── offerFillTooLate: a fill signed at `tip` must be able to mine by the offer's last live block ───────────
+// The resolver applies a fill at offerExpiryHeightOf - 1 and refuses one at offerExpiryHeightOf (the node refuses
+// that attest outright), so the predicate passes exactly while tip + FILL_TIP_MARGIN <= expiresAt - 1.
+{
+  // a taker-bound offer (the offer-id lane: no claim), anchored above V22 so its raw expiry binds
+  const offH = V22_HEIGHT + 100, { ev } = offerAt(offH, epochOf(offH) + 3);
+  const offerId = nid(), o = offer({ give: { ticker: "TKN", amount: "10" }, want: { value: "1000" }, taker: BUYER });
+  ev.push({ kind: "propose", id: offerId, proposer: D, uri: o.uri, payloadHash: o.payloadHash, height: offH, pos: 2, expiresEpoch: epochOf(offH) + 3, paidTo: {} });
+  const expH = offerExpiryHeightOf(epochOf(offH) + 3, offH);
+  const fillAt = (h: number) => statusAt([...ev, { kind: "attest", txid: nid(), proposalId: offerId, attester: BUYER, score: SCORE_FILL, confidence: 0, height: h, pos: 1, paidTo: { [D]: "1000", [TREASURY_ADDR]: "1000" } }], h, offerId);
+  assert.equal(fillAt(expH - 1), "filled", "premise: a fill at the last live block applies");
+  assert.equal(fillAt(expH), "expired", "premise: a fill at offerExpiryHeightOf does not");
+  const lastSafe = expH - 1 - FILL_TIP_MARGIN;
+  assert.equal(offerFillTooLate(expH, lastSafe), false, `signed at ${lastSafe}, it can mine by ${expH - 1}`);
+  assert.equal(offerFillTooLate(expH, lastSafe + 1), true, "one block later it may strand");
+  assert.equal(offerFillTooLate(expH, expH), true, "at the expiry it cannot mine");
+  console.log(`  ✓ offerFillTooLate: expiry ${expH}, last safe tip ${lastSafe}`);
+  pass++;
+}
 
 // ── v2.2 creation gate: over-cap REJECTED in [V21,V22) (history preserved), ACCEPTED when anchored >= V22 ──
 function createCase(name: string, offH: number, expEpoch: number, expectOpen: boolean) {

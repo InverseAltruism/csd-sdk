@@ -22,7 +22,7 @@ replayer gates each rule on its own height constant, never on "version X implies
 > it is the one that must never lag the code. Keep the two in lockstep when editing.
 
 CairnX is a meta-asset and exchange convention on Compute Substrate (CSD). It defines fungible
-tokens and atomic delivery-versus-payment trades using **only** the chain's existing `Propose`
+tokens and trades, one transaction paying and recording each fill, using **only** the chain's existing `Propose`
 and `Attest` transactions: no fork, no new transaction types, no custodian. Token semantics are
 enforced by a **pure, deterministic resolver** that any party can run; independent resolvers
 replaying the same chain converge on identical state.
@@ -149,7 +149,7 @@ CairnX meaning for deploys. The **deployer** is the anchoring proposer.
 - `memo` (64 UTF-16 units max) and `ts` are optional free fields with the same rules as
   `transfer` (4.3); `ts` MUST be a JS-safe integer (A8).
 
-### 4.5 `fill`: atomic delivery-versus-payment (an Attest, not a Propose)
+### 4.5 `fill`: payment and record in one transaction (an Attest, not a Propose)
 
 A fill is an **`Attest` transaction** referencing the offer's proposal id with **`score = 100`**,
 whose **own outputs** pay the seller:
@@ -159,10 +159,12 @@ whose **own outputs** pay the seller:
 - `Σ(outputs of the attesting tx paying want.payto) ≥ want.value`;
 - on apply: the locked `give.amount` moves to the **attester**, the offer closes.
 
-Because payment outputs and the attestation are one transaction (C2), **delivery-versus-payment
-is atomic at consensus level**: the buyer cannot pay without (the chain recording the basis for)
-receiving, and the seller's tokens were already convention-locked. The fill costs only the
-attest fee floor (0.05 CSD) plus the payment.
+Because payment outputs and the attestation are one transaction (C2), **one transaction pays and
+records the fill**, and the replay then decides delivery by the rules above. A CSD-paid fill the replay
+refuses keeps the payment: CairnX rejecting the fill does not undo or refund the transaction's CSD outputs,
+which stand as the chain keeps them (subject to reorganization). A token-for-token fill
+(§11) is atomic: the replay moves both sides or neither. The seller's tokens were already
+convention-locked. The fill costs only the attest fee floor (0.05 CSD) plus the payment.
 
 The **first valid fill in apply order wins**. For a **CSD-priced** fill `confidence` is ignored
 (set 100); a **token-priced** fill (§11) additionally requires the `confidence = 1 000 000` opt-in
@@ -1134,10 +1136,13 @@ audit flags such a burn.
 **Client policy (not consensus, does not affect canonical state).** A filler waits a value-scaled
 `requiredClaimDepth` (§20 reorg note) on BOTH the offer and the fclaim (and, for a partial tail-fill, on the
 offer's earlier fill-basis events) before signing, and refuses to broadcast a fill within `FILL_TIP_MARGIN`
-(`= 2`) blocks of `holdEnd` (a stranded no-op, never a fund risk), computed from the fclaim's actual confirmed
-height and `expires_epoch`. A clean-start SPV scan must cover
-`GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS` (`= 104`) blocks so it can
-never false-accept a denied fclaim.
+(`= 4`) blocks of `holdEnd` (a stranded no-op, never a fund risk), computed from the fclaim's actual confirmed
+height and `expires_epoch`. Whether an fclaim was granted depends on the holds granted in the
+`GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS` (`= 104`) blocks before it and on
+its proposer's live holds on other offers. A client replaying a window of blocks it read completely therefore
+decides an fclaim only when the window reaches `GAP_NEEDED` below it and the fclaims in that span are decided as
+well; an fclaim in the window's lowest `GAP_NEEDED` blocks, and a fill older than the window, are not decided by
+it. cairnx-core's `verifyFillSpv` replays such a window and names these as known limits.
 
 - **Adoption note:** at/above V28 the fill's referenced proposal changes (offer id becomes fclaim txid) and
   `SCORE_CLAIM` is rejected, so v2.8 is BOTH a relaxation (an fclaim fill a fresh core accepts, a stale core

@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.2.4
+
+- `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted
+  in the `GAP_NEEDED` (104) blocks before it and on the proposer's live holds on other offers, so a window decides an
+  fclaim only when its low end is quiet. The comments no longer say a proven event "only moves the replay toward
+  truth" or that the replayed `paid` is the chain's, and its doc lists what it refuses over a window that holds the
+  offer's history, including one honest case: the cap count includes the buyer's earlier fclaims on other offers the
+  chain denied, so three denied ones refuse a later fill the chain granted. A "Known limits" list names, by step, what a
+  window without it gets wrong, first for a caller that uses only `verifyFillSpv` and then with the site's and the
+  wallet's own checks: the grant replay (a hold chain from below the window can grant the caller's own fclaim the
+  chain denied, with an honest resolver; the site's served-hold check and the wallet's second-source read bound it),
+  aged fills at delivery (an honest tail below `min` is refused; for a coarse give the delivery check can disagree
+  with the chain's either way, so a caller refuses a payment its served offer computes as undeliverable) and the
+  sums bind (a served offer that omits such a fill and serves a lower `paid` passes it; for the site and the wallet
+  that needs the project's resolver to lie). The `FillSpvIo` contract names the offer and its give-backing among the
+  events the replay needs, and says backing a seam synthesizes (the site and the wallet do) is not proven and makes
+  the grant verdict conditional on the offer's resolver-trusted admission. Reading the history below the window is
+  not implemented. CONVENTION.md section 31's client policy says the same and gives `FILL_TIP_MARGIN` as 4 (it
+  said 2). Comments and docs only.
+- The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
+  `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
+  author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
+  a fill to another address. The site's and the wallet's seams already bind it.
+- `test/vectors/cases-rules.json` (5 vectors pinning 3 rules, `conformance/gen-rule-vectors.mjs`), replayed by
+  `test/vectors.test.ts` and against the Python oracle by `conformance/crosscheck-resolve.mjs`: a same-block fclaim
+  fill (the fill at the lower position and in the natural order) and a same-block seller cancel at the lower position
+  (proposals apply before attests within a block), a deploy whose uri is not its canonical JSON but whose payload
+  hash is the canonical form's (invalid), and a token offer giving and wanting one ticker (invalid). Removing or
+  reversing the order key, the canonical-uri check or the same-ticker refusal, in either implementation, now fails them.
+- New root export `offerFillTooLate(expiresAt, tip)`, beside `offerExpiryHeightOf`: a policy refusal once fewer than
+  `FILL_TIP_MARGIN` (4) blocks of cushion remain before the offer's last live block (`expiresAt - 1 < tip +
+  FILL_TIP_MARGIN`). It does not mean the fill cannot mine (expiry 100, tip 96 returns true; inclusion at 97 to 99 is
+  possible). A fill not mined by that block is refused by the node: for an offer anchored at V22 or later it strands
+  and moves no payment; for one anchored before V22 whose expiry the v2.1 cap shortened, the resolver expires it while
+  the node still mines its attests, so a late fill there pays and delivers nothing. It was the wallet's own
+  predicate; the wallet, the site and cairn-sdk import this one. `fillEndorsement` was already a root export; both
+  are now pinned in the export-surface test.
+- `requiredClaimDepth`'s doc and `CLAIM_ATTACKER_Q`'s comment no longer call the dominant block producer trusted or
+  the wait reorg-safe: the depth makes a reorg by a minority miner (20% of the hashrate) unlikely, and the external
+  pool that produces most blocks is outside the model. The depths are unchanged.
+- Docs (README, CONVENTION.md's overview and section 4.5, MAKERS.md, the package description) no longer call
+  a fill atomic delivery-versus-payment or say a buyer cannot lose more than the anchor fee. One transaction pays and
+  records a fill and the replay decides delivery: a CSD-paid fill it refuses keeps the payment; a token-for-token
+  fill is atomic.
+- README: the registration lifecycle and records table describe the v2.5 sealed reservation (a payment-free reveal
+  within 8 blocks, the fee at `nfinalize`), the open lane is the v2.8 `fclaim` reservation, the version table gains
+  v2.8 and v2.9 and drops a stale "pending" note, the conformance steps name every vector file, and cairn-cli
+  (deprecated) and the indexer's storage backend are no longer described.
+- README: forward name resolution no longer says the wallet refuses a send whose sources disagree or cannot be
+  proven. It sends to the SPV-proven address with a "sources disagree" warning, shows an unprovable name as not
+  chain-verified with the served address and a caution, and refuses only an unresolved or lapsed name and a change
+  between review and confirm (the wallet's SECURITY.md).
+- MAKERS.md's configuration table follows the reference bot: `MM_FILL_BIDS` defaults to 0 (fills and bid posts
+  off until set; with 1 and `MM_VERIFY_INCLUSION` off the bot alerts and publishes `build.fillsWithoutInclusion`),
+  and new rows for `MM_MAX_BALANCE_READS` (20 bidder balance reads a pass), `MM_SUNRISE_START_TIP` and
+  `MM_SKIM_TO` (the one address a live skim may send to; `MM_ISSUER_ADDR` is not the skim destination).
+- New root export `FCLAIM_MAX_HOLD_SPAN` (89): the longest fclaim hold, so a fill at height f has its fclaim in
+  `[f - FCLAIM_MAX_HOLD_SPAN, f]`. `GAP_NEEDED` is now written as `FCLAIM_MAX_HOLD_SPAN + CLAIM_COOLDOWN_BLOCKS`, same
+  value (104). The site's refusal before the reservation fee needs it to tell which listed fills may lie below the
+  window its fill check reads; the wallet held a copy of it.
+- `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
+
 ## 0.2.3
 
 - `provenOfferRefusal` refuses the two record-only activation gates it lacked. An offer anchored below

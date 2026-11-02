@@ -1,5 +1,5 @@
 // CairnX shared types. The convention is CONVENTION.md; these mirror it 1:1.
-// v1   = tokens (deploy/mint/transfer) + offers/fills (atomic DvP).
+// v1   = tokens (deploy/mint/transfer) + offers/fills (payment and record in one tx; the replay decides delivery).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
 import { EPOCH_LEN, MAX_URI_BYTES, epochOf } from "@inversealtruism/csd-codec";
 
@@ -391,6 +391,16 @@ export const offerExpiryHeightOf = (expiresEpoch: number, anchorHeight: number):
   const capped = (epochOf(anchorHeight) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN;
   return Math.min(raw, Math.max(V21_HEIGHT, capped));
 };
+// A policy refusal for a fill of an offer expiring at `expiresAt` (offerExpiryHeightOf of its proven expiry and
+// anchor) signed at `tip`: true once fewer than FILL_TIP_MARGIN blocks of cushion remain before the offer's last live
+// block (expiresAt - 1), the cushion the fclaim lane keeps before its hold deadline. True does not mean the fill
+// cannot mine: with expiry 100 and tip 96 it is true, though inclusion at 97 to 99 is possible. The cushion exists
+// because the node refuses an attest after its proposal's expiry, in mempool admission and in block apply, so a fill
+// not mined by expiresAt - 1 sits unconfirmed and is dropped. For an offer anchored at V22 or later the resolver's
+// expiry is the node's (the raw expires_epoch), so such a fill strands and moves no payment. For an offer anchored
+// before V22 whose expiry the v2.1 cap shortened, the resolver expires it while the node still mines its attests, so
+// a late fill there pays and delivers nothing. Client policy, not consensus.
+export const offerFillTooLate = (expiresAt: number, tip: number): boolean => expiresAt - 1 < tip + FILL_TIP_MARGIN;
 
 // ── records (the canonical-JSON objects anchored in Propose.uri) ──
 export interface DeployRecord {

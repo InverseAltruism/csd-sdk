@@ -1,5 +1,5 @@
-// @inversealtruism/cairnx-core — the CairnX convention, as a library: tokens, atomic
-// delivery-versus-payment trades, and a leased name registry for Compute Substrate, carried
+// @inversealtruism/cairnx-core: the CairnX convention, as a library: tokens, trades (one transaction pays and
+// records a fill; the replay decides delivery), and a leased name registry for Compute Substrate, carried
 // entirely in the chain's Propose/Attest `uri` payloads (the Ordinals/Runes trust class,
 // stated plainly). CONVENTION.md in this package is the normative spec; test/vectors/ is the
 // conformance bar — an independent implementation is conformant iff it reproduces every
@@ -10,7 +10,7 @@
 //   resolve  — THE pure deterministic resolver: (events, tipHeight) → CairnXState
 //   types    — constants (activation heights, fees, lease parameters) + state/record types + the pure
 //              client selectors (claimWindowAt/Of, claimGraceOf, offerExpiryHeightOf, epochOf, fee math)
-//   client   — reorg-safety helpers a client must apply before paying (requiredClaimDepth)
+//   client   - the claim-burial depth a client waits for before paying, sized against a minority miner (requiredClaimDepth)
 export * from "./types.js";
 export * from "./records.js";
 export { resolve, canonicalState, ptAmt } from "./resolve.js";

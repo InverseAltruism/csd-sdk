@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { CONF_TOKEN_FILL } from "../src/index.js";
+import { CONF_TOKEN_FILL, FCLAIM_MAX_HOLD_SPAN, fillEndorsement, offerFillTooLate } from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
 
@@ -19,4 +19,13 @@ const dts = readFileSync(new URL("../dist/index.d.ts", import.meta.url), "utf8")
 assert.ok(/\bCONF_TOKEN_FILL\b/.test(dts), "dist/index.d.ts must export CONF_TOKEN_FILL (the wallet re-vendor picks the surface up from the built .d.ts)");
 assert.ok(/CONF_TOKEN_FILL = 1000000/.test(dts), "dist/index.d.ts must pin CONF_TOKEN_FILL's literal value");
 
-console.log("cairnx-core export surface: 3 passed (CONF_TOKEN_FILL pinned in src and dist .d.ts)");
+// cairn-sdk's preverifyOffer runs these two over the served offer for a caller's address and tip (one home, no SDK copy
+// of the taker, routing, delivery or expiry rules).
+assert.equal(typeof fillEndorsement, "function", "fillEndorsement is a root export");
+assert.equal(typeof offerFillTooLate, "function", "offerFillTooLate is a root export");
+// The site's refusal before the reservation fee reads which listed fills may lie below the fill check's window with it.
+assert.equal(FCLAIM_MAX_HOLD_SPAN, 89, "FCLAIM_MAX_HOLD_SPAN is a root export (89)");
+for (const name of ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN"])
+  assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
+
+console.log("cairnx-core export surface: 9 passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate and FCLAIM_MAX_HOLD_SPAN pinned in src and dist .d.ts)");
