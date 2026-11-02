@@ -36,6 +36,10 @@
   within 8 blocks, the fee at `nfinalize`), the open lane is the v2.8 `fclaim` reservation, the version table gains
   v2.8 and v2.9 and drops a stale "pending" note, the conformance steps name every vector file, and cairn-cli
   (deprecated) and the indexer's storage backend are no longer described.
+- README: forward name resolution no longer says the wallet refuses a send whose sources disagree or cannot be
+  proven. It sends to the SPV-proven address with a "sources disagree" warning, shows an unprovable name as not
+  chain-verified with the served address and a caution, and refuses only an unresolved or lapsed name and a change
+  between review and confirm (the wallet's SECURITY.md).
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3

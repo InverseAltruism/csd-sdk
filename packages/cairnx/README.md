@@ -143,9 +143,9 @@ stateDiagram-v2
 ### 2.4 · How a name resolves, and what's actually *verified*
 
 This is what makes CNS trust-minimized rather than "ask a server." When the wallet resolves `alice.csd`
-to choose a send recipient, it does **not** trust the resolver's answer, it independently SPV-verifies
-every relevant record into the proof-of-work chain it built itself, replays them, and only trusts the
-deterministically-recomputed winner.
+to choose a send recipient, it does **not** take the resolver's answer as the address: it SPV-verifies every
+relevant record into the proof-of-work chain it built itself, replays them, and sends to the recomputed winner
+when the replay proves one. When it cannot prove one, it says so and leaves the decision to the user.
 
 ```mermaid
 sequenceDiagram
@@ -159,17 +159,21 @@ sequenceDiagram
   Wallet->>SPV: merkle-verify each record into the PoW-verified headers
   Note over Wallet,SPV: union of sources: a source can only ADD real,<br/>signer-authenticated, prevout-bound events (never fabricate)
   Wallet->>Wallet: resolve() the verified events to a deterministic owner + addr
-  alt recomputed addr matches and fully provable
-    Wallet-->>U: verified, show address, allow send
-  else mismatch or unprovable
-    Wallet-->>U: fail closed, show caution, do not auto-trust
+  alt the replay proves an address
+    Wallet-->>U: verified: send to the proven address (warn if a source stated another)
+  else nothing provable, or the sources prove different addresses
+    Wallet-->>U: not chain-verified: show the served address with a caution, the user decides
   end
 ```
 
-- **Forward resolution (`name → address`, the funds path) is SPV-verified and fail-closed.** The wallet
-  treats the resolver as untrusted, merkle-binds each record to a PoW header, replays, and refuses the
-  send if its recomputed answer disagrees or can't be proven. It re-checks again at signing time and
-  refuses both an address change and a verification-status regression.
+- **Forward resolution (`name → address`, the funds path) is SPV-verified, and a disagreement is a warning.**
+  The wallet treats the resolver as untrusted, merkle-binds each record to a PoW header and replays. When a
+  source states another address than the replay proves, the send goes to the proven address with a "sources
+  disagree" warning; when nothing can be proven, the name is shown as not chain-verified, with the served
+  address and a caution, and the user decides. Every `.csd` send carries the name-service caution. It refuses
+  a name that does not resolve or whose lease lapsed, and at signing it re-checks and refuses an address change
+  or a drop from verified to not verified. The wallet's `SECURITY.md` ("What happens when the sources
+  disagree") is the full list.
 - **Reverse resolution (`address → primary name`, a display label) is server-trusted.** It is never a send
   target, an identity badge only, so it is cheaper and clearly bounded as "unverified label."
 - **Ownership has an unambiguous total order:** lowest `(effectiveHeight, position, ordinal-id)` wins, with
@@ -177,7 +181,7 @@ sequenceDiagram
 
 > **Note on bought names:** a name you *register* is fully SPV-verifiable today. A name acquired via a
 > *market fill* is displacement-immune and correctly resolved, but its forward resolution currently shows
-> a caution rather than a green check (the wallet fails *closed* on this class) pending a resolver change
+> a caution rather than a green check (the wallet never shows it as verified) pending a resolver change
 > that makes name-fills name-local. Registration, the alpha's primary flow, is unaffected.
 
 ---
