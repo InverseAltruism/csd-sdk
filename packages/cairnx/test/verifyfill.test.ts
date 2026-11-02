@@ -517,46 +517,64 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
 // ── 16. aged partial fills: what the window replay cannot decide, and the served-state classification a caller
 //    refuses on before paying (the site's refusal before the reservation fee, (c); reading the history, design b',
 //    is a Plan 87 later item) ──
-// A coarse give: 4 units for 50,000,000, min 1,000,000. C's 14,000,000 fill (1 unit) sits below the buyer's window;
-// B's 24,000,000 fill is inside it. The chain holds paid 38,000,000 and delivered 3, so 1,000,000 more delivers 0
-// (floor(4 * 39 / 50) = 3); the window replays paid 24,000,000 and delivered 1, where it delivers 1.
+// A coarse give: 4 units for 50,000,000, min 1,000,000. C's 14,000,000 fill (1 unit) sits below the buyer's window and
+// B's fill is inside it, so the window replays B's fill alone. The delivered amount is floor(4 * paid / 50,000,000),
+// so a 1,000,000 payment (worth less than one unit) can deliver over one paid and not over the other, either way:
+//   B pays 24,000,000: the chain holds 38,000,000 (3 units) and delivers 0; the window holds 24,000,000 (1) and says 1.
+//   B pays 23,000,000: the chain holds 37,000,000 (2 units) and delivers 1; the window holds 23,000,000 (1) and says 0.
 {
   const BUYER = "0x" + "dd".repeat(20);
-  const CO = id("c0"), coarse = PE(CO, offer({ give: { ticker: "AAA", amount: "4" }, want: { value: "50000000", payto: A }, min: "1000000" }), H0 + 2, A, 9e9);
   const pay = (x: bigint) => ({ [A]: String(x), [TREASURY_ADDR]: String((x * 150n + 9999n) / 10000n) });
-  const fcC = PE(id("c1"), fclaim({ offer: CO }), H0 + 10, C, epochOf(H0 + 10) + 2);
-  const fillC = AE(id("c2"), id("c1"), C, H0 + 11, pay(14_000_000n));
-  const fcB = PE(id("c3"), fclaim({ offer: CO }), H0 + 305, B, epochOf(H0 + 305));   // holds to H0 + 330
-  const fillB = AE(id("c4"), id("c3"), B, H0 + 306, pay(24_000_000n));
-  const fcBuy = PE(id("c5"), fclaim({ offer: CO }), H0 + 335, BUYER, epochOf(H0 + 335) + 2);
-  const all = [base[0]!, base[1]!, coarse, fcC, fillC, fcB, fillB, fcBuy];
-  const tip = H0 + 345;
+  const coarseChain = (tag: string, bPays: bigint) => {
+    const k = (n: string) => id(tag + n);
+    const offerId = k("0"), fcBuy = k("5"), tip = H0 + 345;
+    const all: ChainEvent[] = [base[0]!, base[1]!,
+      PE(offerId, offer({ give: { ticker: "AAA", amount: "4" }, want: { value: "50000000", payto: A }, min: "1000000" }), H0 + 2, A, 9e9),
+      PE(k("1"), fclaim({ offer: offerId }), H0 + 10, C, epochOf(H0 + 10) + 2),
+      AE(k("2"), k("1"), C, H0 + 11, pay(14_000_000n)),
+      PE(k("3"), fclaim({ offer: offerId }), H0 + 305, B, epochOf(H0 + 305)),   // holds to H0 + 330
+      AE(k("4"), k("3"), B, H0 + 306, pay(bPays)),
+      PE(fcBuy, fclaim({ offer: offerId }), H0 + 335, BUYER, epochOf(H0 + 335) + 2)];
+    const windowIo = makeIo(all.filter((e) => ![k("1"), k("2")].includes(e.kind === "propose" ? e.id : e.txid)), tip);
+    const chainFill = (x: bigint) => {
+      const fill = AE(k("6"), fcBuy, BUYER, tip + 1, pay(x));
+      return resolve([...all, fill], tip + 1).events.find((e) => e.id === k("6"));
+    };
+    return { all, offerId, fcBuy, tip, windowIo, chainFill, served: resolve(all, tip).offers[offerId]! };
+  };
   ok(H0 + 10 < H0 + 335 - MAX_SCAN, "premise: C's fclaim lies below the buyer's window");
-  const served = resolve(all, tip).offers[CO]!;
-  ok(served.paid === "38000000" && served.delivered === "3", "the served (chain) state holds both fills");
 
-  // (c), the coarse leg: over the served state a 1,000,000 payment delivers nothing, and the resolver refuses it
-  const p1 = previewFill(served, 1_000_000n);
-  ok(p1.deliverable === false && p1.reason === "zero-delivery" && requiredFillOutputs(served, 1_000_000n) === null,
+  // (c), the coarse leg, chain 0 and window 1: over the served state a 1,000,000 payment delivers nothing, and the
+  // resolver refuses it
+  const z = coarseChain("e", 24_000_000n);
+  ok(z.served.paid === "38000000" && z.served.delivered === "3", "the served (chain) state holds both fills");
+  const p1 = previewFill(z.served, 1_000_000n);
+  ok(p1.deliverable === false && p1.reason === "zero-delivery" && requiredFillOutputs(z.served, 1_000_000n) === null,
     "served state: 1,000,000 delivers 0 units (previewFill zero-delivery; requiredFillOutputs null)");
-  const buyFill = AE(id("c6"), id("c5"), BUYER, tip + 1, pay(1_000_000n));
-  ok(resolve([...all, buyFill], tip + 1).events.find((e) => e.id === id("c6"))?.note === "fill too small to deliver any tokens",
-    "the resolver refuses that fill after the payment moved");
-  // the known limit: the window replay (C's fclaim and fill absent) computes 1 unit, so a caller without sums is
-  // told safe; the caller must refuse on the served state above (a lie there can only refuse)
-  const windowIo = makeIo(all.filter((e) => ![id("c1"), id("c2")].includes((e.kind === "propose" ? e.id : e.txid))), tip);
-  const vWin = await verifyFillSpv(CO, id("c5"), BUYER, windowIo, { myLiveHoldsAtGrant: 0, pay: "1000000" });
-  ok(vWin.safe === true, `known limit: the window replay alone accepts the 1,000,000 payment (${vWin.reason})`);
+  ok(z.chainFill(1_000_000n)?.note === "fill too small to deliver any tokens", "the resolver refuses that fill after the payment moved");
+  // TRIPWIRE for design b' (Plan 87): the window replay (C's fclaim and fill absent) computes 1 unit, so a caller
+  // without sums is told safe and must refuse on the served state above (a lie there can only refuse). Reading the
+  // history below the window flips this to a refusal; this assertion then changes with it.
+  const vWin = await verifyFillSpv(z.offerId, z.fcBuy, BUYER, z.windowIo, { myLiveHoldsAtGrant: 0, pay: "1000000" });
+  ok(vWin.safe === true, `tripwire (known limit): the window replay alone accepts the 1,000,000 payment (${vWin.reason})`);
   ok(4n * 1_000_000n < 50_000_000n, "the payment is worth less than one unit: give * pay < want, so its delivery depends on paid");
 
-  // (c), the tail leg, on the same paid with a min of 20,000,000: the 12,000,000 tail is deliverable over the
-  // served state and below min over a window that lacks C's fill
-  const tailOffer = { ...served, min: "20000000" };
+  // the other direction, chain 1 and window 0: the honest 1,000,000 buy delivers on chain and the window refuses it
+  const d = coarseChain("f", 23_000_000n);
+  ok(d.served.paid === "37000000" && d.served.delivered === "2", "the served (chain) state holds both fills");
+  ok(previewFill(d.served, 1_000_000n).got === 1n && d.chainFill(1_000_000n)?.ok === true, "served state and resolver: 1,000,000 delivers 1 unit");
+  // TRIPWIRE for design b': over the window's paid the same payment delivers 0, so the fill check refuses an honest buy
+  const vRef = await verifyFillSpv(d.offerId, d.fcBuy, BUYER, d.windowIo, { myLiveHoldsAtGrant: 0, pay: "1000000" });
+  ok(vRef.safe === false && /deliver 0 units/.test(vRef.reason), `tripwire (known limit): the window replay refuses the honest buy (${vRef.reason})`);
+
+  // (c), the tail leg, on the first chain's paid with a min of 20,000,000: the 12,000,000 tail is deliverable over
+  // the served state and below min over a window that lacks C's fill
+  const tailOffer = { ...z.served, min: "20000000" };
   ok(previewFill(tailOffer, 12_000_000n).deliverable === true, "served state: the 12,000,000 tail is buyable (effMin is the remainder)");
   ok(previewFill({ ...tailOffer, paid: "24000000", delivered: "1" }, 12_000_000n).reason === "below-min",
     "over the window's paid the same tail is below min: the fill check refuses it after the reservation fee");
   // a payment worth at least one unit delivers whatever the earlier fills: 13,000,000 over either paid
-  ok(previewFill({ ...served, paid: "30000000", delivered: "2" }, 13_000_000n).got >= 1n && previewFill({ ...served, paid: "24000000", delivered: "1" }, 13_000_000n).got >= 1n,
+  ok(previewFill({ ...z.served, paid: "30000000", delivered: "2" }, 13_000_000n).got >= 1n && previewFill({ ...z.served, paid: "24000000", delivered: "1" }, 13_000_000n).got >= 1n,
     "give * pay >= want: at least one unit over any earlier paid");
 }
 
