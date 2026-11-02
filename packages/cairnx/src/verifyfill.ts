@@ -39,9 +39,9 @@ import { parseRecord } from "./records.js";
 // lowest GAP_NEEDED blocks is not, because its deciding holds lie below the window. So a hold chain that starts
 // below the window (X below it denies Y inside it; Y, replayed as granted, then denies Z, which the chain granted
 // and which denies the buyer) can replay a grant the chain denied, and so can a third party's fclaim the cap
-// denied on its holds elsewhere, crediting that party's fill. These are known limits, reachable only when the
-// primary resolver serves the matching state (host-only). Deciding them needs the history below the window;
-// reading it is not implemented.
+// denied on its holds elsewhere, crediting that party's fill. These are known limits; verifyFillSpv's "Known
+// limits" says which checks outside it bound them. Deciding them needs the history below the window; reading it
+// is not implemented.
 // The longest fclaim hold (89 with the current constants): a fill is mined at most this far above the fclaim it
 // attests, so a fill at height f has its fclaim in [f - FCLAIM_MAX_HOLD_SPAN, f].
 export const FCLAIM_MAX_HOLD_SPAN = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1;
@@ -82,10 +82,9 @@ export interface FillSpvIo {
   // grants/routes/holds and returns safe:true while the authoritative resolver DENIED = a pay-without-delivery
   // burn. History older than the window is not replayed: a cancel or a consuming fill can be arbitrarily OLD (a
   // V22+ offer may be weeks old), and so can an earlier partial fill, so the replayed `paid`/`delivered` lack
-  // every fill whose fclaim lies below the window. Those are known limits held by the callers (the served
-  // status, the wallet's second-source read, the site's refusal before the reservation fee) and listed under
-  // verifyFillSpv's `opts.sums`. Every id returned here must come back from provenEvent; one that does not fails
-  // the verdict closed.
+  // every fill whose fclaim lies below the window. Those are known limits, listed with the checks outside
+  // verifyFillSpv that bound them in its "Known limits". Every id returned here must come back from provenEvent;
+  // one that does not fails the verdict closed.
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
   // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact (the caller
   // fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim inclusion alone; it
@@ -172,18 +171,28 @@ export interface FillVerdict { safe: boolean; reason: string }
  * wallet's per-address sum includes the maker rebate when payto === seller; the site passes no pay at all).
  *
  * Known limits: the replay sees only the window the seam read, and reading the history below it is not
- * implemented. Each limit names the step it comes from.
- *  - Delivery (step 6), aged fills under an honest resolver: a fill whose fclaim lies below the window is not
- *    replayed, so the replayed `paid` is too low. A tail below the offer's `min` replays as below-min and an
- *    honest buy is refused; for a coarse give (a payment worth less than one unit, `give * pay < want`) the
- *    delivery check can disagree with the chain's in either direction, so a caller refuses a payment its served
- *    offer computes as undeliverable (previewFill) instead of relying on this check for it.
- *  - The sums bind (step 6b), the deflate leg: a resolver that withholds such a fill and serves the matching
- *    lower `paid` passes the bind and the payment overpays (host-only; the wallet's second-source offer read
- *    bounds it).
- *  - The grant replay (step 5), the inflate leg: an fclaim the window does not decide (the GAP_NEEDED note) can
- *    replay as granted with its fill credited, reachable only when the primary resolver serves the matching
- *    state (host-only).
+ * implemented. verifyFillSpv takes no served offer and decides from the proven window alone, so each limit says
+ * first what holds for a caller that uses only verifyFillSpv (with an honest resolver unless stated), then what
+ * the checks of the site and the wallet add. A third-party caller has only the first unless it adds such checks.
+ *  - The grant replay (step 5): an fclaim the window does not decide (the GAP_NEEDED note) can replay as
+ *    granted. A hold chain that starts below the window can make verifyFillSpv grant the caller's own fclaim
+ *    that the chain denied, and the whole fill burns, with an honest resolver. A caller closes it by signing only
+ *    while the served offer names its own fclaim as the current hold: the site fills only when the served claim
+ *    state is the buyer's, so for the site it needs a resolver that serves the false hold; the wallet refuses when
+ *    its second-source offer read reports another reservation holding the offer through the buyer's hold. A third
+ *    party's fclaim the cap denied can also replay as granted with its fill credited, raising the replayed
+ *    `paid`: against sums sized from an honest served offer that only refuses, and it pays wrong only when the
+ *    served `paid` matches the raised one.
+ *  - Delivery (step 6), aged fills: a fill whose fclaim lies below the window is not replayed, so the replayed
+ *    `paid` is too low, with an honest resolver. A tail below the offer's `min` replays as below-min and an honest
+ *    buy is refused. For a coarse give (a payment worth less than one unit, `give * pay < want`) the delivery
+ *    check can disagree with the chain's in either direction: it can refuse an honest buy, or accept a payment the
+ *    chain refuses after it moved. A caller refuses a payment its served offer computes as undeliverable
+ *    (previewFill) instead of relying on this check for it.
+ *  - The sums bind (step 6b): it passes a payment sized from a served offer that omits such a fill and serves the
+ *    matching lower `paid`, and the payment overpays. That needs the resolver the caller sizes from to omit the
+ *    fill; for the site and the wallet that is the project's own resolver (host-only), and the wallet's
+ *    second-source offer read bounds it.
  */
 export async function verifyFillSpv(
   offerId: string,

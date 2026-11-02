@@ -7,12 +7,14 @@
   fclaim only when its low end is quiet. The comments no longer say a proven event "only moves the replay toward
   truth" or that the replayed `paid` is the chain's, and its doc says it accepts every honest fill and refuses only
   doomed or forged ones over a window that holds the offer's history. A "Known limits" list names, by step, what a
-  window without it gets wrong: aged fills at delivery (an honest tail below `min` is refused; for a coarse give the
-  delivery check can disagree with the chain's, so a caller refuses a payment its served offer computes as
-  undeliverable), the deflate leg at the sums bind (a withheld fill and a lower served `paid`, host-only) and the
-  inflate leg at the grant replay (a second-order hold chain or a third party's cap, host-only). The `FillSpvIo`
-  contract names the offer and its give-backing among the events the replay needs. Reading the history below the
-  window is not implemented. CONVENTION.md section 31's client policy says the same and gives
+  window without it gets wrong, first for a caller that uses only `verifyFillSpv` and then with the site's and the
+  wallet's own checks: the grant replay (a hold chain from below the window can grant the caller's own fclaim the
+  chain denied, with an honest resolver; the site's served-hold check and the wallet's second-source read bound it),
+  aged fills at delivery (an honest tail below `min` is refused; for a coarse give the delivery check can disagree
+  with the chain's either way, so a caller refuses a payment its served offer computes as undeliverable) and the
+  sums bind (a served offer that omits such a fill and serves a lower `paid` passes it; for the site and the wallet
+  that needs the project's resolver to lie). The `FillSpvIo` contract names the offer and its give-backing among the
+  events the replay needs. Reading the history below the window is not implemented. CONVENTION.md section 31's client policy says the same and gives
   `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
 - The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
