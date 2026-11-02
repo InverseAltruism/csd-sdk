@@ -42,8 +42,11 @@ await client.submitOrThrow(tx.nodeJson); // throws if the node rejects the trans
 //    verified yourself (your own node, or a value you audited), not one this server gave you. Headers come in
 //    batches of up to 512 from a /headers endpoint; every row is checked, so the endpoint is not trusted either.
 const CHECKPOINT = { height: Number(process.env.CP_HEIGHT), hash: process.env.CP_HASH };
-const headersBatchProvider = async (from, count) =>
-  (await (await fetch(`https://cairn-substrate.com/api/headers/${from}/${count}`)).json()).headers;
+const headersBatchProvider = async (from, count) => {
+  const res = await fetch(`https://cairn-substrate.com/api/headers/${from}/${count}`);
+  if (!res.ok) throw new Error(`headers ${from}+${count}: HTTP ${res.status}`); // a 429 or 502 names itself
+  return (await res.json()).headers;
+};
 const light = new LightClient({ client, headersBatchProvider });
 await light.syncFromCheckpoint(CHECKPOINT.height, CHECKPOINT.hash);
 await light.sync((await client.tip()).height);
