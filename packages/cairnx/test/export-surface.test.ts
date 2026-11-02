@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate } from "../src/index.js";
+import { CONF_TOKEN_FILL, FCLAIM_MAX_HOLD_SPAN, fillEndorsement, offerFillTooLate } from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
 
@@ -23,7 +23,9 @@ assert.ok(/CONF_TOKEN_FILL = 1000000/.test(dts), "dist/index.d.ts must pin CONF_
 // of the taker, routing, delivery or expiry rules).
 assert.equal(typeof fillEndorsement, "function", "fillEndorsement is a root export");
 assert.equal(typeof offerFillTooLate, "function", "offerFillTooLate is a root export");
-for (const name of ["fillEndorsement", "offerFillTooLate"])
+// The site's refusal before the reservation fee reads which listed fills may lie below the fill check's window with it.
+assert.equal(FCLAIM_MAX_HOLD_SPAN, 89, "FCLAIM_MAX_HOLD_SPAN is a root export (89)");
+for (const name of ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN"])
   assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
-console.log("cairnx-core export surface: 7 passed (CONF_TOKEN_FILL, fillEndorsement and offerFillTooLate pinned in src and dist .d.ts)");
+console.log("cairnx-core export surface: 9 passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate and FCLAIM_MAX_HOLD_SPAN pinned in src and dist .d.ts)");
