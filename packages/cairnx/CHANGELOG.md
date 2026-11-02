@@ -40,6 +40,10 @@
   proven. It sends to the SPV-proven address with a "sources disagree" warning, shows an unprovable name as not
   chain-verified with the served address and a caution, and refuses only an unresolved or lapsed name and a change
   between review and confirm (the wallet's SECURITY.md).
+- MAKERS.md's configuration table follows the reference bot: `MM_FILL_BIDS` defaults to 0 (fills and bid posts
+  off until set; with 1 and `MM_VERIFY_INCLUSION` off the bot alerts and publishes `build.fillsWithoutInclusion`),
+  and new rows for `MM_MAX_BALANCE_READS` (20 bidder balance reads a pass), `MM_SUNRISE_START_TIP` and
+  `MM_SKIM_TO` (the one address a live skim may send to; `MM_ISSUER_ADDR` is not the skim destination).
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3
