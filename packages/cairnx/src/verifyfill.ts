@@ -13,7 +13,7 @@
 // attacker-authored, buyer-self-authored, or the deep-reorg finality residual every CSD payment carries.
 import { payloadHash } from "@inversealtruism/csd-codec";
 import {
-  V28_HEIGHT, FCLAIM_MAX_EPOCH_AHEAD, CLAIM_COOLDOWN_BLOCKS, EPOCH_LEN, FILL_TIP_MARGIN, SCORE_FILL, MAX_ACTIVE_CLAIMS,
+  V28_HEIGHT, FILL_TIP_MARGIN, SCORE_FILL, MAX_ACTIVE_CLAIMS,
   V11_HEIGHT, V16_HEIGHT, FEE_BPS, FEE_BPS_V16, ADDR_RE,
   fclaimHoldEnd, isTokenWant,
   type OfferState, type ChainEvent, type ProposeEvent, type AttestEvent, type CairnXState, type CairnXRecord, type OfferRecord,
@@ -22,24 +22,7 @@ import { resolve } from "./resolve.js";
 import { requiredClaimDepth } from "./client.js";
 import { hasLiveClaim, previewFill, requiredFillOutputs } from "./preflight.js";
 import { parseRecord } from "./records.js";
-
-// ── GAP_NEEDED: the clean-start SPV scan bound (FUND-SAFETY, not latency) ──────────────────────────────
-// To re-derive whether THIS fclaim was granted, the replay must include any PRIOR hold whose window +
-// cooldown still bears on the grant (a live prior hold denies via `!claimHeld`; a just-lapsed same-holder
-// hold denies via the cooldown). A grant at the FIRST block of an epoch with `ee = epochOf(h)+2` holds the
-// LONGEST: claimUntilHeight = (ee+1)*EPOCH_LEN, so holdEnd = (ee+1)*EPOCH_LEN - 1 = h + EPOCH_LEN*3 - 1 =
-// h + 89 (a 90-block half-open span; the "-1" is the inclusive last minable height). The cooldown then runs
-// CLAIM_COOLDOWN_BLOCKS past claimUntilHeight, so the deepest prior grant that still denies a fclaim at h_fc
-// sits at h_fc - (EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD+1) - 1 + CLAIM_COOLDOWN_BLOCKS). A one-block under-scan
-// would MISS that prior grant and FALSE-ACCEPT a denied fclaim = a burn, so this is derived symbolically and
-// rounded UP with a full-epoch cushion (never a round number that could drift under a constant change).
-//   GAP_NEEDED = EPOCH_LEN*(FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS
-//              = 30*(2 + 1) - 1 + 15 = 90 - 1 + 15 = 104   (with the current constants)
-export const GAP_NEEDED = EPOCH_LEN * (FCLAIM_MAX_EPOCH_AHEAD + 1) - 1 + CLAIM_COOLDOWN_BLOCKS;
-// The scan headroom: round GAP_NEEDED up with a full-epoch margin so a boundary off-by-one can never
-// under-scan. A caller doing a clean-start scan syncs at least this many blocks back from the fclaim.
-export const SCAN_MARGIN = EPOCH_LEN;
-export const MAX_SCAN = GAP_NEEDED + SCAN_MARGIN;   // = 134 with the current constants
+import { fillHistory, type FillHistoryIo, type HistoryRefusalCode } from "./fillhistory.js";
 
 // ── the SPV seam ──────────────────────────────────────────────────────────────────────────────────────
 // A PoW-verified, MERKLE-PROVEN event: the tx body's RE-DERIVED txid IS the merkle leaf folded to the
@@ -53,24 +36,28 @@ export type ProvenEvent = ProvenPropose | ProvenAttest;
 export interface FillSpvIo {
   // The PoW-VERIFIED tip height. Never a resolver-asserted tip (a forged tip would inflate burial depth).
   tip(): Promise<number>;
-  // The event ids that bear on this offer's fill-safety, for the grant replay to run over. COMPLETENESS IS A
-  // SEAM OBLIGATION THE PURE LAYER CANNOT VERIFY: each id is MERKLE-PROVEN via provenEvent (so a lie can only
-  // ADD a real on-chain event, which only moves the replay toward truth), but OMITTING a real event is the
-  // attack. A withheld cancel, a consuming prior fill, or a give-draining transfer makes the replay see the
-  // offer as MORE open than it is, so the replay grants/routes/holds and returns safe:true while the
-  // authoritative resolver DENIED = a pay-without-delivery burn. So this MUST be derived from PoW-verified
-  // BLOCK BODIES (the swapguard scan model), NOT a bare resolver hint list, and MUST cover: [fclaimHeight -
-  // MAX_SCAN, tip] for hold/cooldown evidence AND the offer's FULL lifecycle (anchor to tip, via a persistent
-  // header/scan snapshot) for status events (cancel/expiry/consuming fill) + give-backing (deploy+mint, or the
-  // name registration). Note the age asymmetry: hold/cooldown evidence is bounded by MAX_SCAN, but a cancel or
-  // a consuming fill can be arbitrarily OLD (a V22+ offer may be weeks old), so the lifecycle scan is NOT
-  // bounded by MAX_SCAN. B5/B6 own this contract (see the B5/B6 wiring notes in the plan). Every id returned
-  // here must come back from provenEvent; one that does not fails the verdict closed.
+  // The event ids that bear on this offer's fill-safety, for the grant replay to run over. Each id is proven via
+  // provenEvent, and every id returned must come back proven or the verdict fails closed. Completeness is a seam
+  // obligation the pure layer cannot verify, and it is per range: the ids must be every lane event (the offer, its
+  // fclaims, ocancels, attests on the offer or its fclaims) of a range of heights the seam read completely from
+  // PoW-verified block bodies (the swapguard scan model), never a resolver hint list. Only inside such a range does
+  // a real event move the replay toward the chain's state. A real event added alone (an fclaim proven without the
+  // holds before it) can make the replay grant what the chain denied, and so can an fclaim in a range's lowest
+  // GAP_NEEDED blocks (src/fillhistory.ts). A seam that declares its range through `history` gets exactly those
+  // fclaims decided; one that does not is trusted to have read MAX_SCAN below the fclaim and no fclaim before it.
+  // Omitting a real event is the attack: a withheld cancel, consuming fill or give-draining transfer replays the
+  // offer as more open than it is, so the replay grants and returns safe:true where the resolver denied, a
+  // pay-without-delivery burn. A cancel or consuming fill can be older than any bounded scan (a V22+ offer may be
+  // weeks old); that withheld-history leg stays with the caller (the served status, the wallet's second source).
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
   // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
   // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
   // inclusion alone; it yields only the merkle-proven record body bound to its on-chain payload_hash.
   provenEvent(id: string): Promise<ProvenEvent | null>;
+  // Optional: the ranges the seam read and the reads that extend them (src/fillhistory.ts). With it, fclaims the
+  // read ranges do not decide are branched over, and a refusal at the delivery gate reads the ranges the served
+  // offer's listed fills need (opts.servedFills). Without it the verdict is the single-replay verdict.
+  history?: FillHistoryIo;
 }
 
 // ── A1 structural bind: parseRecord re-derives canonicalJson(obj) === uri AND payloadHash(obj) === the
@@ -118,16 +105,23 @@ export function replayLiveHold(
 }
 
 // ── the top-level fail-closed verdict ──────────────────────────────────────────────────────────────────
-export interface FillVerdict { safe: boolean; reason: string }
+/** Why a fill was refused, for callers to act on (the reason text is for people). "not-buried", "not-held",
+ *  "not-granted" and "hold-deadline" can change as the tip moves; "history-unread" is a read failure worth a retry. */
+export type FillRefusalCode =
+  | "tip-unverified" | "events-unenumerated" | "event-unproven" | "fclaim-pre-v28" | "record-unbound" | "not-csd-priced"
+  | "not-buried" | "offer-unresolved" | "cap-unasserted" | "cap-reached" | "not-granted" | "not-held" | "invalid-pay"
+  | "no-delivery" | "sums-unsizable" | "invalid-sums" | "sums-mismatch" | "hold-deadline" | HistoryRefusalCode;
+export interface FillVerdict { safe: boolean; reason: string; code?: FillRefusalCode }
 
 /**
  * The union verdict a client MUST clear before signing an open-lane fclaim fill: offer + fclaim
  * MERKLE-PROVEN and bound to their on-chain commitment (A1), both (and any earlier fill-basis) buried
  * `>= requiredClaimDepth`, the grant REPLAYED to a live hold that is mine and routes to THIS fclaim, the
- * fill delivering `>= 1` unit, and a FILL_TIP_MARGIN deadline cushion. Fails CLOSED on any unmet condition.
- * Accepts every honest fill (the holder, live hold, buried, offer+fclaim proven, delivery >= 1); it only
- * refuses the doomed/forged cases (a denied fclaim a lying resolver calls "granted", a cancelled/lapsed or
- * not-mine hold, a below-depth signing, a zero-delivery fill, a stranded past-deadline broadcast).
+ * fill delivering `>= 1` unit, and a FILL_TIP_MARGIN deadline cushion. Fails CLOSED on any unmet condition,
+ * with a `code` on every refusal. Accepts every honest fill the read ranges decide (the holder, live hold,
+ * buried, offer+fclaim proven, delivery >= 1); it refuses the doomed/forged cases (a denied fclaim a lying
+ * resolver calls "granted", a cancelled/lapsed or not-mine hold, a below-depth signing, a zero-delivery fill, a
+ * stranded past-deadline broadcast).
  *
  * `opts.myLiveHoldsAtGrant` (REQUIRED) is the buyer's count of OTHER live fclaim/legacy holds at the moment
  * THIS fclaim was granted, asserted by the authoring client (countOtherHoldsAtGrant computes it). The lane-scoped
@@ -139,27 +133,38 @@ export interface FillVerdict { safe: boolean; reason: string }
  * without it there is nothing to bind. A caller that omits it keeps the overpay exposure described next.
  * `opts.sums` (OPT-IN, B6a / REBIND W3; default OFF = byte-identical verdicts for existing callers) binds the
  * caller's PLANNED per-address CSD payment sums to the PROVEN offer state: requiredFillOutputs is re-run over
- * the merkle-proven, replayed offer (so `paid`/`delivered` are the chain's, not a served lie) and the caller's
- * map must match it EXACTLY, address for address. This closes the W3 overpay: a resolver serving `paid:"0"`
- * for a 90%-filled partial made callers size the FULL want while the chain credits only the remainder - the
- * difference was permanently overpaid. Pass the SAME per-address sums you will build (the wallet's need-map
- * shape: payto + treasury fee + maker rebate, MERGED per address - `payto === seller` merges the rebate leg).
+ * the merkle-proven, replayed offer and the caller's map must match it EXACTLY, address for address. The
+ * replayed `paid`/`delivered` are the chain's only where the read ranges decide them: the seam's window, and with
+ * `io.history` the ranges read for the listed fills. A fill the served offer omits from below those ranges is
+ * in neither, so a resolver that withholds it and serves a matching lower `paid` passes this bind (the withheld-fill
+ * residual; on the wallet the second-source offer read bounds it). Inside the ranges it closes the W3 overpay: a
+ * resolver serving `paid:"0"` for a 90%-filled partial made callers size the FULL want while the chain credits
+ * only the remainder. Pass the SAME per-address sums you will build (the wallet's need-map shape: payto + treasury
+ * fee + maker rebate, MERGED per address - `payto === seller` merges the rebate leg).
  * DELIBERATELY NOT the scalar `dp.pay !== pay` form: that refuses honest fills on both live callers (the
  * wallet's per-address sum includes the maker rebate when payto === seller; the site passes no pay at all).
+ *
+ * `opts.servedFills` (with `io.history` only) is the served offer's fill list (FillEntry txid and height). It is
+ * read only when the replay refuses at the delivery gate: then the ranges those fills need are read
+ * (planFillHistory), every listed fill must be on chain where listed, and the verdict is decided again over them.
+ * A buy that passes without them reads nothing more.
  */
 export async function verifyFillSpv(
   offerId: string,
   fclaimTxid: string,
   me: string,
   io: FillSpvIo,
-  opts: { myLiveHoldsAtGrant: number; pay?: bigint | string | number; sums?: Record<string, bigint | string | number> },
+  opts: {
+    myLiveHoldsAtGrant: number; pay?: bigint | string | number; sums?: Record<string, bigint | string | number>;
+    servedFills?: readonly { txid: string; height: number }[];
+  },
 ): Promise<FillVerdict> {
-  const no = (reason: string): FillVerdict => ({ safe: false, reason });
+  const no = (code: FillRefusalCode, reason: string): FillVerdict => ({ safe: false, reason, code });
 
   // 1. the PoW-VERIFIED tip (never a resolver-asserted tip: a forged tip would inflate burial depth).
   let tip: number;
-  try { tip = Number(await io.tip()); } catch { return no("could not read a PoW-verified tip"); }
-  if (!Number.isFinite(tip)) return no("no PoW-verified tip");
+  try { tip = Number(await io.tip()); } catch { return no("tip-unverified", "could not read a PoW-verified tip"); }
+  if (!Number.isFinite(tip)) return no("tip-unverified", "no PoW-verified tip");
   // Clamp a seam-reported burial to the PoW-verified tip, so a seam over-reporting depth (a forged deeper
   // burial) can never satisfy the depth gate with fewer real confirmations than the PoW chain shows.
   const depthOf = (ev: ProvenEvent): number => Math.min(Number(ev.depth), tip - Number(ev.height) + 1);
@@ -167,12 +172,12 @@ export async function verifyFillSpv(
   // 2. gather + MERKLE-PROVE the offer's event set. Every enumerated id must come back proven and under its own
   //    id: a dropped event (a cancel, a consuming fill, an earlier hold) replays the offer as more open than it is.
   let hintIds: string[];
-  try { hintIds = await io.offerEventIds(offerId, fclaimTxid); } catch { return no("could not enumerate the offer's events"); }
+  try { hintIds = await io.offerEventIds(offerId, fclaimTxid); } catch { return no("events-unenumerated", "could not enumerate the offer's events"); }
   const want = new Set<string>([offerId.toLowerCase(), fclaimTxid.toLowerCase(), ...(hintIds ?? []).map((x) => String(x).toLowerCase())]);
   const unproven = (wid: string): FillVerdict =>
-    wid === offerId.toLowerCase() ? no("offer not merkle-proven (no PoW-verified offer Propose)")
-      : wid === fclaimTxid.toLowerCase() ? no("fclaim not merkle-proven (no PoW-verified fclaim Propose)")
-        : no(`an event on this offer could not be merkle-proven (${wid}) - refusing, the replay would miss it`);
+    wid === offerId.toLowerCase() ? no("event-unproven", "offer not merkle-proven (no PoW-verified offer Propose)")
+      : wid === fclaimTxid.toLowerCase() ? no("event-unproven", "fclaim not merkle-proven (no PoW-verified fclaim Propose)")
+        : no("event-unproven", `an event on this offer could not be merkle-proven (${wid}) - refusing, the replay would miss it`);
   const proven: ProvenEvent[] = [];
   for (const wid of want) {
     let ev: ProvenEvent | null;
@@ -186,15 +191,15 @@ export async function verifyFillSpv(
   const isProp = (e: ProvenEvent): e is ProvenPropose => e.kind === "propose";
   const offerEv = proven.find((e): e is ProvenPropose => isProp(e) && e.id.toLowerCase() === offerId.toLowerCase());
   const fclaimEv = proven.find((e): e is ProvenPropose => isProp(e) && e.id.toLowerCase() === fclaimTxid.toLowerCase());
-  if (!offerEv) return no("offer not merkle-proven (no PoW-verified offer Propose)");
-  if (!fclaimEv) return no("fclaim not merkle-proven (no PoW-verified fclaim Propose)");
-  if (fclaimEv.height < V28_HEIGHT) return no("fclaim mined below the V28 gate (no fclaim lane there)");
+  if (!offerEv) return no("event-unproven", "offer not merkle-proven (no PoW-verified offer Propose)");
+  if (!fclaimEv) return no("event-unproven", "fclaim not merkle-proven (no PoW-verified fclaim Propose)");
+  if (fclaimEv.height < V28_HEIGHT) return no("fclaim-pre-v28", "fclaim mined below the V28 gate (no fclaim lane there)");
   const offerRec = bindRecord(offerEv);
   const fclaimRec = bindRecord(fclaimEv);
-  if (!offerRec || offerRec.t !== "offer") return no("offer record does not bind to its on-chain commitment");
-  if (!fclaimRec || fclaimRec.t !== "fclaim") return no("fclaim record does not bind to its on-chain commitment");
-  if (fclaimRec.offer.toLowerCase() !== offerId.toLowerCase()) return no("fclaim does not reference this offer");
-  if (isTokenWant(offerRec.want)) return no("the fclaim lane is CSD-priced offers only");
+  if (!offerRec || offerRec.t !== "offer") return no("record-unbound", "offer record does not bind to its on-chain commitment");
+  if (!fclaimRec || fclaimRec.t !== "fclaim") return no("record-unbound", "fclaim record does not bind to its on-chain commitment");
+  if (fclaimRec.offer.toLowerCase() !== offerId.toLowerCase()) return no("record-unbound", "fclaim does not reference this offer");
+  if (isTokenWant(offerRec.want)) return no("not-csd-priced", "the fclaim lane is CSD-priced offers only");
   const wantValue = BigInt((offerRec.want as { value: string }).value);
   const E = Number(fclaimEv.expiresEpoch);
 
@@ -204,8 +209,8 @@ export async function verifyFillSpv(
   const need = requiredClaimDepth(wantValue, offerEv.height).depth;
   // NaN-fail-closed: `!(x >= need)` refuses when depthOf is NaN (an off-contract seam feeding a non-numeric
   // depth/height), where the plain `x < need` would slip through (NaN < need is false).
-  if (!(depthOf(offerEv) >= need)) return no(`offer not buried deep enough yet (${depthOf(offerEv)} < ${need}) - wait`);
-  if (!(depthOf(fclaimEv) >= need)) return no(`fclaim not buried deep enough yet (${depthOf(fclaimEv)} < ${need}) - wait`);
+  if (!(depthOf(offerEv) >= need)) return no("not-buried", `offer not buried deep enough yet (${depthOf(offerEv)} < ${need}) - wait`);
+  if (!(depthOf(fclaimEv) >= need)) return no("not-buried", `fclaim not buried deep enough yet (${depthOf(fclaimEv)} < ${need}) - wait`);
   const laneIds = new Set<string>([offerId.toLowerCase()]);
   for (const e of proven) {
     if (!isProp(e)) continue;
@@ -214,67 +219,100 @@ export async function verifyFillSpv(
   }
   for (const e of proven) {
     if (e.kind === "attest" && e.score === SCORE_FILL && laneIds.has(e.proposalId.toLowerCase()) && !(depthOf(e) >= need))
-      return no(`an earlier fill-basis event is not buried deep enough yet (${depthOf(e)} < ${need}) - wait`);
+      return no("not-buried", `an earlier fill-basis event is not buried deep enough yet (${depthOf(e)} < ${need}) - wait`);
   }
 
-  // 5. MANDATORY GRANT REPLAY over the merkle-proven events (NOT the served status / D2 "granted" alias).
-  const r = replayLiveHold(proven, offerId, fclaimTxid, me, tip);
-  if (!r.offer) return no("the offer does not resolve from the proven events (unknown/rejected offer)");
+  // 5. MANDATORY GRANT REPLAY over the merkle-proven events (NOT the served status / D2 "granted" alias). With a
+  //    history seam the replay is the one every undecided fclaim status agrees on (src/fillhistory.ts).
+  const replay = (evs: ProvenEvent[]) => replayLiveHold(evs, offerId, fclaimTxid, me, tip);
+  const history = io.history
+    ? fillHistory({ io: io.history, events: proven, offerId, fclaimTxid, offerHeight: offerEv.height, replay })
+    : null;
+  let r: HoldReplay;
+  if (history) {
+    const d = await history.decide();
+    if (!d.ok) return no(d.code, d.reason);
+    r = d.replay;
+  } else r = replay(proven);
 
-  // GUARD (cross-offer MAX_ACTIVE_CLAIMS cap): the lane-scoped replay CANNOT see the buyer's OTHER-offer live
-  // holds, and the cap is the one grant clause counted across offers, so the replay under-counts it and would
-  // grant a cap-DENIED fclaim. The authoring client (which signed its own claims) MUST assert how many OTHER
-  // live holds it had when THIS fclaim was granted; if that is >= MAX_ACTIVE_CLAIMS the real resolver denied
-  // this fclaim on the cap and the fill would burn. (B5/B6 must ALSO refuse to CREATE a claim at the cap;
-  // this is the fill-side backstop, and it fails CLOSED if the count is not asserted.)
-  // Count what the resolver counts: for a grant at height >= V29_HEIGHT only holds on offers still OPEN at
-  // that height (a hold on an offer this buyer already filled no longer occupies a slot); below V29, every
-  // live hold. Over-counting refuses an honest fill; under-counting lets a cap-denied fill burn.
-  if (!Number.isInteger(opts.myLiveHoldsAtGrant) || opts.myLiveHoldsAtGrant < 0)
-    return no("the caller must assert myLiveHoldsAtGrant (the buyer's concurrent other-offer live-hold count) for the cap check");
-  if (opts.myLiveHoldsAtGrant >= MAX_ACTIVE_CLAIMS) return no("you held the max active claims when this fclaim was granted - the resolver denied it on the cap, refusing (the payment would burn)"); // MUTATE_GUARD_CAP
+  const judge = (r: HoldReplay): FillVerdict => {
+    if (!r.offer) return no("offer-unresolved", "the offer does not resolve from the proven events (unknown/rejected offer)");
 
-  // GUARD (denied-fclaim): the live routing target must BE this fclaim AND it must be GRANTED in the
-  // replayed state. A resolver-DENIED fclaim (a taken/expired/superseded offer) never routes here, so a
-  // lying "granted" assertion cannot walk the payment onto an L0-valid but delivery-less target.
-  if (!(r.routed && r.granted)) return no("this fclaim is not the live granted hold (denied or superseded) - refusing, the payment would burn"); // MUTATE_GUARD_R
+    // GUARD (cross-offer MAX_ACTIVE_CLAIMS cap): the lane-scoped replay CANNOT see the buyer's OTHER-offer live
+    // holds, and the cap is the one grant clause counted across offers, so the replay under-counts it and would
+    // grant a cap-DENIED fclaim. The authoring client (which signed its own claims) MUST assert how many OTHER
+    // live holds it had when THIS fclaim was granted; if that is >= MAX_ACTIVE_CLAIMS the real resolver denied
+    // this fclaim on the cap and the fill would burn. (B5/B6 must ALSO refuse to CREATE a claim at the cap;
+    // this is the fill-side backstop, and it fails CLOSED if the count is not asserted.)
+    // Count what the resolver counts: for a grant at height >= V29_HEIGHT only holds on offers still OPEN at
+    // that height (a hold on an offer this buyer already filled no longer occupies a slot); below V29, every
+    // live hold. Over-counting refuses an honest fill; under-counting lets a cap-denied fill burn.
+    if (!Number.isInteger(opts.myLiveHoldsAtGrant) || opts.myLiveHoldsAtGrant < 0)
+      return no("cap-unasserted", "the caller must assert myLiveHoldsAtGrant (the buyer's concurrent other-offer live-hold count) for the cap check");
+    if (opts.myLiveHoldsAtGrant >= MAX_ACTIVE_CLAIMS) return no("cap-reached", "you held the max active claims when this fclaim was granted - the resolver denied it on the cap, refusing (the payment would burn)"); // MUTATE_GUARD_CAP
 
-  // GUARD (forged-cancel-holder): the offer must be OPEN and the live hold must be MINE. Catches a
-  // cancelled/expired offer, a lapsed hold, and a hold held by someone else (me is not the holder).
-  if (!r.heldByMe) return no("no live claim by you on an open offer (cancelled, lapsed, or not your hold) - refusing"); // MUTATE_GUARD_H
+    // GUARD (denied-fclaim): the live routing target must BE this fclaim AND it must be GRANTED in the
+    // replayed state. A resolver-DENIED fclaim (a taken/expired/superseded offer) never routes here, so a
+    // lying "granted" assertion cannot walk the payment onto an L0-valid but delivery-less target.
+    if (!(r.routed && r.granted)) return no("not-granted", "this fclaim is not the live granted hold (denied or superseded) - refusing, the payment would burn"); // MUTATE_GUARD_R
 
-  // 6. DELIVERY: the payment must move >= 1 unit of the asset (the C3 zero-delivery trap). Status-independent
-  //    (Guard above owns the open check), computed with the resolver's own previewFill math on the terms.
-  let pay: bigint;
-  try { pay = opts.pay !== undefined ? BigInt(opts.pay) : wantValue; } catch { return no("invalid pay amount"); }
-  const dp = previewFill({ ...r.offer, status: "open" } as OfferState, pay);
-  if (!dp.deliverable || dp.got < 1n) return no("this fill would deliver 0 units - refusing (the CSD would be lost)");
+    // GUARD (forged-cancel-holder): the offer must be OPEN and the live hold must be MINE. Catches a
+    // cancelled/expired offer, a lapsed hold, and a hold held by someone else (me is not the holder).
+    if (!r.heldByMe) return no("not-held", "no live claim by you on an open offer (cancelled, lapsed, or not your hold) - refusing"); // MUTATE_GUARD_H
 
-  // 6b. OPT-IN PAYMENT BIND (B6a / REBIND W3, default OFF): bind the caller's planned per-address CSD sums to
-  //     the PROVEN fill progress. requiredFillOutputs over the replayed (merkle-proven) offer is the chain's
-  //     own answer for what THIS pay must carry (partial clamp on the REAL `paid`, fee on the clamp, rebate
-  //     merged per address); any divergence means the caller sized its payment from a lie (or would mis-route
-  //     an output) and the surplus/misroute burns after resolve() clamps to truth. EXACT match, both ways: a
-  //     missing/low leg is a doomed underpay, an extra/high leg is the W3 overpay or a smuggled output (N26).
-  if (opts.sums !== undefined) {
-    const req = requiredFillOutputs({ ...r.offer, status: "open" } as OfferState, pay);
-    if (req === null) return no("the proven offer state cannot size this payment - refusing");
-    const proven = new Map<string, bigint>(req.map((o) => [o.to, o.value]));   // keys already lower-cased
-    const planned = new Map<string, bigint>();
-    try {
-      for (const [a, v] of Object.entries(opts.sums)) { const k = String(a).toLowerCase(); planned.set(k, (planned.get(k) ?? 0n) + BigInt(v)); }
-    } catch { return no("invalid sums (amounts must be base-unit integers)"); }
-    const sumsKeys = new Set([...proven.keys(), ...planned.keys()]);
-    for (const k of sumsKeys) if ((proven.get(k) ?? 0n) !== (planned.get(k) ?? 0n)) return no(`payment does not match the proven fill progress (${k}: planned ${(planned.get(k) ?? 0n).toString()}, proven state requires ${(proven.get(k) ?? 0n).toString()}) - refusing (an overpay past the real remainder is unrecoverable)`); // MUTATE_GUARD_SUMS
-  }
+    // 6. DELIVERY: the payment must move >= 1 unit of the asset (the C3 zero-delivery trap). Status-independent
+    //    (Guard above owns the open check), computed with the resolver's own previewFill math on the terms.
+    let pay: bigint;
+    try { pay = opts.pay !== undefined ? BigInt(opts.pay) : wantValue; } catch { return no("invalid-pay", "invalid pay amount"); }
+    const dp = previewFill({ ...r.offer, status: "open" } as OfferState, pay);
+    if (!dp.deliverable || dp.got < 1n) return no("no-delivery", "this fill would deliver 0 units - refusing (the CSD would be lost)");
 
-  // 7. DEADLINE (client policy; never a fund risk, always fail-safe): refuse within FILL_TIP_MARGIN of
-  //    holdEnd so the payment cannot strand as an L0-unminable no-op past the hold. Computed from the
-  //    fclaim's ACTUAL confirmed expiry epoch, NOT epochOf(tip+45).
-  const holdEnd = fclaimHoldEnd(E);
-  if (holdEnd < tip + FILL_TIP_MARGIN) return no(`too close to the hold deadline (holdEnd ${holdEnd}, tip ${tip}) - would strand`);
+    // 6b. OPT-IN PAYMENT BIND (B6a / REBIND W3, default OFF): bind the caller's planned per-address CSD sums to
+    //     the PROVEN fill progress. requiredFillOutputs over the replayed (merkle-proven) offer is the chain's
+    //     own answer for what THIS pay must carry (partial clamp on the replayed `paid`, fee on the clamp, rebate
+    //     merged per address); any divergence means the caller sized its payment from a lie (or would mis-route
+    //     an output) and the surplus/misroute burns after resolve() clamps to truth. EXACT match, both ways: a
+    //     missing/low leg is a doomed underpay, an extra/high leg is the W3 overpay or a smuggled output (N26).
+    if (opts.sums !== undefined) {
+      const req = requiredFillOutputs({ ...r.offer, status: "open" } as OfferState, pay);
+      if (req === null) return no("sums-unsizable", "the proven offer state cannot size this payment - refusing");
+      const proven = new Map<string, bigint>(req.map((o) => [o.to, o.value]));   // keys already lower-cased
+      const planned = new Map<string, bigint>();
+      try {
+        for (const [a, v] of Object.entries(opts.sums)) { const k = String(a).toLowerCase(); planned.set(k, (planned.get(k) ?? 0n) + BigInt(v)); }
+      } catch { return no("invalid-sums", "invalid sums (amounts must be base-unit integers)"); }
+      const sumsKeys = new Set([...proven.keys(), ...planned.keys()]);
+      for (const k of sumsKeys) if ((proven.get(k) ?? 0n) !== (planned.get(k) ?? 0n)) return no("sums-mismatch", `payment does not match the proven fill progress (${k}: planned ${(planned.get(k) ?? 0n).toString()}, proven state requires ${(proven.get(k) ?? 0n).toString()}) - refusing (an overpay past the real remainder is unrecoverable)`); // MUTATE_GUARD_SUMS
+    }
 
-  return { safe: true, reason: "ok" };
+    // 7. DEADLINE (client policy; never a fund risk, always fail-safe): refuse within FILL_TIP_MARGIN of
+    //    holdEnd so the payment cannot strand as an L0-unminable no-op past the hold. Computed from the
+    //    fclaim's ACTUAL confirmed expiry epoch, NOT epochOf(tip+45).
+    const holdEnd = fclaimHoldEnd(E);
+    if (holdEnd < tip + FILL_TIP_MARGIN) return no("hold-deadline", `too close to the hold deadline (holdEnd ${holdEnd}, tip ${tip}) - would strand`);
+
+    return { safe: true, reason: "ok" };
+  };
+
+  const v = judge(r);
+  // Earlier fills below the read ranges change only the replayed `paid` (and `delivered`, its pro-rata floor), so
+  // they change a verdict only at the delivery gate: a refusal there, or an acceptance whose delivery depends on
+  // `paid`. Only then are the served offer's listed fills read; every other verdict reads nothing more.
+  if (!history || !opts.servedFills || opts.servedFills.length === 0) return v;
+  if (v.code !== "no-delivery" && !(v.safe && deliveryDependsOnPaid(r.offer, opts.pay ?? wantValue))) return v; // MUTATE_LAZY_PLAN
+  const more = await history.readListedFills(opts.servedFills);
+  if (!more.ok) return no(more.code, more.reason);
+  return more.read ? judge(more.replay) : v;
+}
+
+// Whether a partial fill paying `pay` delivers at least one unit whatever the offer's earlier fills: the resolver
+// delivers floor(give * paid' / want) - floor(give * paid / want), which is at least floor(give * x / want) for any
+// earlier `paid`, so only a payment worth less than one unit (a coarse give) can deliver over one replayed `paid`
+// and nothing over the chain's.
+function deliveryDependsOnPaid(offer: OfferState | undefined, pay: bigint | string | number): boolean {
+  if (!offer || offer.min === undefined || isTokenWant(offer.want) || !("amount" in offer.give)) return false;
+  const p = previewFill({ ...offer, status: "open" }, pay);
+  return BigInt(offer.give.amount) * p.pay < BigInt(offer.want.value);
 }
 
 // ── the SHARED fill-boundary TERM bind (Plan 70 R2 Option B: single-source the R1 hand-copies) ──────────

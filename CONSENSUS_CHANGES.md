@@ -57,6 +57,17 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; unreleased; no consensus-surface change) - the fill verifier decides what its read ranges decide
+
+Client-side only: `resolve()` and canonical state are unchanged (the vectors, the 21 pinned replay heights and the
+fuzz are byte-identical). `verifyFillSpv` takes an optional history seam (`src/fillhistory.ts`): an fclaim whose
+grant the ranges its seam read do not decide (one in a range's lowest `GAP_NEEDED` blocks, or one whose proposer
+may hold `MAX_ACTIVE_CLAIMS` elsewhere) is replayed both kept and removed, and the verdict stands only when every
+replay agrees; otherwise the seam reads further down, at most 512 extra heights. A refusal at the delivery gate
+(or a coarse-give payment whose delivery depends on `paid`) reads the ranges the served offer's earlier fills need.
+Without the seam every verdict's `safe` and `reason` are unchanged; refusals gain a `code`. Consumers take it when
+the site re-vendors and the wallet re-vendors (they also wire the seam).
+
 ## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
 
 `verifyDigest` passes `format: "compact"` to noble's `secp256k1.verify`, so the 64 signature bytes are read as

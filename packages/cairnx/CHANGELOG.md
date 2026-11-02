@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.4
+
+- `verifyFillSpv` decides only what the block ranges its seam read decide (aged partial fills, design b'). A grant
+  depends on the holds granted in the `GAP_NEEDED` (104) blocks before it and on the proposer's live holds on other
+  offers, so an fclaim in a range's lowest 104 blocks, or one whose proposer may hold `MAX_ACTIVE_CLAIMS` elsewhere,
+  is undecided. With the new optional `io.history` (`FillHistoryIo`: the window the seam read, its fclaims on other
+  offers, `readRange`, `proposerOf`, the lowest readable height) the replay runs once per kept-or-removed status of
+  the undecided fclaims and is accepted only when every run gives the same grant, route, hold, `paid` and
+  `delivered`. When they differ, the proposers of cap suspects are read, then each range holding an undecided
+  fclaim is extended down by `MAX_SCAN` (134), at most `FILL_HISTORY_CAP` (512) extra heights a verdict. Before,
+  a window from 134 blocks below the buyer's fclaim replayed an fclaim denied by a hold below the window as
+  granted, so the buyer's own fclaim, denied on chain behind a later hold, replayed granted (safe:true on a fill
+  that burns), and a third party's fclaim the cap denied replayed granted with its fill credited.
+- With `io.history`, `opts.servedFills` (the served offer's `fills`, txid and height) is read only when the replay
+  refuses at the delivery gate, or accepts a payment worth less than one unit of a coarse give (whose delivery
+  depends on `paid`). The fills not among the proven events get the range `[height - FILL_HISTORY_SPAN, height]`
+  (223), merged; every listed fill must then be a fill attest at its listed height, and the verdict is decided again.
+  An honest tail buy of a partial offer whose earlier fill aged out of the window was refused ("this fill would
+  deliver 0 units"); it is accepted after one range read. A buy that passes without the list reads nothing more.
+  A resolver that withholds a fill from the list and serves the lower `paid` is not caught (the withheld-fill
+  residual).
+- `FillVerdict` carries `code` on every refusal (`FillRefusalCode`: "not-buried", "not-granted", "not-held",
+  "hold-deadline", "no-delivery", "sums-mismatch", "history-past-cap", "history-below-floor", "history-undecidable",
+  "history-unread", "listed-fill-unproven" and the rest), so callers act on a code, not the reason text. Without
+  `io.history` every verdict's `safe` and `reason` are unchanged.
+- New root exports from `fillhistory.ts`: `planFillHistory(fills, covered, offerHeight, { floor, spent })` (the ranges
+  listed fills need, or a "history-past-cap" / "history-below-floor" refusal, for a caller deciding before it reads),
+  `proveListedFills(fills, prove)` (each listed fill proven at its listed height; sparse proof is sound only where
+  no grant decides delivery, the taker lane), `fclaimDecidedFrom`, `mergeRanges`, `FCLAIM_MAX_HOLD_SPAN` (89),
+  `FILL_HISTORY_SPAN`, `FILL_HISTORY_CAP` and the types. `GAP_NEEDED`, `SCAN_MARGIN` and `MAX_SCAN` moved there,
+  same values, still root exports.
+- The `FillSpvIo` contract and the sums comment no longer say a proven event "only moves the replay toward truth" or
+  that the replayed `paid` is the chain's: that holds inside ranges read completely and decided. CONVENTION.md
+  section 31's client policy says the same of the 104-block scan, and gives `FILL_TIP_MARGIN` as 4 (it said 2).
+- `resolve()` and canonical state are byte-identical to 0.2.3.
+
 ## 0.2.3
 
 - `provenOfferRefusal` refuses the two record-only activation gates it lacked. An offer anchored below

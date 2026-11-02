@@ -25,6 +25,14 @@ export * from "./primary.js";
 // open-lane fclaim buy. Pure record re-derivation + mandatory grant REPLAY (replayLiveHold) + the offer/
 // fclaim/fill-basis depth gate (GAP_NEEDED) over an injected PoW-verified, merkle-proven FillSpvIo seam.
 export * from "./verifyfill.js";
+// fillhistory: which fclaim grants the ranges a fill verifier read decide, the ranges a served offer's listed fills
+// need (planFillHistory), and the listed-fill proof (proveListedFills). The scan constants live there.
+export {
+  GAP_NEEDED, SCAN_MARGIN, MAX_SCAN, FCLAIM_MAX_HOLD_SPAN, FILL_HISTORY_SPAN, FILL_HISTORY_CAP,
+  fclaimDecidedFrom, mergeRanges, planFillHistory, proveListedFills,
+  type HeightRange, type OtherFclaim, type HistoryRead, type FillHistoryIo, type FillHistoryPlan, type HistoryRefusal,
+  type HistoryRefusalCode,
+} from "./fillhistory.js";
 export { paidToFromOutputs, burnedPayment } from "./paidto.js";
 export { myProvenFillClosedOffer } from "./fillclosed.js";
 export { countOtherHoldsAtGrant, LEGACY_HOLD_SUNSET_HEIGHT, type HoldCandidate, type HoldCount, type HoldTarget } from "./holdcount.js";
