@@ -50,9 +50,11 @@ export interface FillSpvIo {
   // pay-without-delivery burn. A cancel or consuming fill can be older than any bounded scan (a V22+ offer may be
   // weeks old); that withheld-history leg stays with the caller (the served status, the wallet's second source).
   offerEventIds(offerId: string, fclaimTxid: string): Promise<string[]>;
-  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact
-  // (the caller fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim
-  // inclusion alone; it yields only the merkle-proven record body bound to its on-chain payload_hash.
+  // The PoW-VERIFIED, MERKLE-PROVEN event for `id`, or null when it cannot surface the proven artifact (the caller
+  // fails CLOSED). It must NEVER surface a resolver-asserted "granted" flag or trust fclaim inclusion alone; it
+  // yields only the merkle-proven record body bound to its on-chain payload_hash. `proposer` and `attester` are
+  // the prevout-bound author (csd-crypto authorOf over the proven body and the coin its input 0 spends), never the
+  // signer read from the scriptSig, which the txid does not commit; an event whose author cannot be bound is null.
   provenEvent(id: string): Promise<ProvenEvent | null>;
   // Optional: the ranges the seam read and the reads that extend them (src/fillhistory.ts). With it, fclaims the
   // read ranges do not decide are branched over, and a refusal at the delivery gate reads the ranges the served

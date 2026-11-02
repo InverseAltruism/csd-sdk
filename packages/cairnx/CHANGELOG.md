@@ -34,6 +34,10 @@
 - The `FillSpvIo` contract and the sums comment no longer say a proven event "only moves the replay toward truth" or
   that the replayed `paid` is the chain's: that holds inside ranges read completely and decided. CONVENTION.md
   section 31's client policy says the same of the 104-block scan, and gives `FILL_TIP_MARGIN` as 4 (it said 2).
+- The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
+  `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
+  author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
+  a fill to another address. The site's and the wallet's seams already bind it.
 - `resolve()` and canonical state are byte-identical to 0.2.3.
 
 ## 0.2.3
