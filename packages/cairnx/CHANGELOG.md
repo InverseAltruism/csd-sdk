@@ -5,12 +5,14 @@
 - `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted
   in the `GAP_NEEDED` (104) blocks before it and on the proposer's live holds on other offers, so a window decides an
   fclaim only when its low end is quiet. The comments no longer say a proven event "only moves the replay toward
-  truth" or that the replayed `paid` is the chain's, and they name the known limits below the window: aged fills
-  (an honest tail below `min` is refused; for a coarse give the delivery check can disagree with the chain's, so a
-  caller refuses a payment its served offer computes as undeliverable), the deflate leg (a withheld fill and a lower
-  served `paid`, host-only) and the inflate leg (a second-order hold chain or a third party's cap, host-only).
-  Reading that history (design b') is a Plan 87 later item. CONVENTION.md section 31's client policy says the same
-  and gives `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
+  truth" or that the replayed `paid` is the chain's, and its doc says it accepts every honest fill and refuses only
+  doomed or forged ones over a window that holds the offer's history. A "Known limits" list names, by step, what a
+  window without it gets wrong: aged fills at delivery (an honest tail below `min` is refused; for a coarse give the
+  delivery check can disagree with the chain's, so a caller refuses a payment its served offer computes as
+  undeliverable), the deflate leg at the sums bind (a withheld fill and a lower served `paid`, host-only) and the
+  inflate leg at the grant replay (a second-order hold chain or a third party's cap, host-only). Reading the history
+  below the window is not implemented. CONVENTION.md section 31's client policy says the same and gives
+  `FILL_TIP_MARGIN` as 4 (it said 2). Comments and docs only.
 - The `FillSpvIo.provenEvent` contract says `proposer` and `attester` are the prevout-bound author (csd-crypto
   `authorOf`), never the signer read from the scriptSig, which the txid does not commit, and that an event whose
   author cannot be bound is null. A seam that took the author from the scriptSig let a body server move a hold or
