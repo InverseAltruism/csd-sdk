@@ -5,7 +5,9 @@
 //   - package/package.json names the committed manifest's package and version (the package directory's
 //     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at the version its
 //     package.json at HEAD names (workspaceVersions) and every other dependency as that manifest declares it, keeps
-//     its other fields, and keeps only scripts it declares with the same text;
+//     its other fields, and keeps its scripts with the same text, less the ones pnpm drops when packing
+//     (PACK_DROPPED_SCRIPTS); the package.json on disk, whose scripts prepack and the publish guard run, has the
+//     commit's scripts exactly;
 //   - every other file outside dist/ is the HEAD commit's file at that path, byte for byte (`git ls-tree` and
 //     `git cat-file`), so an ignored, untracked or skip-worktree file pnpm packed fails; dist/ equals the tree's
 //     build file for file (both directions);
@@ -22,6 +24,9 @@ import { diffDist, untar } from "./published-dist.mjs";
 import { versionMap, workspacePackagesAtHead } from "./workspace.mjs";
 
 const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+// The scripts pnpm drops from a packed manifest: PREPUBLISH_SCRIPTS of createExportableManifest in
+// @pnpm/exportable-manifest, as bundled in pnpm 10.32.1 (the packageManager this repo pins).
+const PACK_DROPPED_SCRIPTS = ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"];
 
 /** @param {unknown} v @returns {string} JSON with object keys sorted, so key order does not count */
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
@@ -62,6 +67,12 @@ export function verifyTarball(tgz, pkgDir, versions) {
   }
   for (const [k, v] of Object.entries(packed.scripts ?? {}))
     if (tree.scripts?.[k] !== v) out.push(`package.json script "${k}" is not the commit's`);
+  for (const k of Object.keys(tree.scripts ?? {}))
+    if (!PACK_DROPPED_SCRIPTS.includes(k) && packed.scripts?.[k] === undefined) out.push(`package.json script "${k}" is missing from the packed manifest`);
+  // prepack and the publish guard run the scripts of the package.json on disk, so those must be the commit's too
+  let disk;
+  try { disk = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")); } catch { disk = undefined; }
+  if (canon(disk?.scripts ?? null) !== canon(tree.scripts ?? null)) out.push("package.json scripts on disk differ from the commit's (HEAD)");
   const rest = (/** @type {Record<string, unknown>} */ m) =>
     canon(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "scripts" && !DEP_FIELDS.includes(k))));
   if (rest(packed) !== rest(tree)) out.push("package.json fields other than scripts and dependencies differ from the commit's");

@@ -52,6 +52,12 @@ console.log("verify-tarball on the bytes the window publishes:");
     writeFileSync(join(d, "package.json"), JSON.stringify(m, null, 2));
   });
   ok("a script the tree does not declare is refused", hook.some((f) => /script "postinstall"/.test(f)), hook.join("; "));
+  const noTest = edited((d) => {
+    const m = JSON.parse(readFileSync(join(d, "package.json"), "utf8"));
+    delete m.scripts.test;
+    writeFileSync(join(d, "package.json"), JSON.stringify(m, null, 2));
+  });
+  ok("a packed manifest missing a script pnpm keeps (test) is refused", noTest.some((f) => /script "test" is missing/.test(f)), noTest.join("; "));
 }
 
 console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
@@ -63,7 +69,8 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   mkdirSync(join(pkg, "vectors"), { recursive: true });
   mkdirSync(join(pkg, "dist"));
   writeFileSync(join(repo, ".gitignore"), "**/*key*.json\ndist/\n");
-  writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@x/fixture", version: "1.0.0", files: ["dist", "vectors"] }, null, 2));
+  writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@x/fixture", version: "1.0.0", files: ["dist", "vectors"],
+    scripts: { test: "node -e 0", prepack: "node -e 0", prepublishOnly: "node -e 0" } }, null, 2));
   writeFileSync(join(pkg, "dist", "index.js"), "export {};\n");
   writeFileSync(join(pkg, "vectors", "cases.json"), "[]\n");
   writeFileSync(join(pkg, "vectors", "more.json"), "{}\n");
@@ -101,6 +108,21 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   const hiddenManifest = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the rewrite shows in git status"];
   ok("a committed package.json rewritten under skip-worktree is refused", hiddenManifest.some((f) => /package\.json fields .* differ from the commit/.test(f)), hiddenManifest.join("; "));
   writeFileSync(join(pkg, "package.json"), manifest);
+  // the publish guard and prepack run the scripts on disk: one removed or changed under skip-worktree is refused
+  const scriptsEdit = (edit: (sc: Record<string, string>) => void) => {
+    const m = JSON.parse(manifest);
+    edit(m.scripts);
+    writeFileSync(join(pkg, "package.json"), JSON.stringify(m, null, 2));
+    const r = git("status", "--porcelain") === "" ? packAndVerify() : ["fixture: the rewrite shows in git status"];
+    writeFileSync(join(pkg, "package.json"), manifest);
+    return r;
+  };
+  const noTestOnDisk = scriptsEdit((sc) => { delete sc.test; });
+  ok("scripts.test removed on disk under skip-worktree (the guard would skip the suite) is refused",
+    noTestOnDisk.some((f) => /scripts on disk differ from the commit/.test(f)), noTestOnDisk.join("; "));
+  const prepackOnDisk = scriptsEdit((sc) => { sc.prepack = "node -e 1"; });
+  ok("a prepack changed on disk under skip-worktree (pnpm drops it from the packed manifest) is refused",
+    prepackOnDisk.some((f) => /scripts on disk differ from the commit/.test(f)), prepackOnDisk.join("; "));
   git("update-index", "--no-skip-worktree", "pkg/package.json");
   // a committed file deleted on disk under skip-worktree: pnpm packs the rest of its directory without it
   git("update-index", "--skip-worktree", "pkg/vectors/cases.json");
