@@ -492,6 +492,8 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
 
   ok(requiredClaimDepth(100_000_000n, H0).depth === 3 && requiredClaimDepth(1_000_000_000_000n, H0).depth === 4
     && requiredClaimDepth(10_000_000_000_000n, H0).depth === 5, "requiredClaimDepth: 1 CSD needs 3, 10,000 CSD 4, 100,000 CSD 5");
+  ok([1n, 10n ** 12n, 10n ** 13n, 10n ** 40n].every((v) => requiredClaimDepth(v, H0).reversalPct > 0) && requiredClaimDepth(10n ** 40n, H0).capped,
+    "reversalPct is positive at every depth, the capped one included: the wait never makes a reorg impossible");
   const BIG = id("b1"), bigOffer = PE(BIG, offer({ give: { ticker: "AAA", amount: "10" }, want: { value: "1000000000000", payto: A } }), H0 + 2, A, 9e9);
   const bigFc = PE(id("b2"), fclaim({ offer: BIG }), H0 + 3, B, E);
   const bigEvents = [base[0]!, base[1]!, bigOffer, bigFc];

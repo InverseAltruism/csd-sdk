@@ -16,7 +16,7 @@ export const COMMIT_REVEAL_MIN_DEPTH = 3; // a name commit must bury this deep b
 /**
  * Confirmations the CLAIM must have before a payment-bearing fill on an open V17 offer worth `valueSats`
  * (anchored at `height`), so that a minority miner undoing the claim is unlikely. Returns
- * `{ depth, reversalPct, capped }`; `reversalPct` is that miner's chance of reversing `depth` blocks, never 0;
+ * `{ depth, reversalPct, capped }`; `reversalPct` is that miner's chance of reversing `depth` blocks, positive at every depth;
  * `capped=true` ⇒ the value exceeds what one claim window can settle (the buyer should split the trade).
  *
  * The model is a miner with `CLAIM_ATTACKER_Q` of the hashrate. It only profits if
