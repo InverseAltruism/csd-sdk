@@ -207,8 +207,8 @@ can never touch CSD.
 Sell a token **or a name** for CSD or another token. The offer locks the give-side in the resolver; the fill is an
 `Attest` whose **same transaction carries the payment outputs**, so the chain records the payment and the fill
 together, and CairnX decides delivery by replay. A token-for-token fill is atomic: the replay moves both sides or
-neither. A CSD-paid fill the replay refuses keeps the payment (a CSD output is final when its transaction mines),
-so the buyer's client checks the offer's proven terms, the reservation and the amount before signing
+neither. A CSD-paid fill the replay refuses keeps the payment: CairnX rejecting the fill does not undo or refund
+the transaction's CSD outputs (only a chain reorganization can drop the transaction), so the buyer's client checks the offer's proven terms, the reservation and the amount before signing
 (`verifyFillSpv`, `fillEndorsement`). No escrow, no custodian.
 
 ```mermaid

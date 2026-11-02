@@ -161,7 +161,8 @@ whose **own outputs** pay the seller:
 
 Because payment outputs and the attestation are one transaction (C2), **one transaction pays and
 records the fill**, and the replay then decides delivery by the rules above. A CSD-paid fill the replay
-refuses keeps the payment: a CSD output is final when its transaction mines. A token-for-token fill
+refuses keeps the payment: CairnX rejecting the fill does not undo or refund the transaction's CSD outputs,
+which stand as the chain keeps them (subject to reorganization). A token-for-token fill
 (§11) is atomic: the replay moves both sides or neither. The seller's tokens were already
 convention-locked. The fill costs only the attest fee floor (0.05 CSD) plus the payment.
 
