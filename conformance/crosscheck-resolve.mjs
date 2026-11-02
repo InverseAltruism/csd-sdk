@@ -1,15 +1,17 @@
 // META-1 (resolve half) — cross-IMPLEMENTATION conformance for the FULL ledger.
 // Feed the shipping JS resolver and the independent Python port (cairnx_ref.py) the SAME
-// language-neutral vectors (packages/cairnx/test/vectors/cases.json) and assert byte-identity:
+// language-neutral vectors (packages/cairnx/test/vectors/cases.json, and cases-rules.json, the rule vectors of
+// gen-rule-vectors.mjs) and assert byte-identity:
 //   canonicalState(JS.resolve)  ===  Python.resolve  ===  JSON.stringify(expectedState)
 // A JS-only ledger fork (a fee/sort/rounding/serialization divergence) diverges HERE.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 
-const casesPath = new URL("../packages/cairnx/test/vectors/cases.json", import.meta.url);
-const { format, cases } = JSON.parse(readFileSync(casesPath, "utf8"));
-if (format !== 2) { console.error("expected vectors format 2"); process.exit(1); }
+const load = (name) => JSON.parse(readFileSync(new URL(`../packages/cairnx/test/vectors/${name}`, import.meta.url), "utf8"));
+const files = [load("cases.json"), load("cases-rules.json")];
+if (files.some((f) => f.format !== 2)) { console.error("expected vectors format 2"); process.exit(1); }
+const cases = files.flatMap((f) => f.cases);
 
 // JS side
 const jsOut = cases.map((c) => canonicalState(resolve(c.events, c.tipHeight)));

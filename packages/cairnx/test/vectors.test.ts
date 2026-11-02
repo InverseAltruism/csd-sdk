@@ -10,12 +10,16 @@ assert.equal(format, 2);
 // AND just-below 88,000; below the gate they are byte-identical to v2.8, which the B6-era corpus above proves.
 const v29 = JSON.parse(readFileSync(new URL("./vectors/cases-v29.json", import.meta.url), "utf8"));
 assert.equal(v29.format, 2);
+// The rule vectors (conformance/gen-rule-vectors.mjs, also in the Python crosscheck): the within-block apply order, the
+// canonical-uri check and the same-ticker offer refusal, each of which no other vector decides.
+const rules = JSON.parse(readFileSync(new URL("./vectors/cases-rules.json", import.meta.url), "utf8"));
+assert.equal(rules.format, 2);
 let pass = 0;
-for (const c of [...cases, ...v29.cases]) {
+for (const c of [...cases, ...v29.cases, ...rules.cases]) {
   assert.equal(canonicalState(resolve(c.events, c.tipHeight)), JSON.stringify(c.expectedState), `vector ${c.name} diverged`);
   pass++;
 }
-console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length} vectors byte-identical (${cases.length} B6-era + ${v29.cases.length} v29)`);
+console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length + rules.cases.length} vectors byte-identical (${cases.length} B6-era + ${v29.cases.length} v29 + ${rules.cases.length} rule)`);
 
 // The replay-hash artifact is LOAD-BEARING, not mirror-only. replay-corpus.json is the real on-chain
 // event sequence truncated at a finalized height (capturedAt/tipHeight in the file); recompute
