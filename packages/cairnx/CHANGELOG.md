@@ -21,6 +21,10 @@
   before attests within a block), a deploy whose uri is not its canonical JSON but whose payload hash is the
   canonical form's (invalid), and a token offer giving and wanting one ticker (invalid). Removing or reversing the
   order key, the canonical-uri check or the same-ticker refusal, in either implementation, now fails them.
+- New root export `offerFillTooLate(expiresAt, tip)`, beside `offerExpiryHeightOf`: whether a fill signed at `tip`
+  can no longer mine by the offer's last live block (`expiresAt - 1 < tip + FILL_TIP_MARGIN`), where the node refuses
+  the attest and the fill strands. It was the wallet's own predicate; the wallet, the site and cairn-sdk import this
+  one. `fillEndorsement` was already a root export; both are now pinned in the export-surface test.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3
