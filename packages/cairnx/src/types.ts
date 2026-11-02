@@ -391,6 +391,12 @@ export const offerExpiryHeightOf = (expiresEpoch: number, anchorHeight: number):
   const capped = (epochOf(anchorHeight) + MAX_OFFER_EPOCHS + 1) * EPOCH_LEN;
   return Math.min(raw, Math.max(V21_HEIGHT, capped));
 };
+// Whether a fill of an offer expiring at `expiresAt` (offerExpiryHeightOf of its proven expiry and anchor) signed at
+// `tip` would strand: the node refuses an attest after its proposal's expiry, in mempool admission and in block apply,
+// so a fill not mined by the offer's last live block (expiresAt - 1) sits unconfirmed and is dropped. FILL_TIP_MARGIN
+// is the same cushion the fclaim lane keeps before its hold deadline. A strand moves no payment; this refuses it
+// before signing. Client policy, not consensus.
+export const offerFillTooLate = (expiresAt: number, tip: number): boolean => expiresAt - 1 < tip + FILL_TIP_MARGIN;
 
 // ── records (the canonical-JSON objects anchored in Propose.uri) ──
 export interface DeployRecord {
