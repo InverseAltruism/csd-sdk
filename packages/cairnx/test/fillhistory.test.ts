@@ -3,6 +3,9 @@
 // [fclaimHeight - MAX_SCAN, tip], lane events only, the offer and its backing proven alone) drives the real
 // verifyFillSpv; the oracle is resolve() over every event, other offers included.
 import assert from "node:assert/strict";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import path from "node:path";
 import {
   DEPLOY_FEE, FCLAIM_MAX_HOLD_SPAN, FILL_HISTORY_CAP, FILL_HISTORY_SPAN, MAX_ACTIVE_CLAIMS, MAX_SCAN, SCORE_CANCEL, SCORE_FILL,
   TREASURY_ADDR, V29_HEIGHT,
@@ -395,6 +398,22 @@ await t("R6: each scenario's verdict is the single-replay verdict, and no histor
   }
   const verdicts = await Promise.all(scenarios().map(async (c) => (await verify(seam(c.all, c.oid, c.fc, c.tip).io, c.oid, c.fc, c.pay, c.sums ?? null, c.served, c.holds)).code ?? "safe"));
   assert.deepEqual(verdicts, ["safe", "not-buried", "not-granted", "not-held", "not-held", "cap-reached", "safe", "no-delivery", "sums-mismatch", "safe"]);
+});
+
+await t("R6 mutation: without the lazy trigger a passing buy reads its aged fill's range", async () => {
+  // the verifyfill.test.ts pattern: drop the marked line from a copy of the source and run the copy
+  const src = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "verifyfill.ts");
+  const lines = readFileSync(src, "utf8").split("\n"), kept = lines.filter((l) => !l.includes("MUTATE_LAZY_PLAN"));
+  assert.equal(kept.length, lines.length - 1, "the marker matches one line");
+  const tmp = src.replace(/verifyfill\.ts$/, `__mutant_lazy_${Date.now()}.ts`);
+  writeFileSync(tmp, kept.join("\n"));
+  try {
+    const mod = await import(pathToFileURL(tmp).href) as { verifyFillSpv: typeof verifyFillSpv };
+    const c = scenarios().find((x) => x.name.startsWith("partial at min"))!;
+    const s = seam(c.all, c.oid, c.fc, c.tip);
+    const v = await mod.verifyFillSpv(c.oid, c.fc, BUY, s.io, { myLiveHoldsAtGrant: 0, pay: c.pay!, sums: c.sums!, servedFills: listed(c.served) });
+    assert.ok(v.safe && s.n.ranges === 1, `the eager mutant reads (${s.n.ranges} range, ${v.reason})`);
+  } finally { unlinkSync(tmp); }
 });
 
 // ── proveListedFills: the listed-fill proof the taker lane runs with sparse reads (no grant decides delivery there) ──
