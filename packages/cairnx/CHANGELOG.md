@@ -25,6 +25,9 @@
   can no longer mine by the offer's last live block (`expiresAt - 1 < tip + FILL_TIP_MARGIN`), where the node refuses
   the attest and the fill strands. It was the wallet's own predicate; the wallet, the site and cairn-sdk import this
   one. `fillEndorsement` was already a root export; both are now pinned in the export-surface test.
+- `requiredClaimDepth`'s doc and `CLAIM_ATTACKER_Q`'s comment no longer call the dominant block producer trusted or
+  the wait reorg-safe: the depth makes a reorg by a minority miner (20% of the hashrate) unlikely, and the external
+  pool that produces most blocks is outside the model. The depths are unchanged.
 - `resolve()`, canonical state and every `verifyFillSpv` verdict are byte-identical to 0.2.3.
 
 ## 0.2.3
