@@ -172,6 +172,7 @@ CI:
 - The conformance job runs Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it).
 - A `secrets` job runs gitleaks over the full history (release binary, sha256 checked).
 - Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment; the workflow token is read-only and no checkout keeps credentials (`test/ci-workflow.test.ts` pins this shape).
+- Every job runs on `ubuntu-24.04`, not a moving `-latest` image, as in the other Cairn repos: GitHub moved `ubuntu-latest` to 26.04, where playwright-core 1.60.0 cannot install its Chromium, and a moving image changes the toolchain under a job without a commit (`test/ci-runner-image.test.ts` refuses a `-latest` runner).
 
 ## Release and publish
 
