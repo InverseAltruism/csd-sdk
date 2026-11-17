@@ -51,7 +51,9 @@ pnpm run audit:all     # record citations + ledger-soundness invariants + money-
 
 `test:crosslang` proves JS and Python agree byte-for-byte, but two implementations can AGREE and both
 be unsound (a burn, a mint-from-nothing, a leaked lock). `audit:all` checks the ledger stays sound and
-that no honest-user money is burned. It is intentionally not a CI gate, so run it by hand. When a
+that no honest-user money is burned. CI's conformance job runs it, and its invariant and money-safety
+findings are report-only there (printed, exit 0; a stale citation, a failed self-test or a JS/Python
+divergence fails the job), so read its output before a merge. When a
 change adds a feature the audit fuel does not exercise, extend the fuel first (see
 `conformance/AUDIT.md`, "Standing practice"). A clean run with a thin coverage line is a weak signal.
 
@@ -677,7 +679,8 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
    numbers need not match). A published version keeps the exact pins it shipped with, so an unbumped
    dependent keeps the old dependency in the published graph; `scripts/check-lockstep.mjs` fails on that.
 3. Add an entry here describing exactly what bytes/math changed and why.
-4. Run the full suite against a live node (oracle + light full-range) before `pnpm -r publish`.
+4. Run the full suite against a live node (oracle + light full-range) before the npm window
+   (`node scripts/npm-window.mjs`, check mode first).
 
 ## Rollout checklist for a NEW GATE or FEE TIER (V28+)
 
@@ -700,8 +703,10 @@ mechanical refresh. In order:
    reinstall, restart the cairnx service off-peak (never during a gate crossing).
 5. Re-vendor the bundled consumers: wallet `bash scripts/build-spv-vendor.sh` +
    `node scripts/check-vendor-fresh.mjs --write`; cairn `bash scripts/build-trade-vendor.sh` +
-   `node scripts/check-vendor-fresh.mjs --write`. Land these promptly: both freshness gates diff
-   against csd-sdk HEAD, so their CI is red between the core merge and the re-vendor commit.
+   `node scripts/check-vendor-fresh.mjs --write`. Land these promptly: neither gate follows csd-sdk
+   HEAD (cairn's vendor job rebuilds from the commit its `PROVENANCE.json` pins, and the wallet builds from the
+   pinned npm packages), so their CI stays green on the old pin and only this step moves a bundled consumer
+   onto the new core.
 6. Grep the ecosystem for the new height as a raw literal; the only hits should be vendored
    bundles and parity-test expectation grids.
 7. Purge Cloudflare for cairn (`/vendor/cairnx-core.js` + the usual .js/.css) after deploy.

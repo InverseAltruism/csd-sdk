@@ -20,7 +20,7 @@ if (!ua.includes("pnpm")) {
   console.error("publish-guard: REFUSING to publish under a non-pnpm client.");
   console.error(`  user agent: ${ua || "(unset)"}`);
   console.error("  npm leaves workspace:* specifiers unresolved in the published manifest (the 0.1.22 incident).");
-  console.error("  Use: pnpm publish (or pnpm -r publish) from the csd-sdk root.");
+  console.error("  A release publishes through the npm window: node scripts/npm-window.mjs (docs/release.md).");
   process.exit(1);
 }
 

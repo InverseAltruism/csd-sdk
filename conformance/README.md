@@ -32,7 +32,7 @@ this directory, only the JS implementation existed, so the contract was asserted
   (`packages/cairnx/test/vectors/replay-corpus.json`, fclaim and V29 included): JS == Python and
   sha256(JS) == `replay-hashes.json` at every pinned height.
 
-Run: `npm run test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
+Run: `pnpm test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
 
 **Status:** META-1 is co-signed across the determinism-critical primitives AND the complete `resolve()`
 ledger, byte-identical `canonicalState` across two independent languages on the pinned vectors AND the
@@ -43,8 +43,8 @@ PARITY) and the **raw regex-vs-regex differential** (`crosscheck-regex.mjs`, 230
 fails CI.
 
 **Money-safety audit tooling (report-only, on-demand):** beyond fork detection, `money-safety.mjs`
-and `race-harness.mjs` hunt the honest-user-burn class (a fee anchored then rejected). They are not
-part of the CI gate; run them on demand with `pnpm run audit:money-safety` / `audit:race` /
+and `race-harness.mjs` hunt the honest-user-burn class (a fee anchored then rejected). CI's conformance
+job runs them through `audit:all` with report-only findings (they print and exit 0); run them on demand with `pnpm run audit:money-safety` / `audit:race` /
 `audit:all`. See `AUDIT.md` for the tools, the fan-out method, and the observability-gap review.
 
 **Fork the port caught (2026-06-15):** `canonicalState` = JS `JSON.stringify(sortKeys(...))`, and
