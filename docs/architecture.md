@@ -1,0 +1,107 @@
+# Architecture
+
+Maintainer reference for the workspace: what each package holds, where the CairnX rules live, the gate heights, the
+`claimWindowOf` hint and who consumes the packages. `AGENTS.md` keeps the rules; this file keeps the detail behind its
+code map. Versions are not listed here: read `packages/*/package.json` (workspace) or
+`npm view @inversealtruism/<pkg> version` (published).
+
+## Packages
+
+The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` is private and names the pnpm version in
+`packageManager`. Every package builds with tsup to esm, cjs and dts.
+
+| Package | Purpose |
+|---|---|
+| csd-codec | Consensus codec: bincode fixint-LE, txid, sighash CSD_SIG_V1 (sha256d over taggedHash + CHAIN_ID_HASH), 84-byte header, bits<->target, merkle root/branch/proof, canonicalJson/payloadHash. Only dep: @noble/hashes. |
+| csd-crypto | secp256k1 keygen/signDigest (low-S, RFC-6979)/verifyDigest (the node's rule: the 64 bytes read as compact only, never DER; low S; fail-closed), hash160 addresses, addrFromScriptPubkey (the node's address parser), buildScriptSig, authorOf (a tx's author: the owner of the coin input 0 spends, when the scriptSig is that owner's signature). Thin noble wrappers, no hand-rolled crypto. |
+| csd-tx | Tx builder: selectInputs (dedupe, unconfirmed-drop, 512 cap), buildSendVerified (takes a verifier such as csd-client verifyInputValues and computes change from the verified input total), buildProposeVerified/buildAttestVerified (DvP value outputs), the deprecated buildSend and unverified buildPropose/buildAttest, signTx, txToNodeJson, feeCap helpers. |
+| csd-client | Typed HTTP RPC client; 4xx doesn't spend retry budget; hostile-boundary tested. Transport, plus verifyInputValues (recomputes each input's source txid). Bodies parse with parseJsonExact by default (an integer above 2^53 stays an exact bigint). |
+| csd-light | Light client: headers-first sync, client-side PoW + LWMA-45 bits re-derivation + chainwork + MTP/timestamp rules, verifyTxInclusion, bindBlockBody (the one block bind: exact parse, repeated-txid refusal, merkle compare to a verified header; bindBlockTxs is the same bind over txs the caller already parsed exactly), syncFromCheckpoint, honest trustLevel on every read (balance is rpc-trusted); tipHeaderPowOk and contenderPlausible, the checks before a non-primary RPC backend may win routing. |
+| csd-vectors | Golden conformance vectors from the node's frozen golden_vectors.rs, real on-chain data, and signature encodings with the node secp256k1 crate's verify_sig verdicts (`SIG_VECTORS`). Zero deps. |
+| cairnx-core (packages/cairnx) | `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 write-up) + portable vectors + replay-hashes. Modules below. |
+| cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
+| csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
+
+## cairnx-core modules (`packages/cairnx/src/`)
+
+- `resolve.ts`: the replay loop; its per-record handlers and shared state context live in `resolve/`.
+- `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
+  claimWindowOf.
+- `records.ts`: parseRecord and its per-record key allow-sets.
+- `preflight.ts`: previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck, fillEndorsement,
+  fillOutputPlan.
+- `verifyfill.ts`: verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary.
+- `primary.ts`: pickPrimaryName.
+- `client.ts`: claim-burial depth helpers.
+- `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
+- `fillclosed.ts`: whether a buyer's proven fill closed the offer behind its fclaim hold.
+- `holdcount.ts`: countOtherHoldsAtGrant, the buyer's other live holds at an fclaim's grant (verifyFillSpv's cap
+  input).
+- `admission.ts`: provenOfferRefusal, the admission check for a merkle-proven offer Propose (domain, the activation
+  height, and the resolver's stateless offer rules, each read from its resolver home).
+
+## conformance/
+
+`cairnx_ref.py` and `siwc_ref.py` (independent Python oracles, written from spec, kept independent), `crosscheck*.mjs`,
+`fuzz-resolve.mjs`, the per-gate `v2x-*-crosslang.mjs` files, and the report-only audit tooling: `invariants.mjs` (7
+ledger-soundness invariants), `money-safety.mjs` (anchored-then-rejected burn detector), `race-harness.mjs`
+(adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1) and `AUDIT.md` (the method).
+`conformance/README.md` describes the differential.
+
+## Consensus gates
+
+All gate heights live in `packages/cairnx/src/types.ts`, the one home (it also holds V11 to V15); gates are height-pure
+and non-retroactive. The list below is a reading aid, in height order.
+
+- V16 = 33,600: fee 1% -> 1.5% + maker rebate.
+- V17 = 34,000: claim-to-fill.
+- V19 = 36,700: nprofile.
+- V20 = 38,400: late-fill fund-loss fix, claim window 15 -> 40 + 5 grace.
+- V18 = 40,000: 2-tier name fee.
+- V21 = 40,100: offer duration cap 168 epochs.
+- V22 = 41,300: cap removed for offers >= V22.
+- V24 = 46,400: 4-tier name fee 15/10/5/3 CSD.
+- V25 = 46,440: sealed reservation (payment-free reveal, winner-only nfinalize).
+- V26 = 46,480: sealed recapture.
+- V27 = 46,520: young-name sale embargo 240 -> 8 blocks.
+- V23 = 52,000: nset-clear to zero addr.
+- V28 = 60,000: fclaim open-lane settlement atomicity (CONVENTION section 31).
+- V29 = 88,000: M4 event de-dup + M5 concurrent-hold status filter (v2.9).
+
+Whether a gate is crossed is a live fact: compare its height with the tip from https://cairn-substrate.com/api/rpc/tip
+(the `gates` field of /trade/api/cairnx/health lists V24 to V29). History and rollout notes: `CONSENSUS_CHANGES.md`.
+
+RESERVED_NAMES (csd, treasury, admin, official, root, www, support) is defined in `packages/cairnx/src/types.ts`,
+enforced by `records.ts` `isName` and mirrored in `conformance/cairnx_ref.py`; `conformance/nprofile-crosslang.mjs`
+compares the two lists.
+
+## claimWindowOf
+
+The rule (`AGENTS.md`): claimWindowOf is a depth hint, never a sole fund gate. Why, in detail:
+
+- For an fclaim hold (claimTxid passed) it returns FCLAIM_WINDOW_MIN = 46, the minimum span an fclaimEpochFor-requested
+  hold can carry, so the derived grant is normally no earlier than the true grant and depth is under-stated
+  (fail-safe).
+- An expiry-capped hold (E clamped to the offer's expiry) can carry a true span < 46. There the derived grant is
+  earlier than the true grant and claimWindowOf-derived depth over-states burial by (46 - true span) blocks, early in
+  the hold. Against the older 40-block inverse this adds at most 6 blocks of over-statement; spans < 40 were
+  over-stated under that constant too.
+- Consumers gate funds on verifyFillSpv's independently computed merkle burial (`verifyfill.ts` derives depth from the
+  proven events and never imports claimWindowOf), as the site swapguard and wallet do.
+
+## Consumers
+
+The chain is the only source of truth; every layer above is a deterministic replay, and this repo is the consensus
+mirror the app layer runs on. The Rust node is the upstream oracle and never depends on the SDK.
+
+- npm consumers, exact pins in their `package.json`: cairnx (the trading service), the cairn web server, cairn-sdk,
+  csd-indexer and clarvis (the second-source resolver, which runs cairnx-core and must ride every gate bump).
+  `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins of cairnx, cairn-sdk and clarvis when their
+  checkouts sit beside this one.
+- Bundled consumers: the cairn website ships browser bundles built from a csd-sdk checkout at the commit its
+  `PROVENANCE.json` names; cairn-wallet ships an SPV bundle built from the published packages its `package.json` pins,
+  with each package's version and registry integrity in its `PROVENANCE.json`. Each repo's `check-vendor-fresh.mjs`
+  rebuilds the bundle and compares bytes, and `check-vendor-fresh.mjs --write` in that repo refreshes the bundle's
+  provenance after a deliberate rebuild. The shared golden vectors keep both aligned with this core.
+- A re-pinned `package.json` is inert until that service restarts, so a coherent pin table is not a coherent fleet:
+  confirm each replayer by live query before a gate height, never by reading a manifest.

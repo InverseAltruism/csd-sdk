@@ -116,8 +116,8 @@ blind-commit displacement pre and post V25, the double-fill). Consult these as a
 Treat these as the audit you run, and grow them. This is the intended long-term use, not a one-off.
 
 - Run `pnpm run audit:all` before merging ANY change to the resolver (`packages/cairnx/src/*`) or a
-  new consensus gate. It is deliberately NOT a CI gate (to avoid false-blocking), so it is on YOU to
-  run it. A clean run is only meaningful if the coverage line shows the states you changed were
+  new consensus gate. CI runs it, but its invariant and money-safety findings are report-only there (to
+  avoid false-blocking), so it is on YOU to read the run. A clean run is only meaningful if the coverage line shows the states you changed were
   actually reached: if you add a feature the fuel does not exercise, EXTEND the fuel first, then
   confirm the coverage counter for it rises. (Lesson from building this: name-give offers and
   token-to-token swaps were initially rejected/absent, so INV6 and the token-priced path read as
