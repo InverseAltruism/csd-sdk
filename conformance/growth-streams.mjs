@@ -99,7 +99,7 @@ export function bids(R, n) {
     if (i % 50 === 0) ev.push(k.A(e.id, e.proposer, h + 1, 0, R.SCORE_CANCEL));
   }
   return {
-    key: "S2", label: `${n} open bids`, events: ev, tipHeight: h + 10, tips: [],
+    key: "S2", label: `${n} open bids`, events: ev, tipHeight: h + 8 * R.EPOCH_LEN, tips: [],   // past every odd expiry
     expect(resolveAt) {
       const st = resolveAt(), bad = [], s = (x) => Object.values(st.bids).filter((v) => v.status === x).length;
       need(bad, codeCount(st, "BID_CREATED") === n, "every bid created");

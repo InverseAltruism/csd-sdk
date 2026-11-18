@@ -1,10 +1,12 @@
-// The replay state one resolve() call threads through the record handlers: the ledger maps, the private expiry
-// indexes and the helpers that mutate them. Internal to cairnx-core; resolve.ts owns the loop and the output.
+// The replay state one resolve() call threads through the record handlers: the token ledger, the commits, the fclaim
+// grants and the log, the store of offers, bids and names (store.ts, which keeps the private indexes), and the
+// helpers that mutate them. Internal to cairnx-core; resolve.ts owns the loop and the output.
 import type { AppliedCode, ReasonCode, RefusalCode } from "../codes.js";
 import {
   AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, claimGraceOf, epochOf, isNameGive,
-  type AppliedEvent, type BidState, type ChainEvent, type OfferState, type TokenState,
+  type AppliedEvent, type ChainEvent, type OfferState, type TokenState,
 } from "../types.js";
+import type { OfferRec, Store } from "./store.js";
 
 // Read an externally-supplied paidTo/pt amount, fail-closed to 0 on any non-canonical value (QA LOW: the
 // raw BigInt(x)/int(x) reads accepted DISJOINT non-decimal forms across JS↔Python — BigInt("0x10")=16 vs
@@ -16,7 +18,7 @@ export function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOU
 
 export interface Bal { available: bigint; locked: bigint }
 export interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }
-export interface NameRec { owner: string; effHeight: number; pos: number; id: string; height: number; addr?: string; locked: boolean; viaFill?: boolean; paidThroughEpoch?: number; profile?: Record<string, string>; pending?: boolean; finalizeBy?: number }
+export type { BidRec, NameRec, OfferRec, Recapture } from "./store.js";
 
 // v2.1 ([V21,V22)): the EFFECTIVE expiry
 // is capped at anchorEpoch + MAX_OFFER_EPOCHS, so a long-resting offer/bid expires at the cap (and existing
@@ -51,35 +53,14 @@ export const claimHeld = (o: OfferState, height: number): boolean =>
 
 export type ResolveCtx = ReturnType<typeof createContext>;
 
-export function createContext() {
+export function createContext(store: Store) {
   const tokens = new Map<string, Tok>();
   const balances = new Map<string, Map<string, Bal>>();       // ticker → addr → bal
-  const names = new Map<string, NameRec>();                   // name → record
   const commits = new Map<string, number>();                  // commitHash → earliest height seen
-  // v2.6 recapture reservations (INTERNAL, not materialized — like `commits`): name → the pending recapture
-  // reservation. The LAPSED record stays in `names` untouched (premium basis preserved) until a finalize wins.
-  const recaptures = new Map<string, { owner: string; effHeight: number; pos: number; id: string; height: number; finalizeBy: number }>();
-  const offers = new Map<string, OfferState>();
   const offerLock = new Map<string, bigint>();                // token offers: id → locked amount
-  const bids = new Map<string, BidState>();                   // v1.2 buy-side intents
-  // Private indexes for expiry work. Closed offers and bids stay in the maps (canonical history)
-  // but are not walked again on every event. Insertion order matches the maps, so a sweep still
-  // expires the same open rows in the same order.
-  const openOffers = new Set<string>();
-  const openBids = new Set<string>();
-  const pendingNames = new Set<string>();
-  const setOfferStatus = (o: OfferState, status: OfferState["status"]) => {
-    o.status = status;
-    if (status === "open") openOffers.add(o.id); else openOffers.delete(o.id);
-  };
-  const setBidStatus = (b: BidState, status: BidState["status"]) => {
-    b.status = status;
-    if (status === "open") openBids.add(b.id); else openBids.delete(b.id);
-  };
-  const putName = (nm: string, n: NameRec) => {
-    names.set(nm, n);
-    if (n.pending) pendingNames.add(nm); else pendingNames.delete(nm);
-  };
+  // name → record; v2.6 recapture reservations (INTERNAL, not materialized, like `commits`), whose LAPSED record stays
+  // in `names` untouched (premium basis preserved) until a finalize wins; offers; v1.2 buy-side intents.
+  const { names, recaptures, offers, bids, setOfferStatus, setBidStatus, putName } = store;
   // v2.8 fclaim (§31): fclaimTxid → the linked offer + grant outcome. Records BOTH granted and DENIED grants
   // (a denied fclaim is an L0-valid fill target, so the audit needs to see it). The GRANTED subset is
   // materialized into state.fclaims (diagnostic, excluded from canonicalState).
@@ -95,39 +76,18 @@ export function createContext() {
   };
 
   // ── release the asset held by an offer (token amount unlock, or name unlock) ──
-  const releaseGive = (o: OfferState) => {
+  const releaseGive = (o: OfferRec) => {
     if (isNameGive(o.give)) { const n = names.get(o.give.name); if (n) n.locked = false; }
     else { const amt = offerLock.get(o.id) ?? 0n; const b = bal(o.give.ticker, o.seller); b.locked -= amt; b.available += amt; }
   };
 
-  // lazily settle offers/bids whose window has ended before `height` (effExpiry above).
-  const sweepExpired = (height: number) => {
-    const ep = epochOf(height);
-    for (const id of [...openOffers]) {
-      const o = offers.get(id);
-      if (!o || o.status !== "open") { openOffers.delete(id); continue; }
-      if (ep > effExpiry(o, height)) { releaseGive(o); setOfferStatus(o, "expired"); }
-    }
-    for (const id of [...openBids]) {
-      const b = bids.get(id);
-      if (!b || b.status !== "open") { openBids.delete(id); continue; }
-      if (ep > effExpiry(b, height)) setBidStatus(b, "expired");
-    }
-    // v2.5: an un-finalized reservation past its finalize window is abandoned — drop it so the name reopens and
-    // canonical state does not accumulate dead reservations. Deterministic (keyed on the block height); below
-    // V25 no name is ever `pending`, so this is a no-op and pre-V25 hashes are byte-identical.
-    for (const nm of [...pendingNames]) {
-      const n = names.get(nm);
-      if (!n || !n.pending) { pendingNames.delete(nm); continue; }
-      if (n.finalizeBy !== undefined && height > n.finalizeBy) { names.delete(nm); pendingNames.delete(nm); }
-    }
-    // v2.6: drop expired recapture reservations (the lapsed record in `names` is UNTOUCHED, so the name simply
-    // stays recapturable). Internal map -> no canonical-state effect; below V26 it is always empty (no-op).
-    for (const nm of [...recaptures.keys()]) { const r = recaptures.get(nm)!; if (height > r.finalizeBy) recaptures.delete(nm); }
-  };
+  // lazily settle what has ended before `height`: offers and bids past effExpiry (above) release their give; a v2.5
+  // reservation past its finalize window is deleted so the name reopens (below V25 none is ever pending); a v2.6
+  // recapture reservation past it is dropped (the lapsed record in `names` is untouched, so the name stays recapturable).
+  const sweepExpired = (height: number) => store.sweep(height, releaseGive);
 
   // an offer responding to a bid, filled by the bidder ⇒ the bid is satisfied (informational)
-  const markBidDone = (o: OfferState, buyer: string) => {
+  const markBidDone = (o: OfferRec, buyer: string) => {
     if (!o.bid) return;
     const b = bids.get(o.bid);
     if (b && b.status === "open" && b.bidder === buyer) setBidStatus(b, "done");
@@ -157,7 +117,7 @@ export function createContext() {
   };
   // release a token offer's locked give-amount in FULL to the buyer, consuming the lock so it can never
   // release twice. (The partial-fill path releases a sub-amount and keeps the lock — it does NOT use this.)
-  const releaseGiveLock = (o: OfferState, who: string, amt: bigint) => {
+  const releaseGiveLock = (o: OfferRec, who: string, amt: bigint) => {
     const t = (o.give as { ticker: string }).ticker;
     bal(t, o.seller).locked -= amt;
     bal(t, who).available += amt;
@@ -170,7 +130,7 @@ export function createContext() {
   const refused = (e: ChainEvent, id: string, kind: string, code: RefusalCode, why?: string) => entry(e, id, kind, false, code, why);
 
   return {
-    tokens, balances, names, commits, recaptures, offers, offerLock, bids, openOffers, openBids, pendingNames, fclaims, log,
+    tokens, balances, names, commits, recaptures, offers, offerLock, bids, fclaims, log, store,
     setOfferStatus, setBidStatus, putName, bal, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
     feesPaid: 0n,
     // v1.4 fill-before-cancel: at V14_HEIGHT+ a cancel/ocancel's EFFECT is deferred to the block

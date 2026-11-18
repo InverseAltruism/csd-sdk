@@ -19,7 +19,10 @@
 //      (d) the sequences of conformance/fuzz-resolve.mjs --emit, (e) the resolve cases of test/vectors/codes.json when
 //      present, (f) the streams of conformance/growth-streams.mjs at full size (16,000 registrations; 20,000 open bids,
 //      offers with holds, live reservations, live recaptures; 2,000 bulk cancels and 2,000 displacements over 20,000
-//      offers; the V21 crossing; the edges), each with the expectations it was built to meet read from the new log;
+//      offers; the V21 crossing; the edges), each with the expectations it was built to meet read from the new log,
+//      (g) when the tree has the replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of
+//      (a), (c), (d), (e) and (f) replayed with it: each indexed read compared with the plain walk, the index invariants
+//      asserted after every event (every 64th on a stream of more than 1,000 events);
 //      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //   5. parse differential: parseRecord null-ness old vs new over every Propose of step 4 and a seeded mutation corpus
 //      (and the record cases of codes.json); where the new build has explainRecord it must agree with parseRecord;
@@ -357,6 +360,14 @@ step("resolve differential (f): conformance/growth-streams.mjs at full size, wit
     console.log(`  ${s.key} ${s.label}: ${s.events.length} events, ${1 + s.tips.length} tip(s), ${diverged - before} divergence(s), ${missed.length ? `${missed.length} expectation(s) MISSED` : "expectations met"}; one run: baseline ${Math.round(oldMs)} ms, tree ${Math.round(newMs)} ms`);
   }
   console.log(`  ${inputs} stream inputs diffed`);
+}
+
+const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
+const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
+if (hasCheck) {
+  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json")], { stdio: "inherit" });
+  if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
 }
 
 // ── 5. parse differential ──────────────────────────────────────────────────────────────────────────

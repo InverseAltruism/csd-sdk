@@ -34,7 +34,7 @@ export function applyNcommit(c: ResolveCtx, ev: ProposeEvent, rec: NameCommitRec
 }
 
 export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who: string, feeToTreasury: bigint): void {
-  const { commits, names, recaptures, applied, refused, putName, voidOpenNameOffers } = c;
+  const { commits, names, recaptures, applied, refused, putName, voidOpenNameOffers, store } = c;
   const v11 = ev.height >= V11_HEIGHT;
   const v15 = ev.height >= V15_HEIGHT;
   const v25 = ev.height >= V25_HEIGHT;
@@ -81,10 +81,9 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
       // lowest (effHeight, pos, id) wins among recapture reservations (recaptures never carry viaFill).
       const better = !crActive || earlierAnchor(effHeight, ev.pos, ev.id, crActive);
       if (!better) { refused(ev, ev.id, "name", "NAME_TAKEN_EARLIER", "recapture already reserved (earlier anchor wins)"); return; }
-      let myR = 0;                                                            // per-address recapture cap (anti-Sybil)
-      for (const [nm, r] of recaptures) if (r.owner === who && nm !== rec.name && ev.height <= r.finalizeBy) myR++;
-      if (myR >= MAX_PENDING_REG) { refused(ev, ev.id, "name", "CAP_PENDING_RECAPTURES", "too many pending recaptures (max reached)"); return; }
-      recaptures.set(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
+      // per-address recapture cap (anti-Sybil): the proposer's other live recaptures (store.ts, recaptureCount)
+      if (store.recaptureCount(who, rec.name, ev.height) >= MAX_PENDING_REG) { refused(ev, ev.id, "name", "CAP_PENDING_RECAPTURES", "too many pending recaptures (max reached)"); return; }
+      store.putRecapture(rec.name, { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, finalizeBy: effHeight + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS });
       if (crActive) applied(ev, ev.id, "name", "NAME_RECAPTURE_RESERVED_DISPLACED", "recapture reserved (displaced prior reservation)"); else applied(ev, ev.id, "name", "NAME_RECAPTURE_RESERVED", "recapture reserved (pending finalize)");
       return;
     }
@@ -112,10 +111,9 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
     // window-valid challenger has effHeight within REG_COMMIT_MAX_BLOCKS of now, hence strictly greater.
     const better = !curActive || (!curActive.viaFill && earlierAnchor(effHeight, ev.pos, ev.id, curActive));
     if (!better) { if (curActive?.viaFill) refused(ev, ev.id, "name", "NAME_TAKEN_PURCHASED", "name taken (purchased — not displaceable)"); else refused(ev, ev.id, "name", "NAME_TAKEN_EARLIER", "name taken (earlier anchor wins)"); return; }
-    // per-address concurrent-reservation cap (anti-Sybil; excludes a re-reveal of THIS name; expired don't count).
-    let myPending = 0;
-    for (const [nm, n] of names) if (n.pending && n.owner === who && nm !== rec.name && n.finalizeBy !== undefined && ev.height <= n.finalizeBy) myPending++;
-    if (myPending >= MAX_PENDING_REG) { refused(ev, ev.id, "name", "CAP_PENDING_RESERVATIONS", "too many pending reservations (max reached)"); return; }
+    // per-address concurrent-reservation cap (anti-Sybil; excludes a re-reveal of THIS name; expired don't count):
+    // the proposer's other live reservations (store.ts, pendingCount).
+    if (store.pendingCount(who, rec.name, ev.height) >= MAX_PENDING_REG) { refused(ev, ev.id, "name", "CAP_PENDING_RESERVATIONS", "too many pending reservations (max reached)"); return; }
     if (curActive) {
       voidOpenNameOffers(rec.name, ev.height);
     }
@@ -144,7 +142,7 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
 }
 
 export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinalizeRecord, who: string, feeToTreasury: bigint): void {
-  const { commits, names, recaptures, pendingNames, applied, refused, putName, voidOpenNameOffers } = c;
+  const { commits, names, recaptures, applied, refused, putName, voidOpenNameOffers, store } = c;
   const v25 = ev.height >= V25_HEIGHT;
   const v26 = ev.height >= V26_HEIGHT;
   // v2.5 winner-only register finalize: pay the reg fee AFTER the displacement contest is frozen, so a
@@ -161,13 +159,8 @@ export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinaliz
     if (!(ev.height > n.effHeight + REG_COMMIT_MAX_BLOCKS)) { refused(ev, ev.id, "nfinalize", "NAME_FINALIZE_TOO_EARLY", "too early — displacement contest not yet frozen"); return; }
     if (n.finalizeBy !== undefined && ev.height > n.finalizeBy) { refused(ev, ev.id, "nfinalize", "NAME_RESERVATION_EXPIRED", "reservation expired"); return; }
     if (feeToTreasury < nameRegFee(rec.name, ev.height)) { refused(ev, ev.id, "nfinalize", "TREASURY_FEE_UNPAID", "name registration fee unpaid"); return; }
-    // clear the reservation flags. `delete` (not `= undefined`) so the key is ABSENT, matching the
-    // Python mirror's `.pop()` exactly: the materialization step rebuilds a fresh object either way,
-    // so canonical output is unaffected, but this removes the JS-present-undefined vs Python-absent
-    // asymmetry at the source instead of relying on every reader testing truthiness.
-    delete n.pending;
-    delete n.finalizeBy;
-    pendingNames.delete(rec.name);
+    // clear the reservation flags (store.ts deletes the keys, so they are absent as in the Python mirror)
+    store.finalizeName(rec.name, n);
     n.paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS;
     c.feesPaid += nameRegFee(rec.name, ev.height);
     applied(ev, ev.id, "nfinalize", "NAME_FINALIZED");
@@ -186,12 +179,12 @@ export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinaliz
     if (ev.height > r.finalizeBy) { refused(ev, ev.id, "nfinalize", "NAME_RESERVATION_EXPIRED", "recapture reservation expired"); return; }
     const cur = names.get(rec.name);
     const ep = epochOf(ev.height);
-    if (!cur || cur.pending || !lapsed(cur, ep)) { recaptures.delete(rec.name); refused(ev, ev.id, "nfinalize", "NAME_NOT_LAPSED", "name is no longer lapsed"); return; }
+    if (!cur || cur.pending || !lapsed(cur, ep)) { store.deleteRecapture(rec.name); refused(ev, ev.id, "nfinalize", "NAME_NOT_LAPSED", "name is no longer lapsed"); return; }
     const fee = expiredClaimFee(rec.name, ep - (paidThrough(cur) + NAME_GRACE_EPOCHS), ev.height);
     if (feeToTreasury < fee) { refused(ev, ev.id, "nfinalize", "TREASURY_FEE_UNPAID", "recapture premium unpaid (decaying)"); return; }
     voidOpenNameOffers(rec.name, ev.height);
     putName(rec.name, { owner: who, effHeight: r.effHeight, pos: r.pos, id: r.id, height: r.height, locked: false, paidThroughEpoch: ep + NAME_TERM_EPOCHS });
-    recaptures.delete(rec.name);
+    store.deleteRecapture(rec.name);
     c.feesPaid += fee;
     applied(ev, ev.id, "nfinalize", "NAME_RECAPTURE_FINALIZED", "recapture finalized (premium)");
     return;
@@ -200,14 +193,14 @@ export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinaliz
 }
 
 export function applyNxfer(c: ResolveCtx, ev: ProposeEvent, rec: NameXferRecord, who: string): void {
-  const { names, applied, refused } = c;
+  const { names, applied, refused, store } = c;
   const v15 = ev.height >= V15_HEIGHT;
   const n = names.get(rec.name);
   if (!n || n.owner !== who) { refused(ev, ev.id, "nxfer", "NAME_NOT_OWNER", "not the name owner"); return; }
   if (n.pending) { refused(ev, ev.id, "nxfer", "NAME_PENDING", "name reservation not yet finalized"); return; }
   if (v15 && lapsed(n, epochOf(ev.height))) { refused(ev, ev.id, "nxfer", "NAME_LAPSED", "lease lapsed — claim it instead"); return; }
   if (n.locked) { refused(ev, ev.id, "nxfer", "NAME_LOCKED", "name is locked by an open offer"); return; }
-  n.owner = rec.to.toLowerCase(); n.addr = undefined; n.profile = undefined; // ownership change clears the profile (doc 36)
+  store.setNameOwner(rec.name, n, rec.to.toLowerCase()); n.addr = undefined; n.profile = undefined; // ownership change clears the profile (doc 36)
   applied(ev, ev.id, "nxfer", "NAME_TRANSFERRED");
 }
 

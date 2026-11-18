@@ -8,6 +8,7 @@
 // exported at authoring time (types.ts `export *`); this test PINS it so it cannot regress unnoticed.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import * as root from "../src/index.js";
 
 import {
   CAIRNX_EVENT_RULE, CAP_CODES, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, REASON_CODES, REASON_CODE_OUTCOME, RecordError,
@@ -48,4 +49,11 @@ const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "e
   "RefusalCode", "RecordCode", "explainRecord", "RecordError"];
 for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
-console.log(`cairnx-core export surface: ${10 + 4 + 5 + names.length} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names, the §34 hashes' four and the §40 codes' nine pinned in src and dist .d.ts)`);
+// The replay's private store and its check mode stay internal: resolve() is the root export's only resolver.
+assert.ok(/declare function resolve\b/.test(dts), "the declaration pattern finds resolve");
+for (const name of ["replay", "createStore", "createContext"]) {
+  assert.ok(!(name in root), `${name} is not a root export`);
+  assert.ok(!new RegExp(`declare (function|const) ${name}\\b`).test(dts), `dist/index.d.ts declares no ${name}`);
+}
+
+console.log(`cairnx-core export surface: ${10 + 4 + 5 + names.length + 7} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names, the §34 hashes' four and the §40 codes' nine pinned in src and dist .d.ts; replay, createStore and createContext absent)`);

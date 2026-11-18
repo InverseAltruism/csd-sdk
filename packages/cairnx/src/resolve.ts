@@ -15,6 +15,7 @@ import {
 } from "./types.js";
 import { applyAttest } from "./resolve/attest.js";
 import { createContext, ptAmt } from "./resolve/context.js";
+import { createStore, type StoreOptions } from "./resolve/store.js";
 import { applyBid, applyFclaim, applyOcancel, applyOffer } from "./resolve/market.js";
 import {
   applyName, applyNcommit, applyNfinalize, applyNprofile, applyNrenew, applyNset, applyNxfer, lapsed, paidThrough,
@@ -29,6 +30,12 @@ export { ptAmt };
 const ord = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
+  return replay(events, tipHeight);
+}
+
+/** resolve() with the options of its private indexes (src/resolve/store.ts): check mode, which runs the plain walks
+ *  beside every indexed read, and the visit counters. For the tests and the seal; the package root does not export it. */
+export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptions = {}): CairnXState {
   // consensus apply order: height asc; within a block all proposals (pos asc) then attests (pos asc);
   // final tiebreak = ordinal order of the lowercase 0x-hex id/txid (CONVENTION §3).
   const ordered = [...events].sort((a, b) =>
@@ -57,7 +64,8 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     applied.push(e);
   }
 
-  const c = createContext();
+  const store = createStore(opts);
+  const c = createContext(store);
   const { tokens, balances, names, recaptures, offers, bids, fclaims, log, refused, sweepExpired } = c;
   let pendingBlock = -1;
   const applyPendingCancels = () => { for (const f of c.pendingCancels) f(); c.pendingCancels = []; };
@@ -66,6 +74,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     if (beforeActivation(ev.height)) continue;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
     sweepExpired(ev.height);
+    store.verify();
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
@@ -101,6 +110,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
   // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
   sweepExpired(tipHeight + 1);
+  store.verify(true);
 
   // ── materialize canonical state (sorted; values as decimal strings) ──
   const tokensOut: Record<string, TokenState> = {};

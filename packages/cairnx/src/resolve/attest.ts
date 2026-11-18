@@ -4,18 +4,18 @@ import {
   CLAIM_COOLDOWN_BLOCKS, CONF_TOKEN_FILL, MAX_ACTIVE_CLAIMS, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL, TREASURY_ADDR,
   V13_HEIGHT, V14_HEIGHT, V16_HEIGHT, V17_HEIGHT, V28_HEIGHT, claimWindowAt, isNameGive, isTokenWant,
   makerRebate, tradeFee,
-  type AttestEvent, type OfferState,
+  type AttestEvent,
 } from "../types.js";
 import type { RefusalCode } from "../codes.js";
-import { claimGrace, claimHeld, ptAmt, type NameRec, type ResolveCtx } from "./context.js";
+import { claimGrace, claimHeld, ptAmt, type NameRec, type OfferRec, type ResolveCtx } from "./context.js";
 
-type TokenWantOffer = OfferState & { want: { ticker: string; amount: string; payto: string } };
-type PartialFillOffer = OfferState & { give: { ticker: string; amount: string }; min: string };
+type TokenWantOffer = OfferRec & { want: { ticker: string; amount: string; payto: string } };
+type PartialFillOffer = OfferRec & { give: { ticker: string; amount: string }; min: string };
 
 // ── shared SCORE_FILL helpers (dedup of the three fill paths — behaviour-preserving) ──
 // v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the holder of a live claim;
 // in [V13,V17) open CSD fills stay banned. Returns the rejection reason, or undefined if allowed.
-const openFillReject = (o: OfferState, height: number, who: string, targetId: string): { code: RefusalCode; note: string } | undefined => {
+const openFillReject = (o: OfferRec, height: number, who: string, targetId: string): { code: RefusalCode; note: string } | undefined => {
   if (!(height >= V13_HEIGHT && !o.taker)) return undefined;
   if (height < V17_HEIGHT) return { code: "FILL_OPEN_LANE_CLOSED", note: "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)" };
   // v2.8 Correction 1 (§31): during an fclaim hold the payment MUST attest the FCLAIM txid, not the offer id
@@ -27,8 +27,8 @@ const openFillReject = (o: OfferState, height: number, who: string, targetId: st
 };
 // a name sale (CSD or token fill) transfers ownership to the buyer, clears addr+profile, and — v1.3+ —
 // re-stamps the anchor to the fill itself with displacement-immune viaFill (red-team H3).
-const deliverNameToBuyer = (n: NameRec, who: string, ev: { height: number; pos: number; txid: string }) => {
-  n.owner = who; n.locked = false; n.addr = undefined; n.profile = undefined; // sale clears the profile (doc 36)
+const deliverNameToBuyer = (c: ResolveCtx, name: string, n: NameRec, who: string, ev: { height: number; pos: number; txid: string }) => {
+  c.store.setNameOwner(name, n, who); n.locked = false; n.addr = undefined; n.profile = undefined; // sale clears the profile (doc 36)
   if (ev.height >= V13_HEIGHT) { n.effHeight = ev.height; n.pos = ev.pos; n.id = ev.txid; n.height = ev.height; n.viaFill = true; }
 };
 
@@ -74,7 +74,7 @@ export function applyAttest(c: ResolveCtx, ev: AttestEvent): void {
   // other scores: reserved → no-op
 }
 
-function applyCancel(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
+function applyCancel(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {
   const { applied, refused, releaseGive, setOfferStatus } = c;
   if (who !== o.seller) { refused(ev, ev.txid, "cancel", "OFFER_NOT_SELLER", "only seller may cancel"); return; }
   if (o.status !== "open") { refused(ev, ev.txid, "cancel", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
@@ -115,7 +115,7 @@ function applyTokenFill(c: ResolveCtx, ev: AttestEvent, o: TokenWantOffer, who: 
   buyer.available -= amt + fee;
   bal(o.want.ticker, o.want.payto).available += amt;
   if (fee > 0n) bal(o.want.ticker, TREASURY_ADDR).available += fee;
-  if (isNameGive(o.give)) deliverNameToBuyer(giveName!, who, ev);
+  if (isNameGive(o.give)) deliverNameToBuyer(c, o.give.name, giveName!, who, ev);
   else releaseGiveLock(o, who, giveLock!);
   setOfferStatus(o, "filled");
   o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: amt.toString(), fee: fee.toString() };
@@ -166,7 +166,7 @@ function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, w
   applied(ev, ev.txid, "fill", "FILL_PARTIAL", `partial ${x}/${want}`);
 }
 
-function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
+function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {
   const { names, offerLock, applied, refused, setOfferStatus, markBidDone, releaseGiveLock } = c;
   if (o.status !== "open") { refused(ev, ev.txid, "fill", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
   if (o.taker && who !== o.taker) { refused(ev, ev.txid, "fill", "FILL_NOT_TAKER", "taker-bound offer"); return; }
@@ -213,7 +213,7 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): 
   if (isNameGive(o.give)) {
     const n = names.get(o.give.name);
     if (!n) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "name vanished (consensus violation)"); return; }
-    deliverNameToBuyer(n, who, ev);
+    deliverNameToBuyer(c, o.give.name, n, who, ev);
   } else {
     const amt = offerLock.get(o.id);
     if (amt === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
@@ -226,7 +226,7 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): 
   applied(ev, ev.txid, "fill", "FILL_APPLIED");
 }
 
-function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
+function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {
   const { applied, refused, liveHoldCount } = c;
   // v2.8 (§31): at V28+ the legacy claim attest is REJECTED (claims are fclaim proposals now) so a stale
   // wallet's claim is diagnosable. A pre-V28 live hold still honors legacy fills until it lapses (the

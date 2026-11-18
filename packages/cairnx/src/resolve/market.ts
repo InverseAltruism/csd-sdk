@@ -5,14 +5,14 @@ import {
   CLAIM_COOLDOWN_BLOCKS, COMMIT_MAX_BLOCKS, EPOCH_LEN, FCLAIM_MAX_EPOCH_AHEAD, FEE_BPS, FEE_BPS_V16, MAX_ACTIVE_CLAIMS,
   MAX_OFFER_EPOCHS, REG_COMMIT_MAX_BLOCKS, TREASURY_ADDR, V11_HEIGHT, V12_HEIGHT, V13_HEIGHT, V14_HEIGHT, V15_HEIGHT,
   V16_HEIGHT, V17_HEIGHT, V21_HEIGHT, V22_HEIGHT, V27_HEIGHT, V28_HEIGHT, epochOf, isNameGive, isTokenWant,
-  type BidRecord, type FclaimRecord, type Give, type OfferCancelAllRecord, type OfferRecord, type OfferState, type ProposeEvent,
+  type BidRecord, type FclaimRecord, type Give, type OfferCancelAllRecord, type OfferRecord, type ProposeEvent,
 } from "../types.js";
 import type { RefusalCode } from "../codes.js";
-import { claimGrace, claimHeld, effExpiry, type ResolveCtx } from "./context.js";
+import { claimGrace, claimHeld, effExpiry, type OfferRec, type ResolveCtx } from "./context.js";
 import { paidThrough } from "./names.js";
 
 export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, who: string): void {
-  const { tokens, names, offers, offerLock, openOffers, bids, bal, applied, refused } = c;
+  const { tokens, names, offerLock, bids, bal, applied, refused, store } = c;
   const v11 = ev.height >= V11_HEIGHT;
   const v15 = ev.height >= V15_HEIGHT;
   const v16 = ev.height >= V16_HEIGHT;
@@ -54,7 +54,7 @@ export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, wh
     if (s.available < amt) { refused(ev, ev.id, "offer", "TOKEN_BALANCE_LOW", "insufficient available balance"); return; }
     s.available -= amt; s.locked += amt; offerLock.set(ev.id, amt);
   }
-  const o: OfferState = {
+  const o: OfferRec = {
     id: ev.id, seller: who, give,
     want: wantIsToken
       ? { ticker: (rec.want as { ticker: string; amount: string }).ticker, amount: (rec.want as { ticker: string; amount: string }).amount, payto }
@@ -64,26 +64,24 @@ export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, wh
     ...(rec.bid !== undefined ? { bid: rec.bid } : {}),
     status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, feeBps: v11 ? (v16 ? FEE_BPS_V16 : FEE_BPS) : 0,
   };
-  offers.set(ev.id, o);
-  openOffers.add(ev.id);
+  store.addOffer(o);
   const linked = rec.bid !== undefined ? bids.get(rec.bid) : undefined;
   if (linked) linked.offers.push(ev.id);
   applied(ev, ev.id, "offer", "OFFER_CREATED");
 }
 
 export function applyBid(c: ResolveCtx, ev: ProposeEvent, rec: BidRecord, who: string): void {
-  const { bids, openBids, applied, refused } = c;
+  const { applied, refused, store } = c;
   const v12 = ev.height >= V12_HEIGHT;
   if (!v12) { refused(ev, ev.id, "bid", "GATE_NOT_ACTIVE", "bids need v1.2"); return; }
   if (!Number.isSafeInteger(ev.expiresEpoch)) { refused(ev, ev.id, "bid", "EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
   if (epochOf(ev.height) > ev.expiresEpoch) { refused(ev, ev.id, "bid", "EXPIRY_PAST", "already expired at anchor"); return; }
   // v2.1 duration cap — gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
   if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { refused(ev, ev.id, "bid", "EXPIRY_TOO_LONG", "v2.1: bid duration exceeds the max"); return; }
-  bids.set(ev.id, {
+  store.addBid({
     id: ev.id, bidder: who, want: rec.want, give: rec.give,
     status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, offers: [],
   });
-  openBids.add(ev.id);
   applied(ev, ev.id, "bid", "BID_CREATED");
 }
 
@@ -93,7 +91,7 @@ export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAl
   if (!v12) { refused(ev, ev.id, "ocancel", "GATE_NOT_ACTIVE", "ocancel needs v1.2"); return; }
   // cancel all the proposer's open offers anchored strictly earlier in apply order
   // (snapshotting at apply-time is correct: higher-pos same-block offers aren't applied yet)
-  const targets: OfferState[] = [];
+  const targets: OfferRec[] = [];
   for (const o of offers.values()) {
     if (o.status !== "open" || o.seller !== who) continue;
     if (o.taker !== undefined && o.height >= V28_HEIGHT) continue; // v2.8 Lane B: a taker-bound V28+ offer is a firm quote (uncancellable)

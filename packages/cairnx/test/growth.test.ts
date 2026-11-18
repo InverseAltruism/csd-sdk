@@ -1,18 +1,20 @@
 // The growth streams of conformance/growth-streams.mjs at 500 and 1,000: each stream's expectations (a refusal and an
-// admission of every cap, the V21 flip, the bulk-cancel filters, the edges) and its state at the tip. A pin is the
+// admission of every cap, the V21 flip, the bulk-cancel filters, the edges), its state at the tip, check mode on every
+// tip, and the replay indexes' visits per event as the stream doubles. A pin is the
 // first 16 hex digits of stateHash and of sha256 over the whole result with each log entry's note left out (codes,
 // recaptures and fclaims stay in), as the tree computed them before the replay indexes (fc6e081); canonicalState
 // there equals cairnx-core 0.2.4's on every stream. A sanctioned rule change that moves a stream re-pins it in the
 // same commit.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { growthStreams, resolverAt } from "../../../conformance/growth-streams.mjs";
+import { growthStreams, resolverAt, type GrowthStream } from "../../../conformance/growth-streams.mjs";
 import * as R from "../src/index.js";
 import type { CairnXState } from "../src/index.js";
+import { replay } from "../src/resolve.js";
 
 const PINS: Record<string, [string, string]> = {
   "500 registrations": ["6321fc7c6419f169", "4f80cb47966cc9c7"],
-  "500 open bids": ["dacd2393a715e10c", "040d5307ebacb68a"],
+  "500 open bids": ["40839123f28bca8d", "dc66d82c9e71e298"],
   "500 open offers with holds": ["029ed4f0ca90c3c4", "b50c1f4dda14b1a2"],
   "500 reservations alive at once": ["46d848d2dafb6b9b", "4cfa10550ef1a80b"],
   "500 recaptures alive at once": ["764a548a71623987", "c059f86ffa9149a0"],
@@ -34,7 +36,7 @@ const PINS: Record<string, [string, string]> = {
   "a NaN-height fclaim at input position 10": ["039bd7140420e94b", "e64a44fd1d10e124"],
   "a NaN-height fclaim at input position 11": ["039bd7140420e94b", "e64a44fd1d10e124"],
   "1000 registrations": ["aa5a59f1554179ba", "5fc2f5eb4ac0c7f2"],
-  "1000 open bids": ["546a23a5f7773a13", "fd12af5ebb86b700"],
+  "1000 open bids": ["84b39f41d12c1f8c", "12bac52e13489cb2"],
   "1000 open offers with holds": ["ec444f5db08e2830", "d9645fe72bf0f161"],
   "1000 reservations alive at once": ["46d848d2dafb6b9b", "d7e9796ada5f55ad"],
   "1000 recaptures alive at once": ["846c2f06783a7bd2", "a02471ce0517c348"],
@@ -63,3 +65,27 @@ for (const n of [500, 1_000]) {
 }
 assert.equal(streams, Object.keys(PINS).length, "every pin is used");
 console.log(`growth streams: ${streams} streams, each stream's expectations met and its state equal to its pin`);
+
+// Check mode on every stream and tip: the plain walks beside every indexed read, the index invariants after every event.
+let checked = 0;
+for (const n of [500, 1_000]) {
+  for (const s of growthStreams(R, n)) {
+    for (const tip of [s.tipHeight, ...s.tips]) {
+      assert.equal(JSON.stringify(replay(s.events, tip, { check: true })), JSON.stringify(R.resolve(s.events, tip)), `${s.label}@${tip}: check mode's result`);
+      checked++;
+    }
+  }
+}
+
+// The cost: entries the indexes visit per event (queue pops, candidates read, plain-walk elements) stay bounded as a
+// stream doubles; the 0.2.4 walks visit O(n) entries per event on the same streams.
+const perEvent = (s: GrowthStream): number => { const stats = { visits: 0 }; replay(s.events, s.tipHeight, { stats }); return stats.visits / s.events.length; };
+const small = growthStreams(R, 500).slice(0, 7), large = growthStreams(R, 1_000).slice(0, 7);
+const costs: string[] = [];
+small.forEach((s, i) => {
+  const a = perEvent(s), b = perEvent(large[i]!);
+  costs.push(`${s.key} ${a.toFixed(3)} / ${b.toFixed(3)}`);
+  assert.ok(a <= 2 && b <= 2, `${s.key}: at most 2 visits per event (${a}, ${b})`);
+  assert.ok(b <= 1.1 * a + 0.05, `${s.key}: visits per event do not grow as the stream doubles (${a} at 500, ${b} at 1,000)`);
+});
+console.log(`growth streams: check mode clean on ${checked} stream inputs; visits per event at 500 / 1,000: ${costs.join(", ")}`);
