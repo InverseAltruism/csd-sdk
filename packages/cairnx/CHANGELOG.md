@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.5
+
+- CONVENTION.md section 33, "From a block to events": the rule that turns the chain's blocks into the events
+  `resolve()` replays (membership from the activation height, first occurrence, order, field forms, the author as the
+  owner of the coin the first input spends, the byte form of an event list). It also accepts a sparse block: every
+  transaction with an app payload at its true position. Section 32's "there is no straddle case" is corrected (a
+  transaction can be mined again, in two blocks), and C3, section 3 and section 5 point at section 33.
+- New root exports `eventOfTx`, `blockMembers`, `blockEvents` and `CAIRNX_EVENT_RULE`, with
+  `test/vectors/events.json` (40 transaction and 25 block vectors, `conformance/gen-events-vectors.mjs`), checked by
+  `test/events.test.ts` and against the Python reference by `conformance/events-crosslang.mjs`. In JavaScript a u64
+  input is a bigint in [0, 2^64) or a number that is an integer in [0, 2^53]; a number above 2^53 is refused.
+- `resolve()`, `records.ts` and `types.ts` are unchanged, and every pinned vector and replay hash is byte-identical.
+  Section 33.2 makes normative the input form the reference service's feed has always had: the first occurrence of a
+  transaction id at every height. A reader that feeds `resolve()` every copy of a re-mined transaction can differ from
+  the reference when a copy lies below V29: a transaction mined at 87,999 and again at 88,001 is one event under
+  section 33 and two applied records under `resolve()` fed both copies. For history the case is empty: a scan of every
+  block from 29,860 to 144,400 (block hash 0x0000000000001874564bd8df5a5893040b0981d96c646e132e3598488d0411b5) on
+  2026-11-18 read 114,541 blocks and 148,395 transactions with 148,395 distinct transaction ids, so no transaction id
+  has been mined twice since activation. The script for that scan ships with the block fixture in the next slice
+  (events-rule-b).
+- A reader that switches to `eventOfTx` sees two forms change, neither of which moves state: an expiry above 2^53 - 1
+  becomes 2^53 (resolve() refuses both alike for offers, bids and fclaims, and reads it for nothing else), and a `uri`
+  holding U+0000 has it written as U+0001 (neither form is JSON, so neither is a record).
+
 ## 0.2.4
 
 - `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted

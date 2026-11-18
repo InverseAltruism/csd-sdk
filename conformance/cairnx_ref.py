@@ -1077,6 +1077,144 @@ def _parse_full_one(i, r):
         return False
     return parse_record(uri, ph) is not None
 
+# ── CONVENTION §33: from a block to events, written from the section text ───────────────────────────────────────
+# A transaction here is a dict {pos, txid, app, outputs} with u64 values as ints; the author is given. Every refusal
+# is a ValueError.
+SAFE_MAX = (1 << 53) - 1
+HEX_CHARS = re.compile(r"[0-9a-fA-F]*")
+
+def _hex_field(v, nbytes, what):
+    if not isinstance(v, str): raise ValueError(what + " is not hex")
+    h = v[2:] if v.startswith("0x") else v
+    if len(h) != 2 * nbytes or not HEX_CHARS.fullmatch(h): raise ValueError(what + " is not %d-byte hex" % nbytes)
+    return "0x" + h.lower()
+
+def _index(v):
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= SAFE_MAX
+
+def _uint(v, limit, what):
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v >= limit: raise ValueError(what + " out of range")
+    return v
+
+def _rule_of(rule):
+    domain, a = rule.get("domain"), rule.get("activationHeight")
+    if not isinstance(domain, str) or domain == "" or not _is_wellformed(domain) or "\x00" in domain or "\x01" in domain:
+        raise ValueError("the domain must be non-empty well-formed text without U+0000 or U+0001")
+    if not _index(a): raise ValueError("the activation height must be an integer >= 0")
+    return domain, a
+
+def _payload_kind(app):
+    # None for no payload, else "propose" or "attest"
+    if not isinstance(app, dict) or app.get("type") not in ("None", "Propose", "Attest"): raise ValueError("unknown app")
+    return {"None": None, "Propose": "propose", "Attest": "attest"}[app["type"]]
+
+def _domain(app):
+    if not isinstance(app.get("domain"), str): raise ValueError("a Propose domain is not text")
+    return app["domain"]
+
+def event_of_tx(t, height, author, rule):
+    domain, activation = _rule_of(rule)
+    if not _index(height): raise ValueError("height")
+    if not _index(t.get("pos")): raise ValueError("pos")
+    txid = _hex_field(t.get("txid"), 32, "txid")
+    app = t.get("app")
+    kind = _payload_kind(app)
+    if kind is None: return None
+    if height < activation: return None
+    if t["pos"] == 0: raise ValueError("an app payload at position 0, the coinbase")
+    if kind == "propose" and _domain(app) != domain: return None
+    if not isinstance(t.get("outputs"), list): raise ValueError("outputs")
+    paid = {}
+    for o in t["outputs"]:
+        addr = _hex_field(o.get("scriptPubkey"), 20, "script_pubkey")
+        value = _uint(o.get("value"), 1 << 64, "output value")
+        if value <= SAFE_MAX: paid[addr] = str(int(paid.get(addr, "0")) + value)
+    who = _hex_field(author, 20, "author")
+    if kind == "propose":
+        uri = app.get("uri")
+        if not isinstance(uri, str) or not _is_wellformed(uri): raise ValueError("uri")
+        expires = _uint(app.get("expiresEpoch"), 1 << 64, "expiresEpoch")
+        if expires > SAFE_MAX: expires = 1 << 53
+        return {"kind": "propose", "id": txid, "proposer": who, "uri": uri.replace("\x00", "\x01"),
+                "payloadHash": _hex_field(app.get("payloadHash"), 32, "payloadHash"), "expiresEpoch": expires,
+                "height": height, "pos": t["pos"], "paidTo": paid}
+    return {"kind": "attest", "txid": txid, "proposalId": _hex_field(app.get("proposalId"), 32, "proposalId"),
+            "attester": who, "score": _uint(app.get("score"), 1 << 32, "score"),
+            "confidence": _uint(app.get("confidence"), 1 << 32, "confidence"), "height": height, "pos": t["pos"], "paidTo": paid}
+
+def block_members(height, txs, event_ids, propose_ids, rule):
+    """The members (kind, tx) of one block in position order. event_ids and propose_ids are the reader's sets."""
+    domain, activation = _rule_of(rule)
+    if not _index(height): raise ValueError("height")
+    if height < activation: return []
+    if not isinstance(txs, list): raise ValueError("txs")
+    listed, block_proposals, candidates, last = set(), set(), [], -1
+    for t in txs:
+        pos = t.get("pos")
+        if not _index(pos) or pos <= last: raise ValueError("positions not strictly increasing")
+        last = pos
+        txid = _hex_field(t.get("txid"), 32, "txid")
+        if txid in listed: raise ValueError("a txid twice in one block")
+        listed.add(txid)
+        kind = _payload_kind(t.get("app"))
+        if kind is None: continue
+        if pos == 0: raise ValueError("an app payload at position 0, the coinbase")
+        if kind == "propose":
+            if _domain(t["app"]) == domain and txid not in event_ids:
+                block_proposals.add(txid)
+                candidates.append(("propose", t, txid, None))
+        else:
+            candidates.append(("attest", t, txid, _hex_field(t["app"].get("proposalId"), 32, "proposalId")))
+    members = []
+    for kind, t, txid, proposal in candidates:
+        if kind == "propose":
+            members.append((kind, t))
+        elif txid not in event_ids and (proposal in propose_ids or proposal in block_proposals):
+            members.append((kind, t))
+    return members
+
+def block_events(height, txs, event_ids, propose_ids, authors, rule):
+    members = block_members(height, txs, event_ids, propose_ids, rule)
+    if not isinstance(authors, list) or len(authors) != len(members): raise ValueError("one author per member")
+    proposes, attests = [], []
+    for (kind, t), author in zip(members, authors):
+        e = event_of_tx(t, height, author, rule)
+        if kind == "propose": proposes.append(e)
+        else: attests.append(e)
+    return proposes + attests
+
+def _vector_tx(t):
+    """A vector's transaction with its u64 decimal strings as ints."""
+    num = lambda v: int(v) if isinstance(v, str) and re.fullmatch(r"-?[0-9]+", v) else v
+    app = dict(t["app"]) if isinstance(t.get("app"), dict) else t.get("app")
+    if isinstance(app, dict) and app.get("type") == "Propose": app["expiresEpoch"] = num(app.get("expiresEpoch"))
+    return {"pos": t.get("pos"), "txid": t.get("txid"), "app": app,
+            "outputs": [dict(o, value=num(o.get("value"))) for o in t.get("outputs", [])]}
+
+def _events_job(job):
+    out_tx, out_blocks = [], []
+    for c in job["tx"]:
+        try: r = event_of_tx(_vector_tx(c["input"]), c["input"]["height"], c["author"], c.get("rule", job["rule"]))
+        except ValueError: r = "error"
+        out_tx.append(canonical_json(r))
+    for c in job["blocks"]:
+        event_ids, propose_ids, members, events, r = set(), set(), [], [], None
+        for i, b in enumerate(c["blocks"]):
+            txs = [_vector_tx(t) for t in b["txs"]]
+            try:
+                ms = block_members(b["height"], txs, event_ids, propose_ids, c.get("rule", job["rule"]))
+                evs = block_events(b["height"], txs, event_ids, propose_ids, [c["authors"].get(t["txid"]) for _, t in ms], c.get("rule", job["rule"]))
+            except ValueError:
+                r = {"error": i}
+                break
+            members.append([t["pos"] for _, t in ms])
+            for e in evs:
+                event_ids.add(e["id"] if e["kind"] == "propose" else e["txid"])
+                if e["kind"] == "propose": propose_ids.add(e["id"])
+                events.append(e)
+        out_blocks.append(canonical_json(r if r is not None else {"members": members, "events": events}))
+    return {"tx": out_tx, "blocks": out_blocks}
+
 # ── CLI: read a JSON job from stdin, emit results for crosscheck.mjs to diff ──
 def main():
     job = json.load(sys.stdin)
@@ -1122,6 +1260,9 @@ def main():
         _FIELD_RE = {"amount": AMOUNT_RE, "addr": ADDR_RE, "ticker": TICKER_RE,
                      "hash": HASH_RE, "name": NAME_RE, "salt": SALT_RE, "pkey": PKEY}
         out["regex"] = [_FIELD_RE[it["field"]].fullmatch(it["s"]) is not None for it in job["regex"]]
+    if "events" in job:
+        # CONVENTION §33 over packages/cairnx/test/vectors/events.json: each case's result as canonical JSON bytes.
+        out["events"] = _events_job(job["events"])
     json.dump(out, sys.stdout)
 
 if __name__ == "__main__":

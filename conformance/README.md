@@ -31,6 +31,10 @@ this directory, only the JS implementation existed, so the contract was asserted
 - **`replay-corpus-crosslang.mjs`:** the same co-sign offline, over the committed on-chain corpus
   (`packages/cairnx/test/vectors/replay-corpus.json`, fclaim and V29 included): JS == Python and
   sha256(JS) == `replay-hashes.json` at every pinned height.
+- **`events-crosslang.mjs`:** the rule from a block to events (CONVENTION section 33): every case of
+  `packages/cairnx/test/vectors/events.json` through the JS rule and `cairnx_ref.py`'s `event_of_tx`,
+  `block_members` and `block_events`, byte-identical to the recorded result. `gen-events-vectors.mjs` writes the
+  file after checking each case's hand-written facts; `events-run.mjs` is the case runner both share.
 
 Run: `pnpm test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
 

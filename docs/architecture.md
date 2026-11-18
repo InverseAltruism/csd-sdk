@@ -34,6 +34,8 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 - `primary.ts`: pickPrimaryName.
 - `client.ts`: claim-burial depth helpers.
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
+- `events.ts`: CONVENTION section 33, the rule from a block to events (eventOfTx, blockMembers, blockEvents); the
+  author is an input the caller binds with csd-crypto authorOf.
 - `fillclosed.ts`: whether a buyer's proven fill closed the offer behind its fclaim hold.
 - `holdcount.ts`: countOtherHoldsAtGrant, the buyer's other live holds at an fclaim's grant (verifyFillSpv's cap
   input).

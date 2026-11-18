@@ -280,14 +280,15 @@ v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (4
 
 ### Package layout
 
-`src/resolve.ts` + `src/resolve/` (the ledger: the replay loop and its per-record handlers) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
+`src/resolve.ts` + `src/resolve/` (the ledger: the replay loop and its per-record handlers) · `src/events.ts` (the rule
+from a block to events, CONVENTION §33) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
 height-gated client selectors) · `src/client.ts` (the claim-burial depth a payer waits for, sized against a minority miner) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
 `primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
 `@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
 order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
-(normative spec, §1–§32) · `test/vectors/` (portable conformance corpus).
+(normative spec, §1–§33) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
 
@@ -303,10 +304,10 @@ const built = offer({ give: { ticker: "CAIRN", amount: "5000000000" },
 const tx = buildPropose({ domain: DOMAIN, uri: built.uri, payloadHash: built.payloadHash,
   expiresEpoch, fee: 25_000_000, utxos, priv });
 
-// RESOLVE the chain. Turning chain data into `ChainEvent`s (`ProposeEvent` / `AttestEvent`, exported here) is
-// the caller's job today; the public pieces are csd-client's `CsdClient` (`blockByHeight`, `proposals`),
-// csd-light's `LightClient` and `bindBlockTxs` (check a block's txs against a verified header), and
-// `paidToFromOutputs` (an event's `paidTo` from a tx's outputs).
+// RESOLVE the chain. CONVENTION §33 turns blocks into events: blockMembers(height, txs, sofar) names the txs
+// that need an author, blockEvents(height, txs, sofar, authors) returns the block's events, and eventOfTx maps
+// one tx. The author is an input: bind it with csd-crypto's authorOf(tx, scriptPubkey) over the coin the first
+// input spends, read from its source tx. csd-light's bindBlockTxs checks a block's txs against a verified header.
 const state = resolve(events, tipHeight);
 console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 ```
@@ -323,10 +324,11 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 
 ### Write a conformant resolver in another language
 
-1. Implement `CONVENTION.md` §1–§32 (apply order, every record type, the `V*_HEIGHT` activations (using
-   the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data surface only).
-2. Replay `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json`: your canonical state must equal
-   `expectedState` **byte-for-byte**.
+1. Implement `CONVENTION.md` §1–§33 (the events of a block, apply order, every record type, the `V*_HEIGHT`
+   activations (using the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data
+   surface only).
+2. Reproduce `test/vectors/events.json` (§33.7). Replay `test/vectors/cases.json`, `cases-v29.json` and
+   `cases-rules.json`: your canonical state must equal `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare `sha256(canonicalState)` against `test/vectors/replay-hashes.json`.
 
 ---

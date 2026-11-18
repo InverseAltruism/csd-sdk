@@ -59,6 +59,30 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.5 (2026-11-18, Plan 91 events-rule-a; unreleased; `resolve()` unchanged, its input form made normative) - the rule from a block to events
+
+The input of the replay is written down: `CONVENTION.md` section 33 states which transactions of a block are events
+for a domain and an activation height, at which occurrence, in which order, with which field forms and author, and the
+byte form of an event list. cairnx-core implements it as `eventOfTx`, `blockMembers` and `blockEvents`, the Python
+reference independently, and `test/vectors/events.json` pins both (`conformance/events-crosslang.mjs` in
+`test:crosslang`). `resolve()`, `records.ts` and `types.ts` are byte-identical to 0.2.4, and every pinned vector and
+replay hash is unchanged.
+
+Section 33.2 makes normative the input form the reference service's feed has always had: the first occurrence of a
+transaction id at every height (csd-indexer keeps it, and the service's scanner reads that feed). A reader that feeds
+`resolve()` every copy of a re-mined transaction can differ from the reference when a copy lies below V29: a
+transaction mined at 87,999 and again at 88,001 is one event under section 33, while `resolve()` fed both copies
+applies both, because section 32's M4 drop applies only at heights at or above V29 (`test/events.test.ts` pins both
+results). For history the case is empty: a scan of every block from 29,860 to 144,400 (block hash
+0x0000000000001874564bd8df5a5893040b0981d96c646e132e3598488d0411b5) on 2026-11-18 read 114,541 blocks and 148,395
+transactions with 148,395 distinct transaction ids, so no transaction id has been mined twice since activation. The
+script for that scan ships with the block fixture in the next slice (events-rule-b).
+
+The other forms the rule fixes where earlier readers differed (an expiry above 2^53 - 1, a `uri` holding U+0000) give
+the same state either way. Section 32's "there is no straddle case" is corrected: a transaction can be mined in two
+blocks, and `resolve()` fed both copies drops the later one only when both are at or above V29; the rule keeps the
+first.
+
 ## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; unreleased; no consensus-surface change) - records, tests and docs
 
 Client-side and docs only: `resolve()`, canonical state and every `verifyFillSpv` verdict are unchanged (the

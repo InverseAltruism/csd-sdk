@@ -9,7 +9,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { CONF_TOKEN_FILL, FCLAIM_MAX_HOLD_SPAN, fillEndorsement, offerFillTooLate } from "../src/index.js";
+import {
+  CAIRNX_EVENT_RULE, CONF_TOKEN_FILL, FCLAIM_MAX_HOLD_SPAN, blockEvents, blockMembers, eventOfTx, fillEndorsement, offerFillTooLate,
+} from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
 
@@ -25,7 +27,11 @@ assert.equal(typeof fillEndorsement, "function", "fillEndorsement is a root expo
 assert.equal(typeof offerFillTooLate, "function", "offerFillTooLate is a root export");
 // The site's refusal before the reservation fee reads which listed fills may lie below the fill check's window with it.
 assert.equal(FCLAIM_MAX_HOLD_SPAN, 89, "FCLAIM_MAX_HOLD_SPAN is a root export (89)");
-for (const name of ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN"])
+// The rule from a block to events (CONVENTION §33): the scanner, the wallet, the site and the replica's sources call it.
+for (const [name, fn] of [["eventOfTx", eventOfTx], ["blockMembers", blockMembers], ["blockEvents", blockEvents]] as const)
+  assert.equal(typeof fn, "function", `${name} is a root export`);
+assert.deepEqual(CAIRNX_EVENT_RULE, { domain: "cairnx:v1", activationHeight: 29_860 }, "CAIRNX_EVENT_RULE is cairnx:v1 from 29,860");
+for (const name of ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE"])
   assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
-console.log("cairnx-core export surface: 9 passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate and FCLAIM_MAX_HOLD_SPAN pinned in src and dist .d.ts)");
+console.log("cairnx-core export surface: 17 passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN and the §33 rule's four names pinned in src and dist .d.ts)");
