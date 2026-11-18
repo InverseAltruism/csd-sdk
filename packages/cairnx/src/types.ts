@@ -2,6 +2,7 @@
 // v1   = tokens (deploy/mint/transfer) + offers/fills (payment and record in one tx; the replay decides delivery).
 // v1.1 = names (registrar, commit-reveal back-dating, transfer, set, name offers) + protocol fees.
 import { EPOCH_LEN, MAX_URI_BYTES, epochOf } from "@inversealtruism/csd-codec";
+import type { ReasonCode } from "./codes.js";
 
 export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
@@ -541,7 +542,10 @@ export interface BidState {
   offers: string[];
 }
 export interface AppliedEvent {
-  height: number; pos: number; id: string; kind: string; ok: boolean; note?: string;
+  height: number; pos: number; id: string; kind: string; ok: boolean;
+  /** The rule that decided the record (CONVENTION §40). Optional: a log built by hand or by an earlier core has none. */
+  code?: ReasonCode;
+  note?: string;
 }
 export interface CairnXState {
   tipHeight: number;
