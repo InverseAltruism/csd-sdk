@@ -1,0 +1,55 @@
+{
+  "name": "@inversealtruism/cairnx-api",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "description": "The contract of the CairnX public read API, version 1: row and envelope types, error codes, the parameter grammar and parser, and the cursor codec. No I/O; browser-safe.",
+  "author": "InverseAltruism",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx test/params.test.ts && tsx test/cursor.test.ts && tsx test/errors.test.ts && tsx test/rows.test.ts && tsx test/package.test.ts && tsx test/bundle.test.ts",
+    "prepack": "pnpm build",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "peerDependencies": {
+    "@inversealtruism/cairnx-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@inversealtruism/cairnx-core": "workspace:*"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/cairnx-api"
+  },
+  "homepage": "https://cairn-substrate.com"
+}

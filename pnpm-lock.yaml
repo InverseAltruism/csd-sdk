@@ -51,6 +51,12 @@ importers:
         specifier: 1.8.0
         version: 1.8.0
 
+  packages/cairnx-api:
+    devDependencies:
+      '@inversealtruism/cairnx-core':
+        specifier: workspace:*
+        version: link:../cairnx
+
   packages/client:
     dependencies:
       '@inversealtruism/csd-codec':

@@ -22,6 +22,7 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 | cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
 | csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
 | cairnx-replica (packages/replica) | A CairnX replica over cairnx-core (a peer dependency): the basis each store is filled from and the level and proof it gives every answer (`checkBasis`, `levelOf`, `proofOf`, `basisKey`), the source and store types, `memoryStore`, and the internal loop (`replicaLoop`: a source's steps checked against the contract and committed to a store, reorgs rolled back, failures backed off; rows read back are checked against the events hash and a rows hash over their full content) with `fullReplay`, the only way to a resolved state, since no state is persisted; `./testing` holds `fixtureSource` and the event factories; `./browser` and `./server` add `nodeBlocks`, complete blocks from one's own node (a loopback address in a page; also private ranges and `CAIRNX_OWN_NODE_HOSTS` on a server) bound to its headers with authors bound by `authorOf`, and `readBlocks`. Unreleased. |
+| cairnx-api (packages/cairnx-api) | The contract of the CairnX public read API, version 1, over cairnx-core (an exact peer dependency): the envelope (`At`, `Page`, `Refusal`), the six lists' rows over the core's state types (counts in place of the unbounded `fills` and `offers` arrays), the error codes with their HTTP statuses (`ERRORS`), the closed parameter table of each route (`ROUTE_TABLE`) and `parseQuery`, which refuses any parameter outside it, and the cursor codec of each list order (`CURSORS`). No I/O, browser-safe. Unreleased. |
 
 ## cairnx-core modules (`packages/cairnx/src/`)
 
@@ -108,7 +109,9 @@ mirror the app layer runs on. The Rust node is the upstream oracle and never dep
 - npm consumers, exact pins in their `package.json`: cairnx (the trading service), the cairn web server, cairn-sdk,
   csd-indexer and clarvis (the second-source resolver, which runs cairnx-core and must ride every gate bump).
   `node scripts/check-consumer-pins.mjs` reports the cairnx-core pins of cairnx, cairn-sdk and clarvis when their
-  checkouts sit beside this one.
+  checkouts sit beside this one. For those consumers it also fails a cairnx-api pin, in any dependency section, whose
+  release tag names another cairnx-core than the one pinned under `dependencies`, or which has no release tag naming
+  that version (see `docs/release.md`).
 - Bundled consumers: the cairn website ships browser bundles built from a csd-sdk checkout at the commit its
   `PROVENANCE.json` names; cairn-wallet ships an SPV bundle built from the published packages its `package.json` pins,
   with each package's version and registry integrity in its `PROVENANCE.json`. Each repo's `check-vendor-fresh.mjs`

@@ -62,6 +62,51 @@ try {
   pin("cairnx", "1.3.0"); pin("cairn-sdk", "1.2.0");
   r = run();
   ok("graded: a lag across a resolve/ handler change fails", r.code === 1 && /CONSENSUS-SURFACE DRIFT/.test(r.out) && /resolve\/market\.ts/.test(r.out));
+
+  // One core per consumer: cairnx-api 0.1.0 is tagged where the core is 1.3.0, 0.2.0 where it is 1.4.0.
+  const pins = (repo: string, core: string, api: string, section = "dependencies") => write(join(parent, repo, "package.json"),
+    JSON.stringify(section === "dependencies" ? { dependencies: { "@inversealtruism/cairnx-core": core, "@inversealtruism/cairnx-api": api } }
+      : { dependencies: { "@inversealtruism/cairnx-core": core }, [section]: { "@inversealtruism/cairnx-api": api } }));
+  const setApi = (version: string) => write(join(sdk, "packages/cairnx-api/package.json"),
+    JSON.stringify({ name: "@inversealtruism/cairnx-api", version, peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }));
+  git("tag", "cairnx-core-1.3.0");
+  setApi("0.1.0");
+  git("add", "-A"); git("commit", "-qm", "cairnx-api 0.1.0"); git("tag", "cairnx-api-0.1.0");
+  write(join(sdk, "packages/cairnx/src/preflight.ts"), "export const preflight = 3;\n");
+  setCore("1.4.0"); setApi("0.2.0");
+  git("commit", "-qam", "1.4.0"); git("tag", "cairnx-api-0.2.0");
+  pin("cairnx", "1.4.0"); pins("cairn-sdk", "1.3.0", "0.1.0");
+  r = run();
+  ok("one core: a consumer on the core its cairnx-api was published against passes, beside a helpers-only lag",
+    r.code === 0 && /cairn-sdk pins cairnx-api 0\.1\.0 \(dependencies\) on its cairnx-core 1\.3\.0/.test(r.out) && /helpers-only lag/.test(r.out));
+  pins("cairn-sdk", "1.4.0", "0.1.0");
+  r = run();
+  ok("one core: a canonical core pin under a cairnx-api published against another core fails",
+    r.code === 1 && /cairn-sdk pins cairnx-core 1\.4\.0 but cairnx-api 0\.1\.0 \(dependencies\) was published against cairnx-core 1\.3\.0: TWO CORES/.test(r.out) && /FAILED \(1\/2\)/.test(r.out));
+  for (const section of ["devDependencies", "peerDependencies", "optionalDependencies"]) {
+    pins("cairn-sdk", "1.4.0", "0.1.0", section);
+    r = run();
+    ok(`one core: a cairnx-api pin under ${section} is checked and fails on two cores`, r.code === 1 && new RegExp(`cairnx-api 0\\.1\\.0 \\(${section}\\) was published against cairnx-core 1\\.3\\.0: TWO CORES`).test(r.out));
+    pins("cairn-sdk", "1.4.0", "0.2.0", section);
+    r = run();
+    ok(`one core: a cairnx-api pin under ${section} on the pinned core passes`, r.code === 0 && new RegExp(`cairn-sdk pins cairnx-api 0\\.2\\.0 \\(${section}\\) on its cairnx-core 1\\.4\\.0`).test(r.out));
+  }
+  pins("cairn-sdk", "1.3.0", "0.2.0");
+  r = run();
+  ok("one core: a graded consumer's advisory lag does not excuse two cores", r.code === 1 && /cairn-sdk pins cairnx-core 1\.3\.0 but cairnx-api 0\.2\.0 \(dependencies\) was published against cairnx-core 1\.4\.0/.test(r.out));
+  pins("cairn-sdk", "1.4.0", "0.2.0"); pins("cairnx", "1.4.0", "0.1.0");
+  r = run();
+  ok("one core: a strict consumer at the canonical core with an older cairnx-api fails", r.code === 1 && /cairnx svc pins cairnx-core 1\.4\.0 but cairnx-api 0\.1\.0/.test(r.out) && /cairn-sdk pins cairnx-api 0\.2\.0 \(dependencies\) on its cairnx-core 1\.4\.0/.test(r.out));
+  pins("cairnx", "1.4.0", "0.1.5");
+  r = run();
+  ok("one core: a cairnx-api version with no tag fails closed", r.code === 1 && /cairnx svc pins cairnx-api 0\.1\.5 \(dependencies\): UNKNOWN version/.test(r.out));
+  git("tag", "cairnx-api-0.3.0");   // a hand-placed tag on a commit whose cairnx-api manifest names 0.2.0
+  pins("cairnx", "1.4.0", "0.3.0");
+  r = run();
+  ok("one core: a tag whose cairnx-api manifest names another version fails closed", r.code === 1 && /cairnx svc pins cairnx-api 0\.3\.0 \(dependencies\): UNKNOWN version/.test(r.out));
+  pins("cairnx", "1.4.0", "0.2.0");
+  r = run();
+  ok("one core: both consumers on one core pass", r.code === 0 && /consumer-pin coherence OK \(2 npm-pinning consumers\)/.test(r.out));
 } finally {
   rmSync(parent, { recursive: true, force: true });
 }
