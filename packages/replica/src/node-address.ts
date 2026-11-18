@@ -15,14 +15,16 @@ function urlOf(node: unknown): URL | null {
     throw e;
   }
 }
-function parse(node: unknown): URL {
+function parse(node: unknown, what = "node"): URL {
   const u = typeof node === "string" ? urlOf(node) : null;
   if (u === null || (u.protocol !== "http:" && u.protocol !== "https:") || u.username !== "" || u.password !== "" || u.search !== "" || u.hash !== "") {
-    throw new ReplicaConfigError("node: not an http or https URL without credentials, query or fragment");
+    throw new ReplicaConfigError(`${what}: not an http or https URL without credentials, query or fragment`);
   }
   return u;
 }
 const base = (u: URL): string => `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+/** The base URL of a server whose answers a source verifies itself, under the same form rule as a node's. */
+export const serverBase = (url: string, what: string): string => base(parse(url, what));
 const refuse = (u: URL, rule: string): never => { throw new ReplicaConfigError(`node: ${u.hostname} is not one's own node (${rule})`); };
 
 function isPrivate(host: string): boolean {

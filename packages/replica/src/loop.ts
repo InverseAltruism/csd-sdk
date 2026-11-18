@@ -161,7 +161,8 @@ export function replicaLoop(o: LoopOptions): Loop {
     });
     if (r !== "ok") return r;
     settled(s.tip);
-    return next.height >= s.tip.height ? "stop" : "more";
+    const goal = Math.max(s.tip.height, Number.isSafeInteger(s.reach) ? s.reach! : 0);
+    return next.height >= goal ? "stop" : "more";
   }
 
   async function onReorg(s: Extract<Step, { kind: "reorg" }>): Promise<"more" | "stop"> {
