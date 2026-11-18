@@ -8,3 +8,6 @@
   statuses, the closed parameter table of each route and `parseQuery`, which refuses an unknown, repeated, empty,
   malformed or out-of-range parameter with its name (heights and positions at most 15 digits), the cursor codec of
   each list order, and `CAIRNX_API_VERSION`. cairnx-core is an exact peer dependency.
+- `./handlers`: `prepareView(state, { height, hash, input, core })`, the frozen view of one published state with
+  `rev`, and `answer(held, route, query)`, the `{ status, body }` of a v1 read of `names`, `bids` or `tokens` from the
+  views held. Dependency: `@noble/hashes`, at cairnx-core's version.

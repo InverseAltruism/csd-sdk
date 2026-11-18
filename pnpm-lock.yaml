@@ -52,6 +52,10 @@ importers:
         version: 1.8.0
 
   packages/cairnx-api:
+    dependencies:
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
     devDependencies:
       '@inversealtruism/cairnx-core':
         specifier: workspace:*
