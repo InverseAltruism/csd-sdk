@@ -51,6 +51,11 @@ this directory, only the JS implementation existed, so the contract was asserted
   `packages/cairnx/test/vectors/codes.json`, the reason codes of CONVENTION section 40, from expectations written by
   hand per event and per record, after checking each against the built dist; it writes nothing when one fails.
   `cairnx_ref.py` writes no codes, so the file is checked by `test/codes.test.ts` and `test/records-explain.test.ts`.
+- **`growth-streams.mjs`** (JavaScript only, not a cross-language job): synthetic streams that load the replay's
+  expiry and per-address work (16,000 registrations; 20,000 open bids, offers with holds, live reservations and live
+  recaptures; bulk cancels and displacements over 20,000 offers; the V21 crossing; edge cases), each with the
+  expectations it was built to meet, read from the reason codes. `scripts/seal-differential.mjs` step 4(f) runs them
+  at full size against the baseline; `packages/cairnx/test/growth.test.ts` at 500 and 1,000 against pinned states.
 
 Block scripts (read a node, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package script runs
 them, `test/live-opt-in.test.ts` that each refuses by name with no node named and fails by name when the node does
