@@ -288,7 +288,7 @@ height-gated client selectors) · `src/client.ts` (the claim-burial depth a paye
 `primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
 `@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
 order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
-(normative spec, §1–§34) · `test/vectors/` (portable conformance corpus).
+(normative spec, §1–§39) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
 
@@ -321,6 +321,9 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 - Replica: a replay of every `cairnx:v1` record. It is exact for names and tokens. What it proves depends
   on where the records came from: one's own node, complete blocks checked against headers, or someone's
   record feed, which is complete only on that feed's word.
+
+Other applications, the profile-key registry with its byte budget, the three levels with their sources,
+conformance and how the rules change are `CONVENTION.md` §35 to §39.
 
 ### Write a conformant resolver in another language
 

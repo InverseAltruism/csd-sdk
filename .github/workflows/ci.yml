@@ -48,6 +48,8 @@ jobs:
       - run: pnpm exec tsx test/check-dashes-paths.test.ts
       - run: pnpm exec tsx test/lint-config.test.ts   # biome.json enables exactly the four rules
       - run: pnpm exec tsx test/dep-pins.test.ts   # every dependency exact or workspace:*, equal to what the lockfile resolves
+      - run: pnpm exec tsx test/check-consensus-citations.test.ts   # the citation check covers the ledger and every docs/gates/ file
+      - run: pnpm exec tsx test/profile-budget.test.ts   # CONVENTION.md section 36.4's byte budget equals the builder's records
 
   secrets:
     runs-on: ubuntu-24.04

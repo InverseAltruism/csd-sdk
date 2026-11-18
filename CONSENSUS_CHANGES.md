@@ -717,6 +717,9 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
 Since the 2026-07-06 promotions, a new name-fee tier is a ONE-FILE core change; the rest is
 mechanical refresh. In order:
 
+0. Write the gate's own file, `docs/gates/<gate>.md`, from `docs/gates/TEMPLATE.md`, and link it from the gate's
+   entry in this file (CONVENTION.md §39). `scripts/check-consensus-citations.mjs` checks its citations and fails
+   while it is unlinked; its rollout table records the live observation of each consumer in steps 4 and 5.
 1. Add the gate height to `packages/cairnx/src/types.ts` and, for a fee tier, add it to
    `NAME_FEE_GATES` in `packages/cairnx/src/preflight.ts` (buildFeeHeight owns the list; the
    wallet and the trade UI import it, so no hand edit exists anywhere else).

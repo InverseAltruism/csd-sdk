@@ -30,6 +30,10 @@
   `test/vectors/hashes.json` (43 cases, and both hashes over the replay corpus at its 21 pinned heights,
   `conformance/gen-hashes-vectors.mjs`), checked by `test/hashes.test.ts` and against the Python reference by
   `conformance/hashes-crosslang.mjs`; the replay-hash test and `replay-corpus-crosslang.mjs` call `stateHash`.
+- CONVENTION.md sections 35 to 39, with no gate: other applications (record types under `cairnx:v1` reserved, an
+  application's own domain, the profile as the place for data about a name), the profile-key registry with its caps,
+  keys, reader rules and byte budget (`scripts/profile-budget.mjs` prints it), what a result proves at each of the
+  three levels, conformance, and how the rules change. No package code and no state change.
 - cairnx-core now declares `@noble/hashes` 1.8.0, the release csd-codec already pins, for its sha256 (csd-codec
   exports none): no new package enters an install.
 

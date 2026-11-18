@@ -1,6 +1,6 @@
 # CairnX Convention v1
 
-**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §39 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive: below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
@@ -9,7 +9,8 @@ v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 4
 v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay hash is pinned in `test/vectors/replay-hashes.json`).
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 §33 is the rule that turns the chain's blocks into the events every version replays; §34 defines the two hashes
-replicas compare.
+replicas compare. §35 and §36 are for other applications (their domains, the profile-key registry), §37 states what
+a result proves, §38 how a replica conforms and §39 how the rules change; none of §33 to §39 has a gate.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -1428,3 +1429,194 @@ value, as the value or `{"error": i}` with i the first block refused; and, witho
 the blocks' events in turn, as the value or `"error"`. `corpus` gives both hashes over
 `test/vectors/replay-corpus.json` at each height of `replay-hashes.json`, the events at heights <= h in a stable sort
 by height.
+
+---
+
+# CairnX for other applications (no gate)
+
+## 35. Other applications
+
+This section and §36 bind an application that is not CairnX and reads or writes on the same chain. Neither has an
+activation gate: they state what the reference already does and reserve names for later, so they move no state.
+
+### 35.1 Record types under `cairnx:v1` are reserved
+
+Every record type under `cairnx:v1` belongs to this convention. A record whose `t` this version does not define is a
+no-op today (§3), and a later gate may give that type a meaning; from the gate's height on, a record of that type is
+read by the new rule, whoever anchored it and for whatever purpose. A record of a defined type with a key its schema
+does not list is a no-op too (§5.1 A8). An application therefore must not anchor its own records under `cairnx:v1`,
+neither as a new type nor as extra keys on a defined one.
+
+### 35.2 An application's own domain
+
+An application's own records go in its own domain, named `<app>:<major>`: `<app>` names the application and `<major>`
+is the major version of its record format. A domain is a string of the form §33 requires of D. Domains whose text
+begins with `cairnx`, `csd` or `cairn` are reserved to this convention and its maintainers; an application uses none
+of them.
+
+A domain is a label and not an authority. Anyone can anchor a `Propose` under any domain, a reserved one included,
+and reserving a prefix gives no one control of it. An application decides which authors it accepts under its domain,
+with the author of §33.5.
+
+The rule of §33 takes the domain and the activation height as parameters (`EventRule`; `CAIRNX_EVENT_RULE` is
+CairnX's), so an application reads its own domain with the same functions (`eventOfTx`, `blockMembers`,
+`blockEvents`) and its own D and A. `resolve()` reads only CairnX records; the meaning of an application's records is
+the application's to define.
+
+### 35.3 Data for readers of a name: the profile
+
+Data an application publishes for the readers of a name (a site, a node address, a pointer to its own data) goes in
+the name's profile, the `nprofile` record of §22, under the keys of §36.
+
+- A write replaces the whole map: the resolver stores the record's `p` as the profile, and `{}` clears it (§22). A
+  writer therefore reads the current profile first and writes the merged map, with every key it did not set kept at
+  its current value.
+- A reader ignores the profile of a name that is expired or pending. In the state of §5 these are a name with
+  `expired: true` (its lease and grace have lapsed, §17) and a name with `pending: true` (a reservation of §28 not yet
+  finalized). An expired name keeps its last profile in state until the name is claimed again; that profile is
+  history, not the word of a current owner.
+
+Known limit: only the owner writes a profile (§22), and two writers for one owner (two applications, or two devices)
+that read the same profile and both write within one block interval lose one write: the later in apply order (§3)
+replaces the map, and the keys only the earlier write carried are gone. The convention has no per-key write; a writer
+that needs its write kept reads the profile again once its record is mined.
+
+## 36. The profile-key registry
+
+This is the registry of profile keys, the first version. The resolver validates keys by their form alone and keeps no
+list of them (§22), so the registry binds writers and readers, not replay.
+
+### 36.1 The caps
+
+From `src/types.ts`; a record that breaks one is a no-op (§22).
+
+| Cap | Constant | Value |
+|---|---|---|
+| keys in one profile | `PROFILE_MAX_KEYS` | 16 |
+| UTF-8 bytes of one value | `PROFILE_MAX_VALUE_BYTES` | 256 |
+| UTF-8 bytes of the whole record, its `uri` | `MAX_RECORD_BYTES` (the node's `uri` cap, C4) | 512 |
+| the form of a key | `PKEY` | `^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$`: 1 to 32 characters, lowercase letters and digits, with dots and hyphens inside |
+
+Each value is a string. The resolver accepts any well-formed string within the byte cap (§5.1 A7), the empty string
+included; the forms below are what a reader accepts as the value of a registered key.
+
+### 36.2 The keys
+
+| Key | Value |
+|---|---|
+| `display`, `description`, `avatar`, `header`, `url`, `email`, `location`, `com.twitter`, `com.github`, `com.discord`, `org.telegram`, `com.linkedin`, `com.reddit` | the 13 keys the reference site's profile editor writes, registered as they are: a display name, a short text, an image URL (`avatar`, `header`, `https://` only), a link (`url`, below), an email address, a place, and six handles on the named services |
+| `url` | an `https://` link |
+| `contenthash` | a URI: `ipfs://<CIDv1>`, with nothing after the CID. Not ENS's binary encoding. A later revision of this registry may add `ipns://`; it is not valid now |
+| `csd.*` | reserved to this convention for keys about the chain itself; only the keys below are defined |
+| `csd.p2p` | a peer of the chain's own network: a libp2p multiaddr that ends with its peer id (`/p2p/<peer id>`) |
+| `csd.rpc` | an address through which a page reaches a node's API: an `https://` base URL without credentials, query or fragment, or the multiaddr of a gateway that carries that API, ending with the gateway's peer id |
+| an application's keys | under a reverse-DNS prefix of a domain the application controls, for example `org.example.app` for the application at `app.example.org`; the whole key matches `PKEY` |
+
+The six service keys of the editor (`com.twitter` to `com.reddit`) are reverse-DNS names of domains this convention
+does not control. They are registered as the editor writes them and are the only such keys.
+
+### 36.3 Reader rules
+
+- Accept only the schemes and forms stated in §36.2, and treat any other value of a registered key as absent.
+- `csd.p2p` and `csd.rpc`: never use an address that is loopback, link-local or private, whether it is written as an
+  address or reached through a name that resolves to one. A multiaddr ends with a peer id, and a reader dials that
+  peer only with its peer id checked.
+- An address that a name's profile publishes is that name owner's node. What is read through it is at most single
+  records, each proven for inclusion with its author bound to the coin it spent (§33.5; the record proof of §37),
+  never a complete history, and never what marks any name, that one or another, as verified.
+- A profile is never a send target (§22): the address a name pays to is `addr`, set by `nset`.
+- The profile of an expired or pending name is ignored (§35.3).
+
+### 36.4 The byte budget
+
+For a 32-character name, each row is the record `nameProfile` builds, measured with `canonicalJson`, in UTF-8 bytes
+against `MAX_RECORD_BYTES`. `node scripts/profile-budget.mjs` in the csd-sdk repository prints every figure, and its
+test keeps this table equal to that output. The example values are of a realistic length: `contenthash` a CIDv1 in
+base32, 66 bytes; `csd.p2p` a DNS multiaddr with an Ed25519 peer id, 89 bytes; `csd.rpc` an https base URL, 24
+bytes, or a WebRTC gateway multiaddr with a certificate hash and a peer id, 158 bytes; each editor key 12 bytes.
+
+| Profile | Keys | Record bytes | Left of 512 |
+|---|---|---|---|
+| empty | 0 | 71 | 441 |
+| `contenthash` | 1 | 153 | 359 |
+| `contenthash`, `csd.p2p` | 2 | 255 | 257 |
+| `contenthash`, `csd.p2p`, `csd.rpc` (https URL) | 3 | 292 | 220 |
+| `contenthash`, `csd.p2p`, `csd.rpc` (gateway multiaddr) | 3 | 426 | 86 |
+| 13 editor keys, `contenthash`, `csd.p2p` | 15 | 601 | 89 over: `nameProfile` refuses it |
+
+The 13 editor keys and the three registered keys `contenthash`, `csd.p2p` and `csd.rpc` are 16 keys, the key cap
+exactly, yet the last row, with 15 of them and 12-byte values, is already over the byte cap. The byte cap binds
+before the key cap, so an application uses one key that points at its own data rather than one key per field.
+
+### 36.5 Adding a key
+
+A key is added to the registry by a change to this file: a row in §36.2 with its value form, and its reader rules in
+§36.3 when it needs any. It needs no gate, since the resolver keeps no list of keys. A key under an application's own
+reverse-DNS prefix needs no registration.
+
+---
+
+# What a result proves (no gate)
+
+## 37. The three levels
+
+A result says which of three levels it is.
+
+1. Display. An answer read from someone's API. It is worth the trust placed in that API.
+2. Record proof. One record was mined in a block under valid proof of work, and its author is the owner of the coin
+   its first input spends (§33.5). It does not prove that the record is the latest for its name or token, and it
+   decides nothing about a name whose state depends on records outside the name's own history (a fill that depends
+   on the buyer's other claims or balance, a registration that depends on the registrant's other reservations).
+3. Replica. `resolve()` over every event of §33. It is exact for names and tokens when its event list is complete;
+   §33.1 states what establishes that. What it proves depends on its source:
+   - blocks from one's own node: the trust is one's own node;
+   - complete blocks checked against headers: a block cannot be thinned, because its transactions must hash to the
+     merkle root of the header and each author is bound to the coin it spent; what remains to trust is that the
+     header source serves the chain with the most work;
+   - a record log fixed in a release, plus complete blocks above the height it ends at: below that height the trust
+     is the release;
+   - a feed: a node's events route, csd-indexer's feeds, or any other list of records. A feed is complete only on its
+     word, so a replay fed from one gives display, or a record proof for each record it proves, and says so. From
+     one's own node the events route is the node software's word, which a replica makes equal to the first source by
+     a recount from blocks at the boundaries of §38.
+
+---
+
+# Conformance and rule changes (no gate)
+
+## 38. Conformance
+
+A replica conforms at three levels.
+
+1. The vectors: `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json` (replay, §5), `events.json`
+   (§33.7) and `hashes.json` (§34.4). A conformant implementation reproduces every case byte for byte.
+2. The pinned replay hashes: `test/vectors/replay-hashes.json`, the state hash (§34.1) of the live chain at each
+   pinned height.
+3. A running comparison: two replicas compare the tuple (height, block hash, events hash, state hash) of §34.3 at
+   finalized epoch boundaries. An epoch is `EPOCH_LEN` = 30 blocks (csd-codec, re-exported by cairnx-core); a
+   boundary is a height that is a multiple of `EPOCH_LEN`, and a finalized boundary is one that both replicas hold at
+   least at the final depth of §3.
+
+What a difference means is in §34.3. The operating rule: a difference is reported, never acted on automatically. A
+replica that credits value stops crediting only when a difference at one block hash persists over three consecutive
+boundaries and its own recount from complete blocks (§37) gives the same difference.
+
+A form of the tuple recorded on chain is reserved under the reserved prefixes of §35.2 and is not defined by this
+version.
+
+## 39. Rule changes
+
+- This specification is normative for the future. Pinned history stands: every height below a gate replays as it
+  did, and the pinned replay hashes do not move. Behaviour changes only at a gate, an activation height in
+  `src/types.ts`; a section without a gate, such as §33 to §39, moves no state.
+- `CONSENSUS_CHANGES.md` in the csd-sdk repository is the ledger of every change. Each gate after v2.9 also has its
+  own file, `docs/gates/<gate>.md`, written from `docs/gates/TEMPLATE.md` and linked from its ledger entry. It
+  states the motivation, the rule text, the class of the change (reject-more: an input the earlier rule applied
+  becomes a no-op; accept-different: an input is applied where it was not, or applied otherwise), the height, the
+  vectors that pin it, and a rollout table of every consumer with how its adoption is observed.
+  `scripts/check-consensus-citations.mjs` checks the citations of the ledger and of every gate file, and that each
+  gate file is linked from the ledger.
+- A published height never moves earlier. (The v2.4 to v2.7 heights were moved earlier once, on 2026-07-03, before
+  this rule; see the note at the top of this file.)
+- Rule changes ride gates within `cairnx:v1`. A second domain is only for a deliberate restart of state: its records
+  are not events of `cairnx:v1` (§33.1), so it starts from no tokens, no balances and no names.

@@ -56,7 +56,8 @@ money-safety corpus and the race harness.
   `test/lint-config.test.ts` pins that biome.json enables exactly the four rules), `check:dashes-paths`,
   check-lockstep, the per-package tests, edge and security (their node-dependent parts skip), the live opt-in guard
   (`test/live-opt-in.test.ts`: an opted-in live suite fails when its node does not answer) and the root tests of the
-  release scripts, the workflow, the lint config and the dependency pins (`test/*.test.ts`).
+  release scripts, the citation check, the profile budget, the workflow, the lint config and the dependency pins
+  (`test/*.test.ts`).
 - The `conformance` job runs Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit
   findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it).
 - The `secrets` job runs gitleaks over the full history (release binary, sha256 checked).
