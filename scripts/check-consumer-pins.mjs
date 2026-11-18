@@ -6,7 +6,8 @@
 // consumer repos, so this best-effort check asserts they agree. Run from the csd-sdk repo with the sibling
 // repos checked out under the same parent (the dev/host layout). Skips any repo that isn't present.
 //
-//   node scripts/check-consumer-pins.mjs        # exit 1 if a consumer pins a different cairnx-core
+//   node scripts/check-consumer-pins.mjs        # exit 1 if a consumer pins a different cairnx-core, or a cairnx-api
+//                                               # published against another cairnx-core than the one it pins
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +29,7 @@ const CONSUMERS = [
   ["clarvis", "clarvis/package.json", "graded"], // second-source resolver; usually on its own host, so skipped here
 ];
 
-const { execSync } = await import("node:child_process");
+const { execSync, execFileSync } = await import("node:child_process");
 const CONSENSUS_SURFACE = ["packages/cairnx/src/resolve.ts", "packages/cairnx/src/resolve", "packages/cairnx/src/records.ts", "packages/cairnx/src/types.ts"];
 /** "" when ver..HEAD leaves the consensus surface untouched; a --stat summary when it drifted; null when unknowable. */
 function consensusDrift(ver) {
@@ -40,23 +41,60 @@ function consensusDrift(ver) {
   } catch { return null; }
 }
 
+// One core per consumer: cairnx-api declares cairnx-core as an exact peer, packed from `workspace:*` as the core version
+// of the commit it was released from, which its `cairnx-api-<ver>` tag names (docs/release.md). A consumer that pins
+// cairnx-api, in any dependency section, must pin that core; any other pin installs a second core or runs the API on a
+// core it was not built against. A version with no tag, or a tag whose cairnx-api manifest names another version,
+// fails closed.
+const API = "@inversealtruism/cairnx-api";
+const SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+/** The `version` of `path` at the cairnx-api-<ver> tag, or null. */
+const versionAtTag = (ver, path) => {
+  try {
+    const manifest = execFileSync("git", ["-C", SDK, "show", `cairnx-api-${ver}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return String(JSON.parse(manifest).version);
+  } catch { return null; }
+};
+/** The cairnx-core version cairnx-api `ver` was published against, or null when unknowable. */
+function coreOfApi(ver) {
+  if (!/^\d+\.\d+\.\d+$/.test(String(ver))) return null;
+  if (versionAtTag(ver, "packages/cairnx-api/package.json") !== ver) return null;
+  return versionAtTag(ver, "packages/cairnx/package.json");
+}
+
 console.log(`cairnx-core canonical version: ${canonical}`);
-let bad = 0, seen = 0, advis = 0;
+let seen = 0, advis = 0;
+const failed = new Set();
+const fail = (name, msg) => { console.error(msg); failed.add(name); };
+
+/** The core pin against the canonical version, by the consumer's tier. */
+function checkCorePin(name, dep, tier) {
+  if (dep === canonical) { console.log(`  ✓ ${name} pins cairnx-core ${dep}`); return; }
+  if (tier === "graded") {
+    const drift = consensusDrift(dep);
+    if (drift === "") { console.warn(`  ⚠ ${name} pins cairnx-core ${dep} != canonical ${canonical}: helpers-only lag (consensus surface identical); re-pin when convenient`); advis++; return; }
+    if (drift === null) return fail(name, `  ✗ ${name} pins cairnx-core ${dep}: UNKNOWN version (no cairnx-core-${dep} tag to grade against), treat as drift, re-pin`);
+    return fail(name, `  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical}: CONSENSUS-SURFACE DRIFT, a live replayer on it forks:\n${drift.split("\n").map((l) => "      " + l).join("\n")}`);
+  }
+  fail(name, `  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical}: re-pin + reinstall + (svc) restart`);
+}
+
+/** A consumer that pins cairnx-api, in `section`, pins the core that cairnx-api version was published against. */
+function checkOneCore(name, dep, api, section) {
+  const core = coreOfApi(api);
+  if (core === null) return fail(name, `  ✗ ${name} pins cairnx-api ${api} (${section}): UNKNOWN version (no cairnx-api-${api} tag naming that version to read its cairnx-core from), re-pin`);
+  if (core !== dep) return fail(name, `  ✗ ${name} pins cairnx-core ${dep} but cairnx-api ${api} (${section}) was published against cairnx-core ${core}: TWO CORES, pin cairnx-core ${core} or the cairnx-api built on ${dep}`);
+  console.log(`  ✓ ${name} pins cairnx-api ${api} (${section}) on its cairnx-core ${core}`);
+}
+
 for (const [name, rel, tier] of CONSUMERS) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) { console.log(`  • ${name}: not present, skip`); continue; }
   seen++;
-  const dep = JSON.parse(readFileSync(p, "utf8")).dependencies?.["@inversealtruism/cairnx-core"];
-  if (dep === canonical) { console.log(`  ✓ ${name} pins cairnx-core ${dep}`); continue; }
-  if (tier === "graded") {
-    const drift = consensusDrift(dep);
-    if (drift === "") { console.warn(`  ⚠ ${name} pins cairnx-core ${dep} != canonical ${canonical}: helpers-only lag (consensus surface identical); re-pin when convenient`); advis++; continue; }
-    if (drift === null) { console.error(`  ✗ ${name} pins cairnx-core ${dep}: UNKNOWN version (no cairnx-core-${dep} tag to grade against), treat as drift, re-pin`); bad++; continue; }
-    console.error(`  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical}: CONSENSUS-SURFACE DRIFT, a live replayer on it forks:\n${drift.split("\n").map((l) => "      " + l).join("\n")}`);
-    bad++; continue;
-  }
-  console.error(`  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical}: re-pin + reinstall + (svc) restart`); bad++;
+  const manifest = JSON.parse(readFileSync(p, "utf8"));
+  const dep = manifest.dependencies?.["@inversealtruism/cairnx-core"];
+  checkCorePin(name, dep, tier);
+  for (const section of SECTIONS) if (manifest[section]?.[API] !== undefined) checkOneCore(name, dep, manifest[section][API], section);
 }
-if (bad) { console.error(`\nconsumer-pin coherence FAILED (${bad}/${seen})`); process.exit(1); }
+if (failed.size) { console.error(`\nconsumer-pin coherence FAILED (${failed.size}/${seen})`); process.exit(1); }
 console.log(`\nconsumer-pin coherence OK (${seen} npm-pinning consumers${advis ? `, ${advis} advisory helpers-only lag` : ""}). Bundled consumers (cairn UI, wallet) are guarded by their own vendor-freshness gates.`);
-

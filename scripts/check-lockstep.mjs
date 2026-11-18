@@ -71,10 +71,13 @@ await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
   const { status, meta } = await registryVersion(p.name, p.version);
   if (status === 404) return; // not published yet: pnpm pins the current workspace versions at publish
   if (status !== 200) { errors.push(`${p.name}@${p.version}: npm registry returned HTTP ${status}`); return; }
-  for (const [dep, pinned] of Object.entries(meta.dependencies ?? {})) {
-    const current = workspaceVersion.get(dep);
-    if (current !== undefined && pinned !== current) {
-      errors.push(`${p.name}@${p.version} is published pinning ${dep}@${pinned}, workspace has ${current} (bump ${p.name})`);
+  // An exact peer on a workspace package (cairnx-core under cairnx-api and the replica) is a pin too.
+  for (const field of ["dependencies", "peerDependencies"]) {
+    for (const [dep, pinned] of Object.entries(meta[field] ?? {})) {
+      const current = workspaceVersion.get(dep);
+      if (current !== undefined && pinned !== current) {
+        errors.push(`${p.name}@${p.version} is published pinning ${dep}@${pinned}${field === "peerDependencies" ? " as a peer" : ""}, workspace has ${current} (bump ${p.name})`);
+      }
     }
   }
   if (typeof meta.dist?.tarball !== "string") { errors.push(`${p.name}@${p.version}: registry metadata names no tarball`); return; }

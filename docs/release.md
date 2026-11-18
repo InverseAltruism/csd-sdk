@@ -7,7 +7,9 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 ## What `scripts/check-lockstep.mjs` enforces
 
 - Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ever ships.
-- Published pins: every package version already on npm pins the current workspace versions of its deps.
+- Published pins: every package version already on npm pins the current workspace versions of its deps and of its
+  exact peers (cairnx-core under cairnx-api and the replica), so a core bump needs a bump of every package that peers
+  on it. `test/check-lockstep.test.ts` covers the peer case.
 - Published dist: for a version already on npm, the registry tarball (sha512-verified) holds byte-identical `dist/`
   files to this tree's build, so a source change needs a version bump. It detects that accident (one version, two code
   states), not a hostile tarball crafted to extract differently under npm and not a newly published version. The
@@ -75,12 +77,23 @@ the window script copies it into a userconfig in a private temporary directory, 
 from npm's output and removes the userconfig on exit. The maintainer deletes the file and revokes the token after the
 window.
 
+## Release tags
+
+After a window, the maintainer tags each published version at the release commit with an annotated tag named
+`<package name without the scope>-<version>`, such as `cairnx-core-0.2.7` or `cairnx-api-0.1.0`, and a message naming
+the window, as the existing tags do (`git tag -a cairnx-api-0.1.0 <commit> -m "cairnx-api-0.1.0: published <date> in the
+npm window from tarballs packed at this commit by scripts/npm-window.mjs"`), then pushes it.
+`scripts/check-consumer-pins.mjs` reads them: a `cairnx-core-<version>` tag to grade a lagging core pin, and a
+`cairnx-api-<version>` tag, whose cairnx-api manifest must name that version, for the cairnx-core version that
+cairnx-api was packed against. Without the tag every consumer's check reports that version as unknown and fails.
+
 ## Versioning
 
 Independent versioning (strict lockstep deliberately abandoned; do not re-litigate): bump the packages you changed and
 every workspace package that depends on them, because a published version keeps the exact pins it shipped with.
 Numbers need not match. A devDependency pin alone (csd-vectors is one for most packages) does not require a bump:
-consumers never install a package's devDependencies, and check-lockstep compares only `dependencies`.
+consumers never install a package's devDependencies, and check-lockstep compares `dependencies` and
+`peerDependencies` only.
 
 Consumers pin exact versions; a lockfile never resolves two different csd-codec copies (sign with one encoding, verify
 with another).
