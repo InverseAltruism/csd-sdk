@@ -8,7 +8,8 @@ v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 4
 v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 46 480 (§29) · v2.7 @ 46 520 (§30) ·
 v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay hash is pinned in `test/vectors/replay-hashes.json`).
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
-§33 is the rule that turns the chain's blocks into the events every version replays.
+§33 is the rule that turns the chain's blocks into the events every version replays; §34 defines the two hashes
+replicas compare.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -29,7 +30,8 @@ enforced by a **pure, deterministic resolver** that any party can run; independe
 replaying the same chain converge on identical state.
 
 This document is normative. The reference resolver (`src/resolve.ts`), the reference rule of §33
-(`src/events.ts`) and their conformance suites implement exactly what is written here.
+(`src/events.ts`), the hashes of §34 (`src/hashes.ts`) and their conformance suites implement exactly what is written
+here.
 
 ---
 
@@ -1318,7 +1320,9 @@ Each refuses (throws; `ValueError` in Python) input that is not a block of the c
 §33.4: positions that are not integers >= 0 in strictly increasing order, a transaction id repeated in a block, an
 app payload at position 0, a field outside its consensus type (hex of the wrong length, an integer out of range,
 text that is not well-formed), a member without an author, and a rule whose domain or activation height is not
-in the form above. Hex input may carry a `0x` prefix or none, with its digits in either case.
+in the form above. Hex input may carry a `0x` prefix or none, with its digits in either case. An integer field (a
+height, the activation height, a position, a score, a confidence) may come in any JSON spelling of its value (`1`,
+`1.0`, `1e0`); a boolean is not an integer.
 `eventOfTx` checks the height, position, transaction id and app type of any transaction; of one below A it reads
 nothing more, and it checks the remaining fields and the author only of an event. `blockMembers` checks the
 position, transaction id and app type of every listed transaction, the domain of every `Propose` and the proposal
@@ -1336,3 +1340,91 @@ event list as the bytes of §33.6.
 Feeds are not this rule's output. csd-indexer's chain-order feed of a domain's attestations includes attestations
 on proposals below A, which `resolve()` ignores; a node's events route can list every copy of a re-mined
 transaction, and §32's M4 drop removes only the copies at heights at or above V29.
+
+---
+
+# Comparing replicas (no gate)
+
+## 34. State hash and events hash
+
+Two replicas that replay the same chain compare two hashes at one block: the events hash commits what they read, the
+state hash what they derived. Neither enters a record or the canonical state, so defining them moves no state; both
+are fixed byte for byte here so that every replica computes them alike.
+
+### 34.1 The state hash
+
+The state hash of a resolver state is sha256 of the UTF-8 bytes of its canonical state (§5, §5.1, with the
+integer-key order of A2), written `0x` and 64 lowercase hex digits. Besides the seven keys of §5's surface, a
+`resolve()` result carries three diagnostic fields that the canonical state leaves out: `events` (the applied log),
+`recaptures` (§29) and `fclaims` (§31); the state hash of a complete result is the hash of its surface alone. At
+height h it is the state hash of `resolve()` over the events at heights <= h with tip h;
+`test/vectors/replay-hashes.json` pins that digest, without the `0x`.
+
+### 34.2 The events hash
+
+The events hash runs over the events of §33 block by block. For a block at height h that holds at least one event:
+
+```
+b     = sha256( h as 8 bytes big endian || row_1 || ... || row_n )
+row_i = position as 4 bytes big endian || transaction id (32 bytes) || author (20 bytes)
+```
+
+with one row per event of the block, in ascending position. The transaction id is a `Propose`'s `id` or an
+`Attest`'s `txid`, the author its `proposer` or `attester`. The order is position order, not the apply order of
+§33.3, which lists `Propose` events first; positions within a block are distinct. The running value e is 32 zero
+bytes before the first block at or above A, and each block that holds an event, in ascending height, replaces it:
+
+```
+e = sha256( e_prev || b )
+```
+
+A block without events leaves e as it is. The events hash at height h is e after the last block at or below h that
+holds an event, written `0x` and 64 lowercase hex digits.
+
+Height and position are in the hash because the resolver compares positions of records in different blocks (the
+name contests of §9 and §28). The transaction id commits every other field of the transaction, and the author, which
+it does not commit (§33.5), is in the row, so no JSON form, number form or text storage enters the hash.
+
+### 34.3 Comparing two replicas
+
+Two replicas compare (height, block hash, events hash, state hash) at one height. The comparison means something only
+at a height both treat as final: near the tip two honest replicas can hold different blocks for a while.
+
+- Another block hash at the height: the replicas follow different branches. Wait and compare again; this is a
+  branch difference, never a divergence.
+- The same block hash, another events hash: the replicas read different events from the same blocks, so their record
+  sources differ (a source left out or added a transaction, or recorded another author, height or position).
+- The same events hash, another state hash: the replicas read the same transactions at the same places with the same
+  authors and apply different rules to them: the resolver (§3 to §32), or the field forms of §33.4, which the events
+  hash does not see.
+
+The running value carries every earlier block, so the first block whose events differ lies after the last height at
+which the events hashes agree.
+
+### 34.4 Reference functions and vectors
+
+cairnx-core exports `stateHash`, `eventsHashStep`, `eventsHash` and `EVENTS_HASH_START` (the 32 zero bytes);
+`conformance/cairnx_ref.py` implements them independently.
+
+- `stateHash(state)` is the state hash of a `resolve()` result.
+- `eventsHashStep(prev, height, events)` is e after one block from the value `prev`, with `events` the block's
+  events in any order; for no events it is `prev`.
+- `eventsHash(events)` is e over a list from the start value. The list is in the order of §33.3 or in an order that
+  differs from it only within a block, so each height forms one run. Unlike `resolve()`, it does not sort across
+  heights: a list in another order is sorted by height first.
+
+Values, transaction ids and authors are `0x` and lowercase hex, the forms of §33.4; a height is an integer in
+[0, 2^53 - 1], a position an integer in [0, 2^32 - 1], either in any JSON spelling of its value (`100000.0` and `1e5`
+are 100000); a boolean is not an integer. Each function refuses (throws; `ValueError` in Python) a
+previous value, transaction id or author in another form (upper case or without `0x` included), a height or position
+out of its range, an event whose kind is neither `propose` nor `attest`, an event whose height is not the step's, and
+a position repeated in a block; `eventsHash` refuses a height below the one before it. `eventsHashStep` sees no
+earlier height, so a caller that steps block by block keeps the blocks in order. Neither reads any other field.
+
+`test/vectors/hashes.json` (`conformance/gen-hashes-vectors.mjs`) holds the vectors, `{format: 1, start, cases,
+corpus}`, one case per line. A case gives `blocks` (`{height, events}`, each event with the five fields above), may
+give `prev`, and gives `expect`: `steps`, `eventsHashStep` applied to the blocks in turn from `prev` or the start
+value, as the value or `{"error": i}` with i the first block refused; and, without `prev`, `list`, `eventsHash` over
+the blocks' events in turn, as the value or `"error"`. `corpus` gives both hashes over
+`test/vectors/replay-corpus.json` at each height of `replay-hashes.json`, the events at heights <= h in a stable sort
+by height.

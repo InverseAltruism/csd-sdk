@@ -37,7 +37,16 @@ this directory, only the JS implementation existed, so the contract was asserted
   file after checking each case's hand-written facts; `events-run.mjs` is the case runner both share. It also runs
   the recorded blocks of `packages/cairnx/test/fixtures/events-blocks.json` through both and requires the events to
   be the pinned replay corpus sorted into the order of section 33.3 (height, then Proposes by position, then Attests
-  by position), as canonicalJson bytes of the whole list.
+  by position), as canonicalJson bytes of the whole list. Cases sent as literal JSON text check that an integer in
+  another spelling (`100000.0`, `1e5`) reads as the integer and a fraction or a boolean is refused, since
+  `JSON.stringify` erases those spellings from the vector file.
+- **`hashes-crosslang.mjs`:** the state hash and the events hash (CONVENTION section 34): every case of
+  `packages/cairnx/test/vectors/hashes.json` and both hashes over the replay corpus at every pinned height, through
+  the JS functions and `cairnx_ref.py`'s `events_hash_step`, `events_hash` and `state_hash`. `gen-hashes-vectors.mjs`
+  writes the file after checking its facts (three values rebuilt byte by byte, the corpus state hashes equal to
+  `replay-hashes.json`); `hashes-run.mjs` is the runner both share. It also hashes complete `resolve()` results
+  (diagnostic fields included) at three corpus heights and for the empty state, and runs literal JSON cases as the
+  events job does.
 
 Block scripts (read a node, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package script runs
 them, `test/live-opt-in.test.ts` that each refuses by name with no node named and fails by name when the node does

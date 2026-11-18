@@ -83,6 +83,12 @@ the same state either way. Section 32's "there is no straddle case" is corrected
 blocks, and `resolve()` fed both copies drops the later one only when both are at or above V29; the rule keeps the
 first.
 
+Section 34 (Plan 91 hashes) adds two hashes outside canonical state, so no state moves: `stateHash`, sha256 of the
+UTF-8 bytes of `canonicalState` (the digest `replay-hashes.json` pins, now written with `0x`), and `eventsHash`, a
+running sha256 from 32 zero bytes over each event-holding block: its height (8 bytes big endian), then per event in
+ascending position the position (4 bytes big endian), the transaction id (32 bytes) and the author (20 bytes).
+`test/vectors/hashes.json` pins both, over synthetic cases and over the replay corpus at its 21 pinned heights.
+
 ## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; unreleased; no consensus-surface change) - records, tests and docs
 
 Client-side and docs only: `resolve()`, canonical state and every `verifyFillSpv` verdict are unchanged (the

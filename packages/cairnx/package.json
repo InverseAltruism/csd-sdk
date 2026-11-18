@@ -47,7 +47,8 @@
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
   "dependencies": {
-    "@inversealtruism/csd-codec": "workspace:*"
+    "@inversealtruism/csd-codec": "workspace:*",
+    "@noble/hashes": "1.8.0"
   },
   "license": "MIT",
   "sideEffects": false,

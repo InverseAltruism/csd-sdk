@@ -23,6 +23,15 @@
 - A reader that switches to `eventOfTx` sees two forms change, neither of which moves state: an expiry above 2^53 - 1
   becomes 2^53 (resolve() refuses both alike for offers, bids and fclaims, and reads it for nothing else), and a `uri`
   holding U+0000 has it written as U+0001 (neither form is JSON, so neither is a record).
+- CONVENTION.md section 34, "State hash and events hash": the two hashes replicas compare at one block, and what a
+  difference in each means. New root exports `stateHash` (sha256 of `canonicalState`'s UTF-8 bytes, the digest
+  `replay-hashes.json` already pins), `eventsHashStep`, `eventsHash` and `EVENTS_HASH_START`: a running sha256 over
+  each event-holding block's height and its events' positions, transaction ids and authors. Vectors in
+  `test/vectors/hashes.json` (43 cases, and both hashes over the replay corpus at its 21 pinned heights,
+  `conformance/gen-hashes-vectors.mjs`), checked by `test/hashes.test.ts` and against the Python reference by
+  `conformance/hashes-crosslang.mjs`; the replay-hash test and `replay-corpus-crosslang.mjs` call `stateHash`.
+- cairnx-core now declares `@noble/hashes` 1.8.0, the release csd-codec already pins, for its sha256 (csd-codec
+  exports none): no new package enters an install.
 
 ## 0.2.4
 

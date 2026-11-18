@@ -281,14 +281,14 @@ v2.4–v2.7 were re-pinned 2026-07-03 from their originally published heights (4
 ### Package layout
 
 `src/resolve.ts` + `src/resolve/` (the ledger: the replay loop and its per-record handlers) · `src/events.ts` (the rule
-from a block to events, CONVENTION §33) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
+from a block to events, CONVENTION §33) · `src/hashes.ts` (the state and events hashes, §34) · `src/records.ts` (the parse/validate gate) · `src/types.ts` (constants +
 height-gated client selectors) · `src/client.ts` (the claim-burial depth a payer waits for, sized against a minority miner) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
 `primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
 `@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
 order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
-(normative spec, §1–§33) · `test/vectors/` (portable conformance corpus).
+(normative spec, §1–§34) · `test/vectors/` (portable conformance corpus).
 
 ### Use it
 
@@ -324,12 +324,13 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 
 ### Write a conformant resolver in another language
 
-1. Implement `CONVENTION.md` §1–§33 (the events of a block, apply order, every record type, the `V*_HEIGHT`
+1. Implement `CONVENTION.md` §1–§34 (the events of a block, apply order, every record type, the `V*_HEIGHT`
    activations (using the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data
    surface only).
 2. Reproduce `test/vectors/events.json` (§33.7). Replay `test/vectors/cases.json`, `cases-v29.json` and
    `cases-rules.json`: your canonical state must equal `expectedState` **byte-for-byte**.
-3. Replay the live chain and compare `sha256(canonicalState)` against `test/vectors/replay-hashes.json`.
+3. Replay the live chain and compare the state hash (§34.1) against `test/vectors/replay-hashes.json`, and reproduce
+   `test/vectors/hashes.json` (§34.4).
 
 ---
 

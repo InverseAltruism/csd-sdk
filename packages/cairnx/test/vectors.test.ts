@@ -1,7 +1,7 @@
 // Conformance: replay every language-neutral vector and require byte-identical canonical state.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { canonicalState, resolve } from "../src/index.js";
+import { canonicalState, resolve, stateHash } from "../src/index.js";
 
 const { format, cases } = JSON.parse(readFileSync(new URL("./vectors/cases.json", import.meta.url), "utf8"));
 assert.equal(format, 2);
@@ -23,13 +23,12 @@ console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length 
 
 // The replay-hash artifact is LOAD-BEARING, not mirror-only. replay-corpus.json is the real on-chain
 // event sequence truncated at a finalized height (capturedAt/tipHeight in the file); recompute
-// sha256(canonicalState(resolve(corpus<=H, H))) for EVERY pinned height in replay-hashes.json and
+// stateHash(resolve(corpus<=H, H)) (CONVENTION §34.1) for EVERY pinned height in replay-hashes.json and
 // assert byte-identity. Reds on ANY consensus drift with no indexer needed. The tip-of-record entry
 // asserts strictly too: the corpus is frozen, so it is exactly reproducible here (only the live
 // cairnx generator treats it as aging out). The coverage floors below keep the corpus from being
 // swapped for one that cannot see the V28 fclaim lane or the V29 rules.
 {
-  const { createHash } = await import("node:crypto");
   const corpus = JSON.parse(readFileSync(new URL("./vectors/replay-corpus.json", import.meta.url), "utf8"));
   const pinned = JSON.parse(readFileSync(new URL("./vectors/replay-hashes.json", import.meta.url), "utf8"));
   assert.equal(corpus.format, 1);
@@ -51,12 +50,11 @@ console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length 
     assert.equal(youngest, 46_062, "youngest name effective height at the V27 height");
     assert.ok(V27_HEIGHT - youngest > COMMIT_MAX_BLOCKS, "every name at V27 had out-aged the pre-V27 sale embargo");
   }
-  const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
   let replayed = 0;
   for (const [H, want] of Object.entries(pinned.hashes)) {
     const h = Number(H);
-    const got = sha(canonicalState(resolve(corpus.events.filter((e: { height: number }) => e.height <= h), h)));
-    assert.equal(got, want, `replay hash @${H} diverged from the pinned baseline`);
+    const got = stateHash(resolve(corpus.events.filter((e: { height: number }) => e.height <= h), h));
+    assert.equal(got, `0x${want}`, `replay hash @${H} diverged from the pinned baseline`);
     replayed++;
   }
   assert.ok(replayed >= 21, `expected the full pin set, got ${replayed}`);

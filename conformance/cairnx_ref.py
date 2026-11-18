@@ -1053,10 +1053,13 @@ def _js_stringify(v, depth=0):
     keys = _js_obj_key_order(list(v.keys()))
     return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + _js_stringify(v[k], depth + 1) for k in keys) + "}"
 
+# §5 and §34.1: a resolve() result's diagnostic fields, which the canonical state leaves out.
+DIAGNOSTIC_FIELDS = ("events", "recaptures", "fclaims")
+
 def canonical_state(state):
     # canonicalState = JS JSON.stringify(sortKeys(data)); replicate the JS object-key enumeration
     # order (integer-index keys first), which differs from the codec's pure code-unit canonicalJson.
-    return _js_stringify(state)
+    return _js_stringify({k: v for k, v in state.items() if k not in DIAGNOSTIC_FIELDS})
 
 def record_keys_ok(rec):
     """Backward-compat for the primitive crosscheck: the onlyKeys gate (now subsumed by parse_record)."""
@@ -1089,19 +1092,32 @@ def _hex_field(v, nbytes, what):
     if len(h) != 2 * nbytes or not HEX_CHARS.fullmatch(h): raise ValueError(what + " is not %d-byte hex" % nbytes)
     return "0x" + h.lower()
 
-def _index(v):
-    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= SAFE_MAX
+def _integral(v, top):
+    """An integer in [0, top] as an int, in any JSON spelling of it (100000, 100000.0, 1e5 are one number in JSON's
+    data model, as JavaScript reads them); None otherwise. A bool is no number."""
+    if isinstance(v, float) and v.is_integer(): v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= top else None
 
+def _index(v, what):
+    n = _integral(v, SAFE_MAX)
+    if n is None: raise ValueError(what + " is not an integer in [0, 2^53 - 1]")
+    return n
+
+def _u32(v, what):
+    n = _integral(v, 0xFFFFFFFF)
+    if n is None: raise ValueError(what + " is not a u32")
+    return n
+
+# The u64 fields arrive as decimal strings in the vectors (§33.7), decoded to ints by _vector_tx.
 def _uint(v, limit, what):
     if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v >= limit: raise ValueError(what + " out of range")
     return v
 
 def _rule_of(rule):
-    domain, a = rule.get("domain"), rule.get("activationHeight")
+    domain = rule.get("domain")
     if not isinstance(domain, str) or domain == "" or not _is_wellformed(domain) or "\x00" in domain or "\x01" in domain:
         raise ValueError("the domain must be non-empty well-formed text without U+0000 or U+0001")
-    if not _index(a): raise ValueError("the activation height must be an integer >= 0")
-    return domain, a
+    return domain, _index(rule.get("activationHeight"), "the activation height")
 
 def _payload_kind(app):
     # None for no payload, else "propose" or "attest"
@@ -1114,14 +1130,13 @@ def _domain(app):
 
 def event_of_tx(t, height, author, rule):
     domain, activation = _rule_of(rule)
-    if not _index(height): raise ValueError("height")
-    if not _index(t.get("pos")): raise ValueError("pos")
+    height, pos = _index(height, "height"), _index(t.get("pos"), "pos")
     txid = _hex_field(t.get("txid"), 32, "txid")
     app = t.get("app")
     kind = _payload_kind(app)
     if kind is None: return None
     if height < activation: return None
-    if t["pos"] == 0: raise ValueError("an app payload at position 0, the coinbase")
+    if pos == 0: raise ValueError("an app payload at position 0, the coinbase")
     if kind == "propose" and _domain(app) != domain: return None
     if not isinstance(t.get("outputs"), list): raise ValueError("outputs")
     paid = {}
@@ -1137,22 +1152,23 @@ def event_of_tx(t, height, author, rule):
         if expires > SAFE_MAX: expires = 1 << 53
         return {"kind": "propose", "id": txid, "proposer": who, "uri": uri.replace("\x00", "\x01"),
                 "payloadHash": _hex_field(app.get("payloadHash"), 32, "payloadHash"), "expiresEpoch": expires,
-                "height": height, "pos": t["pos"], "paidTo": paid}
+                "height": height, "pos": pos, "paidTo": paid}
     return {"kind": "attest", "txid": txid, "proposalId": _hex_field(app.get("proposalId"), 32, "proposalId"),
-            "attester": who, "score": _uint(app.get("score"), 1 << 32, "score"),
-            "confidence": _uint(app.get("confidence"), 1 << 32, "confidence"), "height": height, "pos": t["pos"], "paidTo": paid}
+            "attester": who, "score": _u32(app.get("score"), "score"),
+            "confidence": _u32(app.get("confidence"), "confidence"), "height": height, "pos": pos, "paidTo": paid}
 
 def block_members(height, txs, event_ids, propose_ids, rule):
-    """The members (kind, tx) of one block in position order. event_ids and propose_ids are the reader's sets."""
+    """The members (kind, tx) of one block in position order, each tx with its position as an int. event_ids and
+    propose_ids are the reader's sets."""
     domain, activation = _rule_of(rule)
-    if not _index(height): raise ValueError("height")
+    height = _index(height, "height")
     if height < activation: return []
     if not isinstance(txs, list): raise ValueError("txs")
     listed, block_proposals, candidates, last = set(), set(), [], -1
     for t in txs:
-        pos = t.get("pos")
-        if not _index(pos) or pos <= last: raise ValueError("positions not strictly increasing")
-        last = pos
+        pos = _index(t.get("pos"), "pos")
+        if pos <= last: raise ValueError("positions not strictly increasing")
+        last, t = pos, dict(t, pos=pos)
         txid = _hex_field(t.get("txid"), 32, "txid")
         if txid in listed: raise ValueError("a txid twice in one block")
         listed.add(txid)
@@ -1215,6 +1231,74 @@ def _events_job(job):
         out_blocks.append(canonical_json(r if r is not None else {"members": members, "events": events}))
     return {"tx": out_tx, "blocks": out_blocks}
 
+# ── CONVENTION §34: the state hash and the events hash, written from the section text ───────────────────────────────
+# Hex crosses the boundary as 0x and lowercase only (the forms of §33.4); every refusal is a ValueError.
+EVENTS_HASH_START = "0x" + "00" * 32
+_LOWER_HEX = {32: re.compile(r"0x[0-9a-f]{64}"), 20: re.compile(r"0x[0-9a-f]{40}")}
+
+def state_hash(state):
+    return "0x" + hashlib.sha256(canonical_state(state).encode("utf-8")).hexdigest()
+
+def _raw(v, nbytes, what):
+    if not isinstance(v, str) or not _LOWER_HEX[nbytes].fullmatch(v): raise ValueError(what + " is not 0x lowercase hex")
+    return bytes.fromhex(v[2:])
+
+def events_hash_step(prev, height, events):
+    """e after one block: sha256(e_prev || b), b over the block's events in ascending position; no events: e_prev."""
+    e_prev = _raw(prev, 32, "previous value")
+    height = _integral(height, SAFE_MAX)
+    if height is None: raise ValueError("height")
+    if not isinstance(events, list): raise ValueError("events")
+    if not events: return prev
+    rows = {}
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("kind") not in ("propose", "attest"): raise ValueError("kind")
+        if _integral(ev.get("height"), SAFE_MAX) != height: raise ValueError("an event of another height")
+        pos = _integral(ev.get("pos"), 0xFFFFFFFF)
+        if pos is None: raise ValueError("position")
+        if pos in rows: raise ValueError("a position twice in one block")
+        txid, author = ("id", "proposer") if ev["kind"] == "propose" else ("txid", "attester")
+        rows[pos] = _raw(ev.get(txid), 32, "transaction id") + _raw(ev.get(author), 20, "author")
+    b = hashlib.sha256(height.to_bytes(8, "big") + b"".join(p.to_bytes(4, "big") + rows[p] for p in sorted(rows))).digest()
+    return "0x" + hashlib.sha256(e_prev + b).hexdigest()
+
+def events_hash(events):
+    """e over a list whose heights never fall: one step per run of one height, from the start value."""
+    if not isinstance(events, list): raise ValueError("events")
+    runs = []
+    for ev in events:
+        h = _integral(ev.get("height"), SAFE_MAX) if isinstance(ev, dict) else None
+        if h is None: raise ValueError("height")
+        if runs and runs[-1][0] == h: runs[-1][1].append(ev)
+        else: runs.append((h, [ev]))
+    value, below = EVENTS_HASH_START, -1
+    for h, block in runs:
+        if h < below: raise ValueError("a height below the one before it")
+        value, below = events_hash_step(value, h, block), h
+    return value
+
+def _hashes_job(job):
+    cases = []
+    for c in job["cases"]:
+        value = c["prev"] if "prev" in c else EVENTS_HASH_START
+        for i, b in enumerate(c["blocks"]):
+            try: value = events_hash_step(value, b["height"], b["events"])
+            except ValueError:
+                value = {"error": i}
+                break
+        r = {"steps": value}
+        if "prev" not in c:
+            try: r["list"] = events_hash([ev for b in c["blocks"] for ev in b["events"]])
+            except ValueError: r["list"] = "error"
+        cases.append(canonical_json(r))
+    events = job["corpus"]["events"] if "corpus" in job else []
+    by_height = sorted(events, key=lambda ev: ev["height"])  # stable
+    corpus = {}
+    for h in (job["corpus"]["heights"] if "corpus" in job else []):
+        corpus[str(h)] = {"eventsHash": events_hash([ev for ev in by_height if ev["height"] <= h]),
+                          "stateHash": state_hash(resolve([ev for ev in events if ev["height"] <= h], h))}
+    return {"start": EVENTS_HASH_START, "cases": cases, "corpus": corpus}
+
 # ── CLI: read a JSON job from stdin, emit results for crosscheck.mjs to diff ──
 def main():
     job = json.load(sys.stdin)
@@ -1263,6 +1347,12 @@ def main():
     if "events" in job:
         # CONVENTION §33 over packages/cairnx/test/vectors/events.json: each case's result as canonical JSON bytes.
         out["events"] = _events_job(job["events"])
+    if "hashes" in job:
+        # CONVENTION §34 over packages/cairnx/test/vectors/hashes.json and the committed corpus.
+        out["hashes"] = _hashes_job(job["hashes"])
+    if "stateHashes" in job:
+        # §34.1 over complete resolver states, diagnostic fields included.
+        out["stateHashes"] = [state_hash(s) for s in job["stateHashes"]]
     json.dump(out, sys.stdout)
 
 if __name__ == "__main__":
