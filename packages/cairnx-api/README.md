@@ -62,6 +62,38 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   `of(row)`. A cursor is only a position: a cursor of another list or snapshot that fits the grammar is valid
   (`44682:2` is an `events` cursor and a `newest` names cursor alike).
 
+## Handlers (`./handlers`)
+
+For a host that serves the API (the CairnX service; later a replica): the v1 reads over a prepared view. No I/O, no
+clock, no randomness: equal inputs give byte-equal answers.
+
+- `prepareView(state, { height, hash, input, core })`: once per published state, builds every served list's rows in
+  each order, the key indexes and the counts, and `at` with its `rev`. `height` is the state's `tipHeight`, `hash`
+  that block's hash, `input` the host's identity of its event list (it must change whenever the list does: the
+  service's replay fingerprint, a replica's events hash), `core` the cairnx-core version the process loaded. `rev` is
+  the first 16 hex digits of sha256 over `input`, `core` and this package's version, joined by newlines. The state is
+  read during the call only and never written; the view shares no object with it and is frozen at every depth.
+  Throws a `TypeError` on a malformed source (a height that is not the state's tip, a malformed hash, an empty input,
+  a newline in `input`, a `core` that is not a version).
+- `answer(held, route, query)`: `held` is the views the host holds, newest first; `query` is the raw query string or
+  `URL.searchParams`, never a parsed record (it merges a repeated parameter that must be refused). It returns
+  `{ status, body }`, a fresh plain object that shares nothing with the view:
+  - a route this release does not serve: 404 `NOT_FOUND`; a refused parameter: the parser's 400; no view held: 503
+    `NOT_READY`;
+  - `at` absent: the newest view; else the newest view with that height and hash (and that `rev` when given), or 409
+    `SNAPSHOT_NOT_HELD` with the newest `at` in the body;
+  - a page: the filtered rows in the list's order after `after` (sought by comparing keys, so a cursor whose row is
+    gone still finds its place), `limit` of them, `next` from a one-row lookahead (null on the last page, full or
+    not), and `total`, the count of rows matching the filters;
+  - `keys`: the rows that exist, in the list's default order, a key with no row absent, `total` their count.
+
+This release serves `names`, `bids` and `tokens`; the other three answer `NOT_FOUND` until the release that adds
+them. A page stays bounded: every string in a row is fixed-width (an address, a hash, a decimal) or was carried by one
+record of at most `MAX_RECORD_BYTES` (a name, a ticker, a token's name or metadata hash, a whole profile), so a row
+is at most about 1.5 KB and a page of 200 far under a 1 MiB response cap. Cost per request: an unfiltered page or a
+`keys` read is a binary search and a copy of at most `limit` rows; a filtered page scans the list until the page
+fills, and with an `owner` filter counts every row for `total`.
+
 ## Parameters
 
 Every route takes `at`, `keys`, `after` and `limit`.

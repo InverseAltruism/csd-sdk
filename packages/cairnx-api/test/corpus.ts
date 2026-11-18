@@ -1,6 +1,6 @@
 // cairnx-core's committed replay corpus (1,133 events to height 117,000), found through cairnx-core's resolved entry in
 // the workspace, resolved once, with the v1 rows of each list derived as the row types define them (the unbounded
-// arrays replaced by their counts). The handlers that build rows for answers are not in this package yet.
+// arrays replaced by their counts): the tests' own derivation, independent of the handlers' builders.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -13,6 +13,9 @@ const corpus = JSON.parse(readFileSync(join(core, "test/vectors/replay-corpus.js
 /** The state, through a JSON round trip: what a client of an answer can see (an undefined field is absent). */
 export const state = JSON.parse(JSON.stringify(resolve(corpus.events, corpus.tipHeight))) as CairnXState;
 export const tipHeight = corpus.tipHeight;
+/** The state at height `h`: the records up to it, resolved with `h` as the tip, through a JSON round trip. */
+export const stateAt = (h: number): CairnXState =>
+  JSON.parse(JSON.stringify(resolve(corpus.events.filter((e) => e.height <= h), h))) as CairnXState;
 /** The corpus records themselves, the input the state was resolved from. */
 export const events: readonly ChainEvent[] = corpus.events;
 

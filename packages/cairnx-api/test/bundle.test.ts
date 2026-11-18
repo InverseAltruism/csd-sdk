@@ -1,4 +1,4 @@
-// What a page bundles from `.`: each built entry (ESM and CommonJS) is bundled by esbuild for the browser platform (the
+// What a page bundles from `.` and `./handlers`: each built entry (ESM and CommonJS) is bundled by esbuild for the browser platform (the
 // esbuild tsup carries), with its imports resolved under the browser condition. A Node built-in fails the bundle; the
 // output is then scanned for Buffer, require and the process global. Two controls show the checks see what they ban.
 // Run after the build.
@@ -22,7 +22,7 @@ async function bundle(entry: { file: string } | { contents: string }, format = "
   }
 }
 
-for (const file of ["index.js", "index.cjs"]) {
+for (const file of ["index.js", "index.cjs", "handlers/index.js", "handlers/index.cjs"]) {
   const b = await bundle({ file }), hit = "text" in b ? BANNED.exec(b.text) : null;
   ok(`${file} bundles for the browser with esbuild ${esbuild.version} (${"text" in b ? b.text.length : 0} bytes) and names no Buffer, require, process or node: module`,
     "text" in b && hit === null, "error" in b ? b.error : String(hit?.[0]));
