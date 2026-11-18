@@ -9,6 +9,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./browser": { "types": "./dist/browser.d.ts", "default": "./dist/browser.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
     "./testing": { "types": "./dist/testing.d.ts", "default": "./dist/testing.js" }
   },
   "files": [
@@ -18,10 +20,17 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/testing.ts --format esm --dts --clean",
-    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts && tsx test/steps.test.ts && tsx test/loop.test.ts",
+    "build": "tsup src/index.ts src/browser.ts src/server.ts src/testing.ts --format esm --dts --clean",
+    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts && tsx test/steps.test.ts && tsx test/loop.test.ts && tsx test/node-blocks.test.ts && tsx test/node-fork.test.ts && tsx test/node-address.test.ts && tsx test/bundle.test.ts",
+    "test:live": "tsx test/node-blocks.live.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "dependencies": {
+    "@inversealtruism/csd-client": "workspace:*",
+    "@inversealtruism/csd-codec": "workspace:*",
+    "@inversealtruism/csd-crypto": "workspace:*",
+    "@inversealtruism/csd-light": "workspace:*"
   },
   "peerDependencies": { "@inversealtruism/cairnx-core": "workspace:*" },
   "devDependencies": { "@inversealtruism/cairnx-core": "workspace:*" },
