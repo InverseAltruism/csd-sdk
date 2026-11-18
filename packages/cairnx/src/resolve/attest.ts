@@ -227,7 +227,7 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): vo
 }
 
 function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {
-  const { applied, refused, liveHoldCount } = c;
+  const { applied, refused, store } = c;
   // v2.8 (§31): at V28+ the legacy claim attest is REJECTED (claims are fclaim proposals now) so a stale
   // wallet's claim is diagnosable. A pre-V28 live hold still honors legacy fills until it lapses (the
   // sunset); this only stops NEW legacy claims. No height literal is needed in the fill predicate.
@@ -251,12 +251,12 @@ function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: stri
   }
   // per-address concurrent-claim cap (anti-squat): count offers this attester still HOLDS (window+grace),
   // so the V20 grace can't expand an address's effective concurrent reach past the cap.
-  // liveHoldCount (context.ts) is the fclaim ladder's counter. Its v2.9 open-holds-only clause is INERT here: a
+  // liveHoldCount (store.ts) is the fclaim ladder's counter. Its v2.9 open-holds-only clause is INERT here: a
   // SCORE_CLAIM at ev.height >= V28 is already rejected above (the §31 sunset) and V29 > V28, so this path
   // reads the pre-V29 count (a future un-sunset of legacy claims would inherit the fix, not the bug).
-  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { refused(ev, ev.txid, "claim", "CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  if (store.liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { refused(ev, ev.txid, "claim", "CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
   // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
   // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
-  o.claimedBy = who; o.claimUntilHeight = ev.height + claimWindowAt(ev.height);
+  store.setClaim(o, who, ev.height + claimWindowAt(ev.height));
   applied(ev, ev.txid, "claim", "CLAIM_GRANTED");
 }

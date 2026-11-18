@@ -3,7 +3,7 @@
 // helpers that mutate them. Internal to cairnx-core; resolve.ts owns the loop and the output.
 import type { AppliedCode, ReasonCode, RefusalCode } from "../codes.js";
 import {
-  AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, claimGraceOf, epochOf, isNameGive,
+  AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, claimGraceOf, epochOf, isNameGive,
   type AppliedEvent, type ChainEvent, type OfferState, type TokenState,
 } from "../types.js";
 import type { OfferRec, Store } from "./store.js";
@@ -95,25 +95,11 @@ export function createContext(store: Store) {
   // void every open offer that lists `name` (a displacement/reclaim/reservation-takeover cancels the
   // wrongful holder's listings; releaseGive keeps lock-handling uniform with the cancel/expiry paths).
   // Extracted verbatim from the four inline copies at the displacement/reservation/recapture sites.
+  // v2.8: a name-offer carrying a live fclaim hold is FROZEN against a displacement/recapture void (the
+  // lease-lapse-mid-hold safety: a lapsed name recaptured during a hold must not strand the buyer's
+  // L0-minable fill). Same predicate as Correction 2, keyed on the voiding event's height (store.ts, voidTargets).
   const voidOpenNameOffers = (name: string, height: number) => {
-    for (const o of offers.values()) if (o.status === "open" && isNameGive(o.give) && o.give.name === name) {
-      // v2.8: a name-offer carrying a live fclaim hold is FROZEN against a displacement/recapture void (the
-      // lease-lapse-mid-hold safety: a lapsed name recaptured during a hold must not strand the buyer's
-      // L0-minable fill). Same predicate as Correction 2, keyed on the voiding event's height.
-      if (height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, height)) continue;
-      releaseGive(o); setOfferStatus(o, "cancelled");
-    }
-  };
-  // v2.9 (§32, V29 / REBIND M5): the per-address concurrent-hold cap counts an address's LIVE holds (window +
-  // grace). A FILLED offer keeps its claimedBy/claimUntilHeight/claimTxid (never cleared, §31 last-write-wins
-  // invariant), so pre-V29 a completed fclaim buy still counts against the cap until its hold window lapses -> 3
-  // completed buys deny a 4th honest claim. At the counting event's height >= V29 only OPEN holds count (a filled
-  // offer has SETTLED; its residual claim fields are a record, not a live reservation). GATED on the event height so
-  // pre-V29 is byte-identical; this GRANTS a claim a stale replayer denies (a RELAXATION), hence the adoption gate.
-  // One counter for both claim paths: the fclaim grant ladder and the legacy SCORE_CLAIM.
-  const liveHoldCount = (who: string, height: number): number => {
-    let liveN = 0; for (const x of offers.values()) if (x.claimedBy === who && claimHeld(x, height) && (height < V29_HEIGHT || x.status === "open")) liveN++;
-    return liveN;
+    for (const o of store.voidTargets(name, height)) { releaseGive(o); setOfferStatus(o, "cancelled"); }
   };
   // release a token offer's locked give-amount in FULL to the buyer, consuming the lock so it can never
   // release twice. (The partial-fill path releases a sub-amount and keeps the lock — it does NOT use this.)
@@ -131,7 +117,7 @@ export function createContext(store: Store) {
 
   return {
     tokens, balances, names, commits, recaptures, offers, offerLock, bids, fclaims, log, store,
-    setOfferStatus, setBidStatus, putName, bal, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
+    setOfferStatus, setBidStatus, putName, bal, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, releaseGiveLock,
     feesPaid: 0n,
     // v1.4 fill-before-cancel: at V14_HEIGHT+ a cancel/ocancel's EFFECT is deferred to the block
     // boundary, so any same-block fill wins — a seller can no longer snipe a buyer's in-flight

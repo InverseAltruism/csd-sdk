@@ -1,6 +1,6 @@
 // The buyer's other fclaim holds at the grant of one fclaim: the `myLiveHoldsAtGrant` count verifyFillSpv takes
 // for the MAX_ACTIVE_CLAIMS clause, which its lane-scoped replay cannot see. Not consensus: resolve() reads none
-// of it. The resolver counts at the grant (liveHoldCount in src/resolve/context.ts), over holds granted before it
+// of it. The resolver counts at the grant (liveHoldCount in src/resolve/store.ts), over holds granted before it
 // in apply order, so an fclaim mined after the target, in a later block or later in the same block, is never part
 // of the count.
 import { parseRecord } from "./records.js";

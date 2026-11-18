@@ -86,19 +86,13 @@ export function applyBid(c: ResolveCtx, ev: ProposeEvent, rec: BidRecord, who: s
 }
 
 export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAllRecord, who: string): void {
-  const { offers, applied, refused, releaseGive, setOfferStatus } = c;
+  const { applied, refused, releaseGive, setOfferStatus, store } = c;
   const v12 = ev.height >= V12_HEIGHT;
   if (!v12) { refused(ev, ev.id, "ocancel", "GATE_NOT_ACTIVE", "ocancel needs v1.2"); return; }
   // cancel all the proposer's open offers anchored strictly earlier in apply order
-  // (snapshotting at apply-time is correct: higher-pos same-block offers aren't applied yet)
-  const targets: OfferRec[] = [];
-  for (const o of offers.values()) {
-    if (o.status !== "open" || o.seller !== who) continue;
-    if (o.taker !== undefined && o.height >= V28_HEIGHT) continue; // v2.8 Lane B: a taker-bound V28+ offer is a firm quote (uncancellable)
-    if (rec.ticker !== undefined && !(!isNameGive(o.give) && o.give.ticker === rec.ticker)) continue;
-    if (rec.name !== undefined && !(isNameGive(o.give) && o.give.name === rec.name)) continue;
-    targets.push(o);
-  }
+  // (snapshotting at apply-time is correct: higher-pos same-block offers aren't applied yet), filtered to the give
+  // asset; a taker-bound V28+ offer is a firm quote and is never a target (v2.8 Lane B; store.ts, ocancelTargets)
+  const targets: OfferRec[] = store.ocancelTargets(who, rec.ticker, rec.name);
   if (ev.height >= V14_HEIGHT) {
     // v1.4: defer the effect to the block boundary — same-block fills win (anti-snipe)
     c.pendingCancels.push(() => {
@@ -118,7 +112,7 @@ export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAl
 }
 
 export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, who: string): void {
-  const { offers, fclaims, applied, refused, liveHoldCount } = c;
+  const { offers, fclaims, applied, refused, store } = c;
   // ── v2.8 (§31) open-lane claim GRANT: reserve an OPEN, CSD-priced, untaken offer with a short-expiry
   // Propose. The fill attests THIS txid, so L0's attest-existence + attest-after-expiry rules enforce the
   // hold deadline. On grant, claimedBy/claimUntilHeight/claimTxid are set LAST-WRITE-WINS (a later grant on
@@ -152,9 +146,9 @@ export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, 
   if (claimHeld(target, ev.height)) { deny("CLAIM_HOLD_LIVE", "offer already claimed (hold live)"); return; }
   // cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
   if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("CLAIM_COOLDOWN", "claim cooldown (you just held this offer)"); return; }
-  // per-address concurrent-hold cap (liveHoldCount, context.ts; v2.9 counts open holds only from V29).
-  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { deny("CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
-  target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
+  // per-address concurrent-hold cap (liveHoldCount, store.ts; v2.9 counts open holds only from V29).
+  if (store.liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { deny("CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  store.setClaim(target, who, (E + 1) * EPOCH_LEN, ev.id);
   fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
   applied(ev, ev.id, "fclaim", "CLAIM_GRANTED");
 }

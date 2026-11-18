@@ -3,12 +3,12 @@
 // match, and a read evaluates the walk's own predicate over the index's candidates, so a read equals the walk as long
 // as every write to an indexed field goes through here; the types below make those fields readonly everywhere else.
 // Internal to cairnx-core: nothing here reaches the resolved state or the package exports.
-import { V21_HEIGHT, V22_HEIGHT, epochOf, type BidState, type OfferState } from "../types.js";
-import { effExpiry } from "./context.js";
+import { V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, epochOf, isNameGive, type BidState, type OfferState } from "../types.js";
+import { claimHeld, effExpiry } from "./context.js";
 import { MinQueue } from "./minqueue.js";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-type OfferKeyed = "id" | "seller" | "give" | "taker" | "status" | "expiresEpoch" | "height";
+type OfferKeyed = "id" | "seller" | "give" | "taker" | "status" | "expiresEpoch" | "height" | "claimedBy" | "claimUntilHeight" | "claimTxid";
 type BidKeyed = "id" | "status" | "expiresEpoch" | "height";
 /** An offer as the replay holds it; the fields an index keys on are written only in this module. */
 export type OfferRec = Omit<OfferState, OfferKeyed> & Readonly<Pick<OfferState, OfferKeyed>>;
@@ -46,6 +46,7 @@ export function createStore(opts: StoreOptions = {}) {
   let stamp = 0;
   const openOfferAt = new Map<string, number>(), openBidAt = new Map<string, number>();
   const pendingAt = new Map<string, number>(), recaptureAt = new Map<string, number>();
+  const offerAt = new Map<string, number>();                    // first insertion into `offers`, which never deletes
   // Offers and bids by effective expiry epoch, reservations and recaptures by finalizeBy.
   const offerQ = new MinQueue(), bidQ = new MinQueue(), nameQ = new MinQueue(), recaptureQ = new MinQueue();
   // The highest height swept through the queues. A sweep at a height that is not at least this (NaN included) walks:
@@ -53,6 +54,13 @@ export function createStore(opts: StoreOptions = {}) {
   let maxSweep = -Infinity;
   // Per-owner candidates for the two reservation caps.
   const pendingBy = new Map<string, Set<string>>(), recaptureBy = new Map<string, Set<string>>();
+  // Offers an address was granted a hold on (claimedBy is never cleared; a hold lapses by height), with the highest
+  // height counted through them: a candidate whose hold has ended is dropped, which is safe only while heights rise.
+  const holdsBy = new Map<string, Set<string>>();
+  let maxHoldRead = -Infinity;
+  // Offers by seller, by seller and give asset, and name offers by name: candidates for bulk cancels and name voids.
+  const bySeller = new Map<string, Set<string>>(), bySellerAsset = new Map<string, Set<string>>(), byName = new Map<string, Set<string>>();
+  const assetKey = (seller: string, g: OfferState["give"]): string => `${seller}\u0000${isNameGive(g) ? `n\u0000${g.name}` : `t\u0000${g.ticker}`}`;
   const addTo = (m: Map<string, Set<string>>, k: string, v: string) => {
     let s = m.get(k);
     if (!s) { s = new Set(); m.set(k, s); }
@@ -63,9 +71,20 @@ export function createStore(opts: StoreOptions = {}) {
 
   // ── writes ──
   const addOffer = (o: OfferRec) => {
+    if (!offers.has(o.id)) offerAt.set(o.id, ++stamp);
     offers.set(o.id, o);
     if (!openOffers.has(o.id)) { openOffers.add(o.id); openOfferAt.set(o.id, ++stamp); }
     offerQ.push(effExpiry(o, regimeHeight()), o.id);
+    // a taker-bound offer anchored at V28+ is a firm quote no bulk cancel targets (both fields are fixed at creation)
+    if (!(o.taker !== undefined && o.height >= V28_HEIGHT)) { addTo(bySeller, o.seller, o.id); addTo(bySellerAsset, assetKey(o.seller, o.give), o.id); }
+    if (isNameGive(o.give)) addTo(byName, o.give.name, o.id);
+  };
+  /** A claim grant (the fclaim ladder, or a legacy SCORE_CLAIM without `txid`): the three fields are last-write-wins. */
+  const setClaim = (o: OfferRec, who: string, untilHeight: number, txid?: string) => {
+    const m = o as Mutable<OfferRec>;
+    m.claimedBy = who; m.claimUntilHeight = untilHeight;
+    if (txid !== undefined) m.claimTxid = txid;
+    addTo(holdsBy, who, o.id);
   };
   // Nothing reopens an offer or a bid, so membership of the open sets begins only at addOffer and addBid.
   const setOfferStatus = (o: OfferRec, status: Exclude<OfferState["status"], "open">) => {
@@ -147,6 +166,26 @@ export function createStore(opts: StoreOptions = {}) {
     for (const [nm, r] of recaptures) if (r.owner === who && nm !== except && height <= r.finalizeBy) k++;
     return k;
   };
+  // v2.9 (§32, V29 / REBIND M5): the per-address concurrent-hold cap counts an address's LIVE holds (window +
+  // grace). A FILLED offer keeps its claimedBy/claimUntilHeight/claimTxid (never cleared, §31 last-write-wins
+  // invariant), so pre-V29 a completed fclaim buy still counts against the cap until its hold window lapses -> 3
+  // completed buys deny a 4th honest claim. At the counting event's height >= V29 only OPEN holds count (a filled
+  // offer has SETTLED; its residual claim fields are a record, not a live reservation). GATED on the event height so
+  // pre-V29 is byte-identical; this GRANTS a claim a stale replayer denies (a RELAXATION), hence the adoption gate.
+  // One counter for both claim paths: the fclaim grant ladder and the legacy SCORE_CLAIM.
+  const holdLive = (x: OfferRec, who: string, height: number): boolean =>
+    x.claimedBy === who && claimHeld(x, height) && (height < V29_HEIGHT || x.status === "open");
+  const walkHolds = (who: string, height: number): number => {
+    let k = 0;
+    for (const x of offers.values()) if (holdLive(x, who, height)) k++;
+    return k;
+  };
+  const ocancelMatch = (o: OfferRec, who: string, ticker?: string, name?: string): boolean =>
+    o.status === "open" && o.seller === who && !(o.taker !== undefined && o.height >= V28_HEIGHT)
+    && !(ticker !== undefined && !(!isNameGive(o.give) && o.give.ticker === ticker))
+    && !(name !== undefined && !(isNameGive(o.give) && o.give.name === name));
+  const voidMatch = (o: OfferRec, name: string, height: number): boolean =>
+    o.status === "open" && isNameGive(o.give) && o.give.name === name && !(height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, height));
   const same = (what: string, index: unknown, walk: unknown) => {
     if (JSON.stringify(index) !== JSON.stringify(walk)) throw new Error(`replay index check: ${what}: index ${JSON.stringify(index)}, walk ${JSON.stringify(walk)}`);
   };
@@ -213,9 +252,55 @@ export function createStore(opts: StoreOptions = {}) {
     return k;
   };
 
+  /** The address's live holds at `height` (the walk over every offer, over the address's candidates). */
+  const liveHoldCount = (who: string, height: number): number => {
+    if (!(height >= maxHoldRead)) { stats.visits += offers.size; return walkHolds(who, height); }
+    maxHoldRead = height;
+    let k = 0;
+    const set = holdsBy.get(who);
+    if (set) for (const id of set) {
+      stats.visits++;
+      const x = offers.get(id);
+      // a failed candidate stays failed for every later height until a grant to `who` adds it again
+      if (x && holdLive(x, who, height)) k++; else set.delete(id);
+    }
+    if (check) same(`live holds of ${who} at ${height}`, k, walkHolds(who, height));
+    return k;
+  };
+  const byInsertion = (a: OfferRec, b: OfferRec) => offerAt.get(a.id)! - offerAt.get(b.id)!;
+  /** The open offers a bulk cancel by `who` (with at most one of the two filters) snapshots, in the walk's order. */
+  const ocancelTargets = (who: string, ticker?: string, name?: string): OfferRec[] => {
+    const set = ticker !== undefined ? bySellerAsset.get(`${who}\u0000t\u0000${ticker}`)
+      : name !== undefined ? bySellerAsset.get(`${who}\u0000n\u0000${name}`) : bySeller.get(who);
+    const out: OfferRec[] = [];
+    if (set) for (const id of set) {
+      stats.visits++;
+      const o = offers.get(id);
+      if (!o || o.status !== "open" || o.seller !== who) { set.delete(id); continue; }   // undone only by addOffer
+      if (ocancelMatch(o, who, ticker, name)) out.push(o);
+    }
+    out.sort(byInsertion);
+    if (check) same(`bulk cancel by ${who}`, out.map((o) => o.id), [...offers.values()].filter((o) => ocancelMatch(o, who, ticker, name)).map((o) => o.id));
+    return out;
+  };
+  /** The open offers on `name` a displacement or recapture voids at `height` (a live fclaim hold freezes one). */
+  const voidTargets = (name: string, height: number): OfferRec[] => {
+    const set = byName.get(name);
+    const out: OfferRec[] = [];
+    if (set) for (const id of set) {
+      stats.visits++;
+      const o = offers.get(id);
+      if (!o || o.status !== "open" || !isNameGive(o.give) || o.give.name !== name) { set.delete(id); continue; }   // undone only by addOffer
+      if (voidMatch(o, name, height)) out.push(o);
+    }
+    out.sort(byInsertion);
+    if (check) same(`voids of ${name} at ${height}`, out.map((o) => o.id), [...offers.values()].filter((o) => voidMatch(o, name, height)).map((o) => o.id));
+    return out;
+  };
+
   // Check mode: after events, every index holds what its read could match and the walked sets name live items.
   let checked = 0;
-  const verify = (force = false) => {
+  const verify = (height: number, force = false) => {
     if (!check || (!force && ++checked % checkEvery !== 0)) return;
     const fail = (what: string) => { throw new Error(`replay index check: ${what}`); };
     const queued = (q: MinQueue) => new Set([...q.entries()].map(([k, id]) => `${k}\u0000${id}`));
@@ -243,6 +328,13 @@ export function createStore(opts: StoreOptions = {}) {
       if (!recaptureBy.get(r.owner)?.has(nm)) fail(`recapture ${nm} is not a candidate of its owner ${r.owner}`);
       if (!rq.has(`${r.finalizeBy}\u0000${nm}`)) fail(`recapture ${nm} has no queue entry at ${r.finalizeBy}`);
     }
+    for (const o of offers.values()) {
+      if (o.status === "open" && !(o.taker !== undefined && o.height >= V28_HEIGHT)
+        && !(bySeller.get(o.seller)?.has(o.id) && bySellerAsset.get(assetKey(o.seller, o.give))?.has(o.id))) fail(`open offer ${o.id} is not a candidate of its seller`);
+      if (o.status === "open" && isNameGive(o.give) && !byName.get(o.give.name)?.has(o.id)) fail(`open name offer ${o.id} is not a candidate of ${o.give.name}`);
+      // holds dropped at a read stay dropped only for heights at or above it, so the rule is checked from there on
+      if (height >= maxHoldRead && o.claimedBy !== undefined && holdLive(o, o.claimedBy, height) && !holdsBy.get(o.claimedBy)?.has(o.id)) fail(`live hold on ${o.id} is not a candidate of ${o.claimedBy}`);
+    }
   };
 
   return {
@@ -250,7 +342,7 @@ export function createStore(opts: StoreOptions = {}) {
     bids: bids as ReadonlyMap<string, BidRec>,
     names: names as ReadonlyMap<string, NameRec>,
     recaptures: recaptures as ReadonlyMap<string, Recapture>,
-    addOffer, setOfferStatus, addBid, setBidStatus, putName, setNameOwner, finalizeName, putRecapture, deleteRecapture,
-    sweep, pendingCount, recaptureCount, verify, stats,
+    addOffer, setOfferStatus, setClaim, addBid, setBidStatus, putName, setNameOwner, finalizeName, putRecapture, deleteRecapture,
+    sweep, pendingCount, recaptureCount, liveHoldCount, ocancelTargets, voidTargets, verify, stats,
   };
 }

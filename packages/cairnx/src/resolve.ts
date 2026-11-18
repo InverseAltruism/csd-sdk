@@ -74,7 +74,7 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
     if (beforeActivation(ev.height)) continue;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
     sweepExpired(ev.height);
-    store.verify();
+    store.verify(ev.height);
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
@@ -110,7 +110,7 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
   // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
   sweepExpired(tipHeight + 1);
-  store.verify(true);
+  store.verify(tipHeight + 1, true);
 
   // ── materialize canonical state (sorted; values as decimal strings) ──
   const tokensOut: Record<string, TokenState> = {};
