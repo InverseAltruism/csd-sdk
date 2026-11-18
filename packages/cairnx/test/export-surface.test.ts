@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
-  CAIRNX_EVENT_RULE, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, blockEvents, blockMembers, eventOfTx, eventsHash,
-  eventsHashStep, fillEndorsement, offerFillTooLate, stateHash,
+  CAIRNX_EVENT_RULE, CAP_CODES, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, REASON_CODES, REASON_CODE_OUTCOME, RecordError,
+  blockEvents, blockMembers, eventOfTx, eventsHash, eventsHashStep, explainRecord, fillEndorsement, offerFillTooLate, stateHash,
 } from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
@@ -37,8 +37,15 @@ for (const [name, fn] of [["stateHash", stateHash], ["eventsHashStep", eventsHas
   assert.equal(typeof fn, "function", `${name} is a root export`);
 assert.equal(EVENTS_HASH_START, "0x" + "00".repeat(32), "EVENTS_HASH_START is 32 zero bytes");
 assert.equal(FINAL_DEPTH, 12, "FINAL_DEPTH is the depth CONVENTION section 38 names");
+// The reason codes (CONVENTION §40): the service's record feed and alarms, cairn-sdk and the wallet read them.
+assert.ok(Array.isArray(REASON_CODES) && REASON_CODES.includes("TOKEN_DEPLOYED"), "REASON_CODES is a root export");
+assert.equal(REASON_CODE_OUTCOME.TOKEN_DEPLOYED, "applied", "REASON_CODE_OUTCOME is a root export");
+assert.deepEqual([...CAP_CODES], ["CAP_PENDING_RESERVATIONS", "CAP_PENDING_RECAPTURES", "CAP_LIVE_HOLDS"], "CAP_CODES is a root export");
+assert.equal(typeof explainRecord, "function", "explainRecord is a root export");
+assert.ok(new RecordError("RECORD_BAD_TICKER") instanceof Error, "RecordError is a root export");
 const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE",
-  "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH"];
+  "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH", "REASON_CODES", "REASON_CODE_OUTCOME", "CAP_CODES", "ReasonCode", "AppliedCode",
+  "RefusalCode", "RecordCode", "explainRecord", "RecordError"];
 for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
-console.log(`cairnx-core export surface: ${10 + 4 + names.length} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and the §34 hashes' four pinned in src and dist .d.ts)`);
+console.log(`cairnx-core export surface: ${10 + 4 + 5 + names.length} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names, the §34 hashes' four and the §40 codes' nine pinned in src and dist .d.ts)`);

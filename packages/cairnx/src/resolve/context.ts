@@ -1,5 +1,6 @@
 // The replay state one resolve() call threads through the record handlers: the ledger maps, the private expiry
 // indexes and the helpers that mutate them. Internal to cairnx-core; resolve.ts owns the loop and the output.
+import type { AppliedCode, ReasonCode, RefusalCode } from "../codes.js";
 import {
   AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, claimGraceOf, epochOf, isNameGive,
   type AppliedEvent, type BidState, type ChainEvent, type OfferState, type TokenState,
@@ -92,8 +93,6 @@ export function createContext() {
     if (!b) { b = { available: 0n, locked: 0n }; m.set(addr, b); }
     return b;
   };
-  const note = (e: ChainEvent, id: string, kind: string, ok: boolean, why?: string) =>
-    log.push({ height: e.height, pos: e.pos, id, kind, ok, ...(why ? { note: why } : {}) });
 
   // ── release the asset held by an offer (token amount unlock, or name unlock) ──
   const releaseGive = (o: OfferState) => {
@@ -164,10 +163,15 @@ export function createContext() {
     bal(t, who).available += amt;
     offerLock.delete(o.id);
   };
+  // An applied-log entry. `ok` follows from which of the two writes it, and the code types keep each code on its side.
+  const entry = (e: ChainEvent, id: string, kind: string, ok: boolean, code: ReasonCode, why?: string) =>
+    log.push({ height: e.height, pos: e.pos, id, kind, ok, code, ...(why ? { note: why } : {}) });
+  const applied = (e: ChainEvent, id: string, kind: string, code: AppliedCode, why?: string) => entry(e, id, kind, true, code, why);
+  const refused = (e: ChainEvent, id: string, kind: string, code: RefusalCode, why?: string) => entry(e, id, kind, false, code, why);
 
   return {
     tokens, balances, names, commits, recaptures, offers, offerLock, bids, openOffers, openBids, pendingNames, fclaims, log,
-    setOfferStatus, setBidStatus, putName, bal, note, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
+    setOfferStatus, setBidStatus, putName, bal, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
     feesPaid: 0n,
     // v1.4 fill-before-cancel: at V14_HEIGHT+ a cancel/ocancel's EFFECT is deferred to the block
     // boundary, so any same-block fill wins — a seller can no longer snipe a buyer's in-flight

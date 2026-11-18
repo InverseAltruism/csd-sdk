@@ -47,6 +47,10 @@ this directory, only the JS implementation existed, so the contract was asserted
   `replay-hashes.json`); `hashes-run.mjs` is the runner both share. It also hashes complete `resolve()` results
   (diagnostic fields included) at three corpus heights and for the empty state, and runs literal JSON cases as the
   events job does.
+- **`gen-codes-vectors.mjs`** (JavaScript only, not a cross-language job): writes
+  `packages/cairnx/test/vectors/codes.json`, the reason codes of CONVENTION section 40, from expectations written by
+  hand per event and per record, after checking each against the built dist; it writes nothing when one fails.
+  `cairnx_ref.py` writes no codes, so the file is checked by `test/codes.test.ts` and `test/records-explain.test.ts`.
 
 Block scripts (read a node, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package script runs
 them, `test/live-opt-in.test.ts` that each refuses by name with no node named and fails by name when the node does

@@ -23,7 +23,7 @@ let n = 1; const nid = () => "0x" + (n++).toString(16).padStart(64, "0");
 const PE = (b, h, who, ee, pos = 0, paidTo = {}, id = nid()) => ({ kind: "propose", id, proposer: who, uri: b.uri, payloadHash: b.payloadHash, expiresEpoch: ee, height: h, pos, paidTo });
 let pass = 0, fail = 0;
 const ok = (name, cond) => { cond ? pass++ : fail++; console.log(`  ${cond ? "✓" : "✗"} ${name}`); };
-const noteOf = (st, id) => st.events.find((e) => e.id === id && e.ok === false)?.note ?? "";
+const codeOf = (st, id) => st.events.find((e) => e.id === id && e.ok === false)?.code ?? "";
 
 // a sealed, finalized name owned by A (commit -> payment-free reveal -> winner-only nfinalize)
 const SALT = "a1a1a1a1a1a1a1a1", NAME = "pinname", W = REG_COMMIT_MAX_BLOCKS, C = V28_HEIGHT;
@@ -43,7 +43,7 @@ console.log("R3 unreachability premises (v2.8 freeze coverage argument):");
   const bad = PE(offer({ give: { name: NAME }, want: { value: "1000000000", payto: A } }), OFF_H, A, paidThrough + 1, 0, {}, oBad);
   const good = PE(offer({ give: { name: NAME }, want: { value: "1000000000", payto: A } }), OFF_H, A, paidThrough, 0, {}, oGood);
   const st = resolve([...reg, bad, good], OFF_H + 2);
-  ok("P1 deny: an offer outliving the lease is REJECTED with the v1.5 reason", st.offers[oBad] === undefined && /v1\.5: lease ends inside the offer window/.test(noteOf(st, oBad)));
+  ok("P1 deny: an offer outliving the lease is REJECTED with the v1.5 reason", st.offers[oBad] === undefined && codeOf(st, oBad) === "OFFER_LEASE_TOO_SHORT");
   ok("P1 control: an offer ending AT paidThrough is accepted (guard is exact, not over-wide)", st.offers[oGood]?.status === "open");
 }
 
@@ -52,13 +52,13 @@ console.log("R3 unreachability premises (v2.8 freeze coverage argument):");
   const idReg = nid();
   const bare = PE(nameClaim({ name: "freshpin" }), OFF_H, B, 9e14, 1, {}, idReg);
   const st1 = resolve([...reg, bare], OFF_H + 2);
-  ok("P2 deny: a no-salt register at V25+ is REJECTED", st1.names["freshpin"] === undefined && /v2\.5: registration requires a commit-reveal/.test(noteOf(st1, idReg)));
+  ok("P2 deny: a no-salt register at V25+ is REJECTED", st1.names["freshpin"] === undefined && codeOf(st1, idReg) === "NAME_SALT_REQUIRED");
   // lapse A's lease (epoch > paidThrough + grace), then attempt a bare no-salt takeover
   const lapseH = (paidThrough + NAME_GRACE_EPOCHS + 2) * EPOCH_LEN;
   const idRec = nid();
   const bareRec = PE(nameClaim({ name: NAME }), lapseH, B, 9e15, 1, {}, idRec);
   const st2 = resolve([...reg, bareRec], lapseH + 2);
-  ok("P2 deny: a no-salt RECAPTURE of a lapsed name at V26+ is REJECTED", st2.names[NAME]?.owner === A && /v2\.6: recapture requires a commit-reveal/.test(noteOf(st2, idRec)));
+  ok("P2 deny: a no-salt RECAPTURE of a lapsed name at V26+ is REJECTED", st2.names[NAME]?.owner === A && codeOf(st2, idRec) === "NAME_SALT_REQUIRED");
 }
 
 // ── P3: the anchor-window property ──
@@ -73,7 +73,7 @@ console.log("R3 unreachability premises (v2.8 freeze coverage argument):");
     return { st: resolve(evs, OFF_H + gap + 1), rid };
   };
   const over = mk(W + 1);
-  ok("P3 deny: a reveal past the anchor window is REJECTED (no back-dated anchor)", over.st.names["anchorpin"] === undefined && /no valid in-window commit/.test(noteOf(over.st, over.rid)));
+  ok("P3 deny: a reveal past the anchor window is REJECTED (no back-dated anchor)", over.st.names["anchorpin"] === undefined && codeOf(over.st, over.rid) === "NAME_NO_COMMIT");
   const at = mk(W);
   ok("P3 control: a reveal AT the window edge back-dates to the COMMIT height exactly", at.st.names["anchorpin"]?.effectiveHeight === OFF_H);
 }

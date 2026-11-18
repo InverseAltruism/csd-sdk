@@ -59,6 +59,27 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.6 (2026-11-18, Plan 91 codes; unreleased; consensus-surface files edited, no state change) - stable reason codes
+
+`CONVENTION.md` section 40 adds a reason code to every entry of the applied log and to every record refusal
+(`explainRecord`, `RecordError`), from a table of 113 in `src/codes.ts`. The log is outside canonical state (section
+5), so no state moves: the replay hashes, `cases*.json`, `replay-corpus.json`, `replay-hashes.json`,
+`wa-parity-corpus.json`, `VECTORS.md`, `events.json`, `hashes.json` and `fixtures/events-blocks.json` are
+byte-identical to cairnx-core 0.2.4, and the Python reference writes no codes. A replica that writes no codes conforms
+at every level of section 38.
+
+The change does edit the files `scripts/check-consumer-pins.mjs` grades as the consensus surface (`resolve.ts`,
+`resolve/`, `records.ts`, `types.ts`): every handler writes its code, `records.ts` returns the code of the first rule a
+record breaks in the order it has always checked them, and `types.ts` gains the optional `code` field. The proof that
+these edits are state-neutral is `scripts/seal-differential.mjs`, which builds cairnx-core 0.2.4 from its tag and
+compares it with this tree: `canonicalState` byte-identical and the whole result identical once `code` is left out over
+the 81 cases of the three case files, the replay corpus at 795 heights, 20,000 seeded fuzz sequences and the 145
+resolve cases of `codes.json`; `parseRecord` accepting exactly what 0.2.4 accepts over 72,657 records (20,000 of them
+mutations); the client helpers equal over 1,418 checks. Every input agreed. So the drift flag
+`check-consumer-pins.mjs` now raises for a graded consumer pinned to 0.2.4 or 0.2.5 ("CONSENSUS-SURFACE DRIFT, a live
+replayer on it forks") is accepted for this release: such a replayer derives the same state, and re-pinning it brings
+the codes, not convergence.
+
 ## cairnx-core 0.2.5 (2026-11-18, Plan 91 events-rule-a; unreleased; `resolve()` unchanged, its input form made normative) - the rule from a block to events
 
 The input of the replay is written down: `CONVENTION.md` section 33 states which transactions of a block are events
@@ -307,14 +328,14 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :182 offer, :77 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
-shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :145:
+shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`) and, since
+cairnx-core 0.2.6, with its reason code, at `packages/cairnx/src/resolve/market.ts` :146:
 
-    if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
+    if (!Number.isSafeInteger(E)) { deny("EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
 
 Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladder and calling the same
 `deny()` for the same reason (`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):
@@ -406,7 +427,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :155), where the clause is inert by design (SCORE_CLAIM at
+  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :154), where the clause is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state

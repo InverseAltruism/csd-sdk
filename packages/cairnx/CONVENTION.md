@@ -1,6 +1,6 @@
 # CairnX Convention v1
 
-**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §39 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §40 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive: below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
@@ -10,7 +10,8 @@ v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay 
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 §33 is the rule that turns the chain's blocks into the events every version replays; §34 defines the two hashes
 replicas compare. §35 and §36 are for other applications (their domains, the profile-key registry), §37 states what
-a result proves, §38 how a replica conforms and §39 how the rules change; none of §33 to §39 has a gate.
+a result proves, §38 how a replica conforms, §39 how the rules change and §40 the reason codes of the applied log
+and of record validation; none of §33 to §40 has a gate.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -31,8 +32,8 @@ enforced by a **pure, deterministic resolver** that any party can run; independe
 replaying the same chain converge on identical state.
 
 This document is normative. The reference resolver (`src/resolve.ts`), the reference rule of §33
-(`src/events.ts`), the hashes of §34 (`src/hashes.ts`) and their conformance suites implement exactly what is written
-here.
+(`src/events.ts`), the hashes of §34 (`src/hashes.ts`), the reason codes of §40 (`src/codes.ts`) and their conformance
+suites implement exactly what is written here.
 
 ---
 
@@ -194,7 +195,7 @@ balances: ticker → address → { available, locked }
 offers:   offerId → { seller, give, want, taker?, status: open|filled|cancelled|expired,
                       expiresEpoch, height, fill?: { buyer, txid, height, paid } }
 events:   ordered log of applied/no-op decisions (for explorers & audit; INFORMATIONAL,
-          excluded from the canonical surface; its reason strings are diagnostics, not protocol)
+          excluded from the canonical surface; each entry's `code` is stable (§40), its `note` text a diagnostic)
 ```
 
 **Canonical state (format 2, normative):** the canonical surface is
@@ -1606,11 +1607,14 @@ boundaries and its own recount from complete blocks (§37) gives the same differ
 A form of the tuple recorded on chain is reserved under the reserved prefixes of §35.2 and is not defined by this
 version.
 
+`test/vectors/codes.json` (§40.7) is not a level: the reason codes move no state. A replica that publishes codes
+reproduces it.
+
 ## 39. Rule changes
 
 - This specification is normative for the future. Pinned history stands: every height below a gate replays as it
   did, and the pinned replay hashes do not move. Behaviour changes only at a gate, an activation height in
-  `src/types.ts`; a section without a gate, such as §33 to §39, moves no state.
+  `src/types.ts`; a section without a gate, such as §33 to §40, moves no state.
 - `CONSENSUS_CHANGES.md` in the csd-sdk repository is the ledger of every change. Each gate after v2.9 also has its
   own file, `docs/gates/<gate>.md`, written from `docs/gates/TEMPLATE.md` and linked from its ledger entry. It
   states the motivation, the rule text, the class of the change (reject-more: an input the earlier rule applied
@@ -1622,3 +1626,183 @@ version.
   this rule; see the note at the top of this file.)
 - Rule changes ride gates within `cairnx:v1`. A second domain is only for a deliberate restart of state: its records
   are not events of `cairnx:v1` (§33.1), so it starts from no tokens, no balances and no names.
+
+---
+
+# Reason codes (no gate)
+
+## 40. Reason codes
+
+Every entry of the applied log (§5) carries `code`, the rule that decided the record, beside its `note`. A record that
+does not parse is refused with a record code, which `explainRecord(uri, payloadHash)` returns and a record builder's
+`RecordError` carries. The log stays outside canonical state, so codes move no state, and a replica that writes no
+codes conforms at every level of §38.
+
+### 40.1 What a code is
+
+- A code names one rule. A rule that several record kinds or gate eras share has one code; the entry's `kind` names
+  the record (`invalid` for one that does not parse).
+- Each code has one outcome, applied or refused, and an entry's `ok` is true exactly when its code is applied.
+- A code is upper snake case of at most 40 characters with a family prefix: RECORD, GATE, TOKEN, NAME, OFFER, BID,
+  FILL, CLAIM, EXPIRY, TREASURY, CAP or INVARIANT.
+- Where a record breaks more than one rule, its code is that of the first rule in the reference implementation's order
+  (`src/resolve/`, `src/records.ts`); `test/vectors/codes.json` pins the order where two rules meet.
+- An event that writes no entry has no code: an event below activation (§3); a repeated event at V29 or above (§32);
+  an Attest on a proposal that is not an offer, except a cancel of a bid and a fill of a known fclaim; an Attest on an
+  offer with a reserved score (any but 0, 50 and 100, and 50 below V17); and every expiry the sweep applies.
+
+### 40.2 Stability
+
+A code in a release keeps its meaning: it is never renamed, never reused for another meaning and never removed; a code
+that is no longer written is marked retired and stays reserved. Codes may be added in any release, and a reason may be
+split into a new code only with a line in the changelog. The note text is a diagnostic and may change in any release.
+A consumer must treat an unknown code by its outcome (`ok`), since codes are added in any release.
+
+### 40.3 Caps
+
+The caps are the per-address rules that count the proposer's other names or offers: CAP_PENDING_RESERVATIONS and
+CAP_PENDING_RECAPTURES (`MAX_PENDING_REG`), and CAP_LIVE_HOLDS (`MAX_ACTIVE_CLAIMS`, for fclaims and legacy claims).
+`CAP_CODES` lists them, for an alarm on any cap refusal. A bound on one record or one token is not a cap:
+TOKEN_SUPPLY_EXHAUSTED, EXPIRY_TOO_LONG, CLAIM_TOO_FAR_AHEAD, RECORD_TOO_LARGE and the profile limits.
+
+### 40.4 The table
+
+Four codes guard a state no event reaches, so no vector holds them: NAME_RECLAIMED, NAME_RESERVATION_EXPIRED,
+NAME_NOT_LAPSED and INVARIANT_BROKEN (their rows say why).
+
+| Code | Outcome | Cap | Meaning |
+|---|---|---|---|
+| TOKEN_DEPLOYED | applied | | a ticker is created |
+| TOKEN_MINTED | applied | | supply is credited to the minter (note: the amount) |
+| TOKEN_TRANSFERRED | applied | | tokens move |
+| TOKEN_META_SET | applied | | the issuer sets the metadata hash |
+| NAME_COMMITTED | applied | | a commit is recorded (its earliest height is kept) |
+| NAME_REGISTERED | applied | | a pay-now registration below V25, the name free |
+| NAME_REGISTERED_DISPLACED | applied | | a pay-now registration that displaces a holder with a later anchor |
+| NAME_RESERVED | applied | | a reservation (V25 and above) of a free name |
+| NAME_RESERVED_DISPLACED | applied | | a reservation that displaces a reservation with a later anchor |
+| NAME_RECAPTURE_RESERVED | applied | | a recapture reservation (V26 and above) of a lapsed name |
+| NAME_RECAPTURE_RESERVED_DISPLACED | applied | | a recapture reservation that displaces a later one |
+| NAME_RECLAIMED | applied | | a pay-now reclaim of a lapsed name below V26; no event reaches it, since the earliest lapse falls far above V26 |
+| NAME_FINALIZED | applied | | a registration is finalized and its fee paid |
+| NAME_RECAPTURE_FINALIZED | applied | | a recapture is finalized and its premium paid |
+| NAME_TRANSFERRED | applied | | the name has a new owner |
+| NAME_ADDR_SET | applied | | the address is set, or cleared by the zero address at V23 and above |
+| NAME_PROFILE_SET | applied | | the profile is set, or cleared by an empty `p` |
+| NAME_RENEWED | applied | | one term is added (note: the new paid-through epoch) |
+| OFFER_CREATED | applied | | an offer opens and its give is locked |
+| OFFER_BULK_CANCELLED | applied | | an ocancel applies (note: the count, which may be 0) |
+| OFFER_CANCELLED | applied | | a seller's cancel applies |
+| BID_CREATED | applied | | a bid opens |
+| BID_CANCELLED | applied | | a bidder's cancel applies |
+| FILL_APPLIED | applied | | a whole fill delivers (token-priced or CSD-priced) |
+| FILL_PARTIAL | applied | | a partial fill delivers, the one that completes the offer included (note: paid/want) |
+| CLAIM_GRANTED | applied | | an fclaim (kind fclaim) or a legacy claim (kind claim) holds the offer |
+| GATE_NOT_ACTIVE | refused | | the record type or shape is not active at this height |
+| CLAIM_LEGACY_SUNSET | refused | | a legacy claim attest at V28 or above |
+| TOKEN_TICKER_TAKEN | refused | | an earlier deploy holds the ticker |
+| TOKEN_UNKNOWN | refused | | the ticker, or an offer's want ticker, was never deployed |
+| TOKEN_NOT_ISSUER | refused | | an issuer-only mint or metadata record from another address |
+| TOKEN_SUPPLY_EXHAUSTED | refused | | nothing is left to mint |
+| TOKEN_MINT_AMOUNT_REQUIRED | refused | | an issuer mint without `amount` |
+| TOKEN_BALANCE_LOW | refused | | the available balance is short (a transfer, an offer's give, a token fill's price and fee) |
+| TREASURY_FEE_UNPAID | refused | | the output to the treasury is below the fee or premium |
+| NAME_NO_COMMIT | refused | | no commit for this reveal below its height and inside the window |
+| NAME_SALT_REQUIRED | refused | | a `name` without salt at V25 and above (registration) or V26 and above (recapture) |
+| NAME_TAKEN_EARLIER | refused | | an earlier (effective height, position, id) holds the name or its reservation |
+| NAME_TAKEN_PURCHASED | refused | | the holder bought the name in a fill and cannot be displaced |
+| NAME_SALT_MISMATCH | refused | | the finalize's salt does not re-derive the reservation's commit |
+| NAME_FINALIZE_TOO_EARLY | refused | | a finalize before the displacement freeze ends |
+| NAME_RESERVATION_EXPIRED | refused | | a finalize after finalizeBy; no event reaches it, since the sweep before each event drops the reservation and the late finalize gets NAME_NO_RESERVATION |
+| NAME_NOT_LAPSED | refused | | a recapture finalize of a name no longer lapsed; no event reaches it, since nothing makes a lapsed record live again before that finalize |
+| NAME_NO_RESERVATION | refused | | no reservation or recapture of this name owned by the proposer |
+| NAME_NOT_OWNER | refused | | the proposer does not own the name |
+| NAME_PENDING | refused | | the name is a reservation not yet finalized |
+| NAME_LAPSED | refused | | the lease and its grace are over |
+| NAME_NO_LIVE_LEASE | refused | | a renewal of an unknown or lapsed name |
+| NAME_GRACE_OWNER_ONLY | refused | | a renewal in grace by another address |
+| NAME_LOCKED | refused | | an open offer holds the name |
+| NAME_TOO_YOUNG | refused | | the sale embargo is not over |
+| OFFER_LEASE_TOO_SHORT | refused | | the lease ends before the offer expires |
+| OFFER_TAKER_REQUIRED | refused | | an open CSD-priced offer in [V13, V17) |
+| OFFER_PAYTO_TREASURY | refused | | the payto is the treasury |
+| OFFER_UNKNOWN | refused | | the fclaim names no known offer |
+| OFFER_NOT_OPEN | refused | | the offer is filled, cancelled or expired (note: the status) |
+| OFFER_NOT_SELLER | refused | | a cancel by another address |
+| OFFER_FIRM_QUOTE | refused | | a cancel of a taker-bound offer created at V28 or above |
+| OFFER_CANCEL_HOLD_LIVE | refused | | at the block boundary a deferred cancel meets a live fclaim hold |
+| OFFER_CLOSED_BEFORE_CANCEL | refused | | at the block boundary the offer is already closed (by a fill, or by an earlier cancel) |
+| BID_NOT_BIDDER | refused | | a bid cancel by another address |
+| BID_NOT_OPEN | refused | | the bid is cancelled, expired or done |
+| EXPIRY_UNSAFE | refused | | the expires_epoch is at or above 2^53 |
+| EXPIRY_PAST | refused | | the expiry epoch is before the inclusion epoch |
+| EXPIRY_TOO_LONG | refused | | the v2.1 duration cap (anchors in [V21, V22)) |
+| FILL_FCLAIM_NOT_CURRENT | refused | | a fill attests a denied or superseded fclaim: the payment moves, nothing is delivered |
+| FILL_NOT_TAKER | refused | | the filler is not the bound taker |
+| FILL_NO_TOKEN_MARKER | refused | | a token-priced fill without confidence `CONF_TOKEN_FILL` |
+| FILL_OPEN_LANE_CLOSED | refused | | an open CSD fill in [V13, V17) |
+| FILL_WRONG_TARGET | refused | | an offer-id fill during an fclaim hold |
+| FILL_NO_LIVE_CLAIM | refused | | an open CSD fill without the filler's live hold |
+| FILL_BELOW_MIN | refused | | a partial payment below the effective minimum |
+| FILL_ZERO_DELIVERY | refused | | the payment delivers no unit |
+| FILL_UNDERPAID | refused | | the payment to payto is below want.value |
+| FILL_REBATE_UNPAID | refused | | the maker rebate output is short |
+| CLAIM_TAKER_BOUND | refused | | a taker-bound offer takes no claim |
+| CLAIM_TOKEN_PRICED | refused | | claims are for CSD-priced offers |
+| CLAIM_HOLD_LIVE | refused | | a hold (window and grace) is live, whoever holds it |
+| CLAIM_COOLDOWN | refused | | the last holder within `CLAIM_COOLDOWN_BLOCKS` of its hold's end |
+| CLAIM_OUTLIVES_OFFER | refused | | the hold's expiry is after the offer's |
+| CLAIM_TOO_FAR_AHEAD | refused | | the hold's expiry is more than `FCLAIM_MAX_EPOCH_AHEAD` epochs ahead |
+| CAP_PENDING_RESERVATIONS | refused | yes | the proposer holds `MAX_PENDING_REG` other live reservations |
+| CAP_PENDING_RECAPTURES | refused | yes | the proposer holds `MAX_PENDING_REG` other live recapture reservations |
+| CAP_LIVE_HOLDS | refused | yes | the proposer holds `MAX_ACTIVE_CLAIMS` live holds |
+| INVARIANT_BROKEN | refused | | an open offer's name or give lock is missing; no event reaches it |
+| RECORD_TOO_LARGE | refused | | the uri is over `MAX_RECORD_BYTES` UTF-8 bytes |
+| RECORD_NOT_OBJECT | refused | | the uri is not JSON, or not a JSON object |
+| RECORD_NOT_CANONICAL | refused | | the uri is not the canonical JSON of its object |
+| RECORD_HASH_MISMATCH | refused | | the payload hash does not commit to the uri |
+| RECORD_LONE_SURROGATE | refused | | a string holds a lone surrogate |
+| RECORD_NOT_V1 | refused | | `v` is not 1, or `t` is not a string |
+| RECORD_UNKNOWN_TYPE | refused | | an unknown `t` |
+| RECORD_EXTRA_KEY | refused | | a key outside the record's set |
+| RECORD_BAD_SHAPE | refused | | the fields form none of the record's allowed shapes |
+| RECORD_SAME_TOKEN | refused | | the give and the want are one ticker |
+| RECORD_BAD_TICKER | refused | | a ticker is missing or does not match `TICKER_RE` |
+| RECORD_BAD_NAME | refused | | a name is missing or does not match `NAME_RE` |
+| RECORD_NAME_RESERVED | refused | | a name in `RESERVED_NAMES` |
+| RECORD_BAD_ADDRESS | refused | | an address is missing or does not match `ADDR_RE` |
+| RECORD_BAD_AMOUNT | refused | | an amount is missing or not a canonical decimal string |
+| RECORD_AMOUNT_TOO_LARGE | refused | | an amount at or above 2^96 |
+| RECORD_AMOUNT_ZERO | refused | | an amount of 0 where zero is refused |
+| RECORD_MIN_ABOVE_WANT | refused | | the offer's `min` is above want.value |
+| RECORD_BAD_HASH | refused | | a hash is missing or does not match `HASH_RE` |
+| RECORD_BAD_SALT | refused | | a salt does not match `SALT_RE` |
+| RECORD_BAD_DECIMALS | refused | | the decimals are not an integer from 0 to `MAX_TOKEN_DECIMALS` |
+| RECORD_BAD_MINT_MODE | refused | | the mint is neither open nor issuer |
+| RECORD_BAD_TEXT | refused | | a memo or token name is not a string or is too long (in UTF-16 units) |
+| RECORD_BAD_TS | refused | | the ts is not a safe integer |
+| RECORD_PROFILE_TOO_MANY_KEYS | refused | | a profile over `PROFILE_MAX_KEYS` keys |
+| RECORD_PROFILE_BAD_KEY | refused | | a profile key that does not match `PKEY` |
+| RECORD_PROFILE_BAD_VALUE | refused | | a profile value that is not a string |
+| RECORD_PROFILE_VALUE_TOO_LONG | refused | | a profile value over `PROFILE_MAX_VALUE_BYTES` UTF-8 bytes |
+
+### 40.5 Records and builders
+
+`explainRecord(uri, payloadHash)` answers `{ ok: true, record }` or `{ ok: false, code }`, and `parseRecord` answers
+null exactly when it answers a code. A record builder that refuses throws `RecordError`, an `Error` whose `code` is the
+record code and whose message is `record does not validate against CONVENTION.md (<code>)`. A builder input that is not
+JSON data throws the codec's own error before any rule is checked.
+
+### 40.6 The client helpers' reasons
+
+`previewFill` and `fillOutputPlan` keep their own reasons: `not-open` is OFFER_NOT_OPEN, `zero-delivery` is
+FILL_ZERO_DELIVERY, and `below-min` is FILL_BELOW_MIN on a partial fill and FILL_UNDERPAID on a whole one.
+
+### 40.7 Reference and vectors
+
+`src/codes.ts` holds the table: `REASON_CODES`, `REASON_CODE_OUTCOME`, `CAP_CODES` and the types `ReasonCode`,
+`AppliedCode`, `RefusalCode` and `RecordCode`; a test requires it equal to §40.4. `test/vectors/codes.json` holds 145
+resolve cases (the events, the tip and the expected entries as `[id, kind, ok, code]`, compared as a set) and 50 record
+cases (the uri, the payload hash and the expected code, or null for a record that parses), with every expectation
+written by hand in `conformance/gen-codes-vectors.mjs`. A replica that publishes codes reproduces it. The Python
+reference of `conformance/` writes no codes.

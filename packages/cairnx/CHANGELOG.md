@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.6
+
+- Stable reason codes, CONVENTION.md section 40: each entry of the applied log gains `code`, the rule that decided the
+  record, from a table of 113 (26 applied, 87 refused, 28 of them record codes; 3 caps). A code is never renamed,
+  reused or removed; the note text beside it may change, and a reader treats a code it does not know by the entry's
+  `ok`. New root exports `REASON_CODES`, `REASON_CODE_OUTCOME`, `CAP_CODES` and the types `ReasonCode`, `AppliedCode`,
+  `RefusalCode`, `RecordCode` (`src/codes.ts`). Every entry `resolve()` writes carries a code; an unparseable record's
+  entry carries its record code. Four codes guard states no event reaches (section 40.4 says why). The note texts are
+  unchanged, so a consumer that matches them keeps working; `provenOfferRefusal` returns the same strings as before.
+- `test/vectors/codes.json`: 145 resolve cases and 50 record cases whose expected codes are written by hand in
+  `conformance/gen-codes-vectors.mjs`; together they reach the 109 codes an event can reach. The Python reference
+  writes no codes.
+- `explainRecord(uri, payloadHash)`: `{ ok: true, record }` or `{ ok: false, code }`, the first record rule the uri
+  breaks. `parseRecord` keeps its signature and answers and shares one implementation with it. A builder that refuses
+  throws `RecordError`, an `Error` with `code`; its message is "record does not validate against CONVENTION.md (<code>)",
+  which until now ended at "CONVENTION.md".
+- No state moves: `scripts/seal-differential.mjs` against cairnx-core 0.2.4 finds `canonicalState` byte-identical, the
+  whole result identical once `code` is left out, and `parseRecord` accepting exactly what it accepted.
+
 ## 0.2.5
 
 - CONVENTION.md section 33, "From a block to events": the rule that turns the chain's blocks into the events

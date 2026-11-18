@@ -3,7 +3,10 @@
 // byte-identical canonicalState on EVERY one. Neither side is told the expected answer; a single
 // divergence = a latent cross-language consensus fork. Seeded for reproducibility (prints the seed).
 //   node conformance/fuzz-resolve.mjs [N] [seed]
+//   node conformance/fuzz-resolve.mjs N seed --emit <file>   writes the N generated sequences as JSON and exits before the
+//                                                            differential (scripts/seal-differential.mjs replays them)
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
 let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
@@ -20,8 +23,12 @@ let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (d
 // these; the PoC changed one token so the resolver never reached :799 while the counter still read 27.
 let gFclaimGrants = 0, gFclaimDenies = 0, gV28LegacyEmitted = 0;
 
-const N = Number(process.argv[2] || 3000);
-let SEED = Number(process.argv[3] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
+const ARGS = process.argv.slice(2);
+const EMIT_AT = ARGS.indexOf("--emit");
+const EMIT = EMIT_AT >= 0 ? ARGS.splice(EMIT_AT, 2)[1] : undefined;
+if (EMIT_AT >= 0 && !EMIT) { console.error("--emit needs a file path"); process.exit(2); }
+const N = Number(ARGS[0] || 3000);
+let SEED = Number(ARGS[1] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
 const rng = () => { SEED = (SEED * 1664525 + 1013904223) >>> 0; return SEED / 0x100000000; };
 const ri = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
 const pick = (a) => a[ri(0, a.length - 1)];
@@ -408,6 +415,11 @@ function randPaidTo() {
 
 // generate, run JS, batch to Python, diff
 const seqs = Array.from({ length: N }, genSeq);
+if (EMIT) {
+  writeFileSync(EMIT, JSON.stringify(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
+  console.log(`emitted ${N} sequences to ${EMIT}`);
+  process.exit(0);
+}
 const js = seqs.map((s) => { try { return canonicalState(resolve(s.events, s.tipHeight)); } catch (e) { return "JS_THROW:" + (e?.message || e); } });
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname],
   { input: JSON.stringify({ resolve: seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });

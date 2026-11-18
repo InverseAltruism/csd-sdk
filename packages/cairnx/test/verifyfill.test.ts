@@ -551,7 +551,7 @@ ok(mutCap.safe === true, `MUTATION[cap guard removed]: at-cap fill now PASSES (s
   const p1 = previewFill(z.served, 1_000_000n);
   ok(p1.deliverable === false && p1.reason === "zero-delivery" && requiredFillOutputs(z.served, 1_000_000n) === null,
     "served state: 1,000,000 delivers 0 units (previewFill zero-delivery; requiredFillOutputs null)");
-  ok(z.chainFill(1_000_000n)?.note === "fill too small to deliver any tokens", "the resolver refuses that fill after the payment moved");
+  ok(z.chainFill(1_000_000n)?.code === "FILL_ZERO_DELIVERY", "the resolver refuses that fill after the payment moved");
   // TRIPWIRE for design b' (Plan 87): the window replay (C's fclaim and fill absent) computes 1 unit, so a caller
   // without sums is told safe and must refuse on the served state above (a lie there can only refuse). Reading the
   // history below the window flips this to a refusal; this assertion then changes with it.

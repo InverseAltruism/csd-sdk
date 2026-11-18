@@ -57,7 +57,7 @@ const badFc = id("f9");
 const denied = resolve([...base, PE(badFc, fclaim({ offer: id("ee") }), H0 + 3, C, E)], H0 + 10);
 ok(denied.fclaims[badFc] === undefined, "DENIED fclaim is NOT in state.fclaims (granted-only)");
 const denFill = resolve([...base, PE(badFc, fclaim({ offer: id("ee") }), H0 + 3, C, E), AE(id("14"), badFc, C, H0 + 10, { [A]: "500000000" })], H0 + 15);
-ok((denFill.balances["AAA"] ?? {})[C] === undefined && denFill.events.some((e) => e.kind === "fill" && !e.ok && /denied-fclaim/.test(e.note ?? "")), "fill on a DENIED fclaim delivers nothing and is audit-noted");
+ok((denFill.balances["AAA"] ?? {})[C] === undefined && denFill.events.some((e) => e.kind === "fill" && !e.ok && e.code === "FILL_FCLAIM_NOT_CURRENT"), "fill on a DENIED fclaim delivers nothing and is audit-noted");
 
 // ── 5. Correction 2 (ocancel): a same-block ocancel (pos 0) then fclaim grant (pos 1) leaves the offer held ──
 const c2o = resolve([...base, PE(id("20"), offerCancelAll({}), H0 + 3, A, 9e9, 0), PE(id("f2"), fclaim({ offer: OID }), H0 + 3, B, E, 1)], H0 + 10);
@@ -100,7 +100,7 @@ const hugeFc = id("f7");
 const hugeSt = resolve([...base, PE(hugeFc, fclaim({ offer: OID }), H0 + 3, B, 2 ** 53)], H0 + 10);
 ok(hugeSt.offers[OID]!.claimedBy === undefined && hugeSt.fclaims[hugeFc] === undefined,
   "MF-20: an unsafe-int expiresEpoch grants nothing");
-ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && /out of safe-integer range/.test(e.note ?? "")),
+ok(hugeSt.events.some((e) => e.kind === "fclaim" && !e.ok && e.code === "EXPIRY_UNSAFE"),
   "MF-20: the rejection happens AT the safe-integer guard leg, not at a later ladder leg");
 
 // ── 12. CONVENTION griefing note (Correction 2): two addresses alternating holds keep the seller's cancel

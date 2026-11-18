@@ -5,8 +5,8 @@
 // conformance bar — an independent implementation is conformant iff it reproduces every
 // vector byte-for-byte and the pinned live-chain replay hashes.
 //
-//   records  — parseRecord (the validation gate) + canonical builders for every record type + the
-//              decoy-key allowlists (*_KEYS)
+//   records  — parseRecord (the validation gate) and explainRecord (its reason code) + canonical builders for every
+//              record type (RecordError names the rule they refuse) + the decoy-key allowlists (*_KEYS)
 //   resolve  — THE pure deterministic resolver: (events, tipHeight) → CairnXState
 //   types    — constants (activation heights, fees, lease parameters) + state/record types + the pure
 //              client selectors (claimWindowAt/Of, claimGraceOf, offerExpiryHeightOf, epochOf, fee math)
@@ -35,6 +35,8 @@ export { EVENTS_HASH_START, FINAL_DEPTH, eventsHash, eventsHashStep, stateHash, 
 export { myProvenFillClosedOffer } from "./fillclosed.js";
 export { countOtherHoldsAtGrant, LEGACY_HOLD_SUNSET_HEIGHT, type HoldCandidate, type HoldCount, type HoldTarget } from "./holdcount.js";
 export { provenOfferRefusal, type ProvenOfferTx } from "./admission.js";
+// codes: CONVENTION §40, the stable reason codes of the applied log and of record validation.
+export { CAP_CODES, REASON_CODES, REASON_CODE_OUTCOME, type AppliedCode, type ReasonCode, type RecordCode, type RefusalCode } from "./codes.js";
 // Re-export the csd-codec primitives the cairnx consumers need so the browser UI / wallet import a SINGLE
 // surface (cairnx-core) rather than re-typing canonicalJson or the reward/fee constants. (csd-codec stays
 // the canonical home; this is a convenience re-export, not a second copy.)

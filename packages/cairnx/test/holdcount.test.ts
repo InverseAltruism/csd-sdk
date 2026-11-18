@@ -3,7 +3,7 @@
 // is mined after the first three, so it must not count against them (it did in both client counters).
 import assert from "node:assert/strict";
 import {
-  DEPLOY_FEE, LEGACY_HOLD_SUNSET_HEIGHT, MAX_ACTIVE_CLAIMS, SCORE_CLAIM, TREASURY_ADDR, V28_HEIGHT, V29_HEIGHT, countOtherHoldsAtGrant,
+  DEPLOY_FEE, LEGACY_HOLD_SUNSET_HEIGHT, SCORE_CLAIM, TREASURY_ADDR, V28_HEIGHT, V29_HEIGHT, countOtherHoldsAtGrant,
   deploy, epochOf, fclaim, fclaimHoldEnd, mint, offer, resolve, verifyFillSpv,
   type ChainEvent, type FillSpvIo, type HoldCandidate, type HoldCount, type ProvenEvent, type ProposeEvent,
 } from "../src/index.js";
@@ -40,7 +40,7 @@ const st = resolve(events, tip);
 
 await t("premise: the resolver grants X, Y, Z and denies W on the cap", () => {
   assert.deepEqual(fcs.map((e) => st.fclaims[e.id] !== undefined), [true, true, true, false]);
-  assert.match(st.events.find((e) => e.id === fcs[3]!.id)?.note ?? "", new RegExp(`max ${MAX_ACTIVE_CLAIMS} live claims`));
+  assert.equal(st.events.find((e) => e.id === fcs[3]!.id)?.code, "CAP_LIVE_HOLDS");
 });
 
 await t("the count at each grant is the number of earlier holds, in block then position order", () => {
@@ -100,7 +100,7 @@ await t("the cap-denied fourth fclaim is still refused", async () => {
   };
   await t("V28 straddle: the full replay denies the fclaim on the cap, and the fill verdict is unsafe", async () => {
     assert.equal(lst.fclaims[fc.id], undefined);
-    assert.match(lst.events.find((e) => e.id === fc.id)?.note ?? "", new RegExp(`max ${MAX_ACTIVE_CLAIMS} live claims`));
+    assert.equal(lst.events.find((e) => e.id === fc.id)?.code, "CAP_LIVE_HOLDS");
     const hc = countOtherHoldsAtGrant(fcCand, target, ME);
     assert.equal(hc.ok, false);
     assert.equal((await verdict(hc, target.offer, fc.id, lio)).safe, false);
@@ -117,7 +117,7 @@ await t("a hold ending exactly at the grant height counts; one ending a block ea
   const x = fcs[0]!, end = fclaimHoldEnd(x.expiresEpoch);
   const rival = PE(id("c9"), fclaim({ offer: offers[0]! }), end, SELLER, epochOf(end) + 1);
   const st2 = resolve([...events.slice(0, 7), rival], end + 1);
-  assert.match(st2.events.find((e) => e.id === rival.id)?.note ?? "", /hold live/, "premise: the resolver still holds the offer at holdEnd");
+  assert.equal(st2.events.find((e) => e.id === rival.id)?.code, "CLAIM_HOLD_LIVE", "premise: the resolver still holds the offer at holdEnd");
   const one = [candidates[0]!];
   assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 1 });
   assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end + 1, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 0 });

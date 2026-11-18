@@ -7,7 +7,7 @@
 //
 // v1.1 adds: names (commit-reveal back-dated registrar + transfer + set + name offers) and
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
-import { parseRecord } from "./records.js";
+import { explainRecord } from "./records.js";
 import {
   TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, beforeActivation, epochOf,
   type BalanceState, type BidState, type CairnXState, type ChainEvent, type NameState, type OfferState, type ProposeEvent,
@@ -58,7 +58,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   }
 
   const c = createContext();
-  const { tokens, balances, names, recaptures, offers, bids, fclaims, log, note, sweepExpired } = c;
+  const { tokens, balances, names, recaptures, offers, bids, fclaims, log, refused, sweepExpired } = c;
   let pendingBlock = -1;
   const applyPendingCancels = () => { for (const f of c.pendingCancels) f(); c.pendingCancels = []; };
 
@@ -69,8 +69,9 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
     const feeToTreasury = ev.kind === "propose" ? ptAmt((ev.paidTo ?? {})[TREASURY_ADDR]) : 0n;
 
     if (ev.kind === "propose") {
-      const rec = parseRecord(ev.uri, ev.payloadHash);
-      if (!rec) { note(ev, ev.id, "invalid", false, "unparseable/non-canonical record"); continue; }
+      const parsed = explainRecord(ev.uri, ev.payloadHash);
+      if (!parsed.ok) { refused(ev, ev.id, "invalid", parsed.code, "unparseable/non-canonical record"); continue; }
+      const rec = parsed.record;
       const who = ev.proposer.toLowerCase();
       switch (rec.t) {
         case "deploy": applyDeploy(c, ev, rec, who, feeToTreasury); break;

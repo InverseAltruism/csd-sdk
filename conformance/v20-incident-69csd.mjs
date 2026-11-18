@@ -40,7 +40,7 @@ console.log("transferred to BUYER:", n69?.owner === BUYER ? "✓ YES — the pur
 console.log("JS≡Python:", canonicalState(st) === py ? "✓" : "✗ DIVERGED");
 // rejection trail
 const bad = (st.events || []).filter(e => e.ok === false);
-if (n69?.owner !== BUYER) { console.log("\nrejections:"); for (const b of bad) console.log("  ✗", b.kind, b.reason); }
+if (n69?.owner !== BUYER) { console.log("\nrejections:"); for (const b of bad) console.log("  ✗", b.kind, b.code, b.note); }
 const okAll = n69?.owner === BUYER && String(sellerNeed) === "4547500000" && String(fee) === "67500000" && canonicalState(st) === py;
 console.log("\n" + (okAll ? "✓✓ E2E PASS" : "✗ E2E FAIL"));
 process.exit(okAll ? 0 : 1);

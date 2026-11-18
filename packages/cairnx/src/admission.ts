@@ -16,5 +16,5 @@ export function provenOfferRefusal(rec: OfferRecord, tx: ProvenOfferTx): string 
   if (beforeActivation(tx.height)) return `anchored before CairnX activation (block ${ACTIVATION_HEIGHT})`;
   // a bigint at or above 2^53 converts to an unsafe number, which the rule refuses as the resolver does
   const ee = typeof tx.expiresEpoch === "bigint" ? Number(tx.expiresEpoch) : tx.expiresEpoch;
-  return offerEnvelopeRefusal(rec, String(tx.seller).toLowerCase(), tx.height, ee);
+  return offerEnvelopeRefusal(rec, String(tx.seller).toLowerCase(), tx.height, ee)?.note ?? null;
 }
