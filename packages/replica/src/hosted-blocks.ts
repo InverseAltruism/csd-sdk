@@ -10,7 +10,8 @@
 // past caches (http.ts) from the first block not bound, since an edge may hold a page marked immutable that a
 // deeper reorg replaced; only that second answer is refused. A failure after blocks are bound ends the step before
 // the failing block, keeping them; blocks bound earlier in the step that the root no longer holds (it adopted a
-// branch below them) are dropped. The step's tip is the root's (types.ts, TipView); the server's height is `reach`.
+// branch below them) are dropped, and a step they empty returns the root's rollback. A rollback the root is owed is
+// returned before the server is read. The step's tip is the root's (types.ts, TipView); the server's height is `reach`.
 import { anchorRoot } from "./anchor-root.js";
 import { checkBasis } from "./basis.js";
 import { bindServed, eventsOf, headerOf, memberPick, pickOf, readHead, type Served } from "./block-read.js";
@@ -44,6 +45,8 @@ export function hostedBlocks(o: HostedBlocksOptions): BlocksSource {
   const basis = checkBasis({ kind: "blocks", root: root.root, bodies: origin }) as BlocksBasis;
 
   async function step(s: Session, ctx: StepContext): Promise<Step> {
+    const owed = root.owed(ctx);
+    if (owed !== null) return owed;
     const server = await readHead(s, "the server"), go = await root.begin(s, ctx, server);
     if ("kind" in go) return go;
     const at = ctx.cursor, from = (at?.height ?? ctx.rule.activationHeight - 1) + 1, most = from + Math.max(1, ctx.budget.maxBlocks) - 1;
@@ -62,10 +65,10 @@ export function hostedBlocks(o: HostedBlocksOptions): BlocksSource {
         const a = p - (p % PAGE), whole = a + PAGE - 1 <= server.height, end = Math.min(a + PAGE - 1, to), lo = whole ? a : p, n = whole ? PAGE : end - p + 1;
         try {
           const rows = pageOf(lo, n)(await s.json(`/api/blocks/${lo}/${n}`, fresh)).filter((r) => r.height >= p && r.height <= end);
-          const v = await root.check(s, ctx, server, rows, fresh);
-          if (await prune()) { stop = true; break; }
-          if ("kind" in v) {
-            if (blocks.length === 0) return v;
+          const v = await root.check(s, ctx, server, rows, fresh), cut = await prune();
+          if ("kind" in v || cut) {
+            const back = "kind" in v ? v : root.owed(ctx);
+            if (blocks.length === 0 && back !== null) return back;
             stop = true;
             break;
           }

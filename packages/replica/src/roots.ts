@@ -5,8 +5,9 @@
 // for the highest still on the caller's chain (`at` reads the caller's own store, so the search takes no request
 // and ends within the step: at most 2 * ceil(log2(n + 1)) probes of two reads of `at` each for n held blocks). No
 // header at the cursor while the caller's tip is at or above it (a store that keeps a floor and a suffix) is a
-// refusal, never a rollback: a rollback needs another hash. A caller whose tip is below the cursor on the chain the
-// store holds rolls nothing back.
+// refusal, never a rollback: a rollback needs another hash. Inside the search a null is "not held": the fork is
+// placed only where the caller answered another hash (fork.ts). A caller whose tip is below the cursor on the chain
+// the store holds rolls nothing back.
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
@@ -21,8 +22,9 @@ export type Checked = { readonly verified: number; readonly error: SourceError |
  *  step (a reorg below the store's cursor), or how many leading rows are verified and the error to throw once they
  *  are bound; with `final` false a row that differs from the root throws BRANCH_MOVED, so the page is read again
  *  past caches before a refusal. `hashAt` is the verified hash at a height, or null. `tipView` is the tip the root
- *  vouches for (types.ts, TipView), null before it has one; `tip` may read the root for it. Each throws
- *  SourceError. */
+ *  vouches for (types.ts, TipView), null before it has one; `tip` may read the root for it. `owed` is a rollback the
+ *  store still owes the root, returned before anything is read: while one is owed no tip above its target is
+ *  reported and no step ends otherwise. Each throws SourceError. */
 export interface Root {
   readonly root: HeaderRoot;
   begin(s: Session, ctx: StepContext, server: Head): Promise<Step | { readonly to: number }>;
@@ -30,17 +32,20 @@ export interface Root {
   hashAt(height: number): Promise<string | null>;
   tipView(): TipView | null;
   tip(signal: AbortSignal): Promise<TipView | null>;
+  owed(ctx: StepContext): Step | null;
 }
 
 export function callerRoot(h: VerifiedHeaders): Root {
   let tip: TipView | null = null;
   const hashAt = async (height: number) => (await h.at(height))?.hash.toLowerCase() ?? null;
   const viewOf = (v: { height: number; hash: string; time: number }): TipView => ({ height: v.height, hash: v.hash.toLowerCase(), time: v.time });
-  const fork = forkSearch({ probe: async (_s, height) => ({ hash: (await hashAt(height)) ?? "", prev: (await hashAt(height - 1)) ?? "" }), tipView: async () => tip!, who: "the caller" });
+  const fork = forkSearch({ probe: async (_s, height) => ({ hash: (await hashAt(height)) ?? "", prev: (await hashAt(height - 1)) ?? "" }), tipView: async () => tip!,
+    holds: async (height) => (await hashAt(height)) !== null, who: "the caller" });
   return {
     root: { kind: "caller", floor: h.floor, origin: h.origin },
     hashAt,
     tipView: () => tip,
+    owed: () => null,
     async tip(signal) { const v = await h.sync(null, signal); return v === null ? null : (tip = viewOf(v)); },
     async begin(s, ctx, server) {
       const at = ctx.cursor;

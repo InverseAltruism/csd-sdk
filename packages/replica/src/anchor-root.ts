@@ -1,22 +1,24 @@
 // The anchor root of hostedBlocks (design section 2): headers the source verifies itself from a release's anchor,
 // workRoot, in a window (window.ts). The window is seeded from the server's /api/headers (the LWMA_WINDOW headers
-// ending at the anchor, kept only once they verify) and moves with the pages: each page's headers extend it, and
-// the window keeps the store's cursor at or above its `low`. When a page does not link, or the server's tip is
-// another block at a held height, the server's headers from `low` up to 256 above the window's tip are read: a
-// branch that forks at or above `low` is csd-light's tryReorg (adopted only with more work, else LESS_WORK), and
-// the store rolls back to its fork block. A branch that forks lower is verified from workRoot: a fresh window from
-// the same seed walks the server's headers to the cursor and on until it has more work than the held window (at the
-// server's tip without more work, LESS_WORK, kept until that tip moves), comparing the hash of each held block it
-// passes, and is adopted at the highest held block on its chain, where the store rolls back. A store whose cursor
-// this source's window holds no header for (a store filled before the source started) is walked the same way to
-// the cursor with no work to beat, since the store keeps none (README, "What a store must keep"). Each fork block
-// adopted is remembered until the store's cursor is back on the window, so a rollback that was not committed is
-// returned again, never repaired by a walk without a work bar. A walk that fails is dropped and starts afresh.
+// ending at the anchor, kept only once they verify) and moves with the pages: each page's headers extend it, and the
+// window keeps the store's cursor at or above its `low`. When a page does not link, or the server's tip is another
+// block at a held height, the server's headers from `low` up to 256 above the window's tip are read: a branch that
+// forks at or above `low` is csd-light's tryReorg (adopted only with more work, else LESS_WORK), and the store rolls
+// back to its fork block. A branch that forks lower is verified from workRoot: a fresh window from the same seed
+// walks the server's headers to the cursor and on until it has more work than the held window (at the server's tip
+// without more work, LESS_WORK, kept until that tip moves), comparing the hash of each held block it passes, and is
+// adopted at the highest held block on its chain, where the store rolls back. A store whose cursor this source's
+// window holds no header for (a store filled before the source started) is walked the same way to the cursor with no
+// work to beat, since the store keeps none (README, "What a store must keep"). Each fork block adopted, clamped to
+// the activation height less one, is remembered until the store's cursor is back on the window: until then the
+// rollback to it is owed (`owed`, returned before the server is read), the tip reported is that block, and nothing
+// is repaired by a walk without a work bar. A walk whose headers fail verification is dropped and starts afresh;
+// after a transport error it resumes.
 import { LWMA_WINDOW } from "@inversealtruism/csd-codec";
 import { headerOf } from "./block-read.js";
 import { SourceError } from "./errors.js";
 import type { Head } from "./fork.js";
-import { twice, type Session } from "./http.js";
+import { servedWrong, twice, type Session } from "./http.js";
 import type { Root } from "./roots.js";
 import type { Cursor, StepContext, Step, TipView } from "./types.js";
 import { HeaderWindow, type HeaderRow } from "./window.js";
@@ -30,13 +32,19 @@ const rowsOf = (from: number, count: number) => (v: unknown): HeaderRow[] => {
 };
 const readRows = (s: Session, from: number, count: number) => twice(s, `/api/headers/${from}/${count}`, rowsOf(from, count));
 const lower = (a: Cursor | null, b: Cursor): Cursor => (a !== null && a.height <= b.height ? a : b);
-// A walk resumes after a step's budget, a server behind the cursor or a refusal for less work; anything else drops it.
-const resumable = (e: unknown) => e instanceof SourceError && ["SOURCE_RATE_LIMITED", "SOURCE_UNAVAILABLE", "LESS_WORK"].includes(e.code);
+// A walk is dropped only when what the server served fails verification; after a transport error (a rejected fetch, a
+// timeout), a step's budget, a server behind the cursor or a refusal for less work it resumes where it stopped.
+const resumable = (e: unknown) => !(e instanceof SourceError) || ["SOURCE_RATE_LIMITED", "SOURCE_UNAVAILABLE", "LESS_WORK"].includes(e.code);
 
 /** `batch`: the most headers one /api/headers read asks for, the route's cap (a parameter for tests only). */
 export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   let w: HeaderWindow | null = null, seed: HeaderRow[] | null = null, walk: Walk | null = null, pending: Cursor | null = null;
-  const tipView = (): TipView | null => (w === null ? null : { height: w.tip.height, hash: w.tip.hash.toLowerCase(), time: Number(w.tip.header.time) });
+  // While a rollback may be outstanding the tip is capped at its fork block, the highest block known to lie on both
+  // the store's chain and the window's.
+  const tipView = (): TipView | null => {
+    const top = w === null ? undefined : pending === null ? w.tip : w.at(pending.height);
+    return top === undefined ? null : { height: top.height, hash: top.hash.toLowerCase(), time: Number(top.header.time) };
+  };
   const reorg = (to: Cursor): Step => ({ kind: "reorg", to, tip: tipView()! });
   // The window never drops the store's cursor, or a fork block still to be rolled back to, below `low`.
   const keepOf = (ctx: StepContext) => Math.min(ctx.cursor?.height ?? ctx.rule.activationHeight - 1, pending?.height ?? Number.POSITIVE_INFINITY);
@@ -82,18 +90,28 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
     return walking(s, ctx, server, (walk = { fresh: HeaderWindow.seed(seed!, anchor, depth), bar, need, matched, diverged: false, refusedAt: null }));
   };
 
-  // The server's headers around the window, after a page that does not link: a branch from `low` up, or a walk.
-  // A reorg is returned only below the store's cursor; blocks a step bound above a fork are dropped by the step.
+  // The server's headers around the window, after a page that does not link: a branch from `low` up, or a walk. An
+  // answer that fails verification is read once more past caches. The fork block, clamped to the loop's floor, is
+  // remembered; a reorg is returned only below the store's cursor, and blocks a step bound above it are dropped.
   async function fork(s: Session, ctx: StepContext, server: Head, win: HeaderWindow): Promise<Step | null> {
-    const top = Math.min(server.height, win.tip.height + 256), rows: HeaderRow[] = [];
-    for (let p = win.low; p <= top; p += BATCH) rows.push(...await readRows(s, p, Math.min(BATCH, top - p + 1)));
-    const k = rows.findIndex((r) => r.hash !== win.hashAt(r.height)), first = rows[k];
-    if (first === undefined) return null;
-    if (k === 0) return walkFrom(s, ctx, server, win.work, ctx.cursor?.height ?? ctx.rule.activationHeight - 1);
-    if (first.height === win.tip.height + 1 && first.header.prev.toLowerCase() === win.tip.hash) { win.extend(rows.slice(k), keepOf(ctx)); return null; }
-    win.branch(rows.slice(k));
-    const a = { height: first.height - 1, hash: win.hashAt(first.height - 1)! }, at = ctx.cursor;
+    const floor = ctx.rule.activationHeight - 1, top = Math.min(server.height, win.tip.height + 256);
+    const look = async (fresh: boolean): Promise<Cursor | "below" | null> => {
+      const rows: HeaderRow[] = [];
+      for (let p = win.low; p <= top; p += BATCH) { const n = Math.min(BATCH, top - p + 1); rows.push(...rowsOf(p, n)(await s.json(`/api/headers/${p}/${n}`, fresh))); }
+      const k = rows.findIndex((r) => r.hash !== win.hashAt(r.height)), first = rows[k];
+      if (first === undefined) return null;
+      if (k === 0) return "below";
+      if (first.height === win.tip.height + 1 && first.header.prev.toLowerCase() === win.tip.hash) { win.extend(rows.slice(k), keepOf(ctx)); return null; }
+      win.branch(rows.slice(k));
+      const fb = Math.max(first.height - 1, floor);
+      return { height: fb, hash: win.hashAt(fb)! };
+    };
+    let a: Cursor | "below" | null;
+    try { a = await look(false); } catch (e) { if (!servedWrong(e)) throw e; a = await look(true); }
+    if (a === "below") return walkFrom(s, ctx, server, win.work, ctx.cursor?.height ?? floor);
+    if (a === null) return null;
     pending = lower(pending, a);
+    const at = ctx.cursor;
     return at !== null && a.height < at.height ? reorg(a) : null;
   }
 
@@ -101,6 +119,10 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
     root: { kind: "anchor", anchor },
     tipView,
     tip: async () => tipView(),
+    owed(ctx) {
+      const at = ctx.cursor;
+      return w !== null && at !== null && pending !== null && pending.height < at.height && w.hashAt(at.height) !== at.hash ? reorg(pending) : null;
+    },
     hashAt: async (height) => w?.hashAt(height) ?? null,
     async begin(s, ctx, server) {
       const floor = ctx.rule.activationHeight - 1, at = ctx.cursor, h = at?.height ?? floor;
@@ -111,10 +133,7 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
       if (walk !== null && walk.refusedAt === null) return (await walking(s, ctx, server, walk)) ?? { to: server.height };
       walk = null;
       const mine = win.hashAt(h);
-      if (mine === null || (at !== null && mine !== at.hash)) {
-        if (at !== null && pending !== null && pending.height < at.height) return reorg(pending);
-        return (await walkFrom(s, ctx, server, win.tip.height > anchor.height ? win.work : null, h)) ?? { to: server.height };
-      }
+      if (mine === null || (at !== null && mine !== at.hash)) return (await walkFrom(s, ctx, server, win.tip.height > anchor.height ? win.work : null, h)) ?? { to: server.height };
       pending = null;
       const theirs = win.hashAt(server.height), st = theirs !== null && theirs !== server.hash ? await fork(s, ctx, server, win) : null;
       if (st !== null) return st;

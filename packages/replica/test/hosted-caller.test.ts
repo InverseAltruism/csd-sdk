@@ -61,4 +61,14 @@ const sps = await sp.run();
 ok("a caller that keeps 29,859 and 30,250 to 30,300, its tip 30,300, the store at 30,200: SOURCE_UNAVAILABLE, nothing rolled back",
   refused(sps, "SOURCE_UNAVAILABLE", 30_200) && sps.lastReorg === null && /no header at the cursor/.test(sps.lastError?.reason ?? ""));
 
+// The same kind of caller reorganises from 30,255: no held block of the store in its range is on its chain, and it
+// does not hold the heights below 30,250, so the fork may lie there: a refusal, not a rollback to the floor.
+const deep = callerHeaders({ answers: all, tip: cap.to }), dsrv = { answers: all }, dp = driveHosted(dsrv, { kind: "caller", headers: deep.headers });
+await dp.run();
+Object.assign(deep.c, { answers: branch(30_255), holds: (h: number) => h === 29_859 || h >= 30_250 });
+dsrv.answers = branch(30_255);
+const dps = await dp.run();
+ok("a caller keeping 29,859 and 30,250 to 30,300 that reorganises from 30,255: SOURCE_UNAVAILABLE, nothing rolled back",
+  refused(dps, "SOURCE_UNAVAILABLE", cap.to) && dps.lastReorg === null && dp.bad.length === 0, `${dps.lastError?.reason} ${dps.lastReorg?.to.height}`);
+
 done("cairnx-replica hosted caller");

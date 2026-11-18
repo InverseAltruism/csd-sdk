@@ -83,19 +83,22 @@ replayed on demand.
     is checked for its link, time rules, LWMA bits and proof of work. The window holds the last 45 + `window`
     headers (default 720), never dropping the store's cursor below the 45 a branch needs, and counts `work` from
     workRoot. When a page does not link, or the server's tip is another block at a height the window holds, the
-    server's headers from the window's lowest forkable block to 256 above its tip are read: a branch from inside the
-    window is csd-light's `tryReorg`, adopted only with more work (else `LESS_WORK`, nothing rolled back), and the
-    store rolls back to its fork block. A branch from lower is verified from workRoot: a fresh window from the same
+    server's headers from the window's lowest forkable block to 256 above its tip are read (an answer that fails
+    verification is read once more past caches): a branch from inside the window is csd-light's `tryReorg`, adopted
+    only with more work (else `LESS_WORK`, nothing rolled back), and the store rolls back to its fork block, or to the
+    activation height less one when the fork lies below it. A branch from lower is verified from workRoot: a fresh window from the same
     seed walks the server's headers to the cursor and on until it has more work than the held window (a tie keeps
     the held chain; at the server's tip without more work, `LESS_WORK`, kept until the server's tip moves),
     comparing the hash of each held block it passes, and is adopted at the highest held block on its chain, where
     the store rolls back. A header above workRoot that names another parent is `PIN_OFF_CHAIN`. A reorg found on a
-    later page of a step drops the blocks the step bound above the fork; a rollback the store did not commit is
-    returned again. A server whose tip is below the cursor on the chain held, or below the window, is
+    later page of a step drops the blocks the step bound above the fork and returns the rollback. Until the store's
+    cursor is back on the window's chain, the rollback is returned before anything is read from the server, and the
+    tip reported, by a step or by `tip()`, is the fork block, the highest block known to lie on both chains. A server whose tip is below the cursor on the chain held, or below the window, is
     `SOURCE_UNAVAILABLE`, nothing rolled back.
 
     The walk from workRoot reads at least one batch of 512 headers a step and stops at the step's request budget or
-    deadline; a walk that fails is dropped and starts afresh. While it runs, each step it does not finish is
+    deadline. A walk whose headers fail verification is dropped and starts afresh; after a transport error (a
+    rejected fetch, a timeout) it resumes where it stopped. While it runs, each step it does not finish is
     `SOURCE_RATE_LIMITED` with no wait: an `advance()` ends after that step, `status()` shows that code with the
     cursor unchanged, and the next `advance()` goes on. From the anchor at 29,859 to a tip of 144,460 that is 224
     batches, about 26 steps at 10 requests a step (arithmetic, not measured). It holds a second window of 45 +
@@ -105,8 +108,10 @@ replayed on demand.
     Each step syncs it to the server's tip (`SOURCE_UNAVAILABLE` when `sync` answers null, `BELOW_FLOOR` when `floor`
     lies above the activation height less one) and asks `at` for the cursor's hash. Another hash starts the search
     over the held blocks that `nodeBlocks` uses, with `at` in place of block reads, so it ends within the step, and
-    the rollback lands on a held hash. No header at the cursor while the caller's tip is at or above it is
-    `SOURCE_UNAVAILABLE`, never a rollback. A step reads to the lower of the caller's tip and the server's. Each
+    the rollback lands on a held hash. The search probes only heights `at` answers, and places a fork only where it
+    answered another hash: when no held block it answers for is on its chain and it lacks some, the step is
+    `SOURCE_UNAVAILABLE`, not a rollback to the floor. No header at the cursor while the caller's tip is at or above
+    it is `SOURCE_UNAVAILABLE`, never a rollback. A step reads to the lower of the caller's tip and the server's. Each
     page's headers are given to `offer` when it is present, after `sync`, both with the server's unverified tip
     height; what `offer` answers is not read, and every block must hash to `at` at its height. So `offer` saves the
     caller's own header reads only when its `sync` skips what an earlier offer already gave it.

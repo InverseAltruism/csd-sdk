@@ -33,6 +33,10 @@
   the refusal. `readBlocks` over it reads blocks whose headers the root holds. The tip a step reports is a header
   the root vouches for; the server's claimed height travels as the blocks step's new `reach`, which the loop uses
   only to decide whether to take another step.
+- While a rollback is owed to the anchor root (the store's cursor off the window's chain), `hostedBlocks` returns it
+  before reading the server and reports no tip above its fork block; a fork block below the activation height less
+  one rolls back to that height; a walk from workRoot resumes after a transport error; a fork's header answer that
+  fails verification is read again past caches; a caller's fork is placed only where its `at` answered another hash.
 - 2026-11-18, a copy: `src/http.ts` holds a copy of csd-client's capped body read, which is private to `CsdClient`.
   Remove it when csd-client exports that read.
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
