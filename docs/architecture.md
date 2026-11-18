@@ -8,7 +8,7 @@ code map. Versions are not listed here: read `packages/*/package.json` (workspac
 ## Packages
 
 The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` is private and names the pnpm version in
-`packageManager`. Every package builds with tsup to esm, cjs and dts.
+`packageManager`. Every package builds with tsup to esm, cjs and dts, except cairnx-replica, which builds to esm and dts.
 
 | Package | Purpose |
 |---|---|
@@ -21,6 +21,7 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 | cairnx-core (packages/cairnx) | `resolve(events, tipHeight) -> canonical state`, pure deterministic replay (tokens, names+lease+commit-reveal, offers, bids, fills, fees). Ships the normative CONVENTION.md (section 32 is the v2.9 M4/M5 write-up) + portable vectors + replay-hashes. Modules below. |
 | cairnx-core/mm (packages/cairnx/src/mm, export `./mm`) | The market maker's sizing and Sunrise pricing math, shared by the maker service and the site. Not consensus: resolve() reads none of it and the root export does not include it. |
 | csd-siwc | Sign in with CSD: audience-bound, replay-resistant wallet auth; own Python ref (siwc_ref.py). |
+| cairnx-replica (packages/replica) | A CairnX replica over cairnx-core (a peer dependency): the basis each store is filled from and the level and proof it gives every answer (`checkBasis`, `levelOf`, `proofOf`, `basisKey`), the source and store types, `memoryStore`; `./testing` holds `fixtureSource` and the event factories. Unreleased. |
 
 ## cairnx-core modules (`packages/cairnx/src/`)
 
