@@ -1,4 +1,5 @@
 import type { ChainEvent, EventsSoFar } from "@inversealtruism/cairnx-core";
+import { eventId } from "./order.js";
 
 /** The two sets of CONVENTION section 33.2 inside one step: the loop's `base`, which holds the events below the
  *  cursor and grows only at a commit, and the events of the step's blocks read so far, added in height order. */
@@ -11,7 +12,8 @@ export function stepSofar(base: EventsSoFar): { view: EventsSoFar; add(events: r
     },
     add(events) {
       for (const e of events) {
-        if (e.kind === "propose") { ids.add(e.id); proposeIds.add(e.id); } else ids.add(e.txid);
+        ids.add(eventId(e));
+        if (e.kind === "propose") proposeIds.add(e.id);
       }
     },
   };

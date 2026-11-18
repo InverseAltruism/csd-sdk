@@ -3,18 +3,12 @@
 // the order of CONVENTION section 33.3, canonicalJson of each event, then of the list. The steps are driven by hand
 // here, with the two sets of section 33.2 kept as the loop keeps them: grown only after a step; a source that stops
 // advancing ends the drive after one step per fixture block.
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
 import { CAIRNX_EVENT_RULE, DEPLOY_FEE, TREASURY_ADDR, canonicalJson, resolve, type ChainEvent } from "@inversealtruism/cairnx-core";
 import { levelOf, proofOf, type Cursor, type Source, type Step } from "../src/index.js";
-import { fixtureSource, fixtures, type BlockFixture } from "../src/testing.js";
+import { applyOrder } from "../src/order.js";
+import { fixtureSource, fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
-
-// cairnx-core's package root, found through its resolved entry; its test files are read from the workspace.
-const core = join(dirname(createRequire(import.meta.url).resolve("@inversealtruism/cairnx-core")), "..");
-const fx = JSON.parse(readFileSync(join(core, "test/fixtures/events-blocks.json"), "utf8")) as BlockFixture;
-const corpus = JSON.parse(readFileSync(join(core, "test/vectors/replay-corpus.json"), "utf8")) as { tipHeight: number; events: ChainEvent[] };
+import { corpus, fx } from "./core-files.js";
 
 async function drain(src: Source, maxBlocks: number) {
   const eventIds = new Set<string>(), proposeIds = new Set<string>(), events: ChainEvent[] = [], cursors: (Cursor | null)[] = [];
@@ -40,11 +34,7 @@ console.log("fixtureSource:");
 const src = fixtureSource(fx);
 ok("a fixture is a feed without inclusion proofs: level 1, records as served",
   levelOf(src.basis) === 1 && proofOf(src.basis) === "served" && src.floor === null);
-const key = (e: ChainEvent) => [e.height, e.kind === "propose" ? 0 : 1, e.pos] as const;
-const want = [...corpus.events].sort((a, b) => {
-  const x = key(a), y = key(b);
-  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
-});
+const want = [...corpus.events].sort(applyOrder);
 const got = await drain(src, 64);
 let equal = 0, first = -1;
 for (let i = 0; i < Math.max(want.length, got.events.length); i++) {

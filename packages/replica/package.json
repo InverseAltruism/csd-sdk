@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts src/testing.ts --format esm --dts --clean",
-    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts",
+    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts && tsx test/steps.test.ts && tsx test/loop.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },

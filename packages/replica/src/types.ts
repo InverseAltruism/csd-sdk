@@ -1,6 +1,6 @@
 // The replica's value types. Each store holds one Basis, fixed at its creation, and every answer's level is a pure
 // function of it (basis.ts). Interfaces marked internal are unstable and outside semver.
-import type { ChainEvent, EventRule, EventsSoFar } from "@inversealtruism/cairnx-core";
+import type { CairnXState, ChainEvent, EventRule, EventsSoFar } from "@inversealtruism/cairnx-core";
 
 /** A block: its height and its hash, `0x` and 64 lowercase hex. */
 export interface Cursor { readonly height: number; readonly hash: string }
@@ -60,23 +60,38 @@ export interface Source {
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
 }
 
-/** Internal. A store's meta. No resolved state is persisted. */
+/** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts). */
 export interface StoreMeta {
   readonly format: 1; readonly rule: EventRule; readonly basis: Basis; readonly cursor: Cursor | null; readonly eventsHash: string;
-  readonly eventCount: number; readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number } | null;
+  readonly rowsHash: string; readonly eventCount: number; readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number } | null;
   readonly windowSha256: string | null; readonly work: string | null; readonly workRoot: Cursor | null;
 }
 
-/** Internal. One block's events with the events hash after it. */
-export interface BlockRow { readonly height: number; readonly hash: string | null; readonly events: ChainEvent[]; readonly eventsHash: string }
+/** Internal. One block's events with the events hash and the rows hash after it. */
+export interface BlockRow {
+  readonly height: number; readonly hash: string | null; readonly events: ChainEvent[]; readonly eventsHash: string; readonly rowsHash: string;
+}
 
-/** Internal. An epoch boundary the store keeps. */
-export interface Boundary { readonly height: number; readonly hash: string; readonly eventsHash: string; readonly stateHash: string }
+/** Internal. An epoch boundary the store keeps; `stateHash` is null when it was not replayed as it became deep (loop.ts). */
+export interface Boundary { readonly height: number; readonly hash: string; readonly eventsHash: string; readonly stateHash: string | null }
 
 /** Internal. One commit: applied whole or not at all, and only when `expect` is the stored cursor. */
 export interface Commit {
   readonly expect: Cursor | null; readonly rollbackTo?: Cursor | null; readonly rows: BlockRow[]; readonly boundaries: Boundary[];
   readonly meta: StoreMeta; readonly headerWindow?: Uint8Array;
+}
+
+/** Internal. What turns the rows a loop holds into a resolved state; nothing it holds is persisted. `height` is the
+ *  loop's cursor: the rows given hold every event at or below it, and null means the loop holds nothing. */
+export interface Materializer {
+  load(rows: readonly BlockRow[], height: number | null): void;
+  apply(rows: readonly BlockRow[], height: number): void;
+  rollback(to: number): void;
+  /** The state at `tip - depth` from every event at or below it, or null when that height is not held. Read-only: the
+   *  object may be handed to later callers. */
+  stateAt(tip: number, depth: number): CairnXState | null;
+  /** How long the last replay took, in milliseconds; null before the first. */
+  readonly replayMs: number | null;
 }
 
 /** Internal. Format, rule and basis key a store; `open` refuses any other and names the difference. */
