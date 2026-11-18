@@ -33,6 +33,46 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
+- `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
+  source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
+  accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
+  100.64/10 and fc00::/7 and the hosts listed, comma-separated, in the environment variable `CAIRNX_OWN_NODE_HOSTS`,
+  read once at the first use. Each entry there is a bare lowercase ASCII host name or IP literal (an IPv6 literal in
+  brackets); any other entry throws `ReplicaConfigError` naming it. Any other address, or one with credentials, a
+  query or a fragment, throws `ReplicaConfigError`, naming the host alone. `./browser` reads no environment and imports
+  no Node built-in.
+
+  Every request bypasses HTTP caches (cache mode `no-store`, which sends `Cache-Control: no-cache`) and refuses
+  redirects, so every host read is one the address rule accepted. `timeoutMs` (default 10 s) runs from a request's
+  start, after its pace wait; `paceMs` spaces request starts, across steps too; an abort ends a wait or a request at
+  once (a request only at its timeout on Node before 20.3, which lacks `AbortSignal.any`) and rejects the step. A step reads the node's tip, then each block from the cursor up while its budget lasts
+  (always one block; the requests count every read, the source transactions included, and the tip's header may take
+  one more). Each block is bound: its header hashes to the hash served and links to the block before, its
+  transactions hash to the header's merkle root (csd-light `bindBlockTxs`), and the author of each event member is
+  bound with csd-crypto `authorOf` to the owner of the coin its first input spends, read from the source transaction
+  after its txid is recomputed: from the block answer's `spent_tx` field when the answer carries one that hashes to
+  the spent id, else from `/tx/:id`, up to four at a time. The events are cairnx-core's `blockMembers` and
+  `blockEvents`. A failure ends the step before the failing block and keeps the blocks bound before it; the next step
+  meets it first and is refused: `HEADER_INVALID`, `BODY_MISMATCH` (a transaction missing or added), `AUTHOR_UNBOUND`
+  (an unlocking signature that is not the coin owner's, or a source transaction that does not hash to its id),
+  `SOURCE_MALFORMED` (an answer out of form, or a body the rule of CONVENTION section 33 refuses),
+  `SOURCE_UNAVAILABLE` (no answer, a 503, a source transaction the node does not have), `SOURCE_RATE_LIMITED` (a
+  429). A Retry-After in delta seconds or an IMF-fixdate is waited, at most 300 s; any other value is ignored.
+
+  A reorg is followed when the node's chain no longer holds the cursor's block: its tip is another block at the
+  cursor's height, the block above the cursor does not link to it, or its tip is below the cursor and is not the block
+  the store holds there. The step is then a reorg to the highest held block the node's chain still holds, found by a
+  search over the held blocks (galloping down from the top, then bisecting) of at most 2 * ceil(log2(n + 1)) block
+  reads for n held blocks, kept across steps when a step's requests run out (that step is `SOURCE_RATE_LIMITED` with
+  no wait); with no held block on the node's chain, a reorg to the floor. A node behind the cursor on the chain the
+  store holds is `SOURCE_UNAVAILABLE`, nothing rolled back. A node that holds the cursor's block while the block above
+  does not link to it, or that serves another block at its tip height than its `/tip` names, is `SOURCE_MALFORMED`.
+  `BRANCH_MOVED` remains only for a chain that moved below the floor.
+
+  `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
+  `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
+  `"all"` (every transaction but the coinbase) or `"members"` (each Propose in the rule's domain and each Attest). It
+  throws `SourceError`, `BRANCH_MOVED` for a block that does not link to the one before.
 - `./testing`: `fixtureSource(fixture)`, a level 1 source over a recorded block fixture such as cairnx-core's
   `test/fixtures/events-blocks.json` in this repository, and the event factories `fixtures()`.
 

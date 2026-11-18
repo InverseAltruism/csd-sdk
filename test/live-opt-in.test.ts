@@ -14,6 +14,7 @@ const LIVE_CAPABLE: [string, RegExp][] = [
   ["test/security.test.ts", /SKIP: light forged-chain tests: CSD_RPC unset/],
   ["packages/client/test/client.test.ts", /SKIP: csd-client live test: CSD_RPC unset/],
   ["packages/light/test/light.test.ts", /SKIP: live light tests: CSD_RPC unset/],
+  ["packages/replica/test/node-blocks.live.ts", /SKIP: cairnx-replica live test: CSD_RPC unset/],
 ];
 
 // security.test.ts runs offline assertions and skips only its forged-chain part; the others are live-only.
@@ -43,12 +44,13 @@ for (const [file] of LIVE_CAPABLE.filter(([f]) => liveOnly(f))) {
   pass++;
   console.log(`  ok ${file}: CSD_RPC set, no node -> fails by name`);
 }
-// The block scripts (conformance/chain-read.mjs) are opt-in the same way: with no node named they refuse by name
-// (exit 2) without a request, and with one that does not answer they fail by name (exit 1).
+// The block scripts (conformance/chain-read.mjs, the replica's capture script) are opt-in the same way: with no node
+// named they refuse by name (exit 2) without a request, and with one that does not answer they fail by name (exit 1).
 const BLOCK_SCRIPTS: [string, string[]][] = [
   ["conformance/capture-events-fixture.mjs", ["--to", "117000"]],
   ["conformance/events-live-differential.mjs", []],
   ["conformance/scan-repeated-txids.mjs", []],
+  ["packages/replica/scripts/capture-node-blocks.mjs", ["--from", "29860", "--to", "29860", "--out", "/dev/null"]],
 ];
 const noNode = { ...env };
 delete noNode.CSD_INDEXER;

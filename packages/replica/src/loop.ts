@@ -11,7 +11,7 @@
 // boundary is stored with a null state hash and replayed on demand (Loop.boundary).
 import { CAIRNX_EVENT_RULE, EPOCH_LEN, EVENTS_HASH_START, FINAL_DEPTH, stateHash, type CairnXState, type EventRule } from "@inversealtruism/cairnx-core";
 import { checkStep, reorgBreak } from "./contract.js";
-import { ReplicaConfigError } from "./errors.js";
+import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
 import { Held, verifyRows } from "./held.js";
 import { fullReplay } from "./replay.js";
 import type { BlockRow, Boundary, Commit, Cursor, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
@@ -47,10 +47,9 @@ export interface Loop {
   close(): Promise<void>;
 }
 
-const BACKOFF_FIRST_MS = 1_000, BACKOFF_MAX_MS = 300_000;
+const BACKOFF_FIRST_MS = 1_000;
 /** How far below the tip a boundary is replayed as it becomes deep: 24 epochs, 720 blocks. */
 export const STATE_WINDOW = 24 * EPOCH_LEN;
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // A signal that aborts when either does; AbortSignal.any needs Node 20.3 and the package declares Node 18.
 function linked(a: AbortSignal, b: AbortSignal | undefined): { signal: AbortSignal; dispose(): void } {
@@ -104,7 +103,9 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   function backOff(code: SourceCode | "STORE_FAILED", reason: string, afterMs: number | null): "stop" {
     lastError = { code, reason, at: clock() };
-    retryAt = clock() + (afterMs ?? Math.min(BACKOFF_FIRST_MS * 2 ** failures, BACKOFF_MAX_MS));
+    // A source's wait is taken up to BACKOFF_MAX_MS; one that is not a finite number >= 0 is treated as absent.
+    const asked = afterMs !== null && Number.isFinite(afterMs) && afterMs >= 0 ? Math.min(afterMs, BACKOFF_MAX_MS) : null;
+    retryAt = clock() + (asked ?? Math.min(BACKOFF_FIRST_MS * 2 ** failures, BACKOFF_MAX_MS));
     failures++;
     return "stop";
   }

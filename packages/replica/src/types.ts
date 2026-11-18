@@ -1,6 +1,8 @@
 // The replica's value types. Each store holds one Basis, fixed at its creation, and every answer's level is a pure
 // function of it (basis.ts). Interfaces marked internal are unstable and outside semver.
 import type { CairnXState, ChainEvent, EventRule, EventsSoFar } from "@inversealtruism/cairnx-core";
+import type { BlockHeader } from "@inversealtruism/csd-codec";
+import type { BoundTx } from "@inversealtruism/csd-light";
 
 /** A block: its height and its hash, `0x` and 64 lowercase hex. */
 export interface Cursor { readonly height: number; readonly hash: string }
@@ -58,6 +60,24 @@ export type Step =
 export interface Source {
   readonly basis: Basis; readonly floor: Cursor | null;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
+}
+
+/** A complete block bound to its header: every txid recomputed from its body and the set hashing to the header's
+ *  merkle root; `authors` holds, by txid, the author bound to each transaction the read asked for. */
+export interface BoundBlock {
+  readonly height: number; readonly hash: string; readonly header: BlockHeader; readonly txs: readonly BoundTx[];
+  readonly authors: ReadonlyMap<string, string>;
+}
+
+/** Whose authors a block read binds: none; every transaction but the coinbase; or each that can be an event of the
+ *  rule, a Propose in its domain or any Attest (whether an Attest is a member needs the events below the block). */
+export type AuthorScope = "none" | "all" | "members";
+
+/** A source of complete blocks bound to headers from its root. `block` is internal: one block, linked to `prev` when
+ *  that is given, with the authors of `authors` bound; it throws SourceError. */
+export interface BlocksSource extends Source {
+  readonly basis: BlocksBasis;
+  block(height: number, o: { readonly authors: AuthorScope; readonly rule: EventRule; readonly prev: string | null; readonly signal: AbortSignal }): Promise<BoundBlock>;
 }
 
 /** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts). */

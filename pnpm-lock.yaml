@@ -101,6 +101,19 @@ importers:
         version: link:../vectors
 
   packages/replica:
+    dependencies:
+      '@inversealtruism/csd-client':
+        specifier: workspace:*
+        version: link:../client
+      '@inversealtruism/csd-codec':
+        specifier: workspace:*
+        version: link:../codec
+      '@inversealtruism/csd-crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@inversealtruism/csd-light':
+        specifier: workspace:*
+        version: link:../light
     devDependencies:
       '@inversealtruism/cairnx-core':
         specifier: workspace:*

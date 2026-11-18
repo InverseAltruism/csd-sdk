@@ -34,7 +34,7 @@ ok("the secret scan: pinned gitleaks, this repo's config, full history, merge di
 
 // A live suite with no node exits 0 having asserted nothing, so a CI step that runs one reads green while checking
 // nothing. They run only from `pnpm test:live`.
-const LIVE_ONLY = ["test/oracle.test.ts", "packages/client/test/client.test.ts", "packages/light/test/light.test.ts"];
+const LIVE_ONLY = ["test/oracle.test.ts", "packages/client/test/client.test.ts", "packages/light/test/light.test.ts", "packages/replica/test/node-blocks.live.ts"];
 const scripts = (f: string): Record<string, string> => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")).scripts;
 const root = scripts("package.json");
 const pkgOf = (f: string) => f.startsWith("packages/") ? `${f.split("/").slice(0, 2).join("/")}/package.json` : "package.json";
