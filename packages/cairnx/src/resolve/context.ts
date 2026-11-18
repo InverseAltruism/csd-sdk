@@ -93,8 +93,6 @@ export function createContext() {
     if (!b) { b = { available: 0n, locked: 0n }; m.set(addr, b); }
     return b;
   };
-  const note = (e: ChainEvent, id: string, kind: string, ok: boolean, why?: string) =>
-    log.push({ height: e.height, pos: e.pos, id, kind, ok, ...(why ? { note: why } : {}) });
 
   // ── release the asset held by an offer (token amount unlock, or name unlock) ──
   const releaseGive = (o: OfferState) => {
@@ -173,7 +171,7 @@ export function createContext() {
 
   return {
     tokens, balances, names, commits, recaptures, offers, offerLock, bids, openOffers, openBids, pendingNames, fclaims, log,
-    setOfferStatus, setBidStatus, putName, bal, note, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
+    setOfferStatus, setBidStatus, putName, bal, applied, refused, releaseGive, sweepExpired, markBidDone, voidOpenNameOffers, liveHoldCount, releaseGiveLock,
     feesPaid: 0n,
     // v1.4 fill-before-cancel: at V14_HEIGHT+ a cancel/ocancel's EFFECT is deferred to the block
     // boundary, so any same-block fill wins — a seller can no longer snipe a buyer's in-flight

@@ -5,8 +5,8 @@
 // conformance bar — an independent implementation is conformant iff it reproduces every
 // vector byte-for-byte and the pinned live-chain replay hashes.
 //
-//   records  — parseRecord (the validation gate) + canonical builders for every record type + the
-//              decoy-key allowlists (*_KEYS)
+//   records  — parseRecord (the validation gate) and explainRecord (its reason code) + canonical builders for every
+//              record type (RecordError names the rule they refuse) + the decoy-key allowlists (*_KEYS)
 //   resolve  — THE pure deterministic resolver: (events, tipHeight) → CairnXState
 //   types    — constants (activation heights, fees, lease parameters) + state/record types + the pure
 //              client selectors (claimWindowAt/Of, claimGraceOf, offerExpiryHeightOf, epochOf, fee math)

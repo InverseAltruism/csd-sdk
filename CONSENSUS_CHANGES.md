@@ -406,7 +406,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :156), where the clause is inert by design (SCORE_CLAIM at
+  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :154), where the clause is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state

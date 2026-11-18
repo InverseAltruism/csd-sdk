@@ -5,9 +5,14 @@
 - Stable reason codes (CONVENTION.md section 40, written with the last part of this release): each entry of the
   applied log gains `code`, the rule that decided the record. New root exports `REASON_CODES`, `REASON_CODE_OUTCOME`,
   `CAP_CODES` and the types `ReasonCode`, `AppliedCode`, `RefusalCode`, `RecordCode` (`src/codes.ts`). Every entry
-  carries a code so far except an unparseable record's. `offerEnvelopeRefusal` (internal) returns the code with the
-  note; `provenOfferRefusal` returns the same strings as before. No state moves: `scripts/seal-differential.mjs`
-  against cairnx-core 0.2.4 finds `canonicalState` byte-identical and the whole result identical once `code` is left out.
+  `resolve()` writes carries a code; an unparseable record's entry carries the record code. `offerEnvelopeRefusal`
+  (internal) returns the code with the note; `provenOfferRefusal` returns the same strings as before.
+- `explainRecord(uri, payloadHash)`: `{ ok: true, record }` or `{ ok: false, code }`, the first record rule the uri
+  breaks. `parseRecord` keeps its signature and answers and shares one implementation with it. A builder that refuses
+  throws `RecordError`, an `Error` with `code`; its message is "record does not validate against CONVENTION.md (<code>)",
+  which until now ended at "CONVENTION.md".
+- No state moves: `scripts/seal-differential.mjs` against cairnx-core 0.2.4 finds `canonicalState` byte-identical, the
+  whole result identical once `code` is left out, and `parseRecord` accepting exactly what it accepted.
 
 ## 0.2.5
 

@@ -543,7 +543,8 @@ export interface BidState {
 }
 export interface AppliedEvent {
   height: number; pos: number; id: string; kind: string; ok: boolean;
-  /** The rule that decided the record (CONVENTION §40). Optional: a log built by hand or by an earlier core has none. */
+  /** The rule that decided the record (CONVENTION §40); every entry resolve() writes carries one. Optional in the type:
+   *  a log built by hand or by a core before 0.2.6 has none. */
   code?: ReasonCode;
   note?: string;
 }

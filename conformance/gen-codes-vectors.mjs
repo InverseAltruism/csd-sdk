@@ -373,6 +373,77 @@ Case("ocancel-before-v12", R.V12_HEIGHT, [P(R.offerCancelAll(), R.V12_HEIGHT - 1
   }
 }
 
+// ── records (src/records.ts): each uri with the code explainRecord must give, or null for a record that parses ──
+const records = [];
+// An object is written as its canonical JSON with its own payload hash; a string is the uri as given.
+const Rec = (name, objOrUri, code, payloadHash) => {
+  const uri = typeof objOrUri === "string" ? objOrUri : R.canonicalJson(objOrUri);
+  records.push({ name, uri, payloadHash: payloadHash ?? (typeof objOrUri === "string" ? HASH : R.payloadHash(objOrUri)), code });
+};
+const mintRec = (extra = {}) => ({ v: 1, t: "mint", ticker: "AAA", amount: "1", ...extra });
+const xferRec = (extra = {}) => ({ v: 1, t: "transfer", ticker: "AAA", to: B, amount: "1", ...extra });
+const offerRec = (extra = {}) => ({ v: 1, t: "offer", give: { ticker: "AAA", amount: "10" }, want: { value: "5", payto: A }, ...extra });
+const deployRec = (extra = {}) => ({ v: 1, t: "deploy", ticker: "AAA", decimals: 0, supply: "100", mint: "issuer", ...extra });
+const profRec = (p) => ({ v: 1, t: "nprofile", name: "alice", p });
+Rec("valid-mint", mintRec(), null);
+Rec("valid-offer-want-zero", offerRec({ want: { value: "0", payto: A } }), null);
+Rec("valid-name-reveal", { v: 1, t: "name", name: "alice", salt: SALT }, null);
+Rec("valid-profile-at-the-caps", profRec(Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, ""]))), null);
+Rec("too-large", profRec({ a: "x".repeat(200), b: "x".repeat(200), c: "x".repeat(200) }), "RECORD_TOO_LARGE");
+Rec("not-json", "not json", "RECORD_NOT_OBJECT");
+Rec("json-array", "[1]", "RECORD_NOT_OBJECT");
+Rec("not-canonical-key-order", `{"v":1,"t":"mint","ticker":"AAA"}`, "RECORD_NOT_CANONICAL");
+Rec("hash-mismatch", mintRec(), "RECORD_HASH_MISMATCH", HASH);
+Rec("lone-surrogate", xferRec({ memo: "\uD800" }), "RECORD_LONE_SURROGATE");
+Rec("version-2", mintRec({ v: 2 }), "RECORD_NOT_V1");
+Rec("type-not-a-string", { v: 1, t: 5 }, "RECORD_NOT_V1");
+Rec("unknown-type", { v: 1, t: "zzz" }, "RECORD_UNKNOWN_TYPE");
+Rec("extra-key", mintRec({ x: 1 }), "RECORD_EXTRA_KEY");
+Rec("extra-key-before-a-bad-ticker", mintRec({ x: 1, ticker: "aaa" }), "RECORD_EXTRA_KEY");
+Rec("ncommit-extra-key", { v: 1, t: "ncommit", commit: HASH, x: 1 }, "RECORD_EXTRA_KEY");
+Rec("offer-empty-give", offerRec({ give: {} }), "RECORD_BAD_SHAPE");
+Rec("issuer-deploy-with-mint-limit", deployRec({ mintLimit: "5" }), "RECORD_BAD_SHAPE");
+Rec("min-on-token-want", offerRec({ want: { ticker: "BBB", amount: "5" }, min: "1" }), "RECORD_BAD_SHAPE");
+Rec("ocancel-two-filters", { v: 1, t: "ocancel", ticker: "AAA", name: "alice" }, "RECORD_BAD_SHAPE");
+Rec("profile-not-an-object", profRec([]), "RECORD_BAD_SHAPE");
+Rec("bid-give-not-value", { v: 1, t: "bid", want: { ticker: "AAA", amount: "1" }, give: { ticker: "AAA", amount: "1" } }, "RECORD_BAD_SHAPE");
+Rec("offer-same-token", offerRec({ want: { ticker: "AAA", amount: "5" } }), "RECORD_SAME_TOKEN");
+Rec("bad-ticker", mintRec({ ticker: "aaa" }), "RECORD_BAD_TICKER");
+Rec("bad-ticker-before-a-bad-address", xferRec({ ticker: "aaa", to: "0xABC" }), "RECORD_BAD_TICKER");
+Rec("bad-name", { v: 1, t: "name", name: "Alice" }, "RECORD_BAD_NAME");
+Rec("bad-name-leading-hyphen", { v: 1, t: "nrenew", name: "-ab" }, "RECORD_BAD_NAME");
+Rec("reserved-name", { v: 1, t: "name", name: "admin", salt: SALT }, "RECORD_NAME_RESERVED");
+Rec("reserved-name-offered", offerRec({ give: { name: "csd" } }), "RECORD_NAME_RESERVED");
+Rec("bad-address", xferRec({ to: "0xABC" }), "RECORD_BAD_ADDRESS");
+Rec("nset-upper-case-address", { v: 1, t: "nset", name: "alice", addr: "0x" + "AB".repeat(20) }, "RECORD_BAD_ADDRESS");
+Rec("bad-amount-leading-zero", mintRec({ amount: "007" }), "RECORD_BAD_AMOUNT");
+Rec("open-deploy-without-mint-limit", deployRec({ mint: "open" }), "RECORD_BAD_AMOUNT");
+Rec("amount-at-2-96", mintRec({ amount: "79228162514264337593543950336" }), "RECORD_AMOUNT_TOO_LARGE");
+Rec("amount-zero", mintRec({ amount: "0" }), "RECORD_AMOUNT_ZERO");
+Rec("bid-give-zero", { v: 1, t: "bid", want: { ticker: "AAA", amount: "1" }, give: { value: "0" } }, "RECORD_AMOUNT_ZERO");
+Rec("min-above-want", offerRec({ min: "6" }), "RECORD_MIN_ABOVE_WANT");
+Rec("bad-hash", { v: 1, t: "tmeta", ticker: "AAA", hash: "0x12" }, "RECORD_BAD_HASH");
+Rec("fclaim-bad-offer-hash", { v: 1, t: "fclaim", offer: "0xAB" }, "RECORD_BAD_HASH");
+Rec("bad-salt", { v: 1, t: "name", name: "alice", salt: "xyz" }, "RECORD_BAD_SALT");
+Rec("nfinalize-without-salt", { v: 1, t: "nfinalize", name: "alice" }, "RECORD_BAD_SALT");
+Rec("decimals-over-the-max", deployRec({ decimals: R.MAX_TOKEN_DECIMALS + 1 }), "RECORD_BAD_DECIMALS");
+Rec("bad-mint-mode", deployRec({ mint: "none" }), "RECORD_BAD_MINT_MODE");
+Rec("memo-over-64", xferRec({ memo: "m".repeat(65) }), "RECORD_BAD_TEXT");
+Rec("token-name-over-32", deployRec({ name: "n".repeat(33) }), "RECORD_BAD_TEXT");
+Rec("ts-not-an-integer", xferRec({ ts: 1.5 }), "RECORD_BAD_TS");
+Rec("profile-17-keys", profRec(Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, ""]))), "RECORD_PROFILE_TOO_MANY_KEYS");
+Rec("profile-upper-case-key", profRec({ URL: "x" }), "RECORD_PROFILE_BAD_KEY");
+Rec("profile-number-value", profRec({ url: 1 }), "RECORD_PROFILE_BAD_VALUE");
+Rec("profile-value-over-256-bytes", profRec({ url: "x".repeat(257) }), "RECORD_PROFILE_VALUE_TOO_LONG");
+// an unparseable record's log entry carries its record code
+{
+  const raw = (uri, payloadHash, h, expect) => ({ event: { kind: "propose", id: nid(), proposer: A, uri, payloadHash, expiresEpoch: 9_000, height: h, pos: 1, paidTo: {} }, expect });
+  const reserved = { v: 1, t: "name", name: "admin", salt: SALT };
+  Case("invalid-not-canonical", M + 5, [raw(`{"v":1,"t":"mint","ticker":"AAA"}`, HASH, M, ["invalid", "RECORD_NOT_CANONICAL"])]);
+  Case("invalid-hash-mismatch", M + 5, [raw(R.canonicalJson(mintRec()), HASH, M, ["invalid", "RECORD_HASH_MISMATCH"])]);
+  Case("invalid-reserved-name", M + 5, [raw(R.canonicalJson(reserved), R.payloadHash(reserved), M, ["invalid", "RECORD_NAME_RESERVED"])]);
+}
+
 // ── check every expectation against the built dist, then write ──
 const outcome = (code) => R.REASON_CODE_OUTCOME[code];
 const fails = [];
@@ -388,12 +459,17 @@ const resolveCases = cases.map(({ name, tipHeight, items }) => {
   if (key(want) !== key(have)) fails.push(`${name}: expected ${key(expect)}, resolve() wrote ${key(got)}`);
   return { name, tipHeight, events, expect };
 });
+for (const r of records) {
+  if (r.code !== null && (outcome(r.code) !== "refused" || !r.code.startsWith("RECORD_"))) fails.push(`${r.name}: ${r.code} is not a record code`);
+  const got = R.explainRecord(r.uri, r.payloadHash);
+  if ((got.ok ? null : got.code) !== r.code) fails.push(`${r.name}: expected ${r.code}, explainRecord gave ${key(got.ok ? null : got.code)}`);
+}
 const names = new Set();
-for (const c of cases) { if (names.has(c.name)) fails.push(`${c.name}: repeated name`); names.add(c.name); }
+for (const c of [...cases, ...records]) { if (names.has(c.name)) fails.push(`${c.name}: repeated name`); names.add(c.name); }
 if (fails.length) { for (const f of fails) console.error(`  EXPECTATION FAILED ${f}`); console.error(`\n${fails.length} expectation(s) failed: codes.json not written`); process.exit(1); }
 
 const path = new URL("../packages/cairnx/test/vectors/codes.json", import.meta.url);
 writeFileSync(path, `{"format":1,"generatedFrom":"hand-written expectations, conformance/gen-codes-vectors.mjs",\n`
-  + `"resolve":[\n${resolveCases.map((c) => JSON.stringify(c)).join(",\n")}\n],\n"records":[\n]}\n`);
-const codes = new Set(resolveCases.flatMap((c) => c.expect.map((e) => e[3])));
-console.log(`wrote ${resolveCases.length} resolve cases (${codes.size} codes) -> codes.json (every hand-written expectation held)`);
+  + `"resolve":[\n${resolveCases.map((c) => JSON.stringify(c)).join(",\n")}\n],\n"records":[\n${records.map((r) => JSON.stringify(r)).join(",\n")}\n]}\n`);
+const codes = new Set([...resolveCases.flatMap((c) => c.expect.map((e) => e[3])), ...records.map((r) => r.code).filter((c) => c !== null)]);
+console.log(`wrote ${resolveCases.length} resolve cases and ${records.length} record cases (${codes.size} codes) -> codes.json (every hand-written expectation held)`);

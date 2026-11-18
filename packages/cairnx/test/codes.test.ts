@@ -1,6 +1,5 @@
-// CONVENTION §40, the reason codes: the table's shape; every hand-written case of test/vectors/codes.json against src;
-// and over every pinned input, each entry that carries a code carries one whose outcome is its `ok`, and every entry of
-// a kind whose handler writes codes carries one.
+// CONVENTION §40, the reason codes: the table's shape; every hand-written resolve case of test/vectors/codes.json against
+// src, and the file's reach; over every pinned input, every entry carries a code whose outcome is its `ok`.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { CAP_CODES, REASON_CODES, REASON_CODE_OUTCOME, resolve, type AppliedEvent, type ChainEvent } from "../src/index.js";
@@ -27,7 +26,7 @@ ok("the list, the map and the caps are frozen", Object.isFrozen(REASON_CODES) &&
 // ── the hand-written vectors ──
 type Expected = [string, string, boolean, string];
 type ResolveCase = { name: string; tipHeight: number; events: ChainEvent[]; expect: Expected[] };
-const vectors = json<{ format: number; resolve: ResolveCase[]; records: unknown[] }>("./vectors/codes.json");
+const vectors = json<{ format: number; resolve: ResolveCase[]; records: { name: string; code: string | null }[] }>("./vectors/codes.json");
 ok("codes.json is format 1", vectors.format === 1);
 const key = (x: unknown) => JSON.stringify(x);
 for (const c of vectors.resolve) {
@@ -41,15 +40,13 @@ for (const c of vectors.resolve) {
 //   NAME_NOT_LAPSED: nothing renews, re-registers or re-anchors a lapsed record before its recapture finalize;
 //   INVARIANT_BROKEN: an open offer's name or give lock is never missing.
 const UNREACHABLE = new Set(["NAME_RECLAIMED", "NAME_RESERVATION_EXPIRED", "NAME_NOT_LAPSED", "INVARIANT_BROKEN"]);
-const reached = new Set(vectors.resolve.flatMap((c) => c.expect.map((e) => e[3])));
-const unreachedResolver = REASON_CODES.filter((c) => !c.startsWith("RECORD_") && !reached.has(c) && !UNREACHABLE.has(c));
-ok(`codes.json reaches every resolver code but the ${UNREACHABLE.size} unreachable ones (${unreachedResolver.join(", ") || "none missing"})`, unreachedResolver.length === 0);
+// The record cases are checked against explainRecord in records-explain.test.ts; here they count toward the reach.
+const reached = new Set([...vectors.resolve.flatMap((c) => c.expect.map((e) => e[3])), ...vectors.records.flatMap((r) => (r.code === null ? [] : [r.code]))]);
+const unreached = REASON_CODES.filter((c) => !reached.has(c) && !UNREACHABLE.has(c));
+ok(`codes.json reaches every code but the ${UNREACHABLE.size} unreachable ones (${unreached.join(", ") || "none missing"})`, unreached.length === 0);
 ok("no unreachable code is reached", [...UNREACHABLE].every((c) => !reached.has(c)));
 
 // ── every pinned input ──
-// The kinds whose handlers write codes so far: all but `invalid`; the release's last code part replaces this with every entry.
-const CODED_KINDS = new Set(["deploy", "mint", "transfer", "tmeta", "ncommit", "name", "nfinalize", "nxfer", "nset", "nprofile", "nrenew",
-  "offer", "bid", "ocancel", "fclaim", "fill", "cancel", "bidcancel", "claim"]);
 type Case = { name: string; events: ChainEvent[]; tipHeight: number };
 const inputs: Case[] = [];
 const corpus = json<{ events: ChainEvent[]; tipHeight: number }>("./vectors/replay-corpus.json");
@@ -64,10 +61,10 @@ for (const c of inputs) {
     if (e.code !== undefined) {
       coded++;
       if (REASON_CODE_OUTCOME[e.code] !== (e.ok ? "applied" : "refused")) contradicting.push(`${c.name}: ${e.id} ${e.kind} ok ${e.ok} ${e.code}`);
-    } else if (CODED_KINDS.has(e.kind)) missing.push(`${c.name}: ${e.id} ${e.kind}`);
+    } else missing.push(`${c.name}: ${e.id} ${e.kind}`);
   }
 }
 ok(`over ${inputs.length} inputs every code's outcome is its entry's ok (${contradicting.slice(0, 3).join("; ") || "none contradict"})`, contradicting.length === 0);
-ok(`over ${inputs.length} inputs every entry of a coded kind carries a code (${missing.slice(0, 3).join("; ") || "none missing"})`, missing.length === 0);
+ok(`over ${inputs.length} inputs every entry carries a code (${missing.slice(0, 3).join("; ") || "none missing"})`, missing.length === 0);
 
 console.log(`reason codes: ${pass} passed (${vectors.resolve.length} codes.json cases; ${entries} log entries over ${inputs.length} inputs, ${coded} coded)`);

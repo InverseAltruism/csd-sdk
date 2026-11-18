@@ -16,7 +16,7 @@
 //   4. resolve differential, old vs new, over (a) the case files, (b) a seeded generated corpus with coverage floors
 //      read back from the BASELINE outputs, (c) the replay corpus at every pinned height and every event height,
 //      (d) the sequences of conformance/fuzz-resolve.mjs --emit, (e) the resolve cases of test/vectors/codes.json when
-//      present; a log entry that carries a `code` must name a code of the new build whose outcome is its `ok`;
+//      present; when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //   5. parse differential: parseRecord null-ness old vs new over every Propose of step 4 and a seeded mutation corpus
 //      (and the record cases of codes.json); where the new build has explainRecord it must agree with parseRecord;
 //   6. client-surface differential: bindOfferTerms, provenOfferTerms, previewFill / requiredFillOutputs / fillIsSafe /
@@ -181,7 +181,12 @@ const diffCase = (name, events, tip) => {
   const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(ns));
   if (fa !== fb) report(name, "full state without code", events, fa, fb);
   for (const e of ns.events) {
-    if (!("code" in e)) { uncoded.set(e.kind, (uncoded.get(e.kind) ?? 0) + 1); continue; }
+    if (!("code" in e)) {
+      uncoded.set(e.kind, (uncoded.get(e.kind) ?? 0) + 1);
+      // a build with the code table writes a code on every entry
+      if (OUTCOME) { bump("an entry without a code"); if (diverged <= 20) console.error(`  NO CODE ${name}: entry ${e.id} kind ${e.kind}`); }
+      continue;
+    }
     codeCount.set(e.code, (codeCount.get(e.code) ?? 0) + 1);
     const outcome = OUTCOME?.[e.code];
     if (outcome !== (e.ok ? "applied" : "refused")) {
@@ -474,6 +479,10 @@ let surfChecks = 0;
     eq(`claimGraceOf(${cu},fc)`, OLD.claimGraceOf(cu, "0xfc"), NEW.claimGraceOf(cu, "0xfc"));
   }
   for (const h of [29_000, 29_960, 33_599, 33_600, 60_000]) eq(`feeBpsAt(${h})`, OLD.feeBpsAt(h), NEW.feeBpsAt(h));
+  // the amount and name checks parseRecord reads, also exported on their own
+  for (const s of ["0", "1", "007", "79228162514264337593543950335", "79228162514264337593543950336", "", "1e3", "-1", 5, null, undefined])
+    for (const opts of [undefined, {}, { allowZero: false }, { allowZero: true }]) eq(`parseAmount(${String(s)},${JSON.stringify(opts)})`, OLD.parseAmount(s, opts), NEW.parseAmount(s, opts));
+  for (const n of ["alice", "a", "a-1", "-a", "a-", "Alice", "admin", "csd", "x".repeat(32), "x".repeat(33), "", 5, null]) eq(`isName(${String(n)})`, OLD.isName(n), NEW.isName(n));
   console.log(`  ${surfChecks} client-surface checks (equal arguments; the default legs accept honest shapes and refuse each lie)`);
 }
 
