@@ -12,7 +12,8 @@ import * as root from "../src/index.js";
 
 import {
   CAIRNX_EVENT_RULE, CAP_CODES, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, REASON_CODES, REASON_CODE_OUTCOME, RecordError,
-  blockEvents, blockMembers, eventOfTx, eventsHash, eventsHashStep, explainRecord, fillEndorsement, offerFillTooLate, stateHash,
+  applyOrder, blockEvents, blockMembers, eventId, eventOfTx, eventsHash, eventsHashStep, explainRecord, fillEndorsement, offerFillTooLate,
+  stateHash,
 } from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
@@ -32,6 +33,8 @@ assert.equal(FCLAIM_MAX_HOLD_SPAN, 89, "FCLAIM_MAX_HOLD_SPAN is a root export (8
 // The rule from a block to events (CONVENTION §33): the scanner, the wallet, the site and the replica's sources call it.
 for (const [name, fn] of [["eventOfTx", eventOfTx], ["blockMembers", blockMembers], ["blockEvents", blockEvents]] as const)
   assert.equal(typeof fn, "function", `${name} is a root export`);
+// The apply order of section 33.3 that resolve() sorts with: the replica re-exports it.
+for (const [name, fn] of [["applyOrder", applyOrder], ["eventId", eventId]] as const) assert.equal(typeof fn, "function", `${name} is a root export`);
 assert.deepEqual(CAIRNX_EVENT_RULE, { domain: "cairnx:v1", activationHeight: 29_860 }, "CAIRNX_EVENT_RULE is cairnx:v1 from 29,860");
 // The hashes two replicas compare (CONVENTION §34): the service, the replica and the comparator call them.
 for (const [name, fn] of [["stateHash", stateHash], ["eventsHashStep", eventsHashStep], ["eventsHash", eventsHash]] as const)
@@ -44,7 +47,7 @@ assert.equal(REASON_CODE_OUTCOME.TOKEN_DEPLOYED, "applied", "REASON_CODE_OUTCOME
 assert.deepEqual([...CAP_CODES], ["CAP_PENDING_RESERVATIONS", "CAP_PENDING_RECAPTURES", "CAP_LIVE_HOLDS"], "CAP_CODES is a root export");
 assert.equal(typeof explainRecord, "function", "explainRecord is a root export");
 assert.ok(new RecordError("RECORD_BAD_TICKER") instanceof Error, "RecordError is a root export");
-const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE",
+const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE", "applyOrder", "eventId",
   "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH", "REASON_CODES", "REASON_CODE_OUTCOME", "CAP_CODES", "ReasonCode", "AppliedCode",
   "RefusalCode", "RecordCode", "explainRecord", "RecordError"];
 for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
@@ -56,4 +59,4 @@ for (const name of ["replay", "createStore", "createContext"]) {
   assert.ok(!new RegExp(`declare (function|const) ${name}\\b`).test(dts), `dist/index.d.ts declares no ${name}`);
 }
 
-console.log(`cairnx-core export surface: ${10 + 4 + 5 + names.length + 7} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names, the §34 hashes' four and the §40 codes' nine pinned in src and dist .d.ts; replay, createStore and createContext absent)`);
+console.log(`cairnx-core export surface: ${10 + 4 + 2 + 5 + names.length + 7} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and its applyOrder and eventId, the §34 hashes' four and the §40 codes' nine pinned in src and dist .d.ts; replay, createStore and createContext absent)`);

@@ -25,8 +25,8 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 
 ## cairnx-core modules (`packages/cairnx/src/`)
 
-- `resolve.ts`: the replay loop; its per-record handlers and shared state context live in `resolve/`, and
-  `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
+- `resolve.ts`: the replay loop and its apply order (`applyOrder`, `eventId`: CONVENTION section 33.3); its
+  per-record handlers and shared state context live in `resolve/`, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
   queues in `resolve/minqueue.ts`; candidates per owner for the reservation caps, per holder for the live-hold cap, per
   seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on.
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including

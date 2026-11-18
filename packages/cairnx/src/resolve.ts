@@ -10,7 +10,7 @@
 import { explainRecord } from "./records.js";
 import {
   TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, beforeActivation, epochOf,
-  type BalanceState, type BidState, type CairnXState, type ChainEvent, type NameState, type OfferState, type ProposeEvent,
+  type BalanceState, type BidState, type CairnXState, type ChainEvent, type NameState, type OfferState,
   type TokenState,
 } from "./types.js";
 import { applyAttest } from "./resolve/attest.js";
@@ -29,6 +29,19 @@ export { ptAmt };
 // third-party (Rust/Go/…) resolver must be able to match byte-for-byte from plain byte order.
 const ord = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+/** An event's id (CONVENTION §33.4): a Propose's id, an Attest's transaction id. */
+export function eventId(e: ChainEvent): string {
+  return e.kind === "propose" ? e.id : e.txid;
+}
+
+/** The apply order of CONVENTION §3 and §33.3, the comparator resolve() sorts its events with: height, a block's
+ *  Proposes before its Attests, position, then the ordinal order of the id. Negative when `a` applies before `b`, zero
+ *  when all four keys are equal (the same event, or a repeated one, which a stable sort keeps in input order). */
+export function applyOrder(a: ChainEvent, b: ChainEvent): number {
+  return a.height - b.height || Number(a.kind === "attest") - Number(b.kind === "attest") || a.pos - b.pos ||
+    ord(eventId(a), eventId(b));
+}
+
 export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
   return replay(events, tipHeight);
 }
@@ -36,17 +49,7 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
 /** resolve() with the options of its private indexes (src/resolve/store.ts): check mode, which runs the plain walks
  *  beside every indexed read, and the visit counters. For the tests and the seal; the package root does not export it. */
 export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptions = {}): CairnXState {
-  // consensus apply order: height asc; within a block all proposals (pos asc) then attests (pos asc);
-  // final tiebreak = ordinal order of the lowercase 0x-hex id/txid (CONVENTION §3).
-  const ordered = [...events].sort((a, b) =>
-    a.height - b.height ||
-    Number(a.kind === "attest") - Number(b.kind === "attest") ||
-    a.pos - b.pos ||
-    ord(
-      a.kind === "propose" ? (a as ProposeEvent).id : (a as ChainEvent & { txid: string }).txid,
-      b.kind === "propose" ? (b as ProposeEvent).id : (b as ChainEvent & { txid: string }).txid,
-    ),
-  );
+  const ordered = [...events].sort(applyOrder);
   // v2.9 (§32, V29 / REBIND M4): drop a DUPLICATED event before apply. The ordering step above sorts but never
   // de-dupes, so a double-fed transaction (an overlapping scanner page: cairnx/src/scan.ts pushes pages verbatim)
   // applies twice and double-credits o.paid / o.delivered on the partial-fill path. A transaction has ONE identity
@@ -56,11 +59,10 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   // one txid == one block, so both copies always land on the SAME side of the gate. Still moves canonical state (a
   // duplicated feed no longer double-applies), so it rides the SAME gate as M5. The cairnx-service-side de-dup on
   // the attestation pull (scan.ts) is a separate, un-gated defensive change; only this resolve() half is gated.
-  const eid = (e: ChainEvent): string => e.kind === "propose" ? (e as ProposeEvent).id : (e as ChainEvent & { txid: string }).txid;
   const seenIds = new Set<string>();
   const applied: ChainEvent[] = [];
   for (const e of ordered) {
-    if (e.height >= V29_HEIGHT) { const k = eid(e); if (seenIds.has(k)) continue; seenIds.add(k); }
+    if (e.height >= V29_HEIGHT) { const k = eventId(e); if (seenIds.has(k)) continue; seenIds.add(k); }
     applied.push(e);
   }
 

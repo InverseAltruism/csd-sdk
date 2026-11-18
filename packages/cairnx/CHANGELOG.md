@@ -12,6 +12,11 @@
   offers and bids anchored below V22 at their capped expiry. A sweep or a hold count at a height below an earlier
   one's (only NaN heights reorder the replay) takes the old walk, which also serves as the reference of a check mode
   the tests and the seal run. Nothing of it reaches the resolved state or the root exports.
+- New root exports `applyOrder(a, b)`, the apply order of CONVENTION.md sections 3 and 33.3 (height, a block's Proposes
+  before its Attests, position, the ordinal order of the id), and `eventId(e)`, a Propose's id or an Attest's txid.
+  `resolve()` sorts with `applyOrder` and drops section 32's duplicates by `eventId`: the same comparison it made
+  before, moved out of its body, so a reader that must list events in apply order (the replica) imports it instead of
+  copying it.
 - One run on the seal's streams on a loaded host, cairnx-core 0.2.4 against this release, in ms: 16,000 registrations
   5,061 / 1,000; 20,000 open bids 3,494 / 364; 20,000 offers with holds 31,683 / 887; 20,000 live reservations
   15,600 / 618; 20,000 live recaptures 22,508 / 1,872; 2,000 bulk cancels over 20,000 offers 14,230 / 523; 2,000

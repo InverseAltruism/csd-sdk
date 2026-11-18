@@ -1261,6 +1261,7 @@ ids of the `Propose` events among them.
 
 A block's events are listed in apply order: its `Propose` events by position, then its `Attest` events by
 position; blocks follow by height. This is the order of §3.
+The reference comparator is `applyOrder` (with `eventId`, the id it compares last), the function `resolve()` sorts with.
 
 ### 33.4 Field forms
 
