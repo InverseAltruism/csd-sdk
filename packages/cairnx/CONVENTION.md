@@ -1,6 +1,6 @@
 # CairnX Convention v1
 
-**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §39 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive: below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
@@ -8,6 +8,9 @@ v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 4
 v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 46 480 (§29) · v2.7 @ 46 520 (§30) ·
 v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay hash is pinned in `test/vectors/replay-hashes.json`).
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
+§33 is the rule that turns the chain's blocks into the events every version replays; §34 defines the two hashes
+replicas compare. §35 and §36 are for other applications (their domains, the profile-key registry), §37 states what
+a result proves, §38 how a replica conforms and §39 how the rules change; none of §33 to §39 has a gate.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -27,8 +30,9 @@ and `Attest` transactions: no fork, no new transaction types, no custodian. Toke
 enforced by a **pure, deterministic resolver** that any party can run; independent resolvers
 replaying the same chain converge on identical state.
 
-This document is normative. The reference resolver (`src/resolve.ts`) and its conformance suite
-implement exactly what is written here.
+This document is normative. The reference resolver (`src/resolve.ts`), the reference rule of §33
+(`src/events.ts`), the hashes of §34 (`src/hashes.ts`) and their conformance suites implement exactly what is written
+here.
 
 ---
 
@@ -39,7 +43,9 @@ Verified against the node source (`compute-substrate` @ v1.x, 2026-06-10):
 - **C1.** Every input of a tx signs the same global sighash; tx validity requires all signatures.
 - **C2.** A `Propose`/`Attest` tx's value outputs are unrestricted (only fee floors apply:
   ≥ 0.25 CSD propose, ≥ 0.05 CSD attest). One tx can pay arbitrary addresses *and* carry an app payload.
-- **C3.** `proposer` / `attester` = `hash160(input[0].pubkey)`, stored by consensus.
+- **C3.** `proposer` / `attester` = `hash160(input[0].pubkey)`, stored by consensus. The node accepts input 0
+  only when that hash equals the `script_pubkey` of the coin it spends, so for a mined tx it is that coin's
+  owner. The txid does not commit the signature script; a reader takes the author from the spent coin (§33.5).
 - **C4.** `Propose.uri` is a consensus-stored string ≤ **512 bytes** (non-empty); `payload_hash`
   is a consensus-stored 32-byte value (non-zero).
 - **C5.** An `Attest` referencing proposal `P` is **consensus-rejected** once
@@ -70,8 +76,8 @@ signatures in v1: anchoring *from your key* is the authorization.
 - **Tickers** match `^[A-Z][A-Z0-9]{2,11}$`.
 - **Addresses** are `0x` + 40 lowercase hex.
 - **Apply order:** events are replayed in consensus order: by block height; within a block,
-  all `cairnx:v1` proposals in tx order (`pos`), then all attestations on CairnX offers in tx
-  order. (Mirrors the node’s propose/attest phases, C5.) Remaining ties (same height, phase, pos:
+  all `cairnx:v1` proposals in tx order (`pos`), then all attestations on CairnX proposals in tx
+  order (the events of §33). (Mirrors the node’s propose/attest phases, C5.) Remaining ties (same height, phase, pos:
   possible only across indexer quirks, never on a real chain) break by **ordinal (code-unit)
   comparison of the lowercase `0x`-hex txid**. Ordinal comparison is the ONLY string ordering
   used anywhere in resolution and serialization: locale-aware collation (e.g. JavaScript's
@@ -79,8 +85,9 @@ signatures in v1: anchoring *from your key* is the authorization.
 - **Invalid = no-op.** A record that fails any check (schema, balance, state) has **no effect**.
   Unknown `t` values and `v ≠ 1` are no-ops (forward compatibility). Invalidity never poisons
   later records.
-- **Activation:** anchors below height **29 860** are ignored. (Set just before the first
-  protocol traffic: the domain had no prior use; the live X2 e2e records ARE the genesis.)
+- **Activation:** anchors below height **29 860** are ignored, and are not events (§33); neither is an
+  Attest on such an anchor. (Set just before the first protocol traffic: the domain had no prior use; the
+  live X2 e2e records ARE the genesis.)
 - **Finality:** state derived from blocks < 6 confirmations is provisional (display threshold
   3, final 6, matching Cairn's site conventions).
 
@@ -194,7 +201,7 @@ events:   ordered log of applied/no-op decisions (for explorers & audit; INFORMA
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
 Serialization is **canonical JSON**: object keys sorted in ordinal (code-unit) order at every
 depth, no insignificant whitespace, UTF-8, all amounts as decimal strings (no floats anywhere),
-booleans/numbers in their shortest JS form. Two resolvers fed the same chain prefix MUST produce
+booleans/numbers in their shortest JS form. Two resolvers fed the events of §33 for the same chain prefix MUST produce
 byte-identical canonical state; `sha256(canonicalState)` at the activation heights is pinned in
 `test/vectors/replay-hashes.json`, and `test/vectors/cases.json` carries language-neutral replay
 vectors a third-party implementation must reproduce. (Format 1, pre-2026-06-12, included the
@@ -1165,10 +1172,13 @@ so a double-fed transaction (an overlapping scanner page delivered verbatim) app
 partial-fill path that double-credits `paid` / `delivered`. A transaction has ONE identity: a `Propose`'s
 `id`, an `Attest`'s `txid`. At an event height `>= V29_HEIGHT` the FIRST occurrence in consensus order
 (§3: height, propose-before-attest, pos, ordinal id/txid) is kept and every later occurrence of the same
-identity is dropped BEFORE apply. Below the gate nothing is dropped. A duplicate pair shares one txid and
-therefore one mined block, so both copies always land on the same side of the gate; there is no straddle
-case. (The cairnx service also de-duplicates its attestation pull at scan time; that is a transport-side
-defensive measure, deliberately NOT part of this convention. Only the `resolve()` drop is normative.)
+identity is dropped BEFORE apply. Below the gate nothing is dropped. Two copies of one event that a feed
+delivers twice share one txid, height and position, so they land on the same side of the gate. A
+transaction can also be mined again: coinbase txids are not unique on this chain, so a spent coin can be
+created again and the same spending transaction mined in a later block. Those copies sit in two blocks,
+possibly on both sides of the gate, and `resolve()` fed both drops the later copy only when both are at or
+above the gate. §33 keeps the first occurrence, so a feed built by its rule holds neither kind of duplicate;
+the drop above stays the rule for a feed that is not built by it.
 
 **M5: the concurrent-hold cap counts only OPEN holds (relaxation).** §20/§31 cap an address at
 `MAX_ACTIVE_CLAIMS` (= 3) live holds, counted as `claimedBy === who && claimHeld(o, h)`. A FILLED offer
@@ -1194,3 +1204,421 @@ divergence height is pinned by the fork-lens vector set (`cases-v29.json`).
   before the tip crosses 88 000, never "publish and hope". The `replay-hashes.json` V29 entry is pinned
   only POST-crossing from the live chain (see CONSENSUS_CHANGES.md); a pre-crossing V29 hash would be an
   invented pin and is forbidden.
+
+---
+
+# CairnX chain input (no gate)
+
+## 33. From a block to events
+
+`resolve()` (§3, §5) replays a list of events. This section is the rule that makes that list from the chain's
+blocks; two readers that apply it to the same blocks feed `resolve()` the same events. It has no activation gate:
+it is the input form the reference service has always replayed (§33.2), and where other readers used other forms
+(an expiry above 2^53 - 1, a `uri` holding U+0000), `resolve()` derives the same state from both forms (§33.4).
+
+The rule has two parameters: a domain D and an activation height A. CairnX uses D = `cairnx:v1` and A = 29 860
+(`DOMAIN` and `ACTIVATION_HEIGHT`, together `CAIRNX_EVENT_RULE`). D is a non-empty, well-formed string holding
+neither U+0000 nor U+0001; A is an integer >= 0. Another application may apply the rule with its own D and A.
+
+### 33.1 Membership
+
+A transaction at height h and position p (its index in the block; the coinbase is at 0) is an event when h >= A and
+
+- it is a `Propose` whose domain equals D, code unit for code unit, or
+- it is an `Attest` whose proposal id is the id of a `Propose` event of this rule at a height <= h. A `Propose`
+  event in the same block counts at any position, before or after the `Attest`: the node applies a block's
+  proposals before its attestations (C5).
+
+Nothing below A is an event, and nothing below A is read: an `Attest` at or above A on a `Propose` mined below A is
+not an event. A transaction without an app payload is not an event. The coinbase is never an event: consensus
+refuses a block whose first transaction is not the coinbase or whose coinbase carries an app payload, so a list
+with an app payload at position 0 is not a block of the chain, and a reader refuses it.
+
+A reader may apply the rule to a sparse block: a list in strictly increasing position order, each transaction at
+its true position, that holds every transaction of the block that carries an app payload. A complete block is one
+such list. The rule cannot see whether a list is complete; establishing that is the reader's. A complete block
+whose transactions hash to the merkle root of a header the reader verified establishes it; a feed (a node's events
+route, a recorded fixture) establishes it only on the feed's word.
+
+### 33.2 First occurrence
+
+A transaction id is one event, at the lowest height at or above A at which the chain holds it. A block holds a
+transaction id at most once (consensus refuses a block that repeats one), so a reader refuses a list that repeats
+one. A transaction id can still sit in two blocks: coinbase transaction ids are not unique on this chain, so a
+spent coin can be created again and the same spending transaction mined in a later block. Its later copies are not
+events. Occurrences below A are never read, so a transaction mined below A and again at or above A is an event at
+its first height at or above A, when it is a member there. This fixes the input form the reference service has
+always replayed (csd-indexer keeps the first occurrence of a transaction id at every height, and the service reads
+that feed), so a reader that feeds `resolve()` every copy of a re-mined transaction can differ from the reference
+when a copy lies below V29, where §32's M4 drop does not apply.
+
+A reader that applies the rule a block at a time keeps two sets, derived from the events it holds and rolled back
+with them on a reorganisation: the ids of all its events (a `Propose`'s id, an `Attest`'s transaction id) and the
+ids of the `Propose` events among them.
+
+### 33.3 Order
+
+A block's events are listed in apply order: its `Propose` events by position, then its `Attest` events by
+position; blocks follow by height. This is the order of §3.
+
+### 33.4 Field forms
+
+Each event is a `ProposeEvent` or an `AttestEvent` (`src/types.ts`). Transaction ids, hashes and addresses are
+written `0x` and lowercase hex: 64 digits for 32 bytes, 40 for 20 bytes. An output's address is its 20-byte
+`script_pubkey`. The fields are taken from the transaction as decoded from its consensus bytes or its node JSON,
+with u64 values exact. In JavaScript a u64 input (an expiry, an output value) is a bigint in [0, 2^64), or a number
+that is an integer in [0, 2^53]: 2^53 is accepted as a number because it is the rule's own form of a clamped expiry,
+and a number above 2^53 is refused, because such a double no longer identifies one u64. The rule does not check
+again what the node checked (fee floors, `uri` length, expiry at creation).
+
+| Field | Value |
+|---|---|
+| `kind` | `"propose"` or `"attest"` |
+| `id` (Propose), `txid` (Attest) | the transaction id |
+| `proposer`, `attester` | the author (§33.5) |
+| `uri` | the consensus text with each U+0000 written as U+0001, the form csd-indexer keeps from 0.3.8 on. JSON admits neither character unescaped, so a `uri` holding either is no record in both forms |
+| `payloadHash`, `proposalId` | the consensus 32 bytes |
+| `expiresEpoch` | the consensus u64 when it is at most 2^53 - 1, otherwise 2^53 (9007199254740992). `resolve()` reads it only for offers, bids and fclaims, and refuses each of those above 2^53 - 1 |
+| `score`, `confidence` | the consensus u32 values |
+| `height`, `pos` | the block height; the position in the block |
+| `paidTo` | for each address paid by an output whose value is at most 2^53 - 1, the sum of those outputs' values as a decimal string (an output of value 0 lists its address with `"0"`); an output above 2^53 - 1 is left out, since the total supply can exceed 2^53 - 1 |
+
+### 33.5 The author
+
+The author of an event (`proposer`, `attester`) is the owner of the output that the transaction's first input
+spends: that output's `script_pubkey`. The node accepts the first input only when hash160 of the public key in its
+signature script equals that `script_pubkey` (C3), so for a mined transaction the two are one address. The
+transaction id does not commit the signature script, so a copy of a mined transaction can carry another key's
+valid signature and still match its merkle root. The rule therefore takes the author as an input the reader binds:
+the spent output is read from its source transaction after that transaction's id is recomputed, and csd-crypto
+`authorOf(tx, scriptPubkey)` returns the owner only when the first input's signature is the owner's. A copy for
+which it returns null is a damaged copy, to be read again from another source, never an event of another author. A
+reader that cannot bind the author of a member has no events for that block; it never leaves the event out.
+
+### 33.6 The byte form of an event list
+
+The bytes of an event list are csd-codec `canonicalJson` of the array of events in the order of §33.3 (keys in
+code-unit order at every depth, §5.1). No event key and no `paidTo` key is an array index, so §5.1 A2 does not
+arise.
+
+### 33.7 Reference functions and vectors
+
+cairnx-core exports the rule as `eventOfTx`, `blockMembers`, `blockEvents` and `CAIRNX_EVENT_RULE`;
+`conformance/cairnx_ref.py` implements the same three functions independently.
+
+- `eventOfTx(t, height, author, rule?)` maps one transaction (`{pos, txid, tx: {app, outputs}}`) to its event, or to
+  null when it carries no app payload, lies below A, or is a `Propose` in another domain. It does not decide `Attest`
+  membership, which needs the block: a caller that reads single transactions (a wallet proving one fill, a scanner
+  reading a feed that joins attestations to their proposals) decides it itself. An `Attest` on a proposal that is
+  not an event changes no state: `resolve()` ignores it.
+- `blockMembers(height, txs, sofar, rule?)` returns the members of one block (§33.1, §33.2) in position order, so a
+  reader binds authors for those alone; `sofar` holds the two sets of §33.2. `txs` is a list as §33.1 describes.
+- `blockEvents(height, txs, sofar, authors, rule?)` returns the block's events in the order of §33.3, with
+  `authors[i]` the author of the i-th member. It selects the members again, so a list of authors one short is
+  refused.
+
+Each refuses (throws; `ValueError` in Python) input that is not a block of the chain or not in the forms of
+§33.4: positions that are not integers >= 0 in strictly increasing order, a transaction id repeated in a block, an
+app payload at position 0, a field outside its consensus type (hex of the wrong length, an integer out of range,
+text that is not well-formed), a member without an author, and a rule whose domain or activation height is not
+in the form above. Hex input may carry a `0x` prefix or none, with its digits in either case. An integer field (a
+height, the activation height, a position, a score, a confidence) may come in any JSON spelling of its value (`1`,
+`1.0`, `1e0`); a boolean is not an integer.
+`eventOfTx` checks the height, position, transaction id and app type of any transaction; of one below A it reads
+nothing more, and it checks the remaining fields and the author only of an event. `blockMembers` checks the
+position, transaction id and app type of every listed transaction, the domain of every `Propose` and the proposal
+id of every `Attest`; `blockEvents` checks in addition what `eventOfTx` checks of each member. Neither reads
+anything of a block below A.
+
+`test/vectors/events.json` holds the language-neutral vectors, `{format: 1, rule, tx, blocks}`, one case per line.
+A `tx` case gives `input` (`txid`, `height`, `pos`, `app`, `outputs`, field names as in csd-codec's `Tx`, u64 values
+as decimal strings), `author`, and `expect`: the event, null, or `"error"`. A `blocks` case gives a sequence of
+blocks (`{height, txs}`), the authors by transaction id, and `expect`: the members' positions per block and the
+events of the whole sequence, or `{"error": i}` with i the first block refused. The two sets carry across a case's
+blocks, and a member whose author is not listed is given null. A conformant reader reproduces every case, each
+event list as the bytes of §33.6.
+
+Feeds are not this rule's output. csd-indexer's chain-order feed of a domain's attestations includes attestations
+on proposals below A, which `resolve()` ignores; a node's events route can list every copy of a re-mined
+transaction, and §32's M4 drop removes only the copies at heights at or above V29.
+
+---
+
+# Comparing replicas (no gate)
+
+## 34. State hash and events hash
+
+Two replicas that replay the same chain compare two hashes at one block: the events hash commits what they read, the
+state hash what they derived. Neither enters a record or the canonical state, so defining them moves no state; both
+are fixed byte for byte here so that every replica computes them alike.
+
+### 34.1 The state hash
+
+The state hash of a resolver state is sha256 of the UTF-8 bytes of its canonical state (§5, §5.1, with the
+integer-key order of A2), written `0x` and 64 lowercase hex digits. Besides the seven keys of §5's surface, a
+`resolve()` result carries three diagnostic fields that the canonical state leaves out: `events` (the applied log),
+`recaptures` (§29) and `fclaims` (§31); the state hash of a complete result is the hash of its surface alone. At
+height h it is the state hash of `resolve()` over the events at heights <= h with tip h;
+`test/vectors/replay-hashes.json` pins that digest, without the `0x`.
+
+### 34.2 The events hash
+
+The events hash runs over the events of §33 block by block. For a block at height h that holds at least one event:
+
+```
+b     = sha256( h as 8 bytes big endian || row_1 || ... || row_n )
+row_i = position as 4 bytes big endian || transaction id (32 bytes) || author (20 bytes)
+```
+
+with one row per event of the block, in ascending position. The transaction id is a `Propose`'s `id` or an
+`Attest`'s `txid`, the author its `proposer` or `attester`. The order is position order, not the apply order of
+§33.3, which lists `Propose` events first; positions within a block are distinct. The running value e is 32 zero
+bytes before the first block at or above A, and each block that holds an event, in ascending height, replaces it:
+
+```
+e = sha256( e_prev || b )
+```
+
+A block without events leaves e as it is. The events hash at height h is e after the last block at or below h that
+holds an event, written `0x` and 64 lowercase hex digits.
+
+Height and position are in the hash because the resolver compares positions of records in different blocks (the
+name contests of §9 and §28). The transaction id commits every other field of the transaction, and the author, which
+it does not commit (§33.5), is in the row, so no JSON form, number form or text storage enters the hash.
+
+### 34.3 Comparing two replicas
+
+Two replicas compare (height, block hash, events hash, state hash) at one height. The comparison means something only
+at a height both treat as final (§38 names the depth): near the tip two honest replicas can hold different blocks
+for a while.
+
+- Another block hash at the height: the replicas follow different branches. Wait and compare again; this is a
+  branch difference, never a divergence.
+- The same block hash, another events hash: the replicas read different events from the same blocks, so their record
+  sources differ (a source left out or added a transaction, or recorded another author, height or position).
+- The same events hash, another state hash: the replicas read the same transactions at the same places with the same
+  authors and apply different rules to them: the resolver (§3 to §32), or the field forms of §33.4, which the events
+  hash does not see.
+
+The running value carries every earlier block, so the first block whose events differ lies after the last height at
+which the events hashes agree.
+
+### 34.4 Reference functions and vectors
+
+cairnx-core exports `stateHash`, `eventsHashStep`, `eventsHash` and `EVENTS_HASH_START` (the 32 zero bytes);
+`conformance/cairnx_ref.py` implements them independently.
+
+- `stateHash(state)` is the state hash of a `resolve()` result.
+- `eventsHashStep(prev, height, events)` is e after one block from the value `prev`, with `events` the block's
+  events in any order; for no events it is `prev`.
+- `eventsHash(events)` is e over a list from the start value. The list is in the order of §33.3 or in an order that
+  differs from it only within a block, so each height forms one run. Unlike `resolve()`, it does not sort across
+  heights: a list in another order is sorted by height first.
+
+Values, transaction ids and authors are `0x` and lowercase hex, the forms of §33.4; a height is an integer in
+[0, 2^53 - 1], a position an integer in [0, 2^32 - 1], either in any JSON spelling of its value (`100000.0` and `1e5`
+are 100000); a boolean is not an integer. Each function refuses (throws; `ValueError` in Python) a
+previous value, transaction id or author in another form (upper case or without `0x` included), a height or position
+out of its range, an event whose kind is neither `propose` nor `attest`, an event whose height is not the step's, and
+a position repeated in a block; `eventsHash` refuses a height below the one before it. `eventsHashStep` sees no
+earlier height, so a caller that steps block by block keeps the blocks in order. Neither reads any other field.
+
+`test/vectors/hashes.json` (`conformance/gen-hashes-vectors.mjs`) holds the vectors, `{format: 1, start, cases,
+corpus}`, one case per line. A case gives `blocks` (`{height, events}`, each event with the five fields above), may
+give `prev`, and gives `expect`: `steps`, `eventsHashStep` applied to the blocks in turn from `prev` or the start
+value, as the value or `{"error": i}` with i the first block refused; and, without `prev`, `list`, `eventsHash` over
+the blocks' events in turn, as the value or `"error"`. `corpus` gives both hashes over
+`test/vectors/replay-corpus.json` at each height of `replay-hashes.json`, the events at heights <= h in a stable sort
+by height.
+
+---
+
+# CairnX for other applications (no gate)
+
+## 35. Other applications
+
+This section and §36 bind an application that is not CairnX and reads or writes on the same chain. Neither has an
+activation gate: they state what the reference already does and reserve names for later, so they move no state.
+
+### 35.1 Record types under `cairnx:v1` are reserved
+
+Every record type under `cairnx:v1` belongs to this convention. A record whose `t` this version does not define is a
+no-op today (§3), and a later gate may give that type a meaning; from the gate's height on, a record of that type is
+read by the new rule, whoever anchored it and for whatever purpose. A record of a defined type with a key its schema
+does not list is a no-op too (§5.1 A8). An application therefore must not anchor its own records under `cairnx:v1`,
+neither as a new type nor as extra keys on a defined one.
+
+### 35.2 An application's own domain
+
+An application's own records go in its own domain, named `<app>:<major>`: `<app>` names the application and `<major>`
+is the major version of its record format. A domain is a string of the form §33 requires of D. Domains whose text
+begins with `cairnx`, `csd` or `cairn` are reserved to this convention and its maintainers; an application uses none
+of them.
+
+A domain is a label and not an authority. Anyone can anchor a `Propose` under any domain, a reserved one included,
+and reserving a prefix gives no one control of it. An application decides which authors it accepts under its domain,
+with the author of §33.5.
+
+The rule of §33 takes the domain and the activation height as parameters (`EventRule`; `CAIRNX_EVENT_RULE` is
+CairnX's), so an application reads its own domain with the same functions (`eventOfTx`, `blockMembers`,
+`blockEvents`) and its own D and A. `resolve()` reads only CairnX records; the meaning of an application's records is
+the application's to define.
+
+### 35.3 Data for readers of a name: the profile
+
+Data an application publishes for the readers of a name (a site, a node address, a pointer to its own data) goes in
+the name's profile, the `nprofile` record of §22, under the keys of §36.
+
+- A write replaces the whole map: the resolver stores the record's `p` as the profile, and `{}` clears it (§22). A
+  writer therefore reads the current profile first and writes the merged map, with every key it did not set kept at
+  its current value.
+- A reader ignores the profile of a name that is expired or pending. In the state of §5 these are a name with
+  `expired: true` (its lease and grace have lapsed, §17) and a name with `pending: true` (a reservation of §28 not yet
+  finalized). An expired name keeps its last profile in state until the name is claimed again; that profile is
+  history, not the word of a current owner.
+
+Known limit: only the owner writes a profile (§22), and two writers for one owner (two applications, or two devices)
+that read the same profile and both write within one block interval lose one write: the later in apply order (§3)
+replaces the map, and the keys only the earlier write carried are gone. The convention has no per-key write; a writer
+that needs its write kept reads the profile again once its record is mined.
+
+## 36. The profile-key registry
+
+This is the registry of profile keys, the first version. The resolver validates keys by their form alone and keeps no
+list of them (§22), so the registry binds writers and readers, not replay.
+
+### 36.1 The caps
+
+From `src/types.ts`; a record that breaks one is a no-op (§22).
+
+| Cap | Constant | Value |
+|---|---|---|
+| keys in one profile | `PROFILE_MAX_KEYS` | 16 |
+| UTF-8 bytes of one value | `PROFILE_MAX_VALUE_BYTES` | 256 |
+| UTF-8 bytes of the whole record, its `uri` | `MAX_RECORD_BYTES` (the node's `uri` cap, C4) | 512 |
+| the form of a key | `PKEY` | `^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$`: 1 to 32 characters, lowercase letters and digits, with dots and hyphens inside |
+
+Each value is a string. The resolver accepts any well-formed string within the byte cap (§5.1 A7), the empty string
+included; the forms below are what a reader accepts as the value of a registered key.
+
+### 36.2 The keys
+
+| Key | Value |
+|---|---|
+| `display`, `description`, `avatar`, `header`, `url`, `email`, `location`, `com.twitter`, `com.github`, `com.discord`, `org.telegram`, `com.linkedin`, `com.reddit` | the 13 keys the reference site's profile editor writes, registered as they are: a display name, a short text, an image URL (`avatar`, `header`, `https://` only), a link (`url`, below), an email address, a place, and six handles on the named services |
+| `url` | an `https://` link |
+| `contenthash` | a URI: `ipfs://<CIDv1>`, with nothing after the CID. Not ENS's binary encoding. A later revision of this registry may add `ipns://`; it is not valid now |
+| `csd.*` | reserved to this convention for keys about the chain itself; only the keys below are defined |
+| `csd.p2p` | a peer of the chain's own network: a libp2p multiaddr that ends with its peer id (`/p2p/<peer id>`) |
+| `csd.rpc` | an address through which a page reaches a node's API: an `https://` base URL without credentials, query or fragment, or the multiaddr of a gateway that carries that API, ending with the gateway's peer id |
+| an application's keys | under a reverse-DNS prefix of a domain the application controls, for example `org.example.app` for the application at `app.example.org`; the whole key matches `PKEY` |
+
+The six service keys of the editor (`com.twitter` to `com.reddit`) are reverse-DNS names of domains this convention
+does not control. They are registered as the editor writes them and are the only such keys.
+
+### 36.3 Reader rules
+
+- Accept only the schemes and forms stated in §36.2, and treat any other value of a registered key as absent.
+- `csd.p2p` and `csd.rpc`: never use an address that is loopback, link-local or private, whether it is written as an
+  address or reached through a name that resolves to one. A multiaddr ends with a peer id, and a reader dials that
+  peer only with its peer id checked.
+- An address that a name's profile publishes is that name owner's node. What is read through it is at most single
+  records, each proven for inclusion with its author bound to the coin it spent (§33.5; the record proof of §37),
+  never a complete history, and never what marks any name, that one or another, as verified.
+- A profile is never a send target (§22): the address a name pays to is `addr`, set by `nset`.
+- The profile of an expired or pending name is ignored (§35.3).
+
+### 36.4 The byte budget
+
+For a 32-character name, each row is the record `nameProfile` builds, measured with `canonicalJson`, in UTF-8 bytes
+against `MAX_RECORD_BYTES`. `node scripts/profile-budget.mjs` in the csd-sdk repository prints every figure, and its
+test keeps this table equal to that output. The example values are of a realistic length: `contenthash` a CIDv1 in
+base32, 66 bytes; `csd.p2p` a DNS multiaddr with an Ed25519 peer id, 89 bytes; `csd.rpc` an https base URL, 24
+bytes, or a WebRTC gateway multiaddr with a certificate hash and a peer id, 158 bytes; each editor key 12 bytes.
+
+| Profile | Keys | Record bytes | Left of 512 |
+|---|---|---|---|
+| empty | 0 | 71 | 441 |
+| `contenthash` | 1 | 153 | 359 |
+| `contenthash`, `csd.p2p` | 2 | 255 | 257 |
+| `contenthash`, `csd.p2p`, `csd.rpc` (https URL) | 3 | 292 | 220 |
+| `contenthash`, `csd.p2p`, `csd.rpc` (gateway multiaddr) | 3 | 426 | 86 |
+| 13 editor keys, `contenthash`, `csd.p2p` | 15 | 601 | 89 over: `nameProfile` refuses it |
+
+The 13 editor keys and the three registered keys `contenthash`, `csd.p2p` and `csd.rpc` are 16 keys, the key cap
+exactly, yet the last row, with 15 of them and 12-byte values, is already over the byte cap. The byte cap binds
+before the key cap, so an application uses one key that points at its own data rather than one key per field.
+
+### 36.5 Adding a key
+
+A key is added to the registry by a change to this file: a row in §36.2 with its value form, and its reader rules in
+§36.3 when it needs any. It needs no gate, since the resolver keeps no list of keys. A key under an application's own
+reverse-DNS prefix needs no registration.
+
+---
+
+# What a result proves (no gate)
+
+## 37. The three levels
+
+A result says which of three levels it is.
+
+1. Display. An answer read from someone's API. It is worth the trust placed in that API.
+2. Record proof. One record was mined in a block under valid proof of work, and its author is the owner of the coin
+   its first input spends (§33.5). It does not prove that the record is the latest for its name or token, and it
+   decides nothing about a name whose state depends on records outside the name's own history (a fill that depends
+   on the buyer's other claims or balance, a registration that depends on the registrant's other reservations).
+3. Replica. `resolve()` over every event of §33. It is exact for names and tokens when its event list is complete;
+   §33.1 states what establishes that. What it proves depends on its source:
+   - blocks from one's own node: the trust is one's own node;
+   - complete blocks checked against headers: a block cannot be thinned, because its transactions must hash to the
+     merkle root of the header and each author is bound to the coin it spent; what remains to trust is that the
+     header source serves the chain with the most work;
+   - a record log fixed in a release, plus complete blocks above the height it ends at: below that height the trust
+     is the release;
+   - a feed: a node's events route, csd-indexer's feeds, or any other list of records. A feed is complete only on its
+     word, so a replay fed from one gives display, or a record proof for each record it proves, and says so. From
+     one's own node the events route is the node software's word, which a replica makes equal to the first source by
+     a recount from blocks at the boundaries of §38.
+
+---
+
+# Conformance and rule changes (no gate)
+
+## 38. Conformance
+
+A replica conforms at three levels.
+
+1. The vectors: `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json` (replay, §5), `events.json`
+   (§33.7) and `hashes.json` (§34.4). A conformant implementation reproduces every case byte for byte.
+2. The pinned replay hashes: `test/vectors/replay-hashes.json`, the state hash (§34.1) of the live chain at each
+   pinned height.
+3. A running comparison: two replicas compare the tuple (height, block hash, events hash, state hash) of §34.3 at
+   finalized epoch boundaries. An epoch is `EPOCH_LEN` = 30 blocks (csd-codec, re-exported by cairnx-core); a
+   boundary is a height that is a multiple of `EPOCH_LEN`, and a finalized boundary is one that both replicas hold at
+   least `FINAL_DEPTH` = 12 blocks below their tips (cairnx-core `FINAL_DEPTH`). The thresholds of §3 (3 and 6) are
+   display conventions and are not this depth; neither is a bound on how deep a reorganisation can reach.
+
+What a difference means is in §34.3. The operating rule: a difference is reported, never acted on automatically. A
+replica that credits value stops crediting only when a difference at one block hash persists over three consecutive
+boundaries and its own recount from complete blocks (§37) gives the same difference.
+
+A form of the tuple recorded on chain is reserved under the reserved prefixes of §35.2 and is not defined by this
+version.
+
+## 39. Rule changes
+
+- This specification is normative for the future. Pinned history stands: every height below a gate replays as it
+  did, and the pinned replay hashes do not move. Behaviour changes only at a gate, an activation height in
+  `src/types.ts`; a section without a gate, such as §33 to §39, moves no state.
+- `CONSENSUS_CHANGES.md` in the csd-sdk repository is the ledger of every change. Each gate after v2.9 also has its
+  own file, `docs/gates/<gate>.md`, written from `docs/gates/TEMPLATE.md` and linked from its ledger entry. It
+  states the motivation, the rule text, the class of the change (reject-more: an input the earlier rule applied
+  becomes a no-op; accept-different: an input is applied where it was not, or applied otherwise), the height, the
+  vectors that pin it, and a rollout table of every consumer with how its adoption is observed.
+  `scripts/check-consensus-citations.mjs` checks the citations of the ledger and of every gate file, and that each
+  gate file is linked from the ledger.
+- A published height never moves earlier. (The v2.4 to v2.7 heights were moved earlier once, on 2026-07-03, before
+  this rule; see the note at the top of this file.)
+- Rule changes ride gates within `cairnx:v1`. A second domain is only for a deliberate restart of state: its records
+  are not events of `cairnx:v1` (§33.1), so it starts from no tokens, no balances and no names.

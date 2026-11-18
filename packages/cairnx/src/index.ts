@@ -26,6 +26,12 @@ export * from "./primary.js";
 // fclaim/fill-basis depth gate (GAP_NEEDED) over an injected PoW-verified, merkle-proven FillSpvIo seam.
 export * from "./verifyfill.js";
 export { paidToFromOutputs, burnedPayment } from "./paidto.js";
+// events: CONVENTION §33, the rule from a block to the events resolve() replays.
+export {
+  CAIRNX_EVENT_RULE, blockEvents, blockMembers, eventOfTx, type EventMember, type EventRule, type EventRuleTx, type EventsSoFar,
+} from "./events.js";
+// hashes: CONVENTION §34, the state hash and the events hash two replicas compare at one block.
+export { EVENTS_HASH_START, FINAL_DEPTH, eventsHash, eventsHashStep, stateHash, type HashedEvent } from "./hashes.js";
 export { myProvenFillClosedOffer } from "./fillclosed.js";
 export { countOtherHoldsAtGrant, LEGACY_HOLD_SUNSET_HEIGHT, type HoldCandidate, type HoldCount, type HoldTarget } from "./holdcount.js";
 export { provenOfferRefusal, type ProvenOfferTx } from "./admission.js";

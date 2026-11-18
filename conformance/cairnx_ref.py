@@ -1053,10 +1053,13 @@ def _js_stringify(v, depth=0):
     keys = _js_obj_key_order(list(v.keys()))
     return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + _js_stringify(v[k], depth + 1) for k in keys) + "}"
 
+# §5 and §34.1: a resolve() result's diagnostic fields, which the canonical state leaves out.
+DIAGNOSTIC_FIELDS = ("events", "recaptures", "fclaims")
+
 def canonical_state(state):
     # canonicalState = JS JSON.stringify(sortKeys(data)); replicate the JS object-key enumeration
     # order (integer-index keys first), which differs from the codec's pure code-unit canonicalJson.
-    return _js_stringify(state)
+    return _js_stringify({k: v for k, v in state.items() if k not in DIAGNOSTIC_FIELDS})
 
 def record_keys_ok(rec):
     """Backward-compat for the primitive crosscheck: the onlyKeys gate (now subsumed by parse_record)."""
@@ -1076,6 +1079,225 @@ def _parse_full_one(i, r):
         print(f"parseFull[{i}]: no canonical form ({e}); rejected", file=sys.stderr)
         return False
     return parse_record(uri, ph) is not None
+
+# ── CONVENTION §33: from a block to events, written from the section text ───────────────────────────────────────
+# A transaction here is a dict {pos, txid, app, outputs} with u64 values as ints; the author is given. Every refusal
+# is a ValueError.
+SAFE_MAX = (1 << 53) - 1
+HEX_CHARS = re.compile(r"[0-9a-fA-F]*")
+
+def _hex_field(v, nbytes, what):
+    if not isinstance(v, str): raise ValueError(what + " is not hex")
+    h = v[2:] if v.startswith("0x") else v
+    if len(h) != 2 * nbytes or not HEX_CHARS.fullmatch(h): raise ValueError(what + " is not %d-byte hex" % nbytes)
+    return "0x" + h.lower()
+
+def _integral(v, top):
+    """An integer in [0, top] as an int, in any JSON spelling of it (100000, 100000.0, 1e5 are one number in JSON's
+    data model, as JavaScript reads them); None otherwise. A bool is no number."""
+    if isinstance(v, float) and v.is_integer(): v = int(v)
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= top else None
+
+def _index(v, what):
+    n = _integral(v, SAFE_MAX)
+    if n is None: raise ValueError(what + " is not an integer in [0, 2^53 - 1]")
+    return n
+
+def _u32(v, what):
+    n = _integral(v, 0xFFFFFFFF)
+    if n is None: raise ValueError(what + " is not a u32")
+    return n
+
+# The u64 fields arrive as decimal strings in the vectors (§33.7), decoded to ints by _vector_tx.
+def _uint(v, limit, what):
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v >= limit: raise ValueError(what + " out of range")
+    return v
+
+def _rule_of(rule):
+    domain = rule.get("domain")
+    if not isinstance(domain, str) or domain == "" or not _is_wellformed(domain) or "\x00" in domain or "\x01" in domain:
+        raise ValueError("the domain must be non-empty well-formed text without U+0000 or U+0001")
+    return domain, _index(rule.get("activationHeight"), "the activation height")
+
+def _payload_kind(app):
+    # None for no payload, else "propose" or "attest"
+    if not isinstance(app, dict) or app.get("type") not in ("None", "Propose", "Attest"): raise ValueError("unknown app")
+    return {"None": None, "Propose": "propose", "Attest": "attest"}[app["type"]]
+
+def _domain(app):
+    if not isinstance(app.get("domain"), str): raise ValueError("a Propose domain is not text")
+    return app["domain"]
+
+def event_of_tx(t, height, author, rule):
+    domain, activation = _rule_of(rule)
+    height, pos = _index(height, "height"), _index(t.get("pos"), "pos")
+    txid = _hex_field(t.get("txid"), 32, "txid")
+    app = t.get("app")
+    kind = _payload_kind(app)
+    if kind is None: return None
+    if height < activation: return None
+    if pos == 0: raise ValueError("an app payload at position 0, the coinbase")
+    if kind == "propose" and _domain(app) != domain: return None
+    if not isinstance(t.get("outputs"), list): raise ValueError("outputs")
+    paid = {}
+    for o in t["outputs"]:
+        addr = _hex_field(o.get("scriptPubkey"), 20, "script_pubkey")
+        value = _uint(o.get("value"), 1 << 64, "output value")
+        if value <= SAFE_MAX: paid[addr] = str(int(paid.get(addr, "0")) + value)
+    who = _hex_field(author, 20, "author")
+    if kind == "propose":
+        uri = app.get("uri")
+        if not isinstance(uri, str) or not _is_wellformed(uri): raise ValueError("uri")
+        expires = _uint(app.get("expiresEpoch"), 1 << 64, "expiresEpoch")
+        if expires > SAFE_MAX: expires = 1 << 53
+        return {"kind": "propose", "id": txid, "proposer": who, "uri": uri.replace("\x00", "\x01"),
+                "payloadHash": _hex_field(app.get("payloadHash"), 32, "payloadHash"), "expiresEpoch": expires,
+                "height": height, "pos": pos, "paidTo": paid}
+    return {"kind": "attest", "txid": txid, "proposalId": _hex_field(app.get("proposalId"), 32, "proposalId"),
+            "attester": who, "score": _u32(app.get("score"), "score"),
+            "confidence": _u32(app.get("confidence"), "confidence"), "height": height, "pos": pos, "paidTo": paid}
+
+def block_members(height, txs, event_ids, propose_ids, rule):
+    """The members (kind, tx) of one block in position order, each tx with its position as an int. event_ids and
+    propose_ids are the reader's sets."""
+    domain, activation = _rule_of(rule)
+    height = _index(height, "height")
+    if height < activation: return []
+    if not isinstance(txs, list): raise ValueError("txs")
+    listed, block_proposals, candidates, last = set(), set(), [], -1
+    for t in txs:
+        pos = _index(t.get("pos"), "pos")
+        if pos <= last: raise ValueError("positions not strictly increasing")
+        last, t = pos, dict(t, pos=pos)
+        txid = _hex_field(t.get("txid"), 32, "txid")
+        if txid in listed: raise ValueError("a txid twice in one block")
+        listed.add(txid)
+        kind = _payload_kind(t.get("app"))
+        if kind is None: continue
+        if pos == 0: raise ValueError("an app payload at position 0, the coinbase")
+        if kind == "propose":
+            if _domain(t["app"]) == domain and txid not in event_ids:
+                block_proposals.add(txid)
+                candidates.append(("propose", t, txid, None))
+        else:
+            candidates.append(("attest", t, txid, _hex_field(t["app"].get("proposalId"), 32, "proposalId")))
+    members = []
+    for kind, t, txid, proposal in candidates:
+        if kind == "propose":
+            members.append((kind, t))
+        elif txid not in event_ids and (proposal in propose_ids or proposal in block_proposals):
+            members.append((kind, t))
+    return members
+
+def block_events(height, txs, event_ids, propose_ids, authors, rule):
+    members = block_members(height, txs, event_ids, propose_ids, rule)
+    if not isinstance(authors, list) or len(authors) != len(members): raise ValueError("one author per member")
+    proposes, attests = [], []
+    for (kind, t), author in zip(members, authors):
+        e = event_of_tx(t, height, author, rule)
+        if kind == "propose": proposes.append(e)
+        else: attests.append(e)
+    return proposes + attests
+
+def _vector_tx(t):
+    """A vector's transaction with its u64 decimal strings as ints."""
+    num = lambda v: int(v) if isinstance(v, str) and re.fullmatch(r"-?[0-9]+", v) else v
+    app = dict(t["app"]) if isinstance(t.get("app"), dict) else t.get("app")
+    if isinstance(app, dict) and app.get("type") == "Propose": app["expiresEpoch"] = num(app.get("expiresEpoch"))
+    return {"pos": t.get("pos"), "txid": t.get("txid"), "app": app,
+            "outputs": [dict(o, value=num(o.get("value"))) for o in t.get("outputs", [])]}
+
+def _events_job(job):
+    out_tx, out_blocks = [], []
+    for c in job["tx"]:
+        try: r = event_of_tx(_vector_tx(c["input"]), c["input"]["height"], c["author"], c.get("rule", job["rule"]))
+        except ValueError: r = "error"
+        out_tx.append(canonical_json(r))
+    for c in job["blocks"]:
+        event_ids, propose_ids, members, events, r = set(), set(), [], [], None
+        for i, b in enumerate(c["blocks"]):
+            txs = [_vector_tx(t) for t in b["txs"]]
+            try:
+                ms = block_members(b["height"], txs, event_ids, propose_ids, c.get("rule", job["rule"]))
+                evs = block_events(b["height"], txs, event_ids, propose_ids, [c["authors"].get(t["txid"]) for _, t in ms], c.get("rule", job["rule"]))
+            except ValueError:
+                r = {"error": i}
+                break
+            members.append([t["pos"] for _, t in ms])
+            for e in evs:
+                event_ids.add(e["id"] if e["kind"] == "propose" else e["txid"])
+                if e["kind"] == "propose": propose_ids.add(e["id"])
+                events.append(e)
+        out_blocks.append(canonical_json(r if r is not None else {"members": members, "events": events}))
+    return {"tx": out_tx, "blocks": out_blocks}
+
+# ── CONVENTION §34: the state hash and the events hash, written from the section text ───────────────────────────────
+# Hex crosses the boundary as 0x and lowercase only (the forms of §33.4); every refusal is a ValueError.
+EVENTS_HASH_START = "0x" + "00" * 32
+_LOWER_HEX = {32: re.compile(r"0x[0-9a-f]{64}"), 20: re.compile(r"0x[0-9a-f]{40}")}
+
+def state_hash(state):
+    return "0x" + hashlib.sha256(canonical_state(state).encode("utf-8")).hexdigest()
+
+def _raw(v, nbytes, what):
+    if not isinstance(v, str) or not _LOWER_HEX[nbytes].fullmatch(v): raise ValueError(what + " is not 0x lowercase hex")
+    return bytes.fromhex(v[2:])
+
+def events_hash_step(prev, height, events):
+    """e after one block: sha256(e_prev || b), b over the block's events in ascending position; no events: e_prev."""
+    e_prev = _raw(prev, 32, "previous value")
+    height = _integral(height, SAFE_MAX)
+    if height is None: raise ValueError("height")
+    if not isinstance(events, list): raise ValueError("events")
+    if not events: return prev
+    rows = {}
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("kind") not in ("propose", "attest"): raise ValueError("kind")
+        if _integral(ev.get("height"), SAFE_MAX) != height: raise ValueError("an event of another height")
+        pos = _integral(ev.get("pos"), 0xFFFFFFFF)
+        if pos is None: raise ValueError("position")
+        if pos in rows: raise ValueError("a position twice in one block")
+        txid, author = ("id", "proposer") if ev["kind"] == "propose" else ("txid", "attester")
+        rows[pos] = _raw(ev.get(txid), 32, "transaction id") + _raw(ev.get(author), 20, "author")
+    b = hashlib.sha256(height.to_bytes(8, "big") + b"".join(p.to_bytes(4, "big") + rows[p] for p in sorted(rows))).digest()
+    return "0x" + hashlib.sha256(e_prev + b).hexdigest()
+
+def events_hash(events):
+    """e over a list whose heights never fall: one step per run of one height, from the start value."""
+    if not isinstance(events, list): raise ValueError("events")
+    runs = []
+    for ev in events:
+        h = _integral(ev.get("height"), SAFE_MAX) if isinstance(ev, dict) else None
+        if h is None: raise ValueError("height")
+        if runs and runs[-1][0] == h: runs[-1][1].append(ev)
+        else: runs.append((h, [ev]))
+    value, below = EVENTS_HASH_START, -1
+    for h, block in runs:
+        if h < below: raise ValueError("a height below the one before it")
+        value, below = events_hash_step(value, h, block), h
+    return value
+
+def _hashes_job(job):
+    cases = []
+    for c in job["cases"]:
+        value = c["prev"] if "prev" in c else EVENTS_HASH_START
+        for i, b in enumerate(c["blocks"]):
+            try: value = events_hash_step(value, b["height"], b["events"])
+            except ValueError:
+                value = {"error": i}
+                break
+        r = {"steps": value}
+        if "prev" not in c:
+            try: r["list"] = events_hash([ev for b in c["blocks"] for ev in b["events"]])
+            except ValueError: r["list"] = "error"
+        cases.append(canonical_json(r))
+    events = job["corpus"]["events"] if "corpus" in job else []
+    by_height = sorted(events, key=lambda ev: ev["height"])  # stable
+    corpus = {}
+    for h in (job["corpus"]["heights"] if "corpus" in job else []):
+        corpus[str(h)] = {"eventsHash": events_hash([ev for ev in by_height if ev["height"] <= h]),
+                          "stateHash": state_hash(resolve([ev for ev in events if ev["height"] <= h], h))}
+    return {"start": EVENTS_HASH_START, "cases": cases, "corpus": corpus}
 
 # ── CLI: read a JSON job from stdin, emit results for crosscheck.mjs to diff ──
 def main():
@@ -1122,6 +1344,15 @@ def main():
         _FIELD_RE = {"amount": AMOUNT_RE, "addr": ADDR_RE, "ticker": TICKER_RE,
                      "hash": HASH_RE, "name": NAME_RE, "salt": SALT_RE, "pkey": PKEY}
         out["regex"] = [_FIELD_RE[it["field"]].fullmatch(it["s"]) is not None for it in job["regex"]]
+    if "events" in job:
+        # CONVENTION §33 over packages/cairnx/test/vectors/events.json: each case's result as canonical JSON bytes.
+        out["events"] = _events_job(job["events"])
+    if "hashes" in job:
+        # CONVENTION §34 over packages/cairnx/test/vectors/hashes.json and the committed corpus.
+        out["hashes"] = _hashes_job(job["hashes"])
+    if "stateHashes" in job:
+        # §34.1 over complete resolver states, diagnostic fields included.
+        out["stateHashes"] = [state_hash(s) for s in job["stateHashes"]]
     json.dump(out, sys.stdout)
 
 if __name__ == "__main__":

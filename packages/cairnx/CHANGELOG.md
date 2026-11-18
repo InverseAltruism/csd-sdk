@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.2.5
+
+- CONVENTION.md section 33, "From a block to events": the rule that turns the chain's blocks into the events
+  `resolve()` replays (membership from the activation height, first occurrence, order, field forms, the author as the
+  owner of the coin the first input spends, the byte form of an event list). It also accepts a sparse block: every
+  transaction with an app payload at its true position. Section 32's "there is no straddle case" is corrected (a
+  transaction can be mined again, in two blocks), and C3, section 3 and section 5 point at section 33.
+- New root exports `eventOfTx`, `blockMembers`, `blockEvents` and `CAIRNX_EVENT_RULE`, with
+  `test/vectors/events.json` (40 transaction and 25 block vectors, `conformance/gen-events-vectors.mjs`), checked by
+  `test/events.test.ts` and against the Python reference by `conformance/events-crosslang.mjs`. In JavaScript a u64
+  input is a bigint in [0, 2^64) or a number that is an integer in [0, 2^53]; a number above 2^53 is refused.
+- `resolve()`, `records.ts` and `types.ts` are unchanged, and every pinned vector and replay hash is byte-identical.
+  Section 33.2 makes normative the input form the reference service's feed has always had: the first occurrence of a
+  transaction id at every height. A reader that feeds `resolve()` every copy of a re-mined transaction can differ from
+  the reference when a copy lies below V29: a transaction mined at 87,999 and again at 88,001 is one event under
+  section 33 and two applied records under `resolve()` fed both copies. For history the case is empty: a scan of every
+  block from 29,860 to 144,400 (block hash 0x0000000000001874564bd8df5a5893040b0981d96c646e132e3598488d0411b5) on
+  2026-11-18 read 114,541 blocks and 148,395 transactions with 148,395 distinct transaction ids, so no transaction id
+  has been mined twice since activation. The script for that scan ships with the block fixture in the next slice
+  (events-rule-b).
+- A reader that switches to `eventOfTx` sees two forms change, neither of which moves state: an expiry above 2^53 - 1
+  becomes 2^53 (resolve() refuses both alike for offers, bids and fclaims, and reads it for nothing else), and a `uri`
+  holding U+0000 has it written as U+0001 (neither form is JSON, so neither is a record).
+- CONVENTION.md section 34, "State hash and events hash": the two hashes replicas compare at one block, and what a
+  difference in each means. New root exports `stateHash` (sha256 of `canonicalState`'s UTF-8 bytes, the digest
+  `replay-hashes.json` already pins), `eventsHashStep`, `eventsHash` and `EVENTS_HASH_START`: a running sha256 over
+  each event-holding block's height and its events' positions, transaction ids and authors. Vectors in
+  `test/vectors/hashes.json` (43 cases, and both hashes over the replay corpus at its 21 pinned heights,
+  `conformance/gen-hashes-vectors.mjs`), checked by `test/hashes.test.ts` and against the Python reference by
+  `conformance/hashes-crosslang.mjs`; the replay-hash test and `replay-corpus-crosslang.mjs` call `stateHash`.
+- New root export `FINAL_DEPTH` = 12: how far below its tip a replica holds an epoch boundary before it publishes or
+  compares the tuple of section 34.3 there. Section 38 names it; the thresholds of section 3 (3 and 6) are display
+  conventions and are not this depth.
+- CONVENTION.md sections 35 to 39, with no gate: other applications (record types under `cairnx:v1` reserved, an
+  application's own domain, the profile as the place for data about a name), the profile-key registry with its caps,
+  keys, reader rules and byte budget (`scripts/profile-budget.mjs` prints it), what a result proves at each of the
+  three levels, conformance, and how the rules change. No package code and no state change.
+- cairnx-core now declares `@noble/hashes` 1.8.0, the release csd-codec already pins, for its sha256 (csd-codec
+  exports none): no new package enters an install.
+
 ## 0.2.4
 
 - `verifyFillSpv`'s contract and comments say what its window replay decides. A grant depends on the holds granted

@@ -9,7 +9,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { CONF_TOKEN_FILL, FCLAIM_MAX_HOLD_SPAN, fillEndorsement, offerFillTooLate } from "../src/index.js";
+import {
+  CAIRNX_EVENT_RULE, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, blockEvents, blockMembers, eventOfTx, eventsHash,
+  eventsHashStep, fillEndorsement, offerFillTooLate, stateHash,
+} from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
 
@@ -25,7 +28,17 @@ assert.equal(typeof fillEndorsement, "function", "fillEndorsement is a root expo
 assert.equal(typeof offerFillTooLate, "function", "offerFillTooLate is a root export");
 // The site's refusal before the reservation fee reads which listed fills may lie below the fill check's window with it.
 assert.equal(FCLAIM_MAX_HOLD_SPAN, 89, "FCLAIM_MAX_HOLD_SPAN is a root export (89)");
-for (const name of ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN"])
-  assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
+// The rule from a block to events (CONVENTION §33): the scanner, the wallet, the site and the replica's sources call it.
+for (const [name, fn] of [["eventOfTx", eventOfTx], ["blockMembers", blockMembers], ["blockEvents", blockEvents]] as const)
+  assert.equal(typeof fn, "function", `${name} is a root export`);
+assert.deepEqual(CAIRNX_EVENT_RULE, { domain: "cairnx:v1", activationHeight: 29_860 }, "CAIRNX_EVENT_RULE is cairnx:v1 from 29,860");
+// The hashes two replicas compare (CONVENTION §34): the service, the replica and the comparator call them.
+for (const [name, fn] of [["stateHash", stateHash], ["eventsHashStep", eventsHashStep], ["eventsHash", eventsHash]] as const)
+  assert.equal(typeof fn, "function", `${name} is a root export`);
+assert.equal(EVENTS_HASH_START, "0x" + "00".repeat(32), "EVENTS_HASH_START is 32 zero bytes");
+assert.equal(FINAL_DEPTH, 12, "FINAL_DEPTH is the depth CONVENTION section 38 names");
+const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE",
+  "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH"];
+for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
-console.log("cairnx-core export surface: 9 passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate and FCLAIM_MAX_HOLD_SPAN pinned in src and dist .d.ts)");
+console.log(`cairnx-core export surface: ${10 + 4 + names.length} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and the §34 hashes' four pinned in src and dist .d.ts)`);

@@ -47,6 +47,9 @@ importers:
       '@inversealtruism/csd-codec':
         specifier: workspace:*
         version: link:../codec
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
 
   packages/client:
     dependencies:

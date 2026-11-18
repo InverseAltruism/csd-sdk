@@ -193,7 +193,8 @@ For a new gate or fee tier follow the V28+ rollout checklist.
 ## Docs
 
 - `README.md`: what the packages are, install, quick start; `packages/*/README.md`: one per published package.
-- `CONSENSUS_CHANGES.md`: every height-gated change and the two release checklists; its citations are checked by
+- `CONSENSUS_CHANGES.md`: every height-gated change and the two release checklists; `docs/gates/`: one file per gate
+  after v2.9, from `docs/gates/TEMPLATE.md`, linked from its ledger entry. The citations of both are checked by
   `scripts/check-consensus-citations.mjs`.
 - `docs/architecture.md`: packages, cairnx-core modules, the gate list, claimWindowOf, consumers.
 - `docs/release.md`: check-lockstep, the npm window, the token, versioning.
