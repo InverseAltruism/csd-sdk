@@ -10,7 +10,7 @@
   whole as `SOURCE_MALFORMED` when it breaks it, committed whole with a compare of the cursor, a reorg rolled back, a
   failing source backed off) and `advance()`; `fullReplay`, the only way to a resolved state, from rows read back and
   checked against the contract, their events hash and their rows hash first. The order of CONVENTION section 33.3 is
-  a copy of the sort inside cairnx-core's `resolve()` until cairnx-core exports a comparator (2026-11-18).
+  cairnx-core's `applyOrder` and `eventId`, re-exported, the comparator `resolve()` sorts with.
 - `BlockRow.rowsHash` and `StoreMeta.rowsHash`: a running sha256 over each row's full content, so a stored row
   changed in a field the events hash does not cover is refused. `memoryStore` refuses a commit whose meta does not
   carry the events hash and rows hash of the last row held after it.

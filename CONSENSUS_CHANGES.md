@@ -76,7 +76,10 @@ expiry with the sweep height (section 24) is met by re-keying, at the first swee
 and bid anchored below V22. A sweep at a height below an earlier sweep's, which only NaN heights produce (the sort's
 comparator is inconsistent there), takes the walk, and so does a hold count at a height below an earlier count's,
 since a candidate whose hold has ended is dropped. The indexes are built per `resolve()` call and are not in the
-returned state, `canonicalState` or the exports; `dist/index.d.ts` is byte-identical to 0.2.6's.
+returned state, `canonicalState` or the exports. The sort `resolve()` applies (section 3) and the id its V29 drop
+keys on move out of its body into the root exports `applyOrder` and `eventId`, which `resolve()` calls: the same
+comparison, so a reader that lists events in apply order imports it; `dist/index.d.ts` differs from 0.2.6's by those
+two declarations and their two names in the export list.
 
 The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 fc6e081` (fc6e081 being the tree with 0.2.6's source):
 `canonicalState` byte-identical to 0.2.4 and the whole result identical once `code` is left out, and identical to
@@ -450,7 +453,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   but never de-duplicated, so a double-fed transaction (an overlapping scanner page) applied twice and
   double-credited `o.paid`/`o.delivered` on the partial-fill path. At an event height >= V29 a duplicate
   (same propose `id` / attest `txid`) is dropped before apply; the first in consensus order is kept
-  (`resolve.ts` `eid`/`seenIds`). The identity is the L1 tx hash (sha256d), not attacker-choosable, and a
+  (`resolve.ts` `eventId`/`seenIds`). The identity is the L1 tx hash (sha256d), not attacker-choosable, and a
   duplicate pair shares one txid == one block, so both copies always land on the SAME side of the gate. The
   cairnx-SERVICE-side de-dup on the attestation pull (its `scan.ts`) is a separate, un-gated defensive
   change; only the resolve() half is gated here.

@@ -13,7 +13,7 @@
 //   client   - the claim-burial depth a client waits for before paying, sized against a minority miner (requiredClaimDepth)
 export * from "./types.js";
 export * from "./records.js";
-export { resolve, canonicalState, ptAmt } from "./resolve.js";
+export { resolve, canonicalState, ptAmt, applyOrder, eventId } from "./resolve.js";
 export * from "./client.js";
 // preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
 // requiredFillOutputs / buildFeeHeight); mirrors the resolver's fill + claim + freeze math so every
