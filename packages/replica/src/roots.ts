@@ -1,9 +1,16 @@
 // The header roots of hostedBlocks, which does not trust the server it reads blocks from (design section 2): what a
-// root does before a step's pages and with each page's headers. The anchor root is anchor-root.ts.
-import type { SourceError } from "./errors.js";
-import type { Head } from "./fork.js";
+// root does before a step's pages and with each page's headers. The caller root is here; the anchor root is
+// anchor-root.ts. A caller root's headers are the caller's: each step syncs them to the server's tip and asks them
+// for the cursor's hash. Another hash means the caller reorganised, and fork.ts searches the held blocks with `at`
+// for the highest still on the caller's chain (`at` reads the caller's own store, so the search takes no request
+// and ends within the step: at most 2 * ceil(log2(n + 1)) probes of two reads of `at` each for n held blocks). No
+// header at the cursor while the caller's tip is at or above it (a store that keeps a floor and a suffix) is a
+// refusal, never a rollback: a rollback needs another hash. A caller whose tip is below the cursor on the chain the
+// store holds rolls nothing back.
+import { SourceError } from "./errors.js";
+import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
-import type { HeaderRoot, StepContext, Step, TipView } from "./types.js";
+import type { HeaderRoot, StepContext, Step, TipView, VerifiedHeaders } from "./types.js";
 import type { HeaderRow } from "./window.js";
 
 /** Internal. How many leading rows of a page are verified, and the error that ends them, if any. */
@@ -23,4 +30,41 @@ export interface Root {
   hashAt(height: number): Promise<string | null>;
   tipView(): TipView | null;
   tip(signal: AbortSignal): Promise<TipView | null>;
+}
+
+export function callerRoot(h: VerifiedHeaders): Root {
+  let tip: TipView | null = null;
+  const hashAt = async (height: number) => (await h.at(height))?.hash.toLowerCase() ?? null;
+  const viewOf = (v: { height: number; hash: string; time: number }): TipView => ({ height: v.height, hash: v.hash.toLowerCase(), time: v.time });
+  const fork = forkSearch({ probe: async (_s, height) => ({ hash: (await hashAt(height)) ?? "", prev: (await hashAt(height - 1)) ?? "" }), tipView: async () => tip!, who: "the caller" });
+  return {
+    root: { kind: "caller", floor: h.floor, origin: h.origin },
+    hashAt,
+    tipView: () => tip,
+    async tip(signal) { const v = await h.sync(null, signal); return v === null ? null : (tip = viewOf(v)); },
+    async begin(s, ctx, server) {
+      const at = ctx.cursor;
+      if (h.floor > ctx.rule.activationHeight - 1) throw new SourceError("BELOW_FLOOR", `the caller's headers start at ${h.floor}, above the activation height less one`);
+      const v = await h.sync(server.height, ctx.signal);
+      if (v === null) throw new SourceError("SOURCE_UNAVAILABLE", "the caller's headers do not know the tip");
+      tip = viewOf(v);
+      if (at !== null && fork.pending(at) !== null) return fork.run(s, ctx, at, tip, "resume");
+      const mine = at === null ? null : await hashAt(at.height);
+      if (at !== null && mine === null && v.height >= at.height) {
+        throw new SourceError("SOURCE_UNAVAILABLE", `the caller's headers hold no header at the cursor ${at.height}, below their tip ${v.height}`);
+      }
+      if (at !== null && mine !== at.hash) return fork.run(s, ctx, at, tip, "tip");
+      return { to: Math.min(v.height, server.height) };
+    },
+    async check(_s, _ctx, server, rows, final) {
+      await h.offer?.(server.height, rows.map((r) => ({ height: r.height, header: r.header })));
+      for (const [i, r] of rows.entries()) {
+        if ((await hashAt(r.height)) === r.hash) continue;
+        const e = new SourceError(final ? "HEADER_INVALID" : "BRANCH_MOVED", `the block served at ${r.height} is not the one the caller's headers hold`);
+        if (!final) throw e;
+        return { verified: i, error: e };
+      }
+      return { verified: rows.length, error: null };
+    },
+  };
 }

@@ -74,8 +74,8 @@ replayed on demand.
   credentials, query or fragment): `/api/rpc/tip`, `/api/blocks/:from/:count`, `/api/headers/:from/:count` and
   `/api/rpc/tx/:id`, with the HTTP rules above. The server's `/api/rpc/tip` only says how far to try to read: it
   travels as the step's `reach`, which the loop uses to take another step, and never as a tip. The tip a step
-  reports (height, hash and header time) is the highest header the anchor root's window verified. `root` is where
-  the headers come from:
+  reports (height, hash and header time) is one header the root vouches for: under an anchor root the highest
+  header the window verified, under a caller root the caller's verified tip. `root` is where the headers come from:
 
   - `{ kind: "anchor", anchor, window? }`: headers the source verifies itself with csd-light, seeded with the 45
     headers ending at `anchor` (workRoot), which must lie at or below the activation height less one
@@ -101,6 +101,15 @@ replayed on demand.
     batches, about 26 steps at 10 requests a step (arithmetic, not measured). It holds a second window of 45 +
     `window` headers beside the first and the 45 of the seed: with the default window, 1,575 headers, about 1.5 MB
     at 974 bytes a header object (design section 9).
+  - `{ kind: "caller", headers }`: a `VerifiedHeaders` (`floor`, `origin`, `sync`, `at`, `offer?`) the caller keeps.
+    Each step syncs it to the server's tip (`SOURCE_UNAVAILABLE` when `sync` answers null, `BELOW_FLOOR` when `floor`
+    lies above the activation height less one) and asks `at` for the cursor's hash. Another hash starts the search
+    over the held blocks that `nodeBlocks` uses, with `at` in place of block reads, so it ends within the step, and
+    the rollback lands on a held hash. No header at the cursor while the caller's tip is at or above it is
+    `SOURCE_UNAVAILABLE`, never a rollback. A step reads to the lower of the caller's tip and the server's. Each
+    page's headers are given to `offer` when it is present, after `sync`, both with the server's unverified tip
+    height; what `offer` answers is not read, and every block must hash to `at` at its height. So `offer` saves the
+    caller's own header reads only when its `sync` skips what an earlier offer already gave it.
 
   A step reads the server's tip, then pages from the cursor up while its budget lasts (always one page). A page is
   the route's whole aligned 64 when all of it lies at or below that height, so that an edge cache can serve every

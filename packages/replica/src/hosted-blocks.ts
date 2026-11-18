@@ -1,6 +1,6 @@
 // hostedBlocks: complete blocks from our front door's /api/blocks, bound to headers from a root that does not trust
-// that server (design section 2): an anchor, from which the source verifies the headers itself (anchor-root.ts). A
-// step reads the server's /api/rpc/tip, which only says how far to try
+// that server (design section 2): an anchor, from which the source verifies the headers itself (anchor-root.ts), or
+// the caller's VerifiedHeaders (roots.ts). A step reads the server's /api/rpc/tip, which only says how far to try
 // to read, lets the root settle the cursor (a reorg, a refusal or how far to read), then reads pages from cursor + 1
 // while the budget lasts (always one). A page is the route's whole aligned 64 when all of it lies at or below that
 // height, so every reader asks the same URLs and an edge cache can serve them; the part below the cursor is
@@ -17,15 +17,15 @@ import { bindServed, eventsOf, headerOf, memberPick, pickOf, readHead, type Serv
 import { cannotOf, ReplicaConfigError, SourceError } from "./errors.js";
 import { httpSessions, servedWrong, twice, type HttpOptions, type Session } from "./http.js";
 import { serverBase } from "./node-address.js";
-import type { Root } from "./roots.js";
+import { callerRoot, type Root } from "./roots.js";
 import { stepSofar } from "./sofar.js";
-import type { BlockEvents, BlocksBasis, BlocksSource, Cursor, StepContext, Step } from "./types.js";
+import type { BlockEvents, BlocksBasis, BlocksSource, Cursor, StepContext, Step, VerifiedHeaders } from "./types.js";
 
 /** `origin`: the front door's base URL. `root`: a release's anchor with the window of headers held above the 45 of
- *  LWMA context (default 720). */
+ *  LWMA context (default 720), or the caller's verified headers. */
 export interface HostedBlocksOptions extends HttpOptions {
   readonly origin: string;
-  readonly root: { readonly kind: "anchor"; readonly anchor: Cursor; readonly window?: number };
+  readonly root: { readonly kind: "anchor"; readonly anchor: Cursor; readonly window?: number } | { readonly kind: "caller"; readonly headers: VerifiedHeaders };
 }
 const PAGE = 64;
 
@@ -38,9 +38,9 @@ function pageOf(from: number, count: number) {
 }
 
 export function hostedBlocks(o: HostedBlocksOptions): BlocksSource {
-  const origin = serverBase(o.origin, "origin"), session = httpSessions(origin, o, "/api/rpc"), depth = o.root.window ?? 720;
+  const origin = serverBase(o.origin, "origin"), session = httpSessions(origin, o, "/api/rpc"), depth = o.root.kind === "anchor" ? o.root.window ?? 720 : 1;
   if (!Number.isSafeInteger(depth) || depth < 1) throw new ReplicaConfigError(`window: ${depth} is not a positive integer`);
-  const root: Root = anchorRoot(o.root.anchor, depth);
+  const root: Root = o.root.kind === "anchor" ? anchorRoot(o.root.anchor, depth) : callerRoot(o.root.headers);
   const basis = checkBasis({ kind: "blocks", root: root.root, bodies: origin }) as BlocksBasis;
 
   async function step(s: Session, ctx: StepContext): Promise<Step> {

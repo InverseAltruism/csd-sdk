@@ -1,4 +1,4 @@
-// The fork search of nodeBlocks. When the node's chain no longer holds the cursor's block, the target is the highest
+// The fork search of nodeBlocks and of a caller root (roots.ts). When the node's chain no longer holds the cursor's block, the target is the highest
 // held row (a block whose hash the store keeps, ctx.hashAt) that the node's chain still holds, else the floor. Rows
 // are probed one block read each, galloping down from the top (1, 2, 4, ... rows below the lowest row known gone),
 // then bisecting the bracket that holds the fork. For n held rows that is at most 2 * ceil(log2(n + 1)) probes, plus
@@ -13,8 +13,8 @@ export type Head = { readonly height: number; readonly hash: string };
  *  cursor does not link to it. */
 export type Moved = "tip" | "link" | "resume";
 interface State { readonly key: string; readonly held: number[]; lo: number; hi: number; stride: number }
-/** `probe` reads the node's block at a height: its hash and its prev. */
-type IO = { probe(s: Session, height: number): Promise<{ hash: string; prev: string }>; tipView(s: Session, h: Head): Promise<TipView> };
+/** `probe` reads the node's block at a height: its hash and its prev; `who` names the chain's keeper in a reason. */
+type IO = { probe(s: Session, height: number): Promise<{ hash: string; prev: string }>; tipView(s: Session, h: Head): Promise<TipView>; who?: string };
 
 const keyOf = (c: Cursor) => `${c.height}:${c.hash}`;
 const cannot = (code: "SOURCE_MALFORMED" | "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "BRANCH_MOVED", reason: string, retryAfterMs: number | null = null): Step =>
@@ -22,6 +22,7 @@ const cannot = (code: "SOURCE_MALFORMED" | "SOURCE_UNAVAILABLE" | "SOURCE_RATE_L
 
 export function forkSearch(io: IO) {
   let st: State | null = null;
+  const who = io.who ?? "the node";
   const heldUpTo = (ctx: StepContext, top: number): number[] => {
     const out: number[] = [];
     for (let x = ctx.rule.activationHeight; x <= top; x++) if (ctx.hashAt(x) !== null) out.push(x);
@@ -37,7 +38,7 @@ export function forkSearch(io: IO) {
     let r = h.height;
     while (r >= ctx.rule.activationHeight && ctx.hashAt(r) === null) r--;
     const same = r < ctx.rule.activationHeight || (r === h.height ? ctx.hashAt(r) === h.hash : (await io.probe(s, r)).hash === ctx.hashAt(r));
-    if (same) return cannot("SOURCE_UNAVAILABLE", `the node's tip ${h.height} is below the cursor ${at.height} on the chain the store holds`);
+    if (same) return cannot("SOURCE_UNAVAILABLE", `${who}'s tip ${h.height} is below the cursor ${at.height} on the chain the store holds`);
     const held = heldUpTo(ctx, r);
     return { key, held, lo: -1, hi: held.length - 1, stride: 1 };
   }
@@ -61,8 +62,8 @@ export function forkSearch(io: IO) {
       const { lo, held } = st, floor = ctx.rule.activationHeight - 1, to = lo >= 0 ? held[lo]! : floor;
       st = null;
       if (to >= at.height) {
-        return at.height <= floor ? cannot("BRANCH_MOVED", `the node's chain moved below the floor ${floor}`)
-          : cannot("SOURCE_MALFORMED", `the node holds the cursor's block ${at.height}, and the block above it does not link to it`);
+        return at.height <= floor ? cannot("BRANCH_MOVED", `${who}'s chain moved below the floor ${floor}`)
+          : cannot("SOURCE_MALFORMED", `${who} holds the cursor's block ${at.height}, and the block above it does not link to it`);
       }
       // The node's block at the floor is the prev of its block above it, which the next step reads and links to.
       const hash = lo >= 0 ? ctx.hashAt(to) ?? "" : (await io.probe(s, to + 1)).prev;

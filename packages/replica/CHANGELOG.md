@@ -28,7 +28,8 @@
 - `hostedBlocks` in `./browser` and `./server`: complete blocks from the front door's `/api/blocks` in aligned pages,
   bound to headers from an anchor root (verified with csd-light in a window of 45 + `window` headers, `work` counted
   from workRoot, in-window branches by `tryReorg`, lower ones verified from workRoot by the reseed rule; `LESS_WORK`,
-  `PIN_OFF_CHAIN`, `BELOW_FLOOR`). A refused page is read once more past edge caches before
+  `PIN_OFF_CHAIN`, `BELOW_FLOOR`) or a caller root (`VerifiedHeaders` with `floor`, `origin`, null on an unknown tip
+  and `offer`; a caller reorg rolls back to a held hash). A refused page is read once more past edge caches before
   the refusal. `readBlocks` over it reads blocks whose headers the root holds. The tip a step reports is a header
   the root vouches for; the server's claimed height travels as the blocks step's new `reach`, which the loop uses
   only to decide whether to take another step.

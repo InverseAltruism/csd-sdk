@@ -33,7 +33,7 @@ export type RecordProof = "served" | "inclusion" | "pinned";
  *  so a depth counted from it is a depth of verified work. nodeBlocks: the block the node's /tip names, its time from
  *  that block's header (the node is the root). hostedBlocks under an anchor root: the highest header its window
  *  verified, never the server's /tip, which only says how far to try to read and travels as a blocks step's
- *  `reach`. */
+ *  `reach`. hostedBlocks under a caller root: the tip the caller's `sync` returned, as the caller verified it. */
 export interface TipView { readonly height: number; readonly hash: string; readonly time: number }
 
 /** Internal. One block's events in the order of CONVENTION section 33.3; `hash` is null only at or below a pin, or
@@ -75,6 +75,19 @@ export interface Source {
 export interface BoundBlock {
   readonly height: number; readonly hash: string; readonly header: BlockHeader; readonly txs: readonly BoundTx[];
   readonly authors: ReadonlyMap<string, string>;
+}
+
+/** A caller's verified headers from `floor`, read at `origin`, synced by their owner: `sync` brings them to
+ *  `toHeight` (null: the tip) and gives their tip, or null when the tip is unknown; `at` gives the header held at a
+ *  height, or null; `offer`, when present, takes a range's headers to check like headers it read itself, and says
+ *  whether it took them. hostedBlocks calls `sync` before each page and `offer` after it, each with the server's
+ *  unverified tip height; it ignores what `offer` answers and binds each block to `at`, so `offer` saves the caller's
+ *  own reads only when its `sync` skips what an earlier offer already gave it. */
+export interface VerifiedHeaders {
+  readonly floor: number; readonly origin: string;
+  sync(toHeight: number | null, signal: AbortSignal): Promise<{ readonly height: number; readonly hash: string; readonly time: number } | null>;
+  at(height: number): Promise<{ readonly hash: string; readonly merkle: string } | null>;
+  offer?(tip: number, rows: readonly { readonly height: number; readonly header: BlockHeader }[]): Promise<boolean>;
 }
 
 /** Whose authors a block read binds: none; every transaction but the coinbase; or each that can be an event of the
