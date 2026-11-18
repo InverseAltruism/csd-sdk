@@ -59,6 +59,39 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.7 (2026-11-18, Plan 91 G1; unreleased; consensus-surface files edited, no state change) - replay cost
+
+No state change; replay cost. The replay's walks that grew with total state leave the per-event path: before each
+event the sweep walked every open offer, open bid, pending reservation and recapture reservation, and each reveal
+walked every name (the reservation cap) or every recapture reservation (the recapture cap), so a stream of cheap
+records (a bid costs its 0.25 CSD anchor and locks nothing) made replay quadratic in them. `src/resolve/store.ts`
+now holds those four maps with private indexes: expiry queues (offers and bids by effective expiry epoch,
+reservations and recaptures by `finalizeBy`), per-owner candidate sets for the two caps, and the offers per holder (the
+live-hold cap of sections 20, 31 and 32), per seller and give asset (the bulk cancel of section 12b) and per name (the
+void at a displacement or recapture). An index holds a superset
+of what the walk would match and a read evaluates the walk's own predicate over it, so the read equals the walk while
+every write to an indexed field goes through the store, which the internal types enforce (the fields are readonly to
+every other module). A batch of expiries is applied in the walk's order. The V21 cap that changes an offer's effective
+expiry with the sweep height (section 24) is met by re-keying, at the first sweep at V21 or above, every open offer
+and bid anchored below V22. A sweep at a height below an earlier sweep's, which only NaN heights produce (the sort's
+comparator is inconsistent there), takes the walk, and so does a hold count at a height below an earlier count's,
+since a candidate whose hold has ended is dropped. The indexes are built per `resolve()` call and are not in the
+returned state, `canonicalState` or the exports; `dist/index.d.ts` is byte-identical to 0.2.6's.
+
+The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 fc6e081` (fc6e081 being the tree with 0.2.6's source):
+`canonicalState` byte-identical to 0.2.4 and the whole result identical once `code` is left out, and identical to
+0.2.6 including `code`, over the 81 cases, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve
+cases of `codes.json` and the 53 inputs of `conformance/growth-streams.mjs` at full size (16,000 registrations; 20,000
+open bids, offers with holds, live reservations, live recaptures; 2,000 bulk cancels and 2,000 displacements over
+20,000 offers; the V21 crossing at every event height; the edges), each with expectations that every cap both refused
+and admitted; the replay's check mode (the walks beside every indexed read, the index invariants asserted after events)
+clean over those 21,074 inputs. The Python reference keeps its walks, every pinned vector file is unchanged, and the
+drift flag `check-consumer-pins.mjs` raises for a consumer pinned to 0.2.4 to 0.2.6 is accepted as for 0.2.6: such a
+replayer derives the same state. Two behaviours of 0.2.4 are kept, as the rule is no state change: a bulk cancel still
+visits the seller's matching offers that a live fclaim hold freezes, on each cancel while the hold lasts (a fill comes at
+most `FCLAIM_MAX_HOLD_SPAN`, 89 blocks, after its grant); and below V29 a duplicated offer id applied after a same-block bulk cancel leaves the new
+copy open with its id out of the open set, so it never expires (only a feed that repeats an event can produce it).
+
 ## cairnx-core 0.2.6 (2026-11-18, Plan 91 codes; unreleased; consensus-surface files edited, no state change) - stable reason codes
 
 `CONVENTION.md` section 40 adds a reason code to every entry of the applied log and to every record refusal
@@ -328,12 +361,12 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :175 offer, :77 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
 shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`) and, since
-cairnx-core 0.2.6, with its reason code, at `packages/cairnx/src/resolve/market.ts` :146:
+cairnx-core 0.2.6, with its reason code, at `packages/cairnx/src/resolve/market.ts` :138:
 
     if (!Number.isSafeInteger(E)) { deny("EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
 
@@ -427,7 +460,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/context.ts` :154), where the clause is inert by design (SCORE_CLAIM at
+  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/store.ts` :256), where the clause is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state

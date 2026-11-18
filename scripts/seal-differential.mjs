@@ -4,6 +4,7 @@
 // PROVES: the tree's cairnx-core dist resolves every input below as the baseline release does (default
 // cairnx-core-0.2.4): canonicalState byte for byte, and the whole resolve() result (the applied log with its order, ids,
 // kinds, ok and notes, recaptures, fclaims, feesPaid, key order) identical once each log entry's `code` is left out;
+// with a code baseline (a ref that already writes codes), the whole result identical to it including `code`;
 // parseRecord accepts exactly what the baseline accepts; the client helpers give the baseline's verdicts for equal
 // arguments. If this script does not exit 0, NOTHING PUBLISHES.
 //
@@ -12,11 +13,17 @@
 //   2. every vector file present at the baseline is unchanged in the working tree; 2b content-pins the replay corpus
 //      and hashes, and the vector and fixture files added after the baseline;
 //   3. builds the BASELINE dist from the baseline ref in a throwaway git worktree (pnpm install --frozen-lockfile,
-//      build codec + cairnx);
+//      build codec + cairnx), and the code baseline's the same way when one is given;
 //   4. resolve differential, old vs new, over (a) the case files, (b) a seeded generated corpus with coverage floors
 //      read back from the BASELINE outputs, (c) the replay corpus at every pinned height and every event height,
 //      (d) the sequences of conformance/fuzz-resolve.mjs --emit, (e) the resolve cases of test/vectors/codes.json when
-//      present; when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
+//      present, (f) the streams of conformance/growth-streams.mjs at full size (16,000 registrations; 20,000 open bids,
+//      offers with holds, live reservations, live recaptures; 2,000 bulk cancels and 2,000 displacements over 20,000
+//      offers; the V21 crossing; the edges), each with the expectations it was built to meet read from the new log,
+//      (g) when the tree has the replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of
+//      (a), (c), (d), (e) and (f) replayed with it: each indexed read compared with the plain walk, the index invariants
+//      asserted after every event (every 64th on a stream of more than 1,000 events);
+//      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //   5. parse differential: parseRecord null-ness old vs new over every Propose of step 4 and a seeded mutation corpus
 //      (and the record cases of codes.json); where the new build has explainRecord it must agree with parseRecord;
 //   6. client-surface differential: bindOfferTerms, provenOfferTerms, previewFill / requiredFillOutputs / fillIsSafe /
@@ -26,15 +33,19 @@
 //   8. pnpm test:crosslang (the fork gate) - exit 0 required (SEAL_SKIP_CROSSLANG=1 runs steps 1-7 then exits 3 SEAL
 //      INCOMPLETE: authoring iteration only; it can never produce a SEAL PASS).
 //
-// Usage: node scripts/seal-differential.mjs [baselineRef]     (default: the cairnx-core-0.2.4 tag)
+// Usage: node scripts/seal-differential.mjs [baselineRef] [codeBaselineRef]
+//        baselineRef defaults to the cairnx-core-0.2.4 tag; codeBaselineRef (none by default) is the tree before a
+//        state-neutral change to code-writing source, compared including `code`.
 import { spawnSync } from "node:child_process";
 import { readFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 import { tmpdir } from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_REF = process.argv[2] ?? "cairnx-core-0.2.4";
+const CODE_BASELINE_REF = process.argv[3];
 const die = (msg) => { console.error(`SEAL FAIL: ${msg}`); process.exit(1); };
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", cwd: ROOT, ...opts });
 const step = (s) => console.log(`\n== SEAL: ${s} ==`);
@@ -132,23 +143,32 @@ let corpus;
   console.log(`  replay corpus: ${evs.length} events (${nFclaim} fclaim), span [${lo}, ${hi}], tip ${corpus.tipHeight}, ${nPins} pinned heights; ${Object.keys(ADDED_SINCE_BASELINE).length} later files; every sha256 ok`);
 }
 
-// ── 3. build the baseline dist in a throwaway worktree ─────────────────────────────────────────────
-step(`baseline build (git worktree @ ${BASELINE_REF})`);
-const wt = mkdtempSync(join(tmpdir(), "csd-sdk-seal-"));
-const cleanup = () => { try { sh("git", ["worktree", "remove", "--force", wt]); } catch { /* best effort */ } try { rmSync(wt, { recursive: true, force: true }); } catch { /* ditto */ } };
-process.on("exit", cleanup);
-{
-  let r = sh("git", ["worktree", "add", "--detach", wt, BASELINE_REF], { stdio: "inherit" });
-  if (r.status !== 0) die("git worktree add failed");
-  r = sh("pnpm", ["install", "--frozen-lockfile", "--prefer-offline"], { cwd: wt, stdio: "inherit" });
-  if (r.status !== 0) die("pnpm install in the baseline worktree failed");
-  for (const f of ["@inversealtruism/csd-codec", "@inversealtruism/cairnx-core"]) {
-    r = sh("pnpm", ["--filter", f, "build"], { cwd: wt, stdio: "inherit" });
-    if (r.status !== 0) die(`baseline build of ${f} failed`);
+// ── 3. build the baseline dists in throwaway worktrees ─────────────────────────────────────────────
+const worktrees = [];
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));   // so the cleanup below runs
+process.on("exit", () => {
+  for (const w of worktrees) {
+    try { sh("git", ["worktree", "remove", "--force", w]); } catch { /* best effort */ }
+    try { rmSync(w, { recursive: true, force: true }); } catch { /* ditto */ }
   }
-}
-
+});
+const buildAt = (ref) => {
+  step(`baseline build (git worktree @ ${ref})`);
+  const w = mkdtempSync(join(tmpdir(), "csd-sdk-seal-"));
+  worktrees.push(w);
+  let r = sh("git", ["worktree", "add", "--detach", w, ref], { stdio: "inherit" });
+  if (r.status !== 0) die(`git worktree add ${ref} failed`);
+  r = sh("pnpm", ["install", "--frozen-lockfile", "--prefer-offline"], { cwd: w, stdio: "inherit" });
+  if (r.status !== 0) die(`pnpm install in the ${ref} worktree failed`);
+  for (const f of ["@inversealtruism/csd-codec", "@inversealtruism/cairnx-core"]) {
+    r = sh("pnpm", ["--filter", f, "build"], { cwd: w, stdio: "inherit" });
+    if (r.status !== 0) die(`build of ${f} at ${ref} failed`);
+  }
+  return w;
+};
+const wt = buildAt(BASELINE_REF);
 const OLD = await import(pathToFileURL(join(wt, "packages", "cairnx", "dist", "index.js")).href);
+const CODE = CODE_BASELINE_REF ? await import(pathToFileURL(join(buildAt(CODE_BASELINE_REF), "packages", "cairnx", "dist", "index.js")).href) : null;
 const NEW = await import(pathToFileURL(join(ROOT, "packages", "cairnx", "dist", "index.js")).href);
 
 // ── 4. resolve differential ────────────────────────────────────────────────────────────────────────
@@ -173,13 +193,23 @@ const report = (name, what, events, a, b) => {
   console.error(`    old: ${a.slice(Math.max(0, k - 60), k + 100)}`);
   console.error(`    new: ${b.slice(Math.max(0, k - 60), k + 100)}`);
 };
+const lastMs = { old: 0, new: 0 };            // the last diffCase's resolve times (one run each, informational)
 const diffCase = (name, events, tip) => {
   for (const e of events) if (e.kind === "propose") proposes.set(`${e.uri}\u0000${e.payloadHash}`, { uri: e.uri, payloadHash: e.payloadHash });
-  const os = OLD.resolve(events, tip), ns = NEW.resolve(events, tip);
+  let t0 = performance.now();
+  const os = OLD.resolve(events, tip);
+  lastMs.old = performance.now() - t0;
+  t0 = performance.now();
+  const ns = NEW.resolve(events, tip);
+  lastMs.new = performance.now() - t0;
   const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
   if (a !== b) report(name, "canonicalState", events, a, b);
   const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(ns));
   if (fa !== fb) report(name, "full state without code", events, fa, fb);
+  if (CODE) {
+    const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(ns);
+    if (fc !== fn) report(name, `full state with code vs ${CODE_BASELINE_REF}`, events, fc, fn);
+  }
   for (const e of ns.events) {
     if (!("code" in e)) {
       uncoded.set(e.kind, (uncoded.get(e.kind) ?? 0) + 1);
@@ -313,6 +343,31 @@ step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors
 if (codesVectors) {
   for (const c of codesVectors.resolve) diffCase(`codes.json:${c.name}`, c.events, c.tipHeight);
   console.log(`  ${codesVectors.resolve.length} cases diffed`);
+}
+
+step("resolve differential (f): conformance/growth-streams.mjs at full size, with each stream's expectations");
+{
+  const G = await import(pathToFileURL(join(ROOT, "conformance", "growth-streams.mjs")).href);
+  let inputs = 0;
+  for (const s of G.fullGrowthStreams(NEW)) {
+    const before = diverged;
+    diffCase(`${s.key} ${s.label}@${s.tipHeight}`, s.events, s.tipHeight);
+    const oldMs = lastMs.old, newMs = lastMs.new;
+    inputs++;
+    for (const tip of s.tips) { diffCase(`${s.key} ${s.label}@${tip}`, s.events, tip); inputs++; }
+    const missed = s.expect(G.resolverAt(NEW.resolve, s));
+    for (const m of missed) problems.push(`${s.key} ${s.label}: expected ${m}`);
+    console.log(`  ${s.key} ${s.label}: ${s.events.length} events, ${1 + s.tips.length} tip(s), ${diverged - before} divergence(s), ${missed.length ? `${missed.length} expectation(s) MISSED` : "expectations met"}; one run: baseline ${Math.round(oldMs)} ms, tree ${Math.round(newMs)} ms`);
+  }
+  console.log(`  ${inputs} stream inputs diffed`);
+}
+
+const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
+const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
+if (hasCheck) {
+  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json")], { stdio: "inherit" });
+  if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
 }
 
 // ── 5. parse differential ──────────────────────────────────────────────────────────────────────────
@@ -504,7 +559,7 @@ if (diverged || problems.length) {
   if (smallestUri) console.error(`  shortest uri parseRecord disagrees on: ${smallestUri}`);
   die(`${diverged} divergence(s) between the ${BASELINE_REF} baseline and the tree${problems.length ? `, ${problems.length} other failure(s)` : ""}`);
 }
-console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once \`code\` is left out)`);
+console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once \`code\` is left out)${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`` : ""}`);
 
 // ── 8. the real fork gate ──────────────────────────────────────────────────────────────────────────
 if (process.env.SEAL_SKIP_CROSSLANG === "1") {

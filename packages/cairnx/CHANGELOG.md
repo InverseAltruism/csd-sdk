@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.7
+
+- No state change; replay cost. `resolve()` no longer copies and walks every open offer, open bid, pending reservation
+  and recapture reservation before each event, nor every name or recapture reservation at each reveal for the
+  per-address reservation caps, nor every offer at each claim for the live-hold cap, at each bulk cancel and at each
+  displacement or recapture that voids a name's offers. `src/resolve/store.ts` holds those maps with private expiry
+  queues (`minqueue.ts`) and candidate sets (per owner, per holder, per seller and give asset, per name), and is the
+  only writer of the fields they key on (readonly to the handlers by type); each read evaluates the old walk's own
+  predicate over its candidates and applies a batch in the walk's order. The first sweep at V21 or above re-keys the
+  offers and bids anchored below V22 at their capped expiry. A sweep or a hold count at a height below an earlier
+  one's (only NaN heights reorder the replay) takes the old walk, which also serves as the reference of a check mode
+  the tests and the seal run. Nothing of it reaches the resolved state or the root exports.
+- One run on the seal's streams on a loaded host, cairnx-core 0.2.4 against this release, in ms: 16,000 registrations
+  5,061 / 1,000; 20,000 open bids 3,494 / 364; 20,000 offers with holds 31,683 / 887; 20,000 live reservations
+  15,600 / 618; 20,000 live recaptures 22,508 / 1,872; 2,000 bulk cancels over 20,000 offers 14,230 / 523; 2,000
+  displacements over 20,000 offers 20,636 / 567. Entries visited per event stay flat as a stream doubles.
+- Kept as 0.2.4 has them: a bulk cancel still visits the seller's matching offers a live fclaim hold freezes, on each
+  cancel while the hold lasts; below V29 a duplicated offer id applied after a same-block bulk cancel leaves the new
+  copy open with its id out of the open set, so it never expires (only a feed that repeats an event can produce it).
+- The output does not move: `scripts/seal-differential.mjs cairnx-core-0.2.4 fc6e081` finds `canonicalState`
+  byte-identical to 0.2.4 and the whole result identical once `code` is left out, and identical to 0.2.6 with `code`,
+  over every input it had and the streams of `conformance/growth-streams.mjs` at full size.
+
 ## 0.2.6
 
 - Stable reason codes, CONVENTION.md section 40: each entry of the applied log gains `code`, the rule that decided the
