@@ -27,7 +27,10 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 - `resolve.ts`: the replay loop; its per-record handlers and shared state context live in `resolve/`.
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
   claimWindowOf.
-- `records.ts`: parseRecord and its per-record key allow-sets.
+- `records.ts`: parseRecord, explainRecord (the record code of a refusal) and its per-record key allow-sets; the
+  builders, which throw RecordError.
+- `codes.ts`: CONVENTION section 40, the reason-code table the applied log and the record checks use (REASON_CODES,
+  REASON_CODE_OUTCOME, CAP_CODES); not consensus, since canonicalState leaves the log out.
 - `preflight.ts`: previewFill, requiredFillOutputs, buildFeeHeight, fillIsSafe, finalizeWinnerCheck, fillEndorsement,
   fillOutputPlan.
 - `verifyfill.ts`: verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary.

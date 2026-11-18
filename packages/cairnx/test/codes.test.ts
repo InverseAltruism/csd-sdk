@@ -23,6 +23,14 @@ ok("CAP_CODES are exactly the CAP_ codes, all refusals", JSON.stringify([...CAP_
   && CAP_CODES.length === 3 && CAP_CODES.every((c) => REASON_CODE_OUTCOME[c] === "refused"));
 ok("the list, the map and the caps are frozen", Object.isFrozen(REASON_CODES) && Object.isFrozen(REASON_CODE_OUTCOME) && Object.isFrozen(CAP_CODES));
 
+// ── the table of CONVENTION §40.4 is this table: the same codes in the same order, outcomes and caps ──
+const spec = readFileSync(new URL("../CONVENTION.md", import.meta.url), "utf8");
+const s40 = spec.slice(spec.indexOf("\n## 40. Reason codes"), spec.indexOf("\n### 40.5"));
+const rows = [...s40.matchAll(/^\| ([A-Z0-9_]+) \| (applied|refused) \|\s*(yes)?\s*\| [^|]+ \|$/gm)].map((m) => ({ code: m[1]!, outcome: m[2]!, cap: m[3] === "yes" }));
+ok(`§40.4 lists the ${REASON_CODES.length} codes in table order (${rows.length} rows)`, JSON.stringify(rows.map((r) => r.code)) === JSON.stringify(REASON_CODES));
+ok("§40.4 gives each code its outcome", rows.every((r) => REASON_CODE_OUTCOME[r.code as keyof typeof REASON_CODE_OUTCOME] === r.outcome));
+ok("§40.4 marks exactly CAP_CODES as caps", JSON.stringify(rows.filter((r) => r.cap).map((r) => r.code)) === JSON.stringify([...CAP_CODES]));
+
 // ── the hand-written vectors ──
 type Expected = [string, string, boolean, string];
 type ResolveCase = { name: string; tipHeight: number; events: ChainEvent[]; expect: Expected[] };

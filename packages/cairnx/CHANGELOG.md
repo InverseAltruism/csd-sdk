@@ -2,11 +2,16 @@
 
 ## 0.2.6
 
-- Stable reason codes (CONVENTION.md section 40, written with the last part of this release): each entry of the
-  applied log gains `code`, the rule that decided the record. New root exports `REASON_CODES`, `REASON_CODE_OUTCOME`,
-  `CAP_CODES` and the types `ReasonCode`, `AppliedCode`, `RefusalCode`, `RecordCode` (`src/codes.ts`). Every entry
-  `resolve()` writes carries a code; an unparseable record's entry carries the record code. `offerEnvelopeRefusal`
-  (internal) returns the code with the note; `provenOfferRefusal` returns the same strings as before.
+- Stable reason codes, CONVENTION.md section 40: each entry of the applied log gains `code`, the rule that decided the
+  record, from a table of 113 (26 applied, 87 refused, 28 of them record codes; 3 caps). A code is never renamed,
+  reused or removed; the note text beside it may change, and a reader treats a code it does not know by the entry's
+  `ok`. New root exports `REASON_CODES`, `REASON_CODE_OUTCOME`, `CAP_CODES` and the types `ReasonCode`, `AppliedCode`,
+  `RefusalCode`, `RecordCode` (`src/codes.ts`). Every entry `resolve()` writes carries a code; an unparseable record's
+  entry carries its record code. Four codes guard states no event reaches (section 40.4 says why). The note texts are
+  unchanged, so a consumer that matches them keeps working; `provenOfferRefusal` returns the same strings as before.
+- `test/vectors/codes.json`: 145 resolve cases and 50 record cases whose expected codes are written by hand in
+  `conformance/gen-codes-vectors.mjs`; together they reach the 109 codes an event can reach. The Python reference
+  writes no codes.
 - `explainRecord(uri, payloadHash)`: `{ ok: true, record }` or `{ ok: false, code }`, the first record rule the uri
   breaks. `parseRecord` keeps its signature and answers and shares one implementation with it. A builder that refuses
   throws `RecordError`, an `Error` with `code`; its message is "record does not validate against CONVENTION.md (<code>)",

@@ -325,6 +325,10 @@ console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 Other applications, the profile-key registry with its byte budget, the three levels with their sources,
 conformance and how the rules change are `CONVENTION.md` §35 to §39.
 
+Why a record was applied or refused: each entry of `resolve(...).events` carries a stable `code` (`CONVENTION.md` §40,
+`REASON_CODES`), and `explainRecord(uri, payloadHash)` names the rule a record breaks before it reaches the resolver.
+Match the code, never the `note` text, which may change; a code your release does not know reads by the entry's `ok`.
+
 ### Write a conformant resolver in another language
 
 1. Implement `CONVENTION.md` §1–§34 (the events of a block, apply order, every record type, the `V*_HEIGHT`
@@ -334,6 +338,7 @@ conformance and how the rules change are `CONVENTION.md` §35 to §39.
    `cases-rules.json`: your canonical state must equal `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare the state hash (§34.1) against `test/vectors/replay-hashes.json`, and reproduce
    `test/vectors/hashes.json` (§34.4).
+4. Only if you publish reason codes (§40): reproduce `test/vectors/codes.json`.
 
 ---
 

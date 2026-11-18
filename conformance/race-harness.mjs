@@ -51,15 +51,15 @@ const att = (who, proposalId, h, paidTo = {}, score = 100, pos = 1) => ({ kind: 
 // ── additional money-safety detectors (findBurns handles P1) ────────────────────────────────────────
 
 // P2: a back-dated reveal displaced a prior holder who had PAID a registration fee. The displacer's log
-// entry is noted "displaced prior holder"; the displaced party's earlier register applied (ok:true) but
+// entry carries NAME_REGISTERED_DISPLACED (CONVENTION §40); the displaced party's earlier register applied (ok:true) but
 // they no longer hold the name → their fee is burned. (A `pending` reservation carries no fee, so a
-// post-V25 "displaced prior reservation" is NOT a burn — this is exactly the V25 fix.)
+// post-V25 NAME_RESERVED_DISPLACED is NOT a burn — this is exactly the V25 fix.)
 export function findDisplacementBurns(events, tipHeight) {
   const st = resolve(events, tipHeight);
   const byId = new Map(events.map((e) => [e.kind === "propose" ? e.id : e.txid, e]));
   const out = [];
   for (const l of st.events) {
-    if (!l.ok || l.note !== "displaced prior holder") continue;   // only a fee-bearing register can be so noted
+    if (l.code !== "NAME_REGISTERED_DISPLACED") continue;   // only a fee-bearing register carries this code
     const ev = byId.get(l.id);
     out.push({ height: l.height, displacer: ev?.proposer, note: l.note });
   }

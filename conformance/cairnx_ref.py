@@ -29,7 +29,7 @@ def u16key(s):
 
 def u16len(s):
     """JS `String.length` == count of UTF-16 code units (an astral codepoint is 2). Python `len` is
-    codepoints; using it would fork at the 32-/64-unit boundaries (CONVENTION A6, records.ts:116)."""
+    codepoints; using it would fork at the 32-/64-unit boundaries (CONVENTION A6, parseRecord's token-name and memo lengths)."""
     return len(s.encode("utf-16-le")) // 2
 
 def lt(a, b):
