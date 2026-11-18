@@ -4,6 +4,7 @@
   },
   "paths": {
     "packages/cairnx/test/primary.test.ts": "byte-parity tripwire against the canonical cairnx fixture, read only when that sibling checkout exists; the vendored copy is the one the test needs",
+    "pnpm-lock.yaml": "the link to packages/cairnx from another package names cairnx-core's directory, which shares the private cairnx repo's name; a dependency from outside the repo enters through a package.json, which the check still reads",
     "test/check-dashes-paths.test.ts": "fixtures for this check"
   }
 }

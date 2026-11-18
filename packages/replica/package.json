@@ -1,0 +1,37 @@
+{
+  "name": "@inversealtruism/cairnx-replica",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "description": "A CairnX replica: the chain's records replayed by cairnx-core, with the level of every answer derived from the one basis its store was filled from.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./testing": { "types": "./dist/testing.d.ts", "default": "./dist/testing.js" }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/testing.ts --format esm --dts --clean",
+    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts",
+    "prepack": "pnpm build",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "peerDependencies": { "@inversealtruism/cairnx-core": "workspace:*" },
+  "devDependencies": { "@inversealtruism/cairnx-core": "workspace:*" },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/replica"
+  },
+  "homepage": "https://cairn-substrate.com"
+}

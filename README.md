@@ -76,6 +76,7 @@ Runnable walkthrough (read-only, it never broadcasts): [`examples/quickstart.mjs
 | `@inversealtruism/csd-siwc` | Sign in with CSD: audience-bound, replay-resistant wallet sign-in (an EIP-4361 / CAIP-122 analogue). |
 | `@inversealtruism/cairnx-core` | CairnX, the application layer: tokens, `.csd` names and trades as a pure deterministic replay of on-chain records. A fill's payment and its record share one transaction and the replay decides delivery: a CSD-paid fill it refuses keeps the payment, and a token-for-token fill is atomic. Ships the normative `CONVENTION.md`. |
 | `@inversealtruism/csd-vectors` | The shared test fixtures that pin every package to the official node's behaviour. |
+| `@inversealtruism/cairnx-replica` | Unreleased. A CairnX replica that keeps the chain's records and says how far each answer can be trusted, from the one source its store was filled from. |
 
 ## Why the light client matters
 
