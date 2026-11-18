@@ -1,12 +1,12 @@
 # CairnX Convention v1
 
-**Status:** v2.9 (normative; v2.9 pending activation at `V29_HEIGHT`, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive: below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
 v1.7 @ 34 000 (§20) · v1.9 @ 36 700 (§22) · v2.0 @ 38 400 (§23) · v1.8 @ 40 000 (§21) · v2.1 @ 40 100 (§24) ·
 v2.2 @ 41 300 (§25) · v2.4 @ 46 400 (§27) · v2.5 @ 46 440 (§28) · v2.6 @ 46 480 (§29) · v2.7 @ 46 520 (§30) ·
-v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32, PENDING activation).
+v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay hash is pinned in `test/vectors/replay-hashes.json`).
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
@@ -17,9 +17,9 @@ replayer gates each rule on its own height constant, never on "version X implies
 > recorded history replays byte-identically. Replayers built from this spec MUST use the re-pinned heights above.
 
 > **Canonical copy.** This spec ships in the published `@inversealtruism/cairnx-core` package; the source of
-> truth is `csd-sdk/packages/cairnx/CONVENTION.md`. Any in-repo mirror (e.g. the `cairnx` app repo) MUST be
-> kept **byte-identical** to it on every change: a third-party implementer fetches the *published* copy, so
-> it is the one that must never lag the code. Keep the two in lockstep when editing.
+> truth is `csd-sdk/packages/cairnx/CONVENTION.md`. The `cairnx` app repo keeps no copy: its `CONVENTION.md`
+> is a pointer to this file and to the copy in the installed package. A third-party implementer fetches the
+> *published* copy, so it is the one that must never lag the code.
 
 CairnX is a meta-asset and exchange convention on Compute Substrate (CSD). It defines fungible
 tokens and trades, one transaction paying and recording each fill, using **only** the chain's existing `Propose`
@@ -377,8 +377,9 @@ owned purely on-chain: register, hold, point it at an address, transfer, or sell
 
 - **Charset:** lowercase ASCII only: `^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`, **1–32 chars**,
   no leading/trailing hyphen (single- and double-character premium names are valid and priced at
-  the top of the fee curve). ASCII-only **eliminates the entire homograph/confusable attack
-  class** (no Unicode → no look-alikes) and is trivially deterministic for every indexer.
+  the top of the fee curve). ASCII-only removes the mixed-script homograph class (no Unicode, so
+  no Cyrillic U+0430 in place of a Latin `a`) and is trivially deterministic for every indexer. It
+  does not remove look-alikes within ASCII: `paypa1` and `paypal` are distinct, valid names.
   Reserved: `csd treasury admin official root www support` (`cairn`/`cairnx` are deliberately
   NOT reserved: the operator registered them as ordinary, tradeable names).
 - **`name` (claim):** `{v:1,t:"name",name,salt?}`. Owner = anchoring proposer. **Lowest
@@ -675,10 +676,12 @@ From height **32 000** every name is a **lease**:
 ## 18. `tmeta`: issuer token metadata via the content layer (v1.5)
 
 `{v:1,t:"tmeta",ticker,hash}`: **issuer-only**, last write wins, no fee beyond the anchor.
-`hash` is a csd-swarm Content Convention v1 hash (0x + 64 hex) pointing at the token's
-`{logo, description, links}` document: self-certifying content, so the record stays tiny
-(the 512-byte `uri` cap is untouched) and the metadata inherits the swarm's verify-on-read
-property. State: `tokens[t].tmeta`. Records before v1.5 are no-ops.
+`hash` is a CSD Content Convention v1 hash (0x + 64 hex; `payloadHash` in csd-codec) pointing at
+the token's `{logo, description, links}` document: self-certifying content, so the record stays tiny
+(the 512-byte `uri` cap is untouched) and any copy of the document can be checked against the hash
+on read (`verifyContentBytes` in csd-codec). The csd-swarm content service this section was written
+for is retired; the convention names no host for the document. State: `tokens[t].tmeta`. Records
+before v1.5 are no-ops.
 
 ---
 

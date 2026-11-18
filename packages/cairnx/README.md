@@ -81,8 +81,9 @@ CNS is an **ENS-class** namespace native to Compute Substrate. A name like `alic
 address, **leased** (not sold forever), points to an address, and carries an optional profile, all as
 plain on-chain records, all resolvable by replay.
 
-- **Names are lowercase-ASCII only** (`^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`, 1–32 chars). This kills
-  the homograph/confusable phishing class outright, there is no unicode look-alike attack surface.
+- **Names are lowercase-ASCII only** (`^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$`, 1–32 chars). This removes
+  the mixed-script homograph class: there is no Unicode look-alike surface. Look-alikes within ASCII remain
+  (`paypa1` and `paypal` are distinct, valid names), so an interface that shows a name should still warn on them.
 - **The `.csd` suffix is presentation, not consensus.** The on-chain record stores the *bare* name
   (`alice`); the UI renders `alice.csd`. The CNS rebrand and any display-suffix change are **UI-only**,   they do not touch the resolver or chain history.
 - **Reserved names** (`csd`, `treasury`, `admin`, `official`, `root`, `www`, `support`) can never be
@@ -179,10 +180,11 @@ sequenceDiagram
 - **Ownership has an unambiguous total order:** lowest `(effectiveHeight, position, ordinal-id)` wins, with
   a paid market-fill (`viaFill`) immune to displacement. Exactly one owner per name at every height.
 
-> **Note on bought names:** a name you *register* is fully SPV-verifiable today. A name acquired via a
-> *market fill* is displacement-immune and correctly resolved, but its forward resolution currently shows
-> a caution rather than a green check (the wallet never shows it as verified) pending a resolver change
-> that makes name-fills name-local. Registration, the alpha's primary flow, is unaffected.
+> **Note on names whose history reads other state:** a replay of one name's records alone cannot decide a
+> name whose history touches a rule that reads other state (a name bought on the market can be one such
+> case). The reference service's name-history read (`/cairnx/name-history/:name`) serves such a name with
+> `scopedReplaySufficient: false`, and a per-name verifier should show it as unverified. A replay of the
+> whole `cairnx:v1` domain decides every name exactly.
 
 ---
 
@@ -301,10 +303,23 @@ const built = offer({ give: { ticker: "CAIRN", amount: "5000000000" },
 const tx = buildPropose({ domain: DOMAIN, uri: built.uri, payloadHash: built.payloadHash,
   expiresEpoch, fee: 25_000_000, utxos, priv });
 
-// RESOLVE the chain (events come from any indexer; see the Scanner reference impl)
+// RESOLVE the chain. Turning chain data into `ChainEvent`s (`ProposeEvent` / `AttestEvent`, exported here) is
+// the caller's job today; the public pieces are csd-client's `CsdClient` (`blockByHeight`, `proposals`),
+// csd-light's `LightClient` and `bindBlockTxs` (check a block's txs against a verified header), and
+// `paidToFromOutputs` (an event's `paidTo` from a tx's outputs).
 const state = resolve(events, tipHeight);
 console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 ```
+
+### What a resolver result proves
+
+- Display: an answer read from someone's API. It is worth the trust you place in that API.
+- Record proof: one record is mined under valid proof of work and was written by the owner of the coin
+  its first input spends. It does not prove the record is the latest one, and it decides nothing for a name
+  whose history touches a cross-name rule.
+- Replica: a replay of every `cairnx:v1` record. It is exact for names and tokens. What it proves depends
+  on where the records came from: one's own node, complete blocks checked against headers, or someone's
+  record feed, which is complete only on that feed's word.
 
 ### Write a conformant resolver in another language
 
