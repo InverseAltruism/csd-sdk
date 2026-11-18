@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
-  CAIRNX_EVENT_RULE, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, blockEvents, blockMembers, eventOfTx, eventsHash,
+  CAIRNX_EVENT_RULE, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, blockEvents, blockMembers, eventOfTx, eventsHash,
   eventsHashStep, fillEndorsement, offerFillTooLate, stateHash,
 } from "../src/index.js";
 
@@ -36,8 +36,9 @@ assert.deepEqual(CAIRNX_EVENT_RULE, { domain: "cairnx:v1", activationHeight: 29_
 for (const [name, fn] of [["stateHash", stateHash], ["eventsHashStep", eventsHashStep], ["eventsHash", eventsHash]] as const)
   assert.equal(typeof fn, "function", `${name} is a root export`);
 assert.equal(EVENTS_HASH_START, "0x" + "00".repeat(32), "EVENTS_HASH_START is 32 zero bytes");
+assert.equal(FINAL_DEPTH, 12, "FINAL_DEPTH is the depth CONVENTION section 38 names");
 const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE",
-  "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START"];
+  "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH"];
 for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
 console.log(`cairnx-core export surface: ${10 + 4 + names.length} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and the §34 hashes' four pinned in src and dist .d.ts)`);

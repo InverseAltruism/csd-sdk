@@ -1389,7 +1389,8 @@ it does not commit (§33.5), is in the row, so no JSON form, number form or text
 ### 34.3 Comparing two replicas
 
 Two replicas compare (height, block hash, events hash, state hash) at one height. The comparison means something only
-at a height both treat as final: near the tip two honest replicas can hold different blocks for a while.
+at a height both treat as final (§38 names the depth): near the tip two honest replicas can hold different blocks
+for a while.
 
 - Another block hash at the height: the replicas follow different branches. Wait and compare again; this is a
   branch difference, never a divergence.
@@ -1595,7 +1596,8 @@ A replica conforms at three levels.
 3. A running comparison: two replicas compare the tuple (height, block hash, events hash, state hash) of §34.3 at
    finalized epoch boundaries. An epoch is `EPOCH_LEN` = 30 blocks (csd-codec, re-exported by cairnx-core); a
    boundary is a height that is a multiple of `EPOCH_LEN`, and a finalized boundary is one that both replicas hold at
-   least at the final depth of §3.
+   least `FINAL_DEPTH` = 12 blocks below their tips (cairnx-core `FINAL_DEPTH`). The thresholds of §3 (3 and 6) are
+   display conventions and are not this depth; neither is a bound on how deep a reorganisation can reach.
 
 What a difference means is in §34.3. The operating rule: a difference is reported, never acted on automatically. A
 replica that credits value stops crediting only when a difference at one block hash persists over three consecutive

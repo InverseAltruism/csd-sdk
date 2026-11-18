@@ -7,6 +7,7 @@
 // Trust: the header run starts from a seed, the LWMA window below `from` read from the same node and taken as
 // given (LightClient.syncFromCheckpoint). Every block from `from` on is checked against it, so a reader compares the
 // end hash a script prints with a node it trusts.
+import { FINAL_DEPTH } from "../packages/cairnx/dist/index.js";
 import { txid as codecTxid } from "../packages/codec/dist/index.js";
 import { CsdClient, rpcTxToTx } from "../packages/client/dist/index.js";
 import { authorOf } from "../packages/crypto/dist/index.js";
@@ -14,8 +15,8 @@ import { LightClient, bindBlockTxs, rpcHeaderToHeader } from "../packages/light/
 
 /** The most requests in flight at once, over every client a process makes. */
 export const MAX_PARALLEL = 8;
-/** The least depth below the node's tip a script reads to: the cairnx service's finality. */
-export const MIN_DEPTH = 12;
+/** The least depth below the node's tip a script reads to: the depth replicas compare at (CONVENTION §38). */
+export const MIN_DEPTH = FINAL_DEPTH;
 
 let inFlight = 0;
 const waiting = [];

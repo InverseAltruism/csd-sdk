@@ -15,6 +15,10 @@ export type HashedEvent =
 /** The events hash before the first block that holds an event: 32 zero bytes. */
 export const EVENTS_HASH_START = "0x" + "00".repeat(32);
 
+/** How far below its tip a replica holds an epoch boundary before it publishes or compares the tuple there (§38). It
+ *  is the depth replicas compare at, not a bound on how deep a reorganisation can reach. */
+export const FINAL_DEPTH = 12;
+
 const fail = (what: string): never => { throw new Error(`events hash: ${what}`); };
 const hex = (b: Uint8Array): string => "0x" + bytesToHex(b);
 

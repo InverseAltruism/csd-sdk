@@ -30,6 +30,9 @@
   `test/vectors/hashes.json` (43 cases, and both hashes over the replay corpus at its 21 pinned heights,
   `conformance/gen-hashes-vectors.mjs`), checked by `test/hashes.test.ts` and against the Python reference by
   `conformance/hashes-crosslang.mjs`; the replay-hash test and `replay-corpus-crosslang.mjs` call `stateHash`.
+- New root export `FINAL_DEPTH` = 12: how far below its tip a replica holds an epoch boundary before it publishes or
+  compares the tuple of section 34.3 there. Section 38 names it; the thresholds of section 3 (3 and 6) are display
+  conventions and are not this depth.
 - CONVENTION.md sections 35 to 39, with no gate: other applications (record types under `cairnx:v1` reserved, an
   application's own domain, the profile as the place for data about a name), the profile-key registry with its caps,
   keys, reader rules and byte budget (`scripts/profile-budget.mjs` prints it), what a result proves at each of the
