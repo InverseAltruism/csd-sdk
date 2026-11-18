@@ -6,6 +6,7 @@ import {
   makerRebate, tradeFee,
   type AttestEvent, type OfferState,
 } from "../types.js";
+import type { RefusalCode } from "../codes.js";
 import { claimGrace, claimHeld, ptAmt, type NameRec, type ResolveCtx } from "./context.js";
 
 type TokenWantOffer = OfferState & { want: { ticker: string; amount: string; payto: string } };
@@ -14,14 +15,14 @@ type PartialFillOffer = OfferState & { give: { ticker: string; amount: string };
 // ── shared SCORE_FILL helpers (dedup of the three fill paths — behaviour-preserving) ──
 // v1.7 open-fill gate: an untaken CSD offer (≥V13) is fillable only by the holder of a live claim;
 // in [V13,V17) open CSD fills stay banned. Returns the rejection reason, or undefined if allowed.
-const openFillReject = (o: OfferState, height: number, who: string, targetId: string): string | undefined => {
+const openFillReject = (o: OfferState, height: number, who: string, targetId: string): { code: RefusalCode; note: string } | undefined => {
   if (!(height >= V13_HEIGHT && !o.taker)) return undefined;
-  if (height < V17_HEIGHT) return "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)";
+  if (height < V17_HEIGHT) return { code: "FILL_OPEN_LANE_CLOSED", note: "v1.3: open CSD-quoted fills disabled (offer must be taker-bound)" };
   // v2.8 Correction 1 (§31): during an fclaim hold the payment MUST attest the FCLAIM txid, not the offer id
   // (whose L0 deadline is the offer's far-off expiry). An offer-txid fill (targetId === o.id) is rejected; an
   // fclaim fill routes here with targetId === o.claimTxid !== o.id, so it is admitted by the hold check below.
-  if (height >= V28_HEIGHT && o.claimTxid !== undefined && targetId === o.id) return "v2.8: fill the fclaim txid, not the offer";
-  if (!(claimHeld(o, height) && who === o.claimedBy)) return "v1.7: open offer — claim it first (no live claim by you)";
+  if (height >= V28_HEIGHT && o.claimTxid !== undefined && targetId === o.id) return { code: "FILL_WRONG_TARGET", note: "v2.8: fill the fclaim txid, not the offer" };
+  if (!(claimHeld(o, height) && who === o.claimedBy)) return { code: "FILL_NO_LIVE_CLAIM", note: "v1.7: open offer — claim it first (no live claim by you)" };
   return undefined;
 };
 // a name sale (CSD or token fill) transfers ownership to the buyer, clears addr+profile, and — v1.3+ —
@@ -33,7 +34,7 @@ const deliverNameToBuyer = (n: NameRec, who: string, ev: { height: number; pos: 
 
 // ── attest: fill (score=100) / cancel (score=0) on a CairnX offer or bid ──
 export function applyAttest(c: ResolveCtx, ev: AttestEvent): void {
-  const { offers, fclaims, bids, note, setBidStatus } = c;
+  const { offers, fclaims, bids, applied, refused, setBidStatus } = c;
   const who = ev.attester.toLowerCase();
   let o = offers.get(ev.proposalId);
   // v2.8 fclaim fill routing (§31): a SCORE_FILL on a GRANTED fclaim txid targets the fclaim's linked offer
@@ -51,16 +52,16 @@ export function applyAttest(c: ResolveCtx, ev: AttestEvent): void {
     // v2.8: a SCORE_FILL on a KNOWN but DENIED/ungranted fclaim mines on L0 yet delivers nothing (a burn);
     // note it so the money-safety audit flags the pay-without-delivery. (An unrelated attest is a no-op.)
     if (ev.height >= V28_HEIGHT && ev.score === SCORE_FILL && fclaims.has(ev.proposalId)) {
-      note(ev, ev.txid, "fill", false, "fclaim not current (denied or superseded): no delivery, denied-fclaim fill");
+      refused(ev, ev.txid, "fill", "FILL_FCLAIM_NOT_CURRENT", "fclaim not current (denied or superseded): no delivery, denied-fclaim fill");
       return;
     }
     // v1.2: bids are proposals too — the bidder cancels with score=0
     const b = bids.get(ev.proposalId);
     if (b && ev.score === SCORE_CANCEL) {
-      if (who !== b.bidder) { note(ev, ev.txid, "bidcancel", false, "only bidder may cancel"); return; }
-      if (b.status !== "open") { note(ev, ev.txid, "bidcancel", false, `bid ${b.status}`); return; }
+      if (who !== b.bidder) { refused(ev, ev.txid, "bidcancel", "BID_NOT_BIDDER", "only bidder may cancel"); return; }
+      if (b.status !== "open") { refused(ev, ev.txid, "bidcancel", "BID_NOT_OPEN", `bid ${b.status}`); return; }
       setBidStatus(b, "cancelled");
-      note(ev, ev.txid, "bidcancel", true);
+      applied(ev, ev.txid, "bidcancel", "BID_CANCELLED");
     }
     return; // attest on a non-CairnX proposal — not our event
   }
@@ -74,42 +75,42 @@ export function applyAttest(c: ResolveCtx, ev: AttestEvent): void {
 }
 
 function applyCancel(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
-  const { note, releaseGive, setOfferStatus } = c;
-  if (who !== o.seller) { note(ev, ev.txid, "cancel", false, "only seller may cancel"); return; }
-  if (o.status !== "open") { note(ev, ev.txid, "cancel", false, `offer ${o.status}`); return; }
-  if (o.taker !== undefined && o.height >= V28_HEIGHT) { note(ev, ev.txid, "cancel", false, "v2.8: taker-bound offers are firm quotes (uncancellable)"); return; } // Lane B
+  const { applied, refused, releaseGive, setOfferStatus } = c;
+  if (who !== o.seller) { refused(ev, ev.txid, "cancel", "OFFER_NOT_SELLER", "only seller may cancel"); return; }
+  if (o.status !== "open") { refused(ev, ev.txid, "cancel", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
+  if (o.taker !== undefined && o.height >= V28_HEIGHT) { refused(ev, ev.txid, "cancel", "OFFER_FIRM_QUOTE", "v2.8: taker-bound offers are firm quotes (uncancellable)"); return; } // Lane B
   if (ev.height >= V14_HEIGHT) {
     // v1.4: defer the effect to the block boundary — a same-block fill wins (anti-snipe)
     c.pendingCancels.push(() => {
       // v2.8 Correction 2: freeze a live fclaim hold (keyed on the cancel's own ev.height, live-read on o).
-      if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) { note(ev, ev.txid, "cancel", false, "v2.8: frozen (fclaim hold live)"); return; }
-      if (o.status === "open") { releaseGive(o); setOfferStatus(o, "cancelled"); note(ev, ev.txid, "cancel", true); }
-      else note(ev, ev.txid, "cancel", false, "superseded by same-block fill (v1.4)");
+      if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) { refused(ev, ev.txid, "cancel", "OFFER_CANCEL_HOLD_LIVE", "v2.8: frozen (fclaim hold live)"); return; }
+      if (o.status === "open") { releaseGive(o); setOfferStatus(o, "cancelled"); applied(ev, ev.txid, "cancel", "OFFER_CANCELLED"); }
+      else refused(ev, ev.txid, "cancel", "OFFER_CLOSED_BEFORE_CANCEL", "superseded by same-block fill (v1.4)");
     });
   } else {
     releaseGive(o); setOfferStatus(o, "cancelled");
-    note(ev, ev.txid, "cancel", true);
+    applied(ev, ev.txid, "cancel", "OFFER_CANCELLED");
   }
 }
 
 function applyTokenFill(c: ResolveCtx, ev: AttestEvent, o: TokenWantOffer, who: string): void {
-  const { tokens, names, offerLock, bal, note, setOfferStatus, markBidDone, releaseGiveLock } = c;
+  const { tokens, names, offerLock, bal, applied, refused, setOfferStatus, markBidDone, releaseGiveLock } = c;
   // ── v1.2 token-priced fill: the attester's want-tokens pay for the give ──
-  if (o.status !== "open") { note(ev, ev.txid, "fill", false, `offer ${o.status}`); return; }
-  if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); return; }
+  if (o.status !== "open") { refused(ev, ev.txid, "fill", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
+  if (o.taker && who !== o.taker) { refused(ev, ev.txid, "fill", "FILL_NOT_TAKER", "taker-bound offer"); return; }
   // explicit opt-in marker: a plain signaling attest must never spend the attester's tokens
-  if (ev.confidence !== CONF_TOKEN_FILL) { note(ev, ev.txid, "fill", false, "token fill requires confidence marker"); return; }
-  if (!tokens.has(o.want.ticker)) { note(ev, ev.txid, "fill", false, "want ticker does not exist"); return; }
+  if (ev.confidence !== CONF_TOKEN_FILL) { refused(ev, ev.txid, "fill", "FILL_NO_TOKEN_MARKER", "token fill requires confidence marker"); return; }
+  if (!tokens.has(o.want.ticker)) { refused(ev, ev.txid, "fill", "TOKEN_UNKNOWN", "want ticker does not exist"); return; }
   const amt = BigInt(o.want.amount);
   const fee = o.feeBps ? tradeFee(amt, o.feeBps) : 0n; // in kind, debited convention-side (1.5% for v1.6 offers)
   const buyer = bal(o.want.ticker, who);
-  if (buyer.available < amt + fee) { note(ev, ev.txid, "fill", false, "insufficient want-token balance"); return; }
+  if (buyer.available < amt + fee) { refused(ev, ev.txid, "fill", "TOKEN_BALANCE_LOW", "insufficient want-token balance"); return; }
   // validate the give side BEFORE any mutation (check-then-act: a defensive no-op here
   // must not leave the buyer debited with nothing delivered)
   const giveName = isNameGive(o.give) ? names.get(o.give.name) : undefined;
-  if (isNameGive(o.give) && !giveName) { note(ev, ev.txid, "fill", false, "name vanished (consensus violation)"); return; }
+  if (isNameGive(o.give) && !giveName) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "name vanished (consensus violation)"); return; }
   const giveLock = isNameGive(o.give) ? undefined : offerLock.get(o.id);
-  if (!isNameGive(o.give) && giveLock === undefined) { note(ev, ev.txid, "fill", false, "offer lock missing"); return; }
+  if (!isNameGive(o.give) && giveLock === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
   // atomic swap: debit buyer, credit payto + treasury, deliver give to buyer
   buyer.available -= amt + fee;
   bal(o.want.ticker, o.want.payto).available += amt;
@@ -119,18 +120,18 @@ function applyTokenFill(c: ResolveCtx, ev: AttestEvent, o: TokenWantOffer, who: 
   setOfferStatus(o, "filled");
   o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: amt.toString(), fee: fee.toString() };
   markBidDone(o, who);
-  note(ev, ev.txid, "fill", true);
+  applied(ev, ev.txid, "fill", "FILL_APPLIED");
 }
 
 function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, who: string): void {
-  const { offerLock, bal, note, setOfferStatus, markBidDone } = c;
+  const { offerLock, bal, applied, refused, setOfferStatus, markBidDone } = c;
   // ── v1.2 partial fill (CSD-priced token offer): payment X buys pro-rata, maker-favoring ──
-  if (o.status !== "open") { note(ev, ev.txid, "fill", false, `offer ${o.status}`); return; }
-  if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); return; }
+  if (o.status !== "open") { refused(ev, ev.txid, "fill", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
+  if (o.taker && who !== o.taker) { refused(ev, ev.txid, "fill", "FILL_NOT_TAKER", "taker-bound offer"); return; }
   // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
   // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
   const blk = openFillReject(o, ev.height, who, ev.proposalId);
-  if (blk) { note(ev, ev.txid, "fill", false, blk); return; }
+  if (blk) { refused(ev, ev.txid, "fill", blk.code, blk.note); return; }
   const pt = ev.paidTo ?? {};
   const want = BigInt((o.want as { value: string }).value);
   const paidSoFar = BigInt(o.paid ?? "0");
@@ -138,19 +139,19 @@ function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, w
   const X = ptAmt(pt[o.want.payto]);
   const minV = BigInt(o.min);
   const effMin = remaining < minV ? remaining : minV;   // the tail is always buyable
-  if (X < effMin) { note(ev, ev.txid, "fill", false, "payment below offer min"); return; }
+  if (X < effMin) { refused(ev, ev.txid, "fill", "FILL_BELOW_MIN", "payment below offer min"); return; }
   const x = X < remaining ? X : remaining;              // overpayment is clamped
   const fee = o.feeBps ? tradeFee(x, o.feeBps) : 0n;    // 1.5% for v1.6 offers (partial fills carry NO maker rebate in v1.6)
-  if (ptAmt(pt[TREASURY_ADDR]) < fee) { note(ev, ev.txid, "fill", false, "protocol fee unpaid"); return; }
+  if (ptAmt(pt[TREASURY_ADDR]) < fee) { refused(ev, ev.txid, "fill", "TREASURY_FEE_UNPAID", "protocol fee unpaid"); return; }
   const giveTotal = BigInt((o.give as { amount: string }).amount);
   const newPaid = paidSoFar + x;
   const deliveredSoFar = BigInt(o.delivered ?? "0");
   // cumulative pro-rata floor: never oversells, and the final fill delivers the exact remainder
   const newDelivered = (giveTotal * newPaid) / want;
   const out = newDelivered - deliveredSoFar;
-  if (out === 0n) { note(ev, ev.txid, "fill", false, "fill too small to deliver any tokens"); return; }
+  if (out === 0n) { refused(ev, ev.txid, "fill", "FILL_ZERO_DELIVERY", "fill too small to deliver any tokens"); return; }
   const lock = offerLock.get(o.id);
-  if (lock === undefined) { note(ev, ev.txid, "fill", false, "offer lock missing"); return; }
+  if (lock === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
   bal(o.give.ticker, o.seller).locked -= out;
   bal(o.give.ticker, who).available += out;
   offerLock.set(o.id, lock - out);
@@ -162,17 +163,17 @@ function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, w
     setOfferStatus(o, "filled"); o.fill = entry; offerLock.delete(o.id);
     markBidDone(o, who);
   }
-  note(ev, ev.txid, "fill", true, `partial ${x}/${want}`);
+  applied(ev, ev.txid, "fill", "FILL_PARTIAL", `partial ${x}/${want}`);
 }
 
 function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
-  const { names, offerLock, note, setOfferStatus, markBidDone, releaseGiveLock } = c;
-  if (o.status !== "open") { note(ev, ev.txid, "fill", false, `offer ${o.status}`); return; }
-  if (o.taker && who !== o.taker) { note(ev, ev.txid, "fill", false, "taker-bound offer"); return; }
+  const { names, offerLock, applied, refused, setOfferStatus, markBidDone, releaseGiveLock } = c;
+  if (o.status !== "open") { refused(ev, ev.txid, "fill", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
+  if (o.taker && who !== o.taker) { refused(ev, ev.txid, "fill", "FILL_NOT_TAKER", "taker-bound offer"); return; }
   // v1.7: an open (non-taker) offer is fillable — but ONLY by the holder of a LIVE claim (the
   // claim-to-fill race-safety). In [V13, V17) open CSD fills stay banned (byte-identical to v1.3).
   const blk = openFillReject(o, ev.height, who, ev.proposalId);
-  if (blk) { note(ev, ev.txid, "fill", false, blk); return; }
+  if (blk) { refused(ev, ev.txid, "fill", blk.code, blk.note); return; }
   const pt = ev.paidTo ?? {};
   const want = BigInt((o.want as { value: string }).value);
   const fee = o.feeBps ? tradeFee(want, o.feeBps) : 0n;
@@ -201,43 +202,43 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): 
   // ACCUMULATE (not a Map literal): if any two recipients ever coincide (e.g. payto==seller, the
   // common case; or a hypothetical payto==treasury) the required amounts SUM — a literal would
   // silently overwrite and drop one, letting a fill underpay. Defense-in-depth on the value gate.
-  let unpaid: string | undefined;
+  let unpaid: { code: RefusalCode; note: string } | undefined;
   for (const [addr, amt] of need) if (ptAmt(pt[addr]) < amt) {
-    unpaid = addr === TREASURY_ADDR ? "protocol fee unpaid" : (rebate > 0n && addr === o.seller) ? "maker rebate unpaid (v1.6)" : "payment below want.value";
+    unpaid = addr === TREASURY_ADDR ? { code: "TREASURY_FEE_UNPAID", note: "protocol fee unpaid" } : (rebate > 0n && addr === o.seller) ? { code: "FILL_REBATE_UNPAID", note: "maker rebate unpaid (v1.6)" } : { code: "FILL_UNDERPAID", note: "payment below want.value" };
     break;
   }
-  if (unpaid) { note(ev, ev.txid, "fill", false, unpaid); return; }
+  if (unpaid) { refused(ev, ev.txid, "fill", unpaid.code, unpaid.note); return; }
   const paid = ptAmt(pt[o.want.payto]);
   // deliver the asset to the buyer
   if (isNameGive(o.give)) {
     const n = names.get(o.give.name);
-    if (!n) { note(ev, ev.txid, "fill", false, "name vanished (consensus violation)"); return; }
+    if (!n) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "name vanished (consensus violation)"); return; }
     deliverNameToBuyer(n, who, ev);
   } else {
     const amt = offerLock.get(o.id);
-    if (amt === undefined) { note(ev, ev.txid, "fill", false, "offer lock missing"); return; }
+    if (amt === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
     releaseGiveLock(o, who, amt);
   }
   c.feesPaid += fee;
   setOfferStatus(o, "filled");
   o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: paid.toString(), fee: fee.toString() };
   markBidDone(o, who);
-  note(ev, ev.txid, "fill", true);
+  applied(ev, ev.txid, "fill", "FILL_APPLIED");
 }
 
 function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: string): void {
-  const { note, liveHoldCount } = c;
+  const { applied, refused, liveHoldCount } = c;
   // v2.8 (§31): at V28+ the legacy claim attest is REJECTED (claims are fclaim proposals now) so a stale
   // wallet's claim is diagnosable. A pre-V28 live hold still honors legacy fills until it lapses (the
   // sunset); this only stops NEW legacy claims. No height literal is needed in the fill predicate.
-  if (ev.height >= V28_HEIGHT) { note(ev, ev.txid, "claim", false, "v2.8: claims are fclaim proposals now"); return; }
+  if (ev.height >= V28_HEIGHT) { refused(ev, ev.txid, "claim", "CLAIM_LEGACY_SUNSET", "v2.8: claims are fclaim proposals now"); return; }
   // ── v1.7 claim-to-fill: reserve an OPEN CSD offer for the FIRST claimer (consensus order) for
   // CLAIM_WINDOW_BLOCKS. Payment-free → a losing same-block claimer forfeits only the attest fee,
   // never a payment. Only the live claimer may fill (enforced in the fill paths above). ──
-  if (o.status !== "open") { note(ev, ev.txid, "claim", false, `offer ${o.status}`); return; }
-  if (o.taker) { note(ev, ev.txid, "claim", false, "taker-bound offer needs no claim"); return; }
-  if (isTokenWant(o.want)) { note(ev, ev.txid, "claim", false, "claims are for CSD-priced offers (token offers are no-op-safe)"); return; }
-  if (claimHeld(o, ev.height)) { note(ev, ev.txid, "claim", false, "offer already claimed (hold live)"); return; }
+  if (o.status !== "open") { refused(ev, ev.txid, "claim", "OFFER_NOT_OPEN", `offer ${o.status}`); return; }
+  if (o.taker) { refused(ev, ev.txid, "claim", "CLAIM_TAKER_BOUND", "taker-bound offer needs no claim"); return; }
+  if (isTokenWant(o.want)) { refused(ev, ev.txid, "claim", "CLAIM_TOKEN_PRICED", "claims are for CSD-priced offers (token offers are no-op-safe)"); return; }
+  if (claimHeld(o, ev.height)) { refused(ev, ev.txid, "claim", "CLAIM_HOLD_LIVE", "offer already claimed (hold live)"); return; }
   // anti-recycle: the JUST-LAPSED claimer cannot immediately re-grab the SAME offer (anyone else can).
   // KNOWN BOUND (intentional — identical in cairnx_ref.py, so NOT a cross-impl fork): the cooldown keys
   // on being the LAST claimer (o.claimedBy === who), so an intervening claim by a 2nd address resets it
@@ -246,16 +247,16 @@ function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferState, who: st
   // cooldown on the offer, not the last claimer) if the open lane re-opens with a monopoly concern.
   // cooldown runs from the END of the hold (window + grace), so the grace can't be used to dodge it.
   if (o.claimedBy === who && o.claimUntilHeight !== undefined && ev.height < o.claimUntilHeight + claimGrace(o) + CLAIM_COOLDOWN_BLOCKS) {
-    note(ev, ev.txid, "claim", false, "claim cooldown (you just held this offer)"); return;
+    refused(ev, ev.txid, "claim", "CLAIM_COOLDOWN", "claim cooldown (you just held this offer)"); return;
   }
   // per-address concurrent-claim cap (anti-squat): count offers this attester still HOLDS (window+grace),
   // so the V20 grace can't expand an address's effective concurrent reach past the cap.
   // liveHoldCount (context.ts) is the fclaim ladder's counter. Its v2.9 open-holds-only clause is INERT here: a
   // SCORE_CLAIM at ev.height >= V28 is already rejected above (the §31 sunset) and V29 > V28, so this path
   // reads the pre-V29 count (a future un-sunset of legacy claims would inherit the fix, not the bug).
-  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { note(ev, ev.txid, "claim", false, `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { refused(ev, ev.txid, "claim", "CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
   // grant. No expiry-clamp needed: a claim past the offer's expiry is moot (sweepExpired sets the
   // offer expired and a fill on a non-open offer is rejected) — the expiry always beats the claim.
   o.claimedBy = who; o.claimUntilHeight = ev.height + claimWindowAt(ev.height);
-  note(ev, ev.txid, "claim", true);
+  applied(ev, ev.txid, "claim", "CLAIM_GRANTED");
 }

@@ -307,14 +307,14 @@ real-chain replay pins (`cairnx scripts/conformance.mjs`, JS against Python on t
 ## cairnx-core (Plan 75 P75-4, branch plan75/csd-sdk; UNGATED reject-more; live-differential-proven replay-identical) - fclaim grant safe-integer guard (MF-20)
 
 The fclaim GRANT branch of `resolve.ts` lacked the `Number.isSafeInteger(` guard on the expiry epoch that its
-sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :182 offer, :77 bid). MF-20 adds
+sibling offer and bid Propose branches already carry (`packages/cairnx/src/resolve/market.ts` :183 offer, :78 bid). MF-20 adds
 it, plus the Python mirror in `conformance/cairnx_ref.py`. The guard tests the same predicate as the
 offer branch but not in the same form: the fclaim ladder records every denial in the `fclaims` map, so
 the rung calls the ladder's `deny()` rather than `note()` directly (the REG-1 correction below). As
-shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`), at
-`packages/cairnx/src/resolve/market.ts` :145:
+shipped, now in its own handler (the 12.5 split turned each rung's `continue` into `return`) and, since
+cairnx-core 0.2.6, with its reason code, at `packages/cairnx/src/resolve/market.ts` :146:
 
-    if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
+    if (!Number.isSafeInteger(E)) { deny("EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
 
 Python mirror, `conformance/cairnx_ref.py` :828, the first rung of the same ladder and calling the same
 `deny()` for the same reason (`is_safe_int(None)` is False, matching `Number.isSafeInteger(undefined)`):

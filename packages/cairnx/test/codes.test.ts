@@ -34,10 +34,22 @@ for (const c of vectors.resolve) {
   const got = resolve(c.events, c.tipHeight).events.map((e) => [e.id, e.kind, e.ok, e.code ?? null]);
   ok(`codes.json ${c.name}: the log holds exactly the expected entries`, key(got.map(key).sort()) === key(c.expect.map(key).sort()));
 }
+// Codes no event can produce; each guards a state the rules around it rule out:
+//   NAME_RECLAIMED: the pay-now reclaim of a lapsed name below V26, while the earliest lapse falls far above V26;
+//   NAME_RESERVATION_EXPIRED: the sweep before each event drops a reservation past finalizeBy, so a late finalize finds
+//     none (the cases nfinalize-after-finalize-by and recapture-finalize-after-finalize-by pin NAME_NO_RESERVATION);
+//   NAME_NOT_LAPSED: nothing renews, re-registers or re-anchors a lapsed record before its recapture finalize;
+//   INVARIANT_BROKEN: an open offer's name or give lock is never missing.
+const UNREACHABLE = new Set(["NAME_RECLAIMED", "NAME_RESERVATION_EXPIRED", "NAME_NOT_LAPSED", "INVARIANT_BROKEN"]);
+const reached = new Set(vectors.resolve.flatMap((c) => c.expect.map((e) => e[3])));
+const unreachedResolver = REASON_CODES.filter((c) => !c.startsWith("RECORD_") && !reached.has(c) && !UNREACHABLE.has(c));
+ok(`codes.json reaches every resolver code but the ${UNREACHABLE.size} unreachable ones (${unreachedResolver.join(", ") || "none missing"})`, unreachedResolver.length === 0);
+ok("no unreachable code is reached", [...UNREACHABLE].every((c) => !reached.has(c)));
 
 // ── every pinned input ──
-// The kinds whose handlers write codes so far; the release's last code part replaces this with every entry.
-const CODED_KINDS = new Set(["deploy", "mint", "transfer", "tmeta"]);
+// The kinds whose handlers write codes so far: all but `invalid`; the release's last code part replaces this with every entry.
+const CODED_KINDS = new Set(["deploy", "mint", "transfer", "tmeta", "ncommit", "name", "nfinalize", "nxfer", "nset", "nprofile", "nrenew",
+  "offer", "bid", "ocancel", "fclaim", "fill", "cancel", "bidcancel", "claim"]);
 type Case = { name: string; events: ChainEvent[]; tipHeight: number };
 const inputs: Case[] = [];
 const corpus = json<{ events: ChainEvent[]; tipHeight: number }>("./vectors/replay-corpus.json");

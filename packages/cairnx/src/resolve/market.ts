@@ -7,24 +7,25 @@ import {
   V16_HEIGHT, V17_HEIGHT, V21_HEIGHT, V22_HEIGHT, V27_HEIGHT, V28_HEIGHT, epochOf, isNameGive, isTokenWant,
   type BidRecord, type FclaimRecord, type Give, type OfferCancelAllRecord, type OfferRecord, type OfferState, type ProposeEvent,
 } from "../types.js";
+import type { RefusalCode } from "../codes.js";
 import { claimGrace, claimHeld, effExpiry, type ResolveCtx } from "./context.js";
 import { paidThrough } from "./names.js";
 
 export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, who: string): void {
-  const { tokens, names, offers, offerLock, openOffers, bids, bal, note } = c;
+  const { tokens, names, offers, offerLock, openOffers, bids, bal, applied, refused } = c;
   const v11 = ev.height >= V11_HEIGHT;
   const v15 = ev.height >= V15_HEIGHT;
   const v16 = ev.height >= V16_HEIGHT;
   const wantIsToken = isTokenWant(rec.want);
   const refusal = offerEnvelopeRefusal(rec, who, ev.height, ev.expiresEpoch);
-  if (refusal !== null) { note(ev, ev.id, "offer", false, refusal); return; }
+  if (refusal !== null) { refused(ev, ev.id, "offer", refusal.code, refusal.note); return; }
   const payto = (rec.want.payto ?? who).toLowerCase();
   const give: Give = rec.give;
   if (isNameGive(give)) {
     const n = names.get(give.name);
-    if (!n || n.owner !== who) { note(ev, ev.id, "offer", false, "you don't own this name"); return; }
-    if (n.pending) { note(ev, ev.id, "offer", false, "name reservation not yet finalized"); return; }
-    if (n.locked) { note(ev, ev.id, "offer", false, "name already locked by another offer"); return; }
+    if (!n || n.owner !== who) { refused(ev, ev.id, "offer", "NAME_NOT_OWNER", "you don't own this name"); return; }
+    if (n.pending) { refused(ev, ev.id, "offer", "NAME_PENDING", "name reservation not yet finalized"); return; }
+    if (n.locked) { refused(ev, ev.id, "offer", "NAME_LOCKED", "name already locked by another offer"); return; }
     // v1.3: a claim-based name may not be offered until its anchor out-ages the reveal
     // window — every lurking commit's reveal deadline passes BEFORE a sale can exist, so
     // viaFill immunity (below) can never shield a front-run squatter's quick flip.
@@ -38,19 +39,19 @@ export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, wh
     // 240-block bar; on the chain none did (youngest effective height 46,062; test/vectors.test.ts).
     const saleEmbargo = ev.height >= V27_HEIGHT ? REG_COMMIT_MAX_BLOCKS : COMMIT_MAX_BLOCKS;
     if (ev.height >= V13_HEIGHT && !n.viaFill && ev.height - n.effHeight <= saleEmbargo) {
-      note(ev, ev.id, "offer", false, "name too young to sell (must out-age the reveal window)"); return;
+      refused(ev, ev.id, "offer", "NAME_TOO_YOUNG", "name too young to sell (must out-age the reveal window)"); return;
     }
     // v1.5: the lease must outlive the offer window — so a fill can NEVER hit a lapsed
     // name (a no-op'd CSD fill would still have paid the seller; make it unrepresentable)
     if (v15 && paidThrough(n) < ev.expiresEpoch) {
-      note(ev, ev.id, "offer", false, "v1.5: lease ends inside the offer window (renew first)"); return;
+      refused(ev, ev.id, "offer", "OFFER_LEASE_TOO_SHORT", "v1.5: lease ends inside the offer window (renew first)"); return;
     }
     n.locked = true;
   } else {
-    if (!tokens.has(give.ticker)) { note(ev, ev.id, "offer", false, "unknown ticker"); return; }
+    if (!tokens.has(give.ticker)) { refused(ev, ev.id, "offer", "TOKEN_UNKNOWN", "unknown ticker"); return; }
     const amt = parseAmount(give.amount)!;
     const s = bal(give.ticker, who);
-    if (s.available < amt) { note(ev, ev.id, "offer", false, "insufficient available balance"); return; }
+    if (s.available < amt) { refused(ev, ev.id, "offer", "TOKEN_BALANCE_LOW", "insufficient available balance"); return; }
     s.available -= amt; s.locked += amt; offerLock.set(ev.id, amt);
   }
   const o: OfferState = {
@@ -67,29 +68,29 @@ export function applyOffer(c: ResolveCtx, ev: ProposeEvent, rec: OfferRecord, wh
   openOffers.add(ev.id);
   const linked = rec.bid !== undefined ? bids.get(rec.bid) : undefined;
   if (linked) linked.offers.push(ev.id);
-  note(ev, ev.id, "offer", true);
+  applied(ev, ev.id, "offer", "OFFER_CREATED");
 }
 
 export function applyBid(c: ResolveCtx, ev: ProposeEvent, rec: BidRecord, who: string): void {
-  const { bids, openBids, note } = c;
+  const { bids, openBids, applied, refused } = c;
   const v12 = ev.height >= V12_HEIGHT;
-  if (!v12) { note(ev, ev.id, "bid", false, "bids need v1.2"); return; }
-  if (!Number.isSafeInteger(ev.expiresEpoch)) { note(ev, ev.id, "bid", false, "expiresEpoch out of safe-integer range"); return; }
-  if (epochOf(ev.height) > ev.expiresEpoch) { note(ev, ev.id, "bid", false, "already expired at anchor"); return; }
+  if (!v12) { refused(ev, ev.id, "bid", "GATE_NOT_ACTIVE", "bids need v1.2"); return; }
+  if (!Number.isSafeInteger(ev.expiresEpoch)) { refused(ev, ev.id, "bid", "EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
+  if (epochOf(ev.height) > ev.expiresEpoch) { refused(ev, ev.id, "bid", "EXPIRY_PAST", "already expired at anchor"); return; }
   // v2.1 duration cap — gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
-  if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { note(ev, ev.id, "bid", false, "v2.1: bid duration exceeds the max"); return; }
+  if (ev.height >= V21_HEIGHT && ev.height < V22_HEIGHT && ev.expiresEpoch - epochOf(ev.height) > MAX_OFFER_EPOCHS) { refused(ev, ev.id, "bid", "EXPIRY_TOO_LONG", "v2.1: bid duration exceeds the max"); return; }
   bids.set(ev.id, {
     id: ev.id, bidder: who, want: rec.want, give: rec.give,
     status: "open", expiresEpoch: ev.expiresEpoch, height: ev.height, offers: [],
   });
   openBids.add(ev.id);
-  note(ev, ev.id, "bid", true);
+  applied(ev, ev.id, "bid", "BID_CREATED");
 }
 
 export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAllRecord, who: string): void {
-  const { offers, note, releaseGive, setOfferStatus } = c;
+  const { offers, applied, refused, releaseGive, setOfferStatus } = c;
   const v12 = ev.height >= V12_HEIGHT;
-  if (!v12) { note(ev, ev.id, "ocancel", false, "ocancel needs v1.2"); return; }
+  if (!v12) { refused(ev, ev.id, "ocancel", "GATE_NOT_ACTIVE", "ocancel needs v1.2"); return; }
   // cancel all the proposer's open offers anchored strictly earlier in apply order
   // (snapshotting at apply-time is correct: higher-pos same-block offers aren't applied yet)
   const targets: OfferState[] = [];
@@ -110,21 +111,21 @@ export function applyOcancel(c: ResolveCtx, ev: ProposeEvent, rec: OfferCancelAl
         if (ev.height >= V28_HEIGHT && o.claimTxid !== undefined && claimHeld(o, ev.height)) continue;
         if (o.status === "open") { releaseGive(o); setOfferStatus(o, "cancelled"); n++; }
       }
-      note(ev, ev.id, "ocancel", true, `${n} cancelled (deferred past same-block fills)`);
+      applied(ev, ev.id, "ocancel", "OFFER_BULK_CANCELLED", `${n} cancelled (deferred past same-block fills)`);
     });
   } else {
     for (const o of targets) { releaseGive(o); setOfferStatus(o, "cancelled"); }
-    note(ev, ev.id, "ocancel", true, `${targets.length} cancelled`);
+    applied(ev, ev.id, "ocancel", "OFFER_BULK_CANCELLED", `${targets.length} cancelled`);
   }
 }
 
 export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, who: string): void {
-  const { offers, fclaims, note, liveHoldCount } = c;
+  const { offers, fclaims, applied, refused, liveHoldCount } = c;
   // ── v2.8 (§31) open-lane claim GRANT: reserve an OPEN, CSD-priced, untaken offer with a short-expiry
   // Propose. The fill attests THIS txid, so L0's attest-existence + attest-after-expiry rules enforce the
   // hold deadline. On grant, claimedBy/claimUntilHeight/claimTxid are set LAST-WRITE-WINS (a later grant on
   // the same offer re-assigns all three; claimTxid is never left stale and never cleared). ──
-  if (ev.height < V28_HEIGHT) { note(ev, ev.id, "fclaim", false, "fclaim needs v2.8"); return; }
+  if (ev.height < V28_HEIGHT) { refused(ev, ev.id, "fclaim", "GATE_NOT_ACTIVE", "fclaim needs v2.8"); return; }
   // PARITY with the sibling offer/bid Propose guards (same guard, same phrasing): expiresEpoch
   // is an unbounded on-chain u64; at or above 2^53 it has no exact JS representation (the
   // offer-branch rationale applies verbatim). For every chain-derivable stream this is
@@ -135,54 +136,54 @@ export function applyFclaim(c: ResolveCtx, ev: ProposeEvent, rec: FclaimRecord, 
   // NaN, which canonicalState serializes as null. Reject-more, ungated.
   const target = offers.get(rec.offer);
   const E = ev.expiresEpoch;
-  const deny = (why: string) => { fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: false }); note(ev, ev.id, "fclaim", false, why); };
-  // P75-4 REG-1: this MUST use deny(), not a bare note()+return. Every other rung of this ladder
+  const deny = (code: RefusalCode, why: string) => { fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: false }); refused(ev, ev.id, "fclaim", code, why); };
+  // P75-4 REG-1: this MUST use deny(), not a bare refused()+return. Every other rung of this ladder
   // records a DENIED fclaim in the map, and applyAttest reads fclaims.has(proposalId) to flag a paid
   // SCORE_FILL on a denied fclaim as a pay-without-delivery burn for money-safety.mjs. An
   // expires_epoch at or above 2^53 is a MINEABLE u64, so unlike NaN that class is on-chain
   // reachable: skipping the map entry would silence the burn note for the one shape that can
   // actually happen. Canonical cost is zero, because fclaimsOut in resolve.ts filters on `granted`.
-  if (!Number.isSafeInteger(E)) { deny("expiresEpoch out of safe-integer range"); return; }
-  if (!target) { deny("unknown offer"); return; }
-  if (target.status !== "open") { deny(`offer ${target.status}`); return; }
-  if (target.taker) { deny("taker-bound offer needs no claim"); return; }
-  if (isTokenWant(target.want)) { deny("claims are for CSD-priced offers"); return; }
-  if (E > effExpiry(target, ev.height)) { deny("hold would outlive the offer expiry"); return; }
-  if (E > epochOf(ev.height) + FCLAIM_MAX_EPOCH_AHEAD) { deny("hold too far ahead (anti-squat)"); return; }
-  if (epochOf(ev.height) > E) { deny("expiry already in the past"); return; }
-  if (claimHeld(target, ev.height)) { deny("offer already claimed (hold live)"); return; }
+  if (!Number.isSafeInteger(E)) { deny("EXPIRY_UNSAFE", "expiresEpoch out of safe-integer range"); return; }
+  if (!target) { deny("OFFER_UNKNOWN", "unknown offer"); return; }
+  if (target.status !== "open") { deny("OFFER_NOT_OPEN", `offer ${target.status}`); return; }
+  if (target.taker) { deny("CLAIM_TAKER_BOUND", "taker-bound offer needs no claim"); return; }
+  if (isTokenWant(target.want)) { deny("CLAIM_TOKEN_PRICED", "claims are for CSD-priced offers"); return; }
+  if (E > effExpiry(target, ev.height)) { deny("CLAIM_OUTLIVES_OFFER", "hold would outlive the offer expiry"); return; }
+  if (E > epochOf(ev.height) + FCLAIM_MAX_EPOCH_AHEAD) { deny("CLAIM_TOO_FAR_AHEAD", "hold too far ahead (anti-squat)"); return; }
+  if (epochOf(ev.height) > E) { deny("EXPIRY_PAST", "expiry already in the past"); return; }
+  if (claimHeld(target, ev.height)) { deny("CLAIM_HOLD_LIVE", "offer already claimed (hold live)"); return; }
   // cooldown runs from the END of the prior hold (window + its era grace, 0 for a prior fclaim hold):
-  if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("claim cooldown (you just held this offer)"); return; }
+  if (target.claimedBy === who && target.claimUntilHeight !== undefined && ev.height < target.claimUntilHeight + claimGrace(target) + CLAIM_COOLDOWN_BLOCKS) { deny("CLAIM_COOLDOWN", "claim cooldown (you just held this offer)"); return; }
   // per-address concurrent-hold cap (liveHoldCount, context.ts; v2.9 counts open holds only from V29).
-  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { deny(`max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
+  if (liveHoldCount(who, ev.height) >= MAX_ACTIVE_CLAIMS) { deny("CAP_LIVE_HOLDS", `max ${MAX_ACTIVE_CLAIMS} live claims per address`); return; }
   target.claimedBy = who; target.claimUntilHeight = (E + 1) * EPOCH_LEN; target.claimTxid = ev.id;
   fclaims.set(ev.id, { offer: rec.offer, proposer: who, expiresEpoch: E, height: ev.height, granted: true });
-  note(ev, ev.id, "fclaim", true);
+  applied(ev, ev.id, "fclaim", "CLAIM_GRANTED");
 }
 
 // The offer rules that read only the record, its proposer, its inclusion height and the Propose's expires_epoch,
-// in applyOffer's order: the first refusal note, or null. Shared with the proven-offer client check
+// in applyOffer's order: the first refusal (its code and note), or null. Shared with the proven-offer client check
 // (provenOfferRefusal in src/admission.ts), so a client refuses exactly what this refuses.
-export function offerEnvelopeRefusal(rec: OfferRecord, who: string, height: number, expiresEpoch: number): string | null {
+export function offerEnvelopeRefusal(rec: OfferRecord, who: string, height: number, expiresEpoch: number): { code: RefusalCode; note: string } | null {
   const wantIsToken = isTokenWant(rec.want);
   // v1.2 shapes (token-priced want, partial-fill min, bid link) are non-retroactive
-  if ((wantIsToken || rec.min !== undefined || rec.bid !== undefined) && height < V12_HEIGHT) return "v1.2 offer shape before activation";
+  if ((wantIsToken || rec.min !== undefined || rec.bid !== undefined) && height < V12_HEIGHT) return { code: "GATE_NOT_ACTIVE", note: "v1.2 offer shape before activation" };
   // v1.3: an open (non-taker-bound) CSD-priced offer is structurally unsafe: a lost
   // same-block fill race forfeits the loser's ENTIRE payment (no escrow on the substrate).
   // CSD buys go bid → taker-bound answer → race-free fill. Token⇄token stays open (no-op-safe).
   // v1.3 banned open CSD offers (the lost-fill-race forfeits a payment); v1.7 RE-ALLOWS them, made
   // race-safe by claim-to-fill (the fill is gated on a live claim), so the ban applies only
   // in [V13, V17). Below V17 this is byte-identical to the original gate.
-  if (height >= V13_HEIGHT && height < V17_HEIGHT && !wantIsToken && rec.taker === undefined) return "v1.3: CSD-priced offers must be taker-bound (use bid/RFQ)";
-  if ((rec.want.payto ?? who).toLowerCase() === TREASURY_ADDR) return "payto cannot be the protocol treasury";
+  if (height >= V13_HEIGHT && height < V17_HEIGHT && !wantIsToken && rec.taker === undefined) return { code: "OFFER_TAKER_REQUIRED", note: "v1.3: CSD-priced offers must be taker-bound (use bid/RFQ)" };
+  if ((rec.want.payto ?? who).toLowerCase() === TREASURY_ADDR) return { code: "OFFER_PAYTO_TREASURY", note: "payto cannot be the protocol treasury" };
   // expiresEpoch is an unbounded on-chain u64; one ≥ 2^53 is stored verbatim into the OPEN
   // offer's canonical state and serializes as the JS-specific "1e+21"/loses precision,
   // forking sha256(canonicalState) vs a u64/decimal resolver (audit M1). No live offer is
   // anywhere near 2^53 (max ~1e5), so rejecting the unrepresentable range is replay-identical.
-  if (!Number.isSafeInteger(expiresEpoch)) return "expiresEpoch out of safe-integer range";
-  if (epochOf(height) > expiresEpoch) return "already expired at anchor";
+  if (!Number.isSafeInteger(expiresEpoch)) return { code: "EXPIRY_UNSAFE", note: "expiresEpoch out of safe-integer range" };
+  if (epochOf(height) > expiresEpoch) return { code: "EXPIRY_PAST", note: "already expired at anchor" };
   // v2.1 duration cap, gated to the [V21,V22) era only; v2.2 (anchor >= V22) removes it (UI-only policy).
-  if (height >= V21_HEIGHT && height < V22_HEIGHT && expiresEpoch - epochOf(height) > MAX_OFFER_EPOCHS) return "v2.1: offer duration exceeds the max";
-  if (isNameGive(rec.give) && height < V11_HEIGHT) return "name offers need v1.1";
+  if (height >= V21_HEIGHT && height < V22_HEIGHT && expiresEpoch - epochOf(height) > MAX_OFFER_EPOCHS) return { code: "EXPIRY_TOO_LONG", note: "v2.1: offer duration exceeds the max" };
+  if (isNameGive(rec.give) && height < V11_HEIGHT) return { code: "GATE_NOT_ACTIVE", note: "name offers need v1.1" };
   return null;
 }

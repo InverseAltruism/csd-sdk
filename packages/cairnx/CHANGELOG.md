@@ -4,9 +4,10 @@
 
 - Stable reason codes (CONVENTION.md section 40, written with the last part of this release): each entry of the
   applied log gains `code`, the rule that decided the record. New root exports `REASON_CODES`, `REASON_CODE_OUTCOME`,
-  `CAP_CODES` and the types `ReasonCode`, `AppliedCode`, `RefusalCode`, `RecordCode` (`src/codes.ts`). The token
-  records (deploy, mint, transfer, tmeta) carry codes so far. No state moves: `scripts/seal-differential.mjs` against
-  cairnx-core 0.2.4 finds `canonicalState` byte-identical and the whole result identical once `code` is left out.
+  `CAP_CODES` and the types `ReasonCode`, `AppliedCode`, `RefusalCode`, `RecordCode` (`src/codes.ts`). Every entry
+  carries a code so far except an unparseable record's. `offerEnvelopeRefusal` (internal) returns the code with the
+  note; `provenOfferRefusal` returns the same strings as before. No state moves: `scripts/seal-differential.mjs`
+  against cairnx-core 0.2.4 finds `canonicalState` byte-identical and the whole result identical once `code` is left out.
 
 ## 0.2.5
 
