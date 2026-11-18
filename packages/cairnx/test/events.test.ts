@@ -1,6 +1,7 @@
 // CONVENTION §33, the rule from a block to events: every vector of test/vectors/events.json against src, then what the
 // language-neutral file cannot hold (number inputs, the corpus as normalised input, the call contract, csd-light's
-// BoundTx as an input, and what resolve() does with the duplicates §33.2 removes).
+// BoundTx as an input, and what resolve() does with the duplicates §33.2 removes), and the rule over the recorded blocks
+// of test/fixtures/events-blocks.json against the pinned corpus.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { BoundTx } from "@inversealtruism/csd-light";
@@ -125,5 +126,46 @@ const straddle = ruleOver([[V29_HEIGHT - 10, [dep]], [V29_HEIGHT - 1, [mnt]], [V
 ok("the rule keeps one copy of a mint mined on both sides of V29", straddle.length === 2 && minted(straddle) === "100");
 ok("resolve() fed both copies across V29 applies both", minted([...straddle, asCopy(V29_HEIGHT + 1)]) === "200");
 ok("resolve() fed both copies at or above V29 applies one", minted([straddle[0]!, asCopy(V29_HEIGHT + 1), asCopy(V29_HEIGHT + 5)]) === "100");
+
+// The rule on the real chain: test/fixtures/events-blocks.json holds every transaction with an app payload of every
+// block from 29,860 to 117,000, captured from a node with each body bound to a verified header and each author bound
+// by authorOf (conformance/capture-events-fixture.mjs). The rule applied to it block by block must give the pinned
+// corpus, every event equal. The corpus is in the service's scan order, so it is compared sorted into the order of
+// §33.3 (height, then Proposes by position, then Attests by position): canonicalJson of each event, then of the list.
+{
+  const { createHash } = await import("node:crypto");
+  const raw = readFileSync(new URL("./fixtures/events-blocks.json", import.meta.url));
+  const FIXTURE_SHA256 = "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c";
+  assert.equal(createHash("sha256").update(raw).digest("hex"), FIXTURE_SHA256, "events-blocks.json moved: recapture and re-pin it in one commit");
+  pass++;
+  const fx = JSON.parse(raw.toString("utf8")) as
+    { format: number; from: number; to: number; toHash: string; blocks: { height: number; hash: string; txs: (VTx & { author: string })[] }[] };
+  const full = corpus as { tipHeight: number; events: ChainEvent[] };
+  ok("the fixture spans the activation height to the corpus height",
+    fx.format === 1 && fx.from === CAIRNX_EVENT_RULE.activationHeight && fx.to === full.tipHeight &&
+    fx.toHash === "0x00000000000090e7e32658201cea5294cef6a573f9d9fdad7d8cea77c3eb8f51");
+  ok("the fixture's blocks are in strictly increasing height order within its range",
+    fx.blocks.every((b, i) => b.height >= fx.from && b.height <= fx.to && (i === 0 || b.height > fx.blocks[i - 1]!.height)));
+  const authors: Record<string, string> = {};
+  for (const b of fx.blocks) for (const t of b.txs) authors[t.txid] = t.author;
+  const got = runBlocks({ name: "fixture", blocks: fx.blocks.map((b) => ({ height: b.height, txs: b.txs })), authors, expect: null });
+  const events = (got as { events?: ChainEvent[] }).events;
+  assert.ok(events, `the rule refused a fixture block: ${canonicalJson(got)}`);
+  const key = (e: ChainEvent) => [e.height, e.kind === "propose" ? 0 : 1, e.pos] as const;
+  const want = [...full.events].sort((a, b) => {
+    const x = key(a), y = key(b);
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  });
+  let equal = 0, first = -1;
+  for (let i = 0; i < Math.max(want.length, events.length); i++) {
+    if (canonicalJson(events[i] ?? null) === canonicalJson(want[i] ?? null)) equal++;
+    else if (first < 0) first = i;
+  }
+  assert.equal(first, -1, `event ${first} differs: rule ${canonicalJson(events[first] ?? null)} corpus ${canonicalJson(want[first] ?? null)}`);
+  ok(`the rule over the recorded blocks gives the ${want.length} corpus events (${equal} equal)`,
+    equal === want.length && events.length === want.length && want.length >= 1133);
+  ok("the event lists are the same bytes (§33.6)", canonicalJson(events) === canonicalJson(want));
+  console.log(`events rule on the recorded blocks: ${events.length} events from ${fx.blocks.length} blocks (${Object.keys(authors).length} payload transactions), ${equal}/${want.length} equal to the corpus`);
+}
 
 console.log(`cairnx-core events rule (CONVENTION §33): ${pass} passed (${file.tx.length} tx and ${file.blocks.length} blocks vectors)`);

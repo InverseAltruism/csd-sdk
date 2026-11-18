@@ -10,12 +10,23 @@ differential is described in `conformance/README.md` and the audit method in `co
   discovery floor.
 - Golden vectors: csd-vectors pins the node's golden_vectors.rs + real on-chain data; cairnx pins cases.json +
   replay-hashes.json (canonical-state sha256 at every activation height).
+- Recorded blocks: `packages/cairnx/test/fixtures/events-blocks.json` (repo only, not in the npm package) holds every
+  transaction with an app payload from 29,860 to 117,000 with its bound author. `test/events.test.ts` pins its sha256
+  and requires CONVENTION section 33's rule applied to it to give the 1,133 events of `replay-corpus.json`, compared in
+  the order of section 33.3; `conformance/events-crosslang.mjs` requires the same of the Python reference. Offline.
 - Root e2e (independent oracles, never self-grading), `pnpm test:e2e`: `test/live-opt-in.test.ts`,
   `test/edge.test.ts`, `test/security.test.ts` (hostile RPC/counterparty). Their live parts run only with `CSD_RPC`
   set.
 - Live (`pnpm test:live`, needs `CSD_RPC`, not in CI; `test/ci-workflow.test.ts` pins that): `test/oracle.test.ts`
   (real on-chain signatures vs SDK-computed sighash, node /tx/template match, chainwork-from-genesis match, real-tx
   round trip), `packages/client/test/client.test.ts`, `packages/light/test/light.test.ts`.
+- Block scripts (maintainer tools, by hand, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package
+  script runs one, `test/live-opt-in.test.ts` that each refuses by name without a node and fails by name when it does
+  not answer): `conformance/capture-events-fixture.mjs` (writes the recorded-blocks fixture from a node),
+  `conformance/events-live-differential.mjs` (needs `CSD_RPC` and `CSD_INDEXER`: the events from blocks through the
+  rule against csd-indexer's chain-order feeds, to a tip at least 48 deep by default) and
+  `conformance/scan-repeated-txids.mjs` (transaction ids mined at more than one height or position).
+  `conformance/README.md` describes each.
 - Cross-language differential (`pnpm test:crosslang`, the CI fork gate, needs python3): crosscheck.mjs,
   crosscheck-regex.mjs (raw regex differential, the C1 class), crosscheck-resolve.mjs, replay-corpus-crosslang.mjs
   (the committed on-chain corpus at every pinned height), crosscheck-siwc.mjs, nprofile-crosslang.mjs,

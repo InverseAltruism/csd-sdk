@@ -76,7 +76,7 @@ applies both, because section 32's M4 drop applies only at heights at or above V
 results). For history the case is empty: a scan of every block from 29,860 to 144,400 (block hash
 0x0000000000001874564bd8df5a5893040b0981d96c646e132e3598488d0411b5) on 2026-11-18 read 114,541 blocks and 148,395
 transactions with 148,395 distinct transaction ids, so no transaction id has been mined twice since activation. The
-script for that scan ships with the block fixture in the next slice (events-rule-b).
+scan is `conformance/scan-repeated-txids.mjs` (`--to 144400` reproduces those counts and that hash).
 
 The other forms the rule fixes where earlier readers differed (an expiry above 2^53 - 1, a `uri` holding U+0000) give
 the same state either way. Section 32's "there is no straddle case" is corrected: a transaction can be mined in two

@@ -43,4 +43,27 @@ for (const [file] of LIVE_CAPABLE.filter(([f]) => liveOnly(f))) {
   pass++;
   console.log(`  ok ${file}: CSD_RPC set, no node -> fails by name`);
 }
+// The block scripts (conformance/chain-read.mjs) are opt-in the same way: with no node named they refuse by name
+// (exit 2) without a request, and with one that does not answer they fail by name (exit 1).
+const BLOCK_SCRIPTS: [string, string[]][] = [
+  ["conformance/capture-events-fixture.mjs", ["--to", "117000"]],
+  ["conformance/events-live-differential.mjs", []],
+  ["conformance/scan-repeated-txids.mjs", []],
+];
+const noNode = { ...env };
+delete noNode.CSD_INDEXER;
+for (const [file, args] of BLOCK_SCRIPTS) {
+  const name = path.basename(file, ".mjs");
+  const r = spawnSync(process.execPath, ["--import", PRELOAD, path.join(ROOT, file), ...args], { cwd: ROOT, env: noNode, encoding: "utf8" });
+  assert.equal(/NETWORK ATTEMPT/.test(r.stderr), false, `${file} made a network request with no node named:\n${r.stderr}`);
+  assert.equal(r.status, 2, `${file} exited ${r.status} with no node named:\n${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, new RegExp(`^${name}: (no node|CSD_RPC is unset).*\\nusage: `, "m"), `${file} must name what is missing`);
+  pass++;
+  console.log(`  ok ${file}: no node named -> refuses by name, no network request`);
+  const live = spawnSync(process.execPath, [path.join(ROOT, file), ...args], { cwd: ROOT, env: { ...noNode, CSD_RPC: refused, CSD_INDEXER: refused }, encoding: "utf8" });
+  assert.equal(live.status, 1, `${file} exited ${live.status} with a node that does not answer:\n${live.stdout}\n${live.stderr}`);
+  assert.match(live.stderr, new RegExp(`^${name}: FAIL: `, "m"), `${file} must name the failure`);
+  pass++;
+  console.log(`  ok ${file}: CSD_RPC set, no node -> fails by name`);
+}
 console.log(`live opt-in: ${pass} passed`);

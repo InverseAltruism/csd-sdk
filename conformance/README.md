@@ -34,7 +34,32 @@ this directory, only the JS implementation existed, so the contract was asserted
 - **`events-crosslang.mjs`:** the rule from a block to events (CONVENTION section 33): every case of
   `packages/cairnx/test/vectors/events.json` through the JS rule and `cairnx_ref.py`'s `event_of_tx`,
   `block_members` and `block_events`, byte-identical to the recorded result. `gen-events-vectors.mjs` writes the
-  file after checking each case's hand-written facts; `events-run.mjs` is the case runner both share.
+  file after checking each case's hand-written facts; `events-run.mjs` is the case runner both share. It also runs
+  the recorded blocks of `packages/cairnx/test/fixtures/events-blocks.json` through both and requires the events to
+  be the pinned replay corpus sorted into the order of section 33.3 (height, then Proposes by position, then Attests
+  by position), as canonicalJson bytes of the whole list.
+
+Block scripts (read a node, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package script runs
+them, `test/live-opt-in.test.ts` that each refuses by name with no node named and fails by name when the node does
+not answer). Each reads complete blocks through `chain-read.mjs`: headers checked by csd-light from a seed (the LWMA
+window below the first height, read from the same node), each body bound to its header's merkle root, authors bound by
+csd-crypto `authorOf`, at most 8 requests in flight. Compare the end hash each prints with a node you trust.
+
+- **`capture-events-fixture.mjs`:** `--rpc <node> --to <height> [--from 29860] [--out FILE]` writes the block
+  fixture: every transaction with an app payload (any domain) of every block in the range, in the `events.json` tx
+  form with its author, one block per line in canonicalJson form, blocks without one left out. The bytes depend on
+  the chain alone, so two captures of one range are identical. Prints blocks read and kept, transactions kept, bytes
+  and sha256. Recapture with `--to 117000` (the corpus height) and re-pin the sha256 in `packages/cairnx/test/events.test.ts`
+  in the same commit; a corpus extension moves both.
+- **`events-live-differential.mjs`:** `CSD_RPC=<node> CSD_INDEXER=<indexer> ... [--to <height>]` (default the tip
+  less 48): the cairnx:v1 events from 29,860 derived from blocks through the rule and from csd-indexer's chain-order
+  feeds (`/proposals` and `/attestations`, `domain=cairnx:v1`, walked at the snapshot block `--to`, which must be the
+  node's block), required equal event by event and as one list. The feed rows carry no outputs, so the feed side's
+  `paidTo` is read from the node's `/tx/<txid>` with the txid recomputed. Prints both sides' counts and the first
+  difference; exits 1 on any.
+- **`scan-repeated-txids.mjs`:** `--rpc <node> [--from 29860] [--to <height>]`: every transaction id (recomputed
+  from its body) that occurs at more than one height or position, split by coinbase and app payload, with the end
+  block's hash; exits 1 when any repeats. The fact cited for cairnx-core 0.2.5 in `CONSENSUS_CHANGES.md`.
 
 Run: `pnpm test:crosslang` (primitives + resolve); in `cairnx`, `npm run test:integration` (real chain).
 
