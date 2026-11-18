@@ -26,7 +26,7 @@ try {
   if (!process.env.CSD_INDEXER) throw new Error("CSD_INDEXER is unset");
 } catch (e) { console.error(`events-live-differential: ${e.message}\n${USAGE}`); process.exit(2); }
 
-const applyOrder = (a, b) => a.height - b.height || (a.kind === "propose" ? 0 : 1) - (b.kind === "propose" ? 0 : 1) || a.pos - b.pos;
+const feedOrder = (a, b) => a.height - b.height || (a.kind === "propose" ? 0 : 1) - (b.kind === "propose" ? 0 : 1) || a.pos - b.pos;
 const idOf = (e) => (e.kind === "propose" ? e.id : e.txid);
 const lower = (s) => String(s).toLowerCase();
 
@@ -98,7 +98,7 @@ async function fromFeed(client, base, to) {
     });
   }
   for (const e of events) e.paidTo = await paidToOf(client, idOf(e));
-  return { events: events.sort(applyOrder), at: [props.at, atts.at], rows: { proposals: props.rows.length, attestations: atts.rows.length }, attsBelow, attsOff };
+  return { events: events.sort(feedOrder), at: [props.at, atts.at], rows: { proposals: props.rows.length, attestations: atts.rows.length }, attsBelow, attsOff };
 }
 
 try {

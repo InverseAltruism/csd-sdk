@@ -36,7 +36,9 @@ export function eventId(e: ChainEvent): string {
 
 /** The apply order of CONVENTION §3 and §33.3, the comparator resolve() sorts its events with: height, a block's
  *  Proposes before its Attests, position, then the ordinal order of the id. Negative when `a` applies before `b`, zero
- *  when all four keys are equal (the same event, or a repeated one, which a stable sort keeps in input order). */
+ *  when all four keys are equal (the same event, or a repeated one, which a stable sort keeps in input order).
+ *  Defined for events the rule of §33 builds: a kind of "propose" or "attest", integer height and position, a string id.
+ *  Outside that domain the result is unspecified: a NaN key compares as equal. */
 export function applyOrder(a: ChainEvent, b: ChainEvent): number {
   return a.height - b.height || Number(a.kind === "attest") - Number(b.kind === "attest") || a.pos - b.pos ||
     ord(eventId(a), eventId(b));

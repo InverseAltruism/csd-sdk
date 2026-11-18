@@ -453,7 +453,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   but never de-duplicated, so a double-fed transaction (an overlapping scanner page) applied twice and
   double-credited `o.paid`/`o.delivered` on the partial-fill path. At an event height >= V29 a duplicate
   (same propose `id` / attest `txid`) is dropped before apply; the first in consensus order is kept
-  (`resolve.ts` `eid`/`seenIds`). The identity is the L1 tx hash (sha256d), not attacker-choosable, and a
+  (`resolve.ts` `eventId`/`seenIds`). The identity is the L1 tx hash (sha256d), not attacker-choosable, and a
   duplicate pair shares one txid == one block, so both copies always land on the SAME side of the gate. The
   cairnx-SERVICE-side de-dup on the attestation pull (its `scan.ts`) is a separate, un-gated defensive
   change; only the resolve() half is gated here.
