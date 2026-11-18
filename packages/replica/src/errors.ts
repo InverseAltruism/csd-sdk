@@ -1,4 +1,4 @@
-import type { SourceCode } from "./types.js";
+import type { SourceCode, Step } from "./types.js";
 
 /** A source, store or basis the replica refuses to run with: an error of the caller's code or configuration, never a
  *  fact about the chain. */
@@ -16,3 +16,7 @@ export class SourceError extends Error {
 export const BACKOFF_MAX_MS = 300_000;
 
 export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The `cannot` step for what a source threw: its SourceError, else SOURCE_UNAVAILABLE. */
+export const cannotOf = (e: unknown): Step => e instanceof SourceError ? { kind: "cannot", code: e.code, reason: e.message, retryAfterMs: e.retryAfterMs }
+  : { kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: messageOf(e), retryAfterMs: null };

@@ -69,6 +69,62 @@ replayed on demand.
   does not link to it, or that serves another block at its tip height than its `/tip` names, is `SOURCE_MALFORMED`.
   `BRANCH_MOVED` remains only for a chain that moved below the floor.
 
+  `hostedBlocks({ origin, root, fetch?, paceMs?, timeoutMs? })`, in `./browser` and `./server`, is a level 3 source
+  of complete blocks from a server it does not trust, our front door at `origin` (an http or https URL without
+  credentials, query or fragment): `/api/rpc/tip`, `/api/blocks/:from/:count`, `/api/headers/:from/:count` and
+  `/api/rpc/tx/:id`, with the HTTP rules above. The server's `/api/rpc/tip` only says how far to try to read: it
+  travels as the step's `reach`, which the loop uses to take another step, and never as a tip. The tip a step
+  reports (height, hash and header time) is the highest header the anchor root's window verified. `root` is where
+  the headers come from:
+
+  - `{ kind: "anchor", anchor, window? }`: headers the source verifies itself with csd-light, seeded with the 45
+    headers ending at `anchor` (workRoot), which must lie at or below the activation height less one
+    (`BELOW_FLOOR`); the seed is kept only once it verifies, so a wrong seed answer is read again. Then each header
+    is checked for its link, time rules, LWMA bits and proof of work. The window holds the last 45 + `window`
+    headers (default 720), never dropping the store's cursor below the 45 a branch needs, and counts `work` from
+    workRoot. When a page does not link, or the server's tip is another block at a height the window holds, the
+    server's headers from the window's lowest forkable block to 256 above its tip are read: a branch from inside the
+    window is csd-light's `tryReorg`, adopted only with more work (else `LESS_WORK`, nothing rolled back), and the
+    store rolls back to its fork block. A branch from lower is verified from workRoot: a fresh window from the same
+    seed walks the server's headers to the cursor and on until it has more work than the held window (a tie keeps
+    the held chain; at the server's tip without more work, `LESS_WORK`, kept until the server's tip moves),
+    comparing the hash of each held block it passes, and is adopted at the highest held block on its chain, where
+    the store rolls back. A header above workRoot that names another parent is `PIN_OFF_CHAIN`. A reorg found on a
+    later page of a step drops the blocks the step bound above the fork; a rollback the store did not commit is
+    returned again. A server whose tip is below the cursor on the chain held, or below the window, is
+    `SOURCE_UNAVAILABLE`, nothing rolled back.
+
+    The walk from workRoot reads at least one batch of 512 headers a step and stops at the step's request budget or
+    deadline; a walk that fails is dropped and starts afresh. While it runs, each step it does not finish is
+    `SOURCE_RATE_LIMITED` with no wait: an `advance()` ends after that step, `status()` shows that code with the
+    cursor unchanged, and the next `advance()` goes on. From the anchor at 29,859 to a tip of 144,460 that is 224
+    batches, about 26 steps at 10 requests a step (arithmetic, not measured). It holds a second window of 45 +
+    `window` headers beside the first and the 45 of the seed: with the default window, 1,575 headers, about 1.5 MB
+    at 974 bytes a header object (design section 9).
+
+  A step reads the server's tip, then pages from the cursor up while its budget lasts (always one page). A page is
+  the route's whole aligned 64 when all of it lies at or below that height, so that an edge cache can serve every
+  reader the same URLs. With `maxBlocks` of 64 or more a step that spans pages ends on a page's last block and no
+  page is read twice; with fewer, a page is read once by each step that needs it. A page refused for what it holds
+  (a block that does not link or verify, a body that does not bind) is read once more from the first block not
+  bound, with a fresh query parameter, and only that answer is refused; `readBlocks` over the source re-reads a
+  block the same way. Blocks bound before a refusal are kept. The route does not yet carry `spent_tx`, so each
+  member's source transaction is one `/api/rpc/tx/:id` read. No pace is set by default: a 429 is waited per its
+  Retry-After.
+
+  What the hosted route must keep for this source: it ignores unknown query parameters, and any cache in front of
+  it keys on the whole URL, query included, so the fresh re-read reaches the origin. Neither is checked by the
+  source.
+
+  What a store must keep (not yet done; the disk and browser stores' slices): the window, `work` and `workRoot`.
+  Until a store persists them, a source started over a filled store has no held work: it walks from workRoot to the
+  store's cursor and adopts any chain from the anchor, valid in proof of work, that reaches the cursor's height,
+  rolling back to the highest held block on it. A running source never does this. The store needs a channel to take
+  `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
+  `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
+  the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
+  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again.
+
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
   `"all"` (every transaction but the coinbase) or `"members"` (each Propose in the rule's domain and each Attest). It

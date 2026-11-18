@@ -8,6 +8,7 @@ import type { BlocksSource } from "./types.js";
 export * from "./index.js";
 export type { HttpOptions } from "./http.js";
 export type { NodeBlocksOptions };
+export { hostedBlocks, type HostedBlocksOptions } from "./hosted-blocks.js";
 
 // The outcome of the one read, a list or the configuration error it threw, is kept for every later call.
 let listed: { hosts: ReadonlySet<string> } | { error: unknown } | undefined;

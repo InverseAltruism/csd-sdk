@@ -4,9 +4,8 @@
 // block-read.ts binds it, its events made by cairnx-core's blockMembers and blockEvents with the step's two sets. A
 // failure after blocks are bound ends the step before the failing block, keeping them; the next step meets it first.
 // When the node's chain no longer holds the cursor's block, fork.ts finds the highest held block it does hold.
-import { blockEvents, blockMembers, HASH_RE } from "@inversealtruism/cairnx-core";
-import { pickOf, readBound, type Pick } from "./block-read.js";
-import { SourceError, messageOf } from "./errors.js";
+import { eventsOf, memberPick, pickOf, readBound, readHead, type Pick } from "./block-read.js";
+import { cannotOf, SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import { httpSessions, type HttpOptions, type Session } from "./http.js";
 import { stepSofar } from "./sofar.js";
@@ -15,11 +14,6 @@ import type { BlockEvents, BlocksSource, BoundBlock, StepContext, Step, TipView 
 /** `node`: the node's base URL, which the entry's address rule must accept. */
 export interface NodeBlocksOptions extends HttpOptions { readonly node: string }
 const none: Pick = () => [];
-// A bound body that the rule of CONVENTION section 33 refuses (a payload at position 0, a field out of its type) is
-// no block of the chain.
-function ruled<T>(f: () => T): T {
-  try { return f(); } catch (e) { throw new SourceError("SOURCE_MALFORMED", messageOf(e)); }
-}
 const isLink = (e: unknown) => e instanceof SourceError && e.code === "BRANCH_MOVED";
 
 /** The source over `node`, an address the caller's entry accepted. */
@@ -27,11 +21,7 @@ export function nodeBlocksAt(node: string, o: HttpOptions): BlocksSource {
   const session = httpSessions(node, o);
   let known: TipView | null = null;
 
-  async function head(s: Session): Promise<Head> {
-    const t = await s.client.tip(), hash = typeof t?.tip === "string" ? t.tip : "";
-    if (!Number.isSafeInteger(t?.height) || t.height < 0 || !HASH_RE.test(hash)) throw new SourceError("SOURCE_MALFORMED", "the node's /tip is not a height and a hash");
-    return { height: t.height, hash };
-  }
+  const head = (s: Session): Promise<Head> => readHead(s, "the node");
   // The tip's header time, from the last block read when that is the tip, else from a read of the tip's block.
   async function tipView(s: Session, h: Head, last: BoundBlock | null): Promise<TipView> {
     if (known?.hash === h.hash && last?.hash !== h.hash) return known;
@@ -52,10 +42,9 @@ export function nodeBlocksAt(node: string, o: HttpOptions): BlocksSource {
     for (let height = (at?.height ?? ctx.rule.activationHeight - 1) + 1; height <= h.height; height++) {
       if (blocks.length > 0 && (blocks.length >= b.maxBlocks || s.requests() >= b.maxRequests || ctx.now() >= b.deadlineAt)) break;
       try {
-        const r = await readBound(s, height, (txs) => ruled(() => blockMembers(height, txs, sofar.view, ctx.rule).map((m) => m.item)), last?.hash ?? at?.hash ?? null);
+        const r = await readBound(s, height, memberPick(height, sofar.view, ctx.rule), last?.hash ?? at?.hash ?? null);
         if (height === h.height && r.hash !== h.hash) throw new SourceError("SOURCE_MALFORMED", `the node serves ${r.hash} at ${height}, not the ${h.hash} its /tip names`);
-        const events = ruled(() => blockEvents(height, r.txs, sofar.view,
-          blockMembers(height, r.txs, sofar.view, ctx.rule).map((m) => r.authors.get(m.item.txid) ?? ""), ctx.rule));
+        const events = eventsOf(r, sofar.view, ctx.rule);
         sofar.add(events);
         blocks.push({ height, hash: r.hash, events });
         last = r;
@@ -89,8 +78,7 @@ export function nodeBlocksAt(node: string, o: HttpOptions): BlocksSource {
         return s;
       } catch (e) {
         if (ctx.signal.aborted) throw e;
-        return e instanceof SourceError ? { kind: "cannot", code: e.code, reason: e.message, retryAfterMs: e.retryAfterMs }
-          : { kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: messageOf(e), retryAfterMs: null };
+        return cannotOf(e);
       }
     },
     async tip(signal) {

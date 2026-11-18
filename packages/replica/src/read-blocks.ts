@@ -3,7 +3,8 @@ import type { AuthorScope, BlocksSource, BoundBlock } from "./types.js";
 
 /** Every block from `from` to `to` in height order, each bound to its header and linked to the one before, with the
  *  authors of `authors` bound (`members` by `rule`, default CairnX's). Throws SourceError on the first block that
- *  cannot be read or bound; a refusal of served data is final only after a re-read with the cache bypassed. */
+ *  cannot be read or bound. A node's reads bypass caches, so its refusal is final at once; hostedBlocks reads a block
+ *  it refuses once more past caches before it throws. */
 export async function* readBlocks(o: {
   source: BlocksSource; from: number; to: number; authors: AuthorScope; rule?: EventRule; signal?: AbortSignal;
 }): AsyncGenerator<BoundBlock> {

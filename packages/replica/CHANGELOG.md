@@ -25,3 +25,14 @@
   nothing back. The address rule of each entry, with `CAIRNX_OWN_NODE_HOSTS` on a server, parsed strictly. `readBlocks`,
   `BoundBlock`, `BlocksSource` and `SourceError`. Dependencies: csd-client, csd-codec, csd-crypto and csd-light.
 - The loop takes a source's Retry-After up to 300 s and ignores one that is not a finite number >= 0.
+- `hostedBlocks` in `./browser` and `./server`: complete blocks from the front door's `/api/blocks` in aligned pages,
+  bound to headers from an anchor root (verified with csd-light in a window of 45 + `window` headers, `work` counted
+  from workRoot, in-window branches by `tryReorg`, lower ones verified from workRoot by the reseed rule; `LESS_WORK`,
+  `PIN_OFF_CHAIN`, `BELOW_FLOOR`). A refused page is read once more past edge caches before
+  the refusal. `readBlocks` over it reads blocks whose headers the root holds. The tip a step reports is a header
+  the root vouches for; the server's claimed height travels as the blocks step's new `reach`, which the loop uses
+  only to decide whether to take another step.
+- 2026-11-18, a copy: `src/http.ts` holds a copy of csd-client's capped body read, which is private to `CsdClient`.
+  Remove it when csd-client exports that read.
+- Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
+  follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").

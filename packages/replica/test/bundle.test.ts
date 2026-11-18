@@ -31,6 +31,9 @@ for (const file of ["index.js", "browser.js"]) {
   ok(`${file} bundles for the browser with esbuild ${esbuild.version} (${"text" in b ? b.text.length : 0} bytes) and names no Buffer, require or process global`,
     "text" in b && hit === null, "error" in b ? b.error : String(hit?.[0]));
 }
+const browser = await bundle({ file: "browser.js" });
+ok("./browser carries hostedBlocks with the header window (its routes and csd-light's tryReorg are in the bundle)",
+  "text" in browser && browser.text.includes("/api/blocks/") && browser.text.includes("/api/headers/") && browser.text.includes("tryReorg"));
 const nodeOnly = await bundle({ contents: 'import { readFileSync } from "node:fs"; export const f = readFileSync;' });
 ok("control: an entry importing node:fs does not bundle for the browser", "error" in nodeOnly);
 const server = await bundle({ file: "server.js" });

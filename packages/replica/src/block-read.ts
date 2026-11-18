@@ -1,11 +1,11 @@
-// One block read from a node and bound: its header hashed and equal to the hash served, its prev equal to the block
-// before when that is known, its body bound to the header's merkle root (csd-light bindBlockTxs), and the author of
-// each picked transaction bound by csd-crypto authorOf to the owner of the coin its first input spends, read from the
-// source transaction once its txid is recomputed (CONVENTION section 33.5). The source transaction is the block
-// answer's `spent_tx` field when the answer carries one (P3) and it hashes to the spent id, else the node's /tx/:id.
-// Every read bypasses HTTP caches (http.ts), so a refusal is final at once; a re-read with the cache bypassed is the
-// hosted source's (slice 4), whose pages a cache may hold.
-import type { EventRule } from "@inversealtruism/cairnx-core";
+// One block answer bound: its header hashed and equal to the hash served, its prev equal to the block before when
+// that is known, its body bound to the header's merkle root (csd-light bindBlockTxs), and the author of each picked
+// transaction bound by csd-crypto authorOf to the owner of the coin its first input spends, read from the source
+// transaction once its txid is recomputed (CONVENTION section 33.5). The source transaction is the block answer's
+// `spent_tx` field when the answer carries one (P3; our hosted route does not serve it yet) and it hashes to the
+// spent id, else the session's /tx/:id. A node's answers bypass every cache (http.ts), so a refusal is final at once;
+// the hosted source's pages may come from an edge cache and are read again before a refusal (hosted-blocks.ts).
+import { blockEvents, blockMembers, HASH_RE, type ChainEvent, type EventRule, type EventsSoFar } from "@inversealtruism/cairnx-core";
 import { headerHash, txid as codecTxid, type BlockHeader, type Tx } from "@inversealtruism/csd-codec";
 import { rpcHeaderToHeader, rpcTxToTx, type CsdClient, type RpcHeaderJson, type RpcTxJson } from "@inversealtruism/csd-client";
 import { authorOf } from "@inversealtruism/csd-crypto";
@@ -22,7 +22,10 @@ export const pickOf = (scope: AuthorScope, rule: EventRule): Pick => (txs) =>
   scope === "none" ? [] : txs.filter((t) => t.pos > 0 && (scope === "all" || t.tx.app.type === "Attest" ||
     (t.tx.app.type === "Propose" && t.tx.app.domain === rule.domain)));
 
-function headerOf(v: unknown, height: number, prev: string | null): { hash: string; header: BlockHeader; txs: unknown } {
+/** A block answer's header, hashed and checked against the hash served, its height and, when given, `prev`. */
+export interface Served { readonly height: number; readonly hash: string; readonly header: BlockHeader; readonly txs: unknown }
+
+export function headerOf(v: unknown, height: number, prev: string | null): Served {
   const b = v as { height?: unknown; hash?: unknown; header?: RpcHeaderJson; txs?: unknown } | null;
   if (b === null || typeof b !== "object" || b.height !== height || typeof b.hash !== "string") {
     throw new SourceError("SOURCE_MALFORMED", `block ${height}: the answer is not the block at ${height}`);
@@ -36,7 +39,7 @@ function headerOf(v: unknown, height: number, prev: string | null): { hash: stri
   }
   if (hash !== b.hash.toLowerCase()) throw new SourceError("HEADER_INVALID", `block ${height}: the header hashes to ${hash}, not ${b.hash}`);
   if (prev !== null && String(header.prev).toLowerCase() !== prev) throw new SourceError("BRANCH_MOVED", `block ${height} does not link to ${prev}`);
-  return { hash, header, txs: b.txs };
+  return { height, hash, header, txs: b.txs };
 }
 
 // The transaction a node JSON decodes to when its txid is `id`, else the reason it is not.
@@ -69,11 +72,11 @@ async function authorOfMember(c: CsdClient, t: BoundTx, memo: Map<string, Promis
   return author;
 }
 
-/** The block at `height`, bound, with the authors of `pick` bound; throws SourceError for what the node served. */
-export async function readBound(s: Session, height: number, pick: Pick, prev: string | null): Promise<BoundBlock> {
-  const c = s.client, { hash, header, txs } = headerOf(await c.blockByHeight(height), height, prev);
-  // The own node is the header root, so its header is taken as given; bindBlockTxs reads only its height and merkle.
-  const bound = bindBlockTxs(txs, { height, hash, header, chainwork: 0n, trusted: true });
+/** A served block bound, with the authors of `pick` bound. The caller has checked its header against its root;
+ *  bindBlockTxs reads only the header's height and merkle root. Throws SourceError. */
+export async function bindServed(s: Session, b: Served, pick: Pick): Promise<BoundBlock> {
+  const { height, hash, header } = b, c = s.client;
+  const bound = bindBlockTxs(b.txs, { height, hash, header, chainwork: 0n, trusted: true });
   if (!bound.ok) throw new SourceError(bound.kind === "malformed" ? "SOURCE_MALFORMED" : "BODY_MISMATCH", bound.reason);
   const picked = pick(bound.txs), memo = new Map<string, Promise<Tx>>(), authors = new Map<string, string>();
   for (let i = 0; i < picked.length; i += PREFETCH) {
@@ -81,4 +84,27 @@ export async function readBound(s: Session, height: number, pick: Pick, prev: st
     part.forEach((t, j) => authors.set(t.txid, got[j]!));
   }
   return { height, hash, header, txs: bound.txs, authors };
+}
+
+/** The node's block at `height`, bound, the node being the header root; throws SourceError for what it served. */
+export const readBound = async (s: Session, height: number, pick: Pick, prev: string | null): Promise<BoundBlock> =>
+  bindServed(s, headerOf(await s.client.blockByHeight(height), height, prev), pick);
+
+// A bound body that the rule of CONVENTION section 33 refuses (a payload at position 0, a field out of its type) is
+// no block of the chain.
+function ruled<T>(f: () => T): T {
+  try { return f(); } catch (e) { throw new SourceError("SOURCE_MALFORMED", messageOf(e)); }
+}
+/** The event members of a block by cairnx-core's blockMembers, whose authors a read binds. */
+export const memberPick = (height: number, sofar: EventsSoFar, rule: EventRule): Pick => (txs) =>
+  ruled(() => blockMembers(height, txs, sofar, rule).map((m) => m.item));
+/** The events of a bound block by cairnx-core's blockEvents, with the authors its read bound. */
+export const eventsOf = (b: BoundBlock, sofar: EventsSoFar, rule: EventRule): ChainEvent[] =>
+  ruled(() => blockEvents(b.height, b.txs, sofar, blockMembers(b.height, b.txs, sofar, rule).map((m) => b.authors.get(m.item.txid) ?? ""), rule));
+
+/** A server's /tip: a height and a hash. */
+export async function readHead(s: Session, who: string): Promise<{ height: number; hash: string }> {
+  const t = await s.client.tip(), hash = typeof t?.tip === "string" ? t.tip : "";
+  if (!Number.isSafeInteger(t?.height) || t.height < 0 || !HASH_RE.test(hash)) throw new SourceError("SOURCE_MALFORMED", `${who}'s /tip is not a height and a hash`);
+  return { height: t.height, hash };
 }

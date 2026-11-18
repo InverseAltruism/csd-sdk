@@ -29,7 +29,11 @@ export type Basis =
  *  spent coin; or inside a release's log. */
 export type RecordProof = "served" | "inclusion" | "pinned";
 
-/** Internal. A source's tip: height, hash and header time in seconds. */
+/** Internal. A source's tip: height, hash and header time in seconds, all three of one header its root vouches for,
+ *  so a depth counted from it is a depth of verified work. nodeBlocks: the block the node's /tip names, its time from
+ *  that block's header (the node is the root). hostedBlocks under an anchor root: the highest header its window
+ *  verified, never the server's /tip, which only says how far to try to read and travels as a blocks step's
+ *  `reach`. */
 export interface TipView { readonly height: number; readonly hash: string; readonly time: number }
 
 /** Internal. One block's events in the order of CONVENTION section 33.3; `hash` is null only at or below a pin, or
@@ -48,15 +52,19 @@ export interface StepContext {
 export type SourceCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "SOURCE_MALFORMED" | "BODY_MISMATCH" | "AUTHOR_UNBOUND"
   | "HEADER_INVALID" | "LESS_WORK" | "BRANCH_MOVED" | "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "BELOW_FLOOR";
 
-/** Internal. One step of a source. A `blocks` cursor hash is null only at or below a pin. */
+/** Internal. One step of a source. A `blocks` cursor hash is null only at or below a pin. `reach`, when present, is how
+ *  far the source expects to read on a server's unverified word: the loop may take more steps toward it, and it
+ *  reaches no tip, status or depth. */
 export type Step =
   | { readonly kind: "blocks"; readonly blocks: BlockEvents[]; readonly cursor: { readonly height: number; readonly hash: string | null };
-      readonly tip: TipView }
+      readonly tip: TipView; readonly reach?: number }
   | { readonly kind: "idle"; readonly tip: TipView }
   | { readonly kind: "reorg"; readonly to: Cursor; readonly tip: TipView }
   | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null };
 
-/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. */
+/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. It has
+ *  no way yet to hand a commit a self-verified root's window, `work` and `workRoot`, or to take them back at open
+ *  (README, "What a store must keep"). */
 export interface Source {
   readonly basis: Basis; readonly floor: Cursor | null;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
