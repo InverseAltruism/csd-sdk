@@ -3,6 +3,7 @@
 // Covered here: whole commits, the compare of `expect` with the stored cursor, rollback, and open's refusals.
 import { CAIRNX_EVENT_RULE, EVENTS_HASH_START, canonicalJson, eventsHashStep, type EventRule } from "@inversealtruism/cairnx-core";
 import { ReplicaConfigError, type Basis, type BlockRow, type Boundary, type Commit, type Cursor, type Store, type StoreMeta } from "../src/index.js";
+import { ROWS_HASH_START, rowsHashStep } from "../src/rowshash.js";
 import { fixtures } from "../src/testing.js";
 
 export type Check = { name: string; ok: boolean };
@@ -12,13 +13,16 @@ const BLOCKS: Basis = { kind: "blocks", root: { kind: "own-node", node: "http://
 const key = (basis: Basis) => ({ format: 1, rule: CAIRNX_EVENT_RULE, basis }) as const;
 const at = (height: number, c = "1"): Cursor => ({ height, hash: `0x${c.repeat(64 - String(height).length)}${height}` });
 const f = fixtures();
-const row = (height: number, prev: string, c = "1"): BlockRow => {
-  const events = [f.prop({ v: 1, t: "nrenew", name: "alice" }, { proposer: `0x${"a1".repeat(20)}`, height, pos: 1 })];
-  return { height, hash: at(height, c).hash, events, eventsHash: eventsHashStep(prev, height, events) };
+// A row after `prev`, the row below it (null for the first), with both running hashes.
+const row = (height: number, prev: BlockRow | null, c = "1"): BlockRow => {
+  const events = [f.prop({ v: 1, t: "nrenew", name: "alice" }, { proposer: `0x${"a1".repeat(20)}`, height, pos: 1 })], hash = at(height, c).hash;
+  return { height, hash, events, eventsHash: eventsHashStep(prev?.eventsHash ?? EVENTS_HASH_START, height, events),
+    rowsHash: rowsHashStep(prev?.rowsHash ?? ROWS_HASH_START, { height, hash, events }) };
 };
-const bound = (height: number): Boundary => ({ height, hash: at(height).hash, eventsHash: EVENTS_HASH_START, stateHash: EVENTS_HASH_START });
-const meta = (cursor: Cursor | null, rows: BlockRow[], basis: Basis = FEED, rule: EventRule = CAIRNX_EVENT_RULE): StoreMeta => ({
-  format: 1, rule, basis, cursor, eventsHash: rows.at(-1)?.eventsHash ?? EVENTS_HASH_START,
+const bound = (height: number, stateHash: string | null = EVENTS_HASH_START): Boundary => ({ height, hash: at(height).hash, eventsHash: EVENTS_HASH_START, stateHash });
+// A meta whose running hashes are those of `last`, the last row held after the commit.
+const meta = (cursor: Cursor | null, rows: BlockRow[], basis: Basis = FEED, rule: EventRule = CAIRNX_EVENT_RULE, last = rows.at(-1)): StoreMeta => ({
+  format: 1, rule, basis, cursor, eventsHash: last?.eventsHash ?? EVENTS_HASH_START, rowsHash: last?.rowsHash ?? ROWS_HASH_START,
   eventCount: rows.reduce((n, r) => n + r.events.length, 0), witnessed: null, windowSha256: null, work: null, workRoot: null,
 });
 const commit = (expect: Cursor | null, rows: BlockRow[], cursor: Cursor | null, more: Partial<Commit> = {}): Commit =>
@@ -42,7 +46,7 @@ export async function storeSuite(make: () => Store | Promise<Store>): Promise<Ch
   check("a commit before open is refused", code(await s.commit(commit(null, [], at(30_000)))) === "STORE_FAILED");
   const first = await s.open(key(FEED));
   check("a fresh store opens with no meta", first.ok && first.meta === null);
-  const r1 = row(30_001, EVENTS_HASH_START), r2 = row(30_050, r1.eventsHash), r3 = row(30_100, r2.eventsHash);
+  const r1 = row(30_001, null), r2 = row(30_050, r1), r3 = row(30_100, r2);
   const c1 = commit(null, structuredClone([r1, r2]), at(30_060), { boundaries: [bound(30_000)], headerWindow: new Uint8Array([1, 2, 3]) });
   check("the first commit is applied", (await s.commit(c1)).ok);
   const want1 = { rows: [r1, r2], boundaries: [bound(30_000)], window: [1, 2, 3], meta: c1.meta };
@@ -59,20 +63,26 @@ export async function storeSuite(make: () => Store | Promise<Store>): Promise<Ch
     { ...commit(at(30_060), [r3], at(30_100)), meta: meta(at(30_100), [r3], FEED, { domain: "other:v1", activationHeight: 1 }) }];
   for (const c of elsewhere) check(`a commit under another ${c.meta.basis === FEED ? "rule" : "basis"} is refused`, code(await s.commit(c)) === "STORE_FAILED");
   const refused: [string, Commit][] = [
-    ["a row at or below the stored cursor", commit(at(30_060), [row(30_060, r2.eventsHash), r3], at(30_100))],
-    ["rows out of height order", commit(at(30_060), [r3, row(30_090, r2.eventsHash)], at(30_100))],
+    ["a row at or below the stored cursor", commit(at(30_060), [row(30_060, r2), r3], at(30_100))],
+    ["rows out of height order", commit(at(30_060), [r3, row(30_090, r2)], at(30_100))],
     ["a cursor below the last row", commit(at(30_060), [r3], at(30_099))],
     ["a boundary not above the last one kept", commit(at(30_060), [r3], at(30_100), { boundaries: [bound(30_000)] })],
-    ["a rollback above the stored cursor", commit(at(30_060), [], at(30_070), { rollbackTo: at(30_070) })],
+    ["a rollback above the stored cursor", { ...commit(at(30_060), [], at(30_070), { rollbackTo: at(30_070) }), meta: meta(at(30_070), [r2]) }],
+    ["a meta whose events hash is not the last row's", { ...commit(at(30_060), [r3], at(30_100)), meta: { ...meta(at(30_100), [r3]), eventsHash: r2.eventsHash } }],
+    ["a meta whose rows hash is not the last row's", { ...commit(at(30_060), [r3], at(30_100)), meta: { ...meta(at(30_100), [r3]), rowsHash: r2.rowsHash } }],
+    ["a meta with no new rows whose hashes are not those of the last row kept", commit(at(30_060), [], at(30_070))],
   ];
   for (const [name, c] of refused) {
     check(`a commit with ${name} is refused whole`, code(await s.commit(c)) === "STORE_FAILED" && same(await held(s), want1));
   }
-  const c2 = commit(at(30_060), [r3], at(30_100), { boundaries: [bound(30_030)] });
+  const c2 = commit(at(30_060), [r3], at(30_100), { boundaries: [bound(30_030, null)] });
   check("of two writers with the same expect, the second is CURSOR_MOVED", (await s.commit(c2)).ok && code(await s.commit(c2)) === "CURSOR_MOVED");
+  check("a boundary without a state hash is held as committed", same(await s.boundaries(), [bound(30_000), bound(30_030, null)]));
+  const still = await s.commit({ ...commit(at(30_100), [], at(30_110)), meta: meta(at(30_110), [], FEED, CAIRNX_EVENT_RULE, r3) });
+  check("a commit with no new rows is taken with the last row's hashes in its meta", still.ok);
 
-  const r2b = row(30_040, r1.eventsHash, "b");
-  const back = await s.commit(commit(at(30_100), [r2b], at(30_045), { rollbackTo: { height: r1.height, hash: r1.hash! } }));
+  const r2b = row(30_040, r1, "b");
+  const back = await s.commit(commit(at(30_110), [r2b], at(30_045), { rollbackTo: { height: r1.height, hash: r1.hash! } }));
   check("a rollback onto a held row keeps it and what lies below, drops the rows and boundaries above, and appends",
     back.ok && same(await held(s), { rows: [r1, r2b], boundaries: [bound(30_000)], window: [1, 2, 3], meta: meta(at(30_045), [r2b]) }));
   const none = await s.commit(commit(at(30_045), [], null, { rollbackTo: null }));
