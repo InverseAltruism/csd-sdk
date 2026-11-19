@@ -59,7 +59,7 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-light, next version (2026-11-19, Plan 91 wallet audit F4; unreleased, version not yet bumped; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
+## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
 `bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose
 `prev_txid`, `script_sig`, `script_pubkey`, `payload_hash` or `proposal_id` is not `0x` and lower-case hex, or whose
@@ -76,7 +76,9 @@ for a Propose, id equality for an Attest); none binds now. The same 486 blocks b
 and give the same 41 events in the same order (CONVENTION section 33 `blockEvents`, authors by `authorOf`).
 `rpcTxToTx`, the codec and the builders accept what they accepted: a source tx read by txid is unaffected, and its
 only fields consumers use are the spent output's `script_pubkey` (through `authorOf`, which returns the address in
-the node's form) and values. Txids, sighashes, signatures and replay output are unchanged.
+the node's form) and values. Txids, sighashes, signatures and replay output are unchanged. csd-light gets a
+CHANGELOG listed in `files`. Its one workspace dependent, cairnx-replica, is private and has no published version,
+so it keeps 0.1.0 and packs with csd-light 0.1.27.
 
 ## cairnx-core, next release (2026-11-19, Plan 91 audit; unreleased; no consensus-surface change) - the convention text follows the code
 
