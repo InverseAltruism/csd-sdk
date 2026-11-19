@@ -15,6 +15,8 @@ export interface ViewSource { height: number; hash: string; input: string; core:
 
 export interface View {
   readonly at: Readonly<At>;
+  /** Internal to `answer`: the prepared arrays and their orders. Not part of the contract; a host reads a view only
+   *  through `answer` and builds one only with `prepareView` (again, when only the block hash changes). */
   readonly lists: { readonly [R in keyof typeof LISTS]: ReturnType<(typeof LISTS)[R]["build"]> };
 }
 

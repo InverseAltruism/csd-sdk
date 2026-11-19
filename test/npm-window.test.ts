@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
-import { checkWindow, finishWindow, headOnOriginMaster, publishWindow } from "../scripts/npm-window.mjs";
+import { checkWindow, finishWindow, headOnOriginMaster, publishOrder, publishWindow } from "../scripts/npm-window.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -240,6 +240,9 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   ok("SHA1SUMS and SHA256SUMS do not list a tarball that failed verify-tarball",
     sums(verify, "SHA1SUMS") === "" && sums(verify, "SHA256SUMS") === "", sums(verify, "SHA1SUMS") + sums(verify, "SHA256SUMS"));
   // cairnx-api: an exact peer on cairnx-core, which pnpm packs from workspace:* as the version HEAD names
+  const peerFirst = publishOrder([{ name: "@inversealtruism/cairnx-api", peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }, { name: "@inversealtruism/cairnx-core" }]);
+  ok("a package is ordered after the workspace package it names as a peer (cairnx-core before cairnx-api, against the name order)",
+    peerFirst.map((p) => p.name).join() === "@inversealtruism/cairnx-core,@inversealtruism/cairnx-api", peerFirst.map((p) => p.name).join());
   const API = "@inversealtruism/cairnx-api";
   const api = await window({ unpublished: API });
   const apiTgz = api.tarballs[0]?.path ?? "";

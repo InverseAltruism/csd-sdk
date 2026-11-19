@@ -61,7 +61,8 @@ reason to allow one. A missing row is never an error: `rows` is empty.
 
   `answer` returns four of them: `NOT_FOUND`, `INVALID_QUERY`, `SNAPSHOT_NOT_HELD` and `NOT_READY`.
   `METHOD_NOT_ALLOWED` and `INTERNAL` are for the host to send, and `INVALID_PATH`, `RATE_LIMITED`,
-  `UPSTREAM_UNAVAILABLE` and `RESPONSE_TOO_LARGE` for a proxy in front of it; this package only names them.
+  `UPSTREAM_UNAVAILABLE` and `RESPONSE_TOO_LARGE` for a proxy in front of it; this package only names them. A proxy
+  may also answer `NOT_FOUND` and `METHOD_NOT_ALLOWED` itself (`ERRORS` marks both `from: "both"`).
 
 - `ROUTES`, `isRoute`, `ROUTE_TABLE`, `paramsOf`, `LIMIT_DEFAULT`, `KEYS_MAX`, `NAME_STATUSES`, `OFFER_STATUSES`,
   `BID_STATUSES`, `OFFER_KINDS`: the closed parameter table of each route, as data.
