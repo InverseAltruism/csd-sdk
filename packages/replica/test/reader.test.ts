@@ -84,7 +84,8 @@ now = timeAt(TIP) * 1000 + 31 * MIN;
 const stale = await caller(TIP, [witnessOn(all, TIP).witness]);
 ok("a 31-minute-old tip with a witness confirming now: TIP_STALE alone", (await balanceWhy(stale)) === "TIP_STALE");
 now = timeAt(TIP) * 1000 + 29 * MIN;
-ok("control: at 29 minutes it is verified", (await stale.r.balance("CAIRN", HOLDER)).verified);
+const fresh29 = await caller(TIP, [witnessOn(all, TIP).witness]);
+ok("control: a replica confirmed at 29 minutes is verified", (await fresh29.r.balance("CAIRN", HOLDER)).verified);
 now = timeAt(TIP) * 1000 + MIN;
 
 const BEH = TIP - 5;
@@ -96,7 +97,7 @@ const pf = await caller(BEH, [witnessOn(all, BEH).witness, forged.witness]);
 ok("a higher tip whose header does not hash to the hash named does not count: verified", (await pf.r.balance("CAIRN", HOLDER)).verified);
 const far = witnessOn(all, TIP, { id: "far", claim: (t) => ({ ...t, height: BEH + FINAL_DEPTH + 30 }) });
 const pp = await caller(BEH, [witnessOn(all, BEH).witness, far.witness]);
-ok(`a valid header named ${FINAL_DEPTH + 30} above a fresh tip is not plausible and does not count: verified`, (await pp.r.balance("CAIRN", HOLDER)).verified);
+ok(`a valid header named ${FINAL_DEPTH + 30} above the replica's tip denies, however far (no plausibility cap): TIP_BEHIND_PEER alone`, (await balanceWhy(pp)) === "TIP_BEHIND_PEER");
 now = timeAt(TIP) * 1000 + MIN;
 
 const lone = await caller(TIP);
@@ -104,8 +105,8 @@ ok("a caller root and no witness: NOT_WITNESSED alone", (await balanceWhy(lone))
 const LOW = TIP - 20;
 now = timeAt(LOW) * 1000 + MIN;
 const low = await caller(LOW, [witnessOn(all, TIP).witness]);
-ok(`a replica at ${LOW}, more than ${FINAL_DEPTH} below the witness's tip ${TIP}: NOT_WITNESSED alone, no hash asked`,
-  (await balanceWhy(low)) === "NOT_WITNESSED" && low.r.status().witnessed === null);
+ok(`a replica at ${LOW}, more than ${FINAL_DEPTH} below the witness's tip ${TIP}: TIP_BEHIND_PEER and NOT_WITNESSED, no confirmation`,
+  (await balanceWhy(low)) === "TIP_BEHIND_PEER,NOT_WITNESSED" && low.r.status().witnessed === null);
 const H1 = TIP - 20, H2 = Array.from({ length: 20 }, (_, i) => H1 + 1 + i).find((h) => timeAt(h) >= timeAt(H1) + 60)!;
 now = timeAt(H1) * 1000;
 const sw = witnessOn(all, H1), silent = await caller(H1, [sw.witness]);
@@ -183,7 +184,8 @@ ok("an events cursor above the replica's: CURSOR_ABOVE_TIP noted, no items, the 
 const other = witnessOn({ ...all, ...branchFrom(TIP - 3) }, TIP, { id: "other", origin: "https://other.example" });
 const dis = await caller(TIP, [witnessOn(all, TIP).witness, other.witness]);
 const da = await dis.r.balance("CAIRN", HOLDER);
-ok("a second witness on another branch at the same height: verified by the first, noted SOURCES_DISAGREE", da.verified && da.notes.some((n) => n.code === "SOURCES_DISAGREE"));
+ok("a second witness on another branch at the same height voids the first's confirmation: NOT_WITNESSED, noted SOURCES_DISAGREE",
+  codes(da) === "NOT_WITNESSED" && da.notes.some((n) => n.code === "SOURCES_DISAGREE"));
 const broken: Store = { ...memoryStore(), open: async () => { throw new Error("disk gone"); } };
 const un = await open({ source: nodeSource(), store: broken, clock });
 const ua = await un.balance("CAIRN", HOLDER);
@@ -226,5 +228,5 @@ ok("its events at depth 0 are both, verified at level 3; at depth 12 (deep heigh
 const l18 = await lg.events(null, { minDepth: 18 });
 ok("at depth 18 (deep height 1,002) only the first", l18.verified && l18.value.items.length === 1 && l18.value.items[0]!.height === 1_002);
 
-for (const r of [feed, behind, above, stale.r, peer.r, pf.r, pp.r, lone.r, low.r, silent.r, rolled.r, differ.r, later.r, two.r, same.r, wr.r, wq.r, sh, ownR, dis.r, un, reopened, lg]) await r.close();
+for (const r of [feed, behind, above, stale.r, fresh29.r, peer.r, pf.r, pp.r, lone.r, low.r, silent.r, rolled.r, differ.r, later.r, two.r, same.r, wr.r, wq.r, sh, ownR, dis.r, un, reopened, lg]) await r.close();
 done("cairnx-replica reader");

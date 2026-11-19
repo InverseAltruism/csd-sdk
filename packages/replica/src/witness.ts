@@ -1,68 +1,85 @@
 // The witnesses of a reader (design section 4). Each advance asks every witness for its tip while the loop steps,
-// then checks the replica's chain against them: a witness with tip height W confirms the replica's branch when it
-// gives, at the highest height h the loop holds a hash for with W - FINAL_DEPTH <= h <= min(W, cursor), the hash the
-// loop holds there (from its tip's hash when h is W, else by hashAt, one more request in series). A confirmation far
-// below a witness's tip is never taken, so a store catching up from a low cursor earns none. A rollback below the
-// confirmed block clears it. A witness's higher tip counts against the replica (TIP_BEHIND_PEER) only when its header
-// hashes to the hash it named, meets its own bits and is plausible against the replica's tip (csd-light route.ts).
-// A witness that throws or answers out of form is silent for that round.
+// then compares the replica's chain with each at one height: h = min(witness tip W, cursor C), and only when the higher
+// of the two is at most FINAL_DEPTH above h. The hash compared is the witness's tip hash when h is W, else its hashAt(h)
+// (one more request in series), against the hash the loop holds at h; when the loop holds none there, the witness
+// cannot compare and confirms nothing. A confirmation is stamped with the time the witness's tip answer arrived and
+// bound to the loop's generation, so a rollback, a reload or a reset of the chain voids it. A witness that answers
+// another hash at h voids the confirmation for every witness (one witness can withhold "verified", none can grant it
+// alone against another's word); so does a clock read earlier than the one before it, since the real time elapsed is
+// then unknown. A witness's higher tip denies (TIP_BEHIND_PEER) when its header hashes to the hash it named and meets
+// its own bits; no plausibility cap applies. A witness that throws is silent for the round; one that answers out of
+// form (its tip or its gate table) is silent too and noted.
 import { FINAL_DEPTH, HASH_RE } from "@inversealtruism/cairnx-core";
-import { TARGET_BLOCK_SECS } from "@inversealtruism/csd-codec";
-import { contenderPlausible, tipHeaderPowOk } from "@inversealtruism/csd-light";
+import { tipHeaderPowOk } from "@inversealtruism/csd-light";
 import type { Witness, WitnessTip } from "./answer.js";
 import { gatesDiffer, type Gates } from "./gates.js";
 import type { Cursor, TipView } from "./types.js";
 
-export type Witnessed = { readonly height: number; readonly hash: string; readonly by: string; readonly at: number };
-type Chain = { cursor: Cursor | null; hashAt(height: number): string | null };
+export type Witnessed = { readonly height: number; readonly hash: string; readonly by: string; readonly at: number; readonly generation: number };
+type Chain = { readonly cursor: Cursor | null; hashAt(height: number): string | null; generation(): number };
+type Heard = { readonly tip: WitnessTip | null; readonly at: number; readonly malformed: boolean };
 
-const tipOk = (t: WitnessTip | null): t is WitnessTip =>
-  t !== null && typeof t === "object" && Number.isSafeInteger(t.height) && t.height >= 0 && typeof t.hash === "string" && HASH_RE.test(t.hash.toLowerCase());
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const tipOk = (t: unknown): t is WitnessTip => isObject(t) && Number.isSafeInteger(t.height) && (t.height as number) >= 0 &&
+  typeof t.hash === "string" && HASH_RE.test(t.hash.toLowerCase());
+/** A gate table: an object of safe integer heights >= 0. */
+const tableOk = (g: unknown): g is Gates => isObject(g) && Object.values(g).every((h) => Number.isSafeInteger(h) && (h as number) >= 0);
 
 export function witnessBoard(witnesses: readonly Witness[], clock: () => number) {
-  const last = new Map<Witness, WitnessTip | null>(), rules = new Map<Witness, Gates>();
-  let witnessed: Witnessed | null = null, disagree = false;
+  const heard = new Map<Witness, Heard>(), rules = new Map<Witness, Gates>();
+  let witnessed: Witnessed | null = null, disagree = false, lastRead = Number.NEGATIVE_INFINITY;
 
-  async function ask(w: Witness, signal: AbortSignal): Promise<void> {
-    let t: WitnessTip | null;
-    try { t = await w.tip(signal); } catch { t = null; }   // a witness that fails is silent this round
-    last.set(w, tipOk(t) ? t : null);
-    if (w.rules === undefined || rules.has(w)) return;
-    try { const r = await w.rules(signal); if (r !== null && typeof r === "object") rules.set(w, r.gates); } catch { rules.delete(w); }
+  /** The clock, read through the board: a read earlier than the one before voids the confirmation. */
+  function now(): number {
+    const t = clock();
+    if (t < lastRead) witnessed = null;
+    lastRead = t;
+    return t;
   }
 
-  async function confirm(w: Witness, chain: Chain, signal: AbortSignal): Promise<void> {
-    const t = last.get(w), c = chain.cursor;
-    if (t == null || c === null) return;
-    for (let h = Math.min(t.height, c.height); h >= t.height - FINAL_DEPTH && h >= 0; h--) {
-      const mine = chain.hashAt(h);
-      if (mine === null) continue;
-      let theirs: string | null;
-      try { theirs = h === t.height ? t.hash : await w.hashAt(h, signal); } catch { theirs = null; }
-      if (typeof theirs !== "string") return;
-      if (theirs.toLowerCase() !== mine) { disagree = true; return; }
-      witnessed = { height: h, hash: mine, by: w.id, at: clock() };
-      return;
+  async function ask(w: Witness, signal: AbortSignal): Promise<void> {
+    let t: unknown = null, bad = false;
+    try { t = await w.tip(signal); } catch { t = null; }   // a witness that fails is silent this round
+    const at = now();
+    if (t !== null && !tipOk(t)) bad = true;
+    if (!bad && w.rules !== undefined && !rules.has(w)) {
+      let r: unknown = null;
+      try { r = await w.rules(signal); } catch { r = null; }   // no table this round; asked again
+      if (r !== null && !(isObject(r) && tableOk(r.gates))) bad = true;
+      else if (r !== null) rules.set(w, (r as { gates: Gates }).gates);
     }
+    heard.set(w, { tip: bad ? null : (t as WitnessTip | null), at, malformed: bad });
   }
 
   return {
-    /** Every witness's tip, and its gate table the first time it gives one. */
+    now,
+    /** Every witness's tip, and its gate table until it gives one in form. */
     tips: (signal: AbortSignal) => Promise.all(witnesses.map((w) => ask(w, signal))).then(() => undefined),
-    /** The confirmations of this round against the chain the loop holds after its step. */
+    /** This round's comparisons against the chain the loop holds after its step. */
     async confirm(chain: Chain, signal: AbortSignal): Promise<void> {
-      disagree = false;
-      for (const w of witnesses) await confirm(w, chain, signal);
+      const gen = chain.generation();
+      let agreed = null as Witnessed | null, against = false;
+      for (const w of witnesses) {
+        const a = heard.get(w), t = a?.tip, c = chain.cursor;
+        if (a === undefined || t == null || c === null) continue;
+        const h = Math.min(t.height, c.height), mine = chain.hashAt(h);
+        if (Math.max(t.height, c.height) - h > FINAL_DEPTH || mine === null) continue;
+        let theirs: unknown;
+        try { theirs = h === t.height ? t.hash : await w.hashAt(h, signal); } catch { theirs = null; }
+        if (chain.generation() !== gen) return;   // the chain was replaced while the witness was asked
+        if (typeof theirs !== "string") continue;
+        if (theirs.toLowerCase() !== mine) against = true;
+        else agreed = { height: h, hash: mine, by: w.id, at: Math.min(a.at, agreed?.at ?? a.at), generation: gen };
+      }
+      disagree = against;
+      if (against) witnessed = null;
+      else if (agreed !== null) witnessed = agreed;
     },
-    rolledBack(to: Cursor): void { if (witnessed !== null && to.height < witnessed.height) witnessed = null; },
-    witnessed: (): Witnessed | null => witnessed,
+    /** The confirmation held, if it is of the chain the loop holds now. */
+    witnessed: (generation: number): Witnessed | null => (witnessed !== null && witnessed.generation === generation ? witnessed : null),
     disagree: (): boolean => disagree,
+    malformed: (): boolean => [...heard.values()].some((a) => a.malformed),
     rulesDiffer: (own: Gates, tip: number): boolean => [...rules.values()].some((g) => gatesDiffer(g, own, tip)),
-    peerAhead(tip: TipView): boolean {
-      return [...last.values()].some((t) => t != null && t.height > tip.height && tipHeaderPowOk(t.header, t.hash) && contenderPlausible({
-        enabled: true, claimedHeight: t.height, contenderBits: t.header.bits, localHeight: tip.height, localTime: tip.time,
-        nowSecs: clock() / 1000, blockSecs: TARGET_BLOCK_SECS, expectedLocalBits: null, maxAhead: FINAL_DEPTH, maxEase: 1,
-      }));
-    },
+    peerAhead: (tip: TipView): boolean => [...heard.values()].some((a) => a.tip != null && a.tip.height > tip.height && tipHeaderPowOk(a.tip.header, a.tip.hash)),
   };
 }

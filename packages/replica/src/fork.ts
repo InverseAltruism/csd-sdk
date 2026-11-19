@@ -16,9 +16,10 @@ export type Head = { readonly height: number; readonly hash: string };
 export type Moved = "tip" | "link" | "resume";
 interface State { readonly key: string; readonly held: number[]; readonly partial: boolean; lo: number; hi: number; stride: number }
 /** `probe` reads the node's block at a height: its hash and its prev; `holds`, when given, says whether the chain's
- *  keeper holds a height at all; `who` names the keeper in a reason. */
+ *  keeper holds a height at all; `who` names the keeper in a reason. `behindIdle`: a keeper behind the cursor on the
+ *  chain the store holds is an idle step with its own tip (below the cursor), not a refusal. */
 type IO = { probe(s: Session, height: number): Promise<{ hash: string; prev: string }>; tipView(s: Session, h: Head): Promise<TipView>;
-  holds?(height: number): Promise<boolean>; who?: string };
+  holds?(height: number): Promise<boolean>; who?: string; behindIdle?: boolean };
 
 const keyOf = (c: Cursor) => `${c.height}:${c.hash}`;
 const cannot = (code: "SOURCE_MALFORMED" | "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "BRANCH_MOVED", reason: string, retryAfterMs: number | null = null): Step =>
@@ -47,6 +48,7 @@ export function forkSearch(io: IO) {
     let r = h.height;
     while (r >= ctx.rule.activationHeight && ctx.hashAt(r) === null) r--;
     const same = r < ctx.rule.activationHeight || (r === h.height ? ctx.hashAt(r) === h.hash : (await io.probe(s, r)).hash === ctx.hashAt(r));
+    if (same && io.behindIdle === true) return { kind: "idle", tip: await io.tipView(s, h) };
     if (same) return cannot("SOURCE_UNAVAILABLE", `${who}'s tip ${h.height} is below the cursor ${at.height} on the chain the store holds`);
     const { held, partial } = await kept(heldUpTo(ctx, r));
     return { key, held, partial, lo: -1, hi: held.length - 1, stride: 1 };

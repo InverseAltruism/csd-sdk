@@ -24,8 +24,6 @@ export type LoopOpen = { ok: true } | { ok: false; reset: Reset };
 export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
   readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number;
-  /** Called after a reorg is committed, with the cursor rolled back to. */
-  readonly onRollback?: (to: Cursor) => void;
 }
 /** Internal. `store` is null before the first open; `retryAt` is when a backed-off loop next calls its source. */
 export interface LoopStatus {
@@ -48,9 +46,20 @@ export interface Loop {
   hashAt(height: number): string | null;
   /** The rows held at or above `fromHeight`, checked as every held row is; read-only. */
   rows(fromHeight: number): readonly BlockRow[];
+  /** A number that changes whenever the chain held is replaced (a rollback, a reload from the store, a reset); an
+   *  extension by a step's blocks keeps it. */
+  generation(): number;
+  /** Resolves when no step is being committed, so that what is read next in the same turn is one whole state. */
+  quiet(): Promise<void>;
   /** The materializer's state at `tip - depth`, or null when the store is not open or that height is not held. */
   stateAt(tip: number, depth: number): CairnXState | null;
   close(): Promise<void>;
+}
+
+/** Whether the chain held after a change extends the one before: every row held before is still held, in place, and
+ *  the cursor moved up. Any other change replaces the chain and moves the generation. */
+export function chainExtends(before: readonly BlockRow[], after: readonly BlockRow[], fromHeight: number, toHeight: number): boolean {
+  return toHeight > fromHeight && after.length >= before.length && before.every((r, i) => after[i] === r);
 }
 
 const BACKOFF_FIRST_MS = 1_000;
@@ -73,6 +82,23 @@ export function replicaLoop(o: LoopOptions): Loop {
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
   let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve();
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
+  let generation = 0, busy: Promise<void> | null = null;
+
+  // The one place the chain held changes. An extension (a step's blocks, which the source linked to the cursor) must
+  // keep every row held in place and move the cursor up (chainExtends); every other change moves the generation,
+  // which a witness's confirmation is bound to (witness.ts).
+  function change(kind: "extend" | "replace", from: number, to: number, apply: () => void): void {
+    const before = held.rows.slice();
+    apply();
+    if (kind === "replace") generation++;
+    else if (!chainExtends(before, held.rows, from, to)) throw new Error("loop: a change of the chain held that does not extend it must move the generation");
+  }
+  // A step's commit runs alone with respect to reads: quiet() waits for it.
+  async function exclusive<T>(f: () => Promise<T>): Promise<T> {
+    let done = () => undefined as void;
+    busy = new Promise<void>((go) => { done = go; });
+    try { return await f(); } finally { busy = null; done(); }
+  }
 
   const cursor = (): Cursor | null => meta?.cursor ?? null;
   const hashAt = (h: number): string | null => held.hashAt(h) ?? (cursor()?.height === h ? cursor()!.hash : null);
@@ -99,10 +125,10 @@ export function replicaLoop(o: LoopOptions): Loop {
     }
     if (!r.ok || h === null) {
       const reset = r.ok ? "corrupt" : r.reset;
-      opened = reset; meta = null; held = new Held(); bounds = [];
+      change("replace", 0, 0, () => { opened = reset; meta = null; held = new Held(); bounds = []; });
       return { ok: false, reset };
     }
-    opened = "open"; meta = r.meta; held = h; bounds = b; filled.clear();
+    change("replace", 0, 0, () => { opened = "open"; meta = r.meta; held = h!; bounds = b; filled.clear(); });
     m.load(rows, r.meta?.cursor?.height ?? null);
     return { ok: true };
   }
@@ -161,7 +187,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     }
     if (!c.ok) return backOff("SOURCE_MALFORMED", c.reason, null);
     const { rows, cursor: next } = c, r = await commit(() => {
-      held.add(rows);
+      change("extend", after, next.height, () => held.add(rows));
       m.apply(rows, next.height);
       return { expect: at, rows, boundaries: deepBoundaries(after, next.height, s.tip.height), meta: metaAt(next) };
     });
@@ -175,13 +201,12 @@ export function replicaLoop(o: LoopOptions): Loop {
     const at = cursor(), why = reorgBreak(s.to, at, source.floor?.height ?? rule.activationHeight - 1, hashAt);
     if (why !== null) return backOff("SOURCE_MALFORMED", why, null);
     const to = { height: s.to.height, hash: s.to.hash }, r = await commit(() => {
-      held.truncate(to.height);
+      change("replace", 0, 0, () => held.truncate(to.height));
       m.rollback(to.height);
       return { expect: at, rollbackTo: to, rows: [], boundaries: [], meta: metaAt(to) };
     });
     if (r !== "ok") return r;
     lastReorg = { from: at!, to: cursor()!, at: clock() };
-    o.onRollback?.(to);
     settled(s.tip);
     return "more";
   }
@@ -196,7 +221,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     if (signal.aborted) return "stop";
     if (s.kind === "cannot") return backOff(s.code, s.reason, s.retryAfterMs);
     if (s.kind === "idle") { settled(s.tip); return "stop"; }
-    return s.kind === "reorg" ? onReorg(s) : onBlocks(s);
+    return exclusive(() => (s.kind === "reorg" ? onReorg(s) : onBlocks(s)));
   }
 
   async function drive(budgetMs: number, outer: AbortSignal | undefined): Promise<LoopStatus> {
@@ -223,6 +248,8 @@ export function replicaLoop(o: LoopOptions): Loop {
     advance: (a = {}) => queued(() => drive(a.budgetMs ?? Number.POSITIVE_INFINITY, a.signal)),
     status, eventsHashAt,
     hashAt: (h) => (opened === "open" ? hashAt(h) : null),
+    generation: () => generation,
+    async quiet() { while (busy !== null) await busy; },
     rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),
     boundary(h) {

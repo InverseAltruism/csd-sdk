@@ -7,7 +7,8 @@
 // header at the cursor while the caller's tip is at or above it (a store that keeps a floor and a suffix) is a
 // refusal, never a rollback: a rollback needs another hash. Inside the search a null is "not held": the fork is
 // placed only where the caller answered another hash (fork.ts). A caller whose tip is below the cursor on the chain
-// the store holds rolls nothing back.
+// the store holds rolls nothing back: the step is idle with the caller's tip, so the loop reports a tip below its
+// cursor (the reader's BRANCH_UNRESOLVED) until the caller's headers reach the cursor again.
 import { floorBreak } from "./basis.js";
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
@@ -41,7 +42,7 @@ export function callerRoot(h: VerifiedHeaders): Root {
   const hashAt = async (height: number) => (await h.at(height))?.hash.toLowerCase() ?? null;
   const viewOf = (v: { height: number; hash: string; time: number }): TipView => ({ height: v.height, hash: v.hash.toLowerCase(), time: v.time });
   const fork = forkSearch({ probe: async (_s, height) => ({ hash: (await hashAt(height)) ?? "", prev: (await hashAt(height - 1)) ?? "" }), tipView: async () => tip!,
-    holds: async (height) => (await hashAt(height)) !== null, who: "the caller" });
+    holds: async (height) => (await hashAt(height)) !== null, who: "the caller", behindIdle: true });
   return {
     root: { kind: "caller", floor: h.floor, origin: h.origin },
     hashAt,

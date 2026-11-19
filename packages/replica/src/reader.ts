@@ -72,22 +72,22 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   const same = headers === null ? undefined : witnesses.find((w) => originOf(w.origin) === originOf(headers));
   if (same !== undefined) throw new ReplicaConfigError(`open: the witness ${same.id} is on the header source's origin ${originOf(headers!)}`);
   const core = coreCheck(o.core), board = witnessBoard(witnesses, clock), store = o.store ?? memoryStore();
-  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, onRollback: (to) => board.rolledBack(to) });
+  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock });
   let opened = await loop.open();
   if (!opened.ok && opened.reset !== "unavailable") { await store.reset(); opened = await loop.open(); }
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;
 
   function judge(minDepth: number): Pick<AnswerMeta, "why" | "notes" | "at"> & { codes: NotVerifiedCode[] } {
-    const s = loop.status(), w = board.witnessed();
+    const now = board.now(), s = loop.status(), w = board.witnessed(loop.generation());   // the clock first: a set-back voids
     const synced = s.store === "open" && s.cursor !== null && s.tip !== null ? { cursor: s.cursor, tip: s.tip } : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now: clock(), peerAhead: (t) => board.peerAhead(t),
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
     const notes: NoteCode[] = [...(core.two ? ["TWO_CORES" as const] : []), ...(s.store === "unavailable" ? ["STORE_UNAVAILABLE" as const] : []),
-      ...(board.disagree() ? ["SOURCES_DISAGREE" as const] : [])];
+      ...(board.disagree() ? ["SOURCES_DISAGREE" as const] : []), ...(board.malformed() ? ["WITNESS_MALFORMED" as const] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
@@ -95,16 +95,18 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   }
 
   function status(): ReplicaStatus {
-    const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed();
+    const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: s.cursor,
       witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: s.lastReorg, lastError: s.lastError, tuple: null, compare: null, replayMs: s.replayMs };
   }
 
+  // A call while a run is in flight joins it (its own budget and signal are not applied), so two runs never overlap.
   function advance(a: { budgetMs?: number; signal?: AbortSignal } = {}): Promise<ReplicaStatus> {
+    if (running !== null) return running;
     const signal = a.signal ?? new AbortController().signal;
     const run = (async () => {
       await Promise.all([loop.advance(a), board.tips(signal)]);
-      await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h) }, signal);
+      await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h), generation: () => loop.generation() }, signal);
       const s = status();
       for (const f of listeners) f(s);
       return s;
@@ -130,6 +132,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
     await settle(o);
+    // Nothing is awaited from here on, so the state read is the one the last whole commit left.
+    await loop.quiet();
     const j = judge(minDepth), s = loop.status();
     if (s.tip !== null && minDepth > s.tip.height) return invalid();
     const deepHeight = j.at?.deepHeight ?? 0;

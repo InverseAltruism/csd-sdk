@@ -23,7 +23,8 @@ const lag = callerHeaders({ answers: all, tip: cap.to }), lg = driveHosted({ ans
 await lg.run();
 lag.c.tip = 30_250;
 const lgs = await lg.run();
-ok("the caller's tip below the cursor on the same chain: SOURCE_UNAVAILABLE, nothing rolled back", refused(lgs, "SOURCE_UNAVAILABLE", cap.to) && lgs.lastReorg === null);
+ok("the caller's tip below the cursor on the same chain: an idle step with the caller's tip, nothing rolled back, nothing refused",
+  lgs.cursor?.height === cap.to && lgs.tip?.height === 30_250 && lgs.tip.hash === blockAt(all, 30_250).hash && lgs.lastError === null && lgs.lastReorg === null);
 const unknown = callerHeaders({ answers: all, tip: null }), uk = await driveHosted({ answers: all }, { kind: "caller", headers: unknown.headers }).run();
 ok("the caller's tip unknown (sync null): SOURCE_UNAVAILABLE, nothing read", uk.lastError?.code === "SOURCE_UNAVAILABLE" && /do not know the tip/.test(uk.lastError.reason) && uk.cursor === null);
 // A caller whose own headers do not link at 30,101: it holds a block mined again at 30,100, which the server serves too.
