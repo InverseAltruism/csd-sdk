@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.8
 
 - Forward resolution is a root export, moved from the reference service without a change to its body: `resolveNameIn(names,
   name)` answers `{ name, addr, via, lapsed, owner }` for the name's `nset` address, else its owner, with `lapsed` from

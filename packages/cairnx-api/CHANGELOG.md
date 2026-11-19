@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- A peer-only step: cairnx-core 0.2.8 is the exact peer. No route, parameter, row, envelope field, error code or cursor
+  grammar changed; `rev` moves with the package version, as it does at every release.
+
 ## 0.1.0 (2026-11-19)
 
 - First release, made for one consumer: the CairnX resolver, which is to mount the handlers. No public HTTP route

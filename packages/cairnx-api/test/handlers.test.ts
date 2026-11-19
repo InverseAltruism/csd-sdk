@@ -63,7 +63,7 @@ for (const [what, at] of [["a wrong rev", `at=${tipHeight}:${H}:${"0".repeat(16)
 }
 const rev = revOf("fp-1", "0.2.7", CAIRNX_API_VERSION);
 ok("rev is the first 16 hex digits of sha256(input, core, package version)", view.at.rev === rev && /^[0-9a-f]{16}$/.test(rev));
-ok("rev changes with the input, the core version and the package version", new Set([rev, revOf("fp-2", "0.2.7", CAIRNX_API_VERSION), revOf("fp-1", "0.2.8", CAIRNX_API_VERSION), revOf("fp-1", "0.2.7", "0.1.1")]).size === 4);
+ok("rev changes with the input, the core version and the package version", new Set([rev, revOf("fp-2", "0.2.7", CAIRNX_API_VERSION), revOf("fp-1", "0.2.8", CAIRNX_API_VERSION), revOf("fp-1", "0.2.7", `${CAIRNX_API_VERSION}-other`)]).size === 4);
 ok("and with nothing else: another state, height and hash under the same input and core keep it",
   prepareView(stateAt(swept!.h), { height: swept!.h, hash: H2, input: "fp-1", core: "0.2.7" }).at.rev === rev);
 for (const [what, s] of [["a height that is not the tip", { ...src, height: tipHeight - 1 }], ["a malformed hash", { ...src, hash: H.toUpperCase() }],
