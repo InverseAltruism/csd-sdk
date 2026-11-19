@@ -34,14 +34,16 @@ Check mode (the default, `node scripts/npm-window.mjs [--out <dir>]`) publishes 
   package.json on disk has the commit's scripts exactly, every other file outside dist/ is the HEAD commit's, byte for
   byte, and every committed file a `files` entry covers is in the tarball, so an ignored, untracked or skip-worktree
   file, or a manifest rolled back on disk, fails; dist/ is the tree's build;
-- writes SHA1SUMS and SHA256SUMS.
+- writes SHA1SUMS and SHA256SUMS of the tarballs that passed verify-tarball.
 
 Both modes also fail on a local change in the tree, on `CSD_PUBLISH_SKIP_TESTS` set, and on a HEAD that is not on
 the first-parent line of `origin/master` as last fetched (`git rev-list --first-parent origin/master` lists it): a
-merge commit or a direct commit on master, the tip or an older one. A commit inside a merged pull request is an
-ancestor of `origin/master` but not on that line, and is refused: it can name the release's version without the
-branch's later commits. A pushed topic branch is refused too. So the release commit is the merge commit of the pull
-request that carries the version, or a later commit on that line.
+merge commit or a direct commit on master, the tip or an older one. A commit inside a pull request merged with a
+merge commit is an ancestor of `origin/master` but not on that line, and is refused: it can name the release's version
+without the branch's later commits. A rebased or fast-forwarded branch's commits are on the line and are admitted, so
+the check does not catch an inner commit of such a branch. A pushed topic branch is refused. So the release commit is
+the commit on that line that carries the version (for a pull request merged with a merge commit, its merge commit),
+or a later one.
 
 Run mode (`--out <dir> --run --token-file <path>`) also needs a typed `publish`. It then copies each verified tarball
 into its private directory, refuses before any npm call if a copy is not the bytes verify-tarball checked, runs
@@ -49,10 +51,12 @@ into its private directory, refuses before any npm call if a copy is not the byt
 recorded at verification.
 
 `test/npm-window.test.ts` pins these refusals: a local change in the tree (with real git), `CSD_PUBLISH_SKIP_TESTS`
-set, a HEAD off the first-parent line (with real git, an inner commit of a merged branch among them), a failing
-publish guard and a failing verify-tarball each fail the window; a run with a failed check never reaches the publish
-step; a tarball that failed verify-tarball has no digest recorded, so publishWindow refuses it whatever its caller
-checked; a tarball replaced after verification is not published.
+set, a HEAD off the first-parent line (with real git, an inner commit of a branch merged with a merge commit among
+them; a fast-forwarded inner commit is admitted), a failing publish guard and a failing verify-tarball each fail the
+window; the script run as a command in check mode exits 1 on a failed check; a run with a failed check never reaches
+the publish step, and a publish step that did not complete exits 1; a tarball that failed verify-tarball has no
+digest recorded, so publishWindow refuses it whatever its caller checked; a tarball replaced after verification is
+not published.
 
 ### What the window does not bind
 

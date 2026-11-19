@@ -166,9 +166,9 @@ const sh = (cmd, args, cwd) => {
 
 /**
  * Whether HEAD is on the first-parent line of origin/master as last fetched: a merge commit or a direct commit on
- * master, the tip or an older one. Every commit of a merged pull request is an ancestor of origin/master, and an inner
- * one can name a version before the branch's last fix, so ancestry alone does not qualify; nor does a pushed topic
- * branch.
+ * master, the tip or an older one. Every commit of a pull request merged with a merge commit is an ancestor of
+ * origin/master, and an inner one can name a version before the branch's last fix, so ancestry alone does not
+ * qualify; nor does a pushed topic branch. A rebased or fast-forwarded branch's commits are on the line and pass.
  * @param {string} root
  * @param {Sh} [run]
  */
@@ -234,7 +234,7 @@ export async function checkWindow(o) {
     const g = exec("pnpm", ["run", "prepublishOnly"], join(root, "packages", p.__dir));
     chk(`${p.name}: publish guard (lockstep, tests${p.name.endsWith("/cairnx-core") ? ", test:crosslang" : ""})`, g.ok, g.out);
   }
-  /** @type {Map<string, Uint8Array>} the bytes each verification read, the only source of the digests */
+  /** @type {Map<string, Uint8Array>} the bytes of each tarball verify-tarball passed, the only input of the sums files */
   const verified = new Map();
   for (const [i, p] of order.entries()) {
     const tb = tarballs[i];
@@ -242,10 +242,10 @@ export async function checkWindow(o) {
     const bytes = new Uint8Array(readFileSync(tb.path));
     const v = verify(bytes, join(root, "packages", p.__dir), versions);
     chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
-    verified.set(tb.path, bytes);
     // no digest, no publish: publishWindow refuses this tarball even if a caller ignores `fails`
     if (v.length) continue;
     tb.sha1 = sha("sha1", bytes); tb.integrity = sriOf(bytes);
+    verified.set(tb.path, bytes);
   }
   const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => verified.has(tb.path))
     .map((tb) => `${sha(alg, /** @type {Uint8Array} */ (verified.get(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");

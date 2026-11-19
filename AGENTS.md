@@ -121,10 +121,11 @@ Packaging and publishing (what each script checks, and why, is in `docs/release.
   CHANGELOG.md lists it in `files`. `test/check-lockstep.test.ts` pins the `workspace:*` rule, the published peer
   pin, the published dist compare and its integrity check.
 - A window publishes through `scripts/npm-window.mjs`, never by hand. The run needs a clean tree whose HEAD is on
-  the first-parent line of `origin/master` (a merge or direct commit on master, not a commit inside a merged branch)
-  and a typed `publish`. `test/npm-window.test.ts` pins that a local change, `CSD_PUBLISH_SKIP_TESTS`, a HEAD off
-  that line, a failing publish guard or a failing verify-tarball each fail the window, and that a run with a failed
-  check never reaches the publish step.
+  the first-parent line of `origin/master` (a merge or direct commit on master, not a commit inside a pull request
+  merged with a merge commit; a rebased or fast-forwarded branch's commits are on the line and are admitted) and a
+  typed `publish`. `test/npm-window.test.ts` pins that a local change, `CSD_PUBLISH_SKIP_TESTS`, a HEAD off that
+  line, a failing publish guard or a failing verify-tarball each fail the window, and that a run with a failed check
+  never reaches the publish step.
 - The maintainer runs a window only from a fresh worktree created at the release commit
   (`git worktree add --detach <path> <commit>`, `git rev-parse HEAD` in it printing that commit, then
   `pnpm install --frozen-lockfile --offline` and `pnpm -r build`), never from a working checkout: the window binds

@@ -59,10 +59,14 @@ try {
   console.log("check-lockstep workspace:*:");
   const unpublished = run({});
   ok("honest: nothing published, inter-deps workspace:*: lockstep OK", unpublished.code === 0 && /lockstep OK/.test(unpublished.out), unpublished.out);
-  put("packages/api/package.json", apiManifest.replace('"workspace:*"', '"1.1.0"'));
-  const exact = run({});
-  put("packages/api/package.json", apiManifest);
-  ok("an intra-workspace peer pinned to an exact version, not workspace:*, fails", exact.code === 1 && /api peerDependencies\.core = "1\.1\.0" \(must be "workspace:\*"\)/.test(exact.out), exact.out);
+  // the rule covers every dependency kind the script reads: dependencies, devDependencies and peerDependencies
+  for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+    put("packages/api/package.json", JSON.stringify({ name: "api", version: "0.1.0", [field]: { core: "1.1.0" } }));
+    const exact = run({});
+    put("packages/api/package.json", apiManifest);
+    ok(`an intra-workspace ${field} entry pinned to an exact version, not workspace:*, fails`,
+      exact.code === 1 && new RegExp(`api ${field}\\.core = "1\\.1\\.0" \\(must be "workspace:\\*"\\)`).test(exact.out), exact.out);
+  }
 
   console.log("check-lockstep published pins:");
   const honest = run(api("1.1.0")).out;   // the stand-in answers api@0.1.0 with no tarball: proof the registry was read
