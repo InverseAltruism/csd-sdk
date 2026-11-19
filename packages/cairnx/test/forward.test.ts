@@ -8,11 +8,14 @@ import {
   ADDR_RE, nameView, resolve, resolveNameIn, type ChainEvent, type NameView, type ResolvedName,
 } from "../src/index.js";
 
-let pass = 0;
+// Each check runs to the end and is counted, so a mutation reports every check it turns red.
+let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => {
-  const r = fn() as unknown;
-  if (r !== undefined) throw new Error(`test "${name}" returned a value - use assert`);
-  pass++; console.log("  ok", name);
+  try {
+    const r = fn() as unknown;
+    if (r !== undefined) throw new Error(`test "${name}" returned a value - use assert`);
+    pass++; console.log("  ok", name);
+  } catch (e) { fail++; console.log(`  FAIL ${name}: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
 };
 const read = (f: string) => JSON.parse(readFileSync(new URL(`./vectors/${f}`, import.meta.url), "utf8"));
 
@@ -27,14 +30,12 @@ t("forward.json is format 1 with every class of §35.4", () => {
 });
 let asked = 0;
 for (const c of vectors.cases) {
-  t(`vector ${c.name}`, () => {
-    const names = resolve(c.events, c.tipHeight).names;
-    for (const a of c.asks) {
-      assert.deepEqual(resolveNameIn(names, a.query), a.resolveNameIn, `${c.name}: resolveNameIn(${a.query})`);
-      assert.deepEqual(nameView(names, a.query), a.nameView, `${c.name}: nameView(${a.query})`);
-      asked++;
-    }
-  });
+  const names = resolve(c.events, c.tipHeight).names;
+  for (const a of c.asks) {
+    t(`vector ${c.name}: resolveNameIn(${a.query})`, () => assert.deepEqual(resolveNameIn(names, a.query), a.resolveNameIn));
+    t(`vector ${c.name}: nameView(${a.query})`, () => assert.deepEqual(nameView(names, a.query), a.nameView));
+    asked++;
+  }
 }
 
 // The oracle: a pending reservation gives nothing, every other name its address if it has one, else its owner.
@@ -81,4 +82,5 @@ t("nameView refuses a non-string and copies the profile it returns", () => {
   assert.notEqual(names.prof1!.profile!.wallet, "changed", "the state's profile is not the view's object");
 });
 
-console.log(`forward resolution: ${pass} passed (${vectors.cases.length} vectors, ${asked} asks; ${corpusNames} corpus name reads at ${heights.length} heights)`);
+console.log(`forward resolution: ${pass} passed, ${fail} failed (${vectors.cases.length} vectors, ${asked} asks; ${corpusNames} corpus name reads at ${heights.length} heights)`);
+if (fail) process.exit(1);
