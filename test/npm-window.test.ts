@@ -4,11 +4,11 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
-import { checkWindow, headOnOriginMaster, publishWindow } from "../scripts/npm-window.mjs";
+import { checkWindow, finishWindow, headOnOriginMaster, publishWindow } from "../scripts/npm-window.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -170,22 +170,37 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   const rolled = git("status", "--porcelain") === "" ? verifyTarball(packB(), b, workspaceVersions(ws)) : ["fixture: the rollback shows in git status"];
   ok("a workspace pin resolved from a manifest rolled back on disk is refused",
     rolled.some((f) => /dependencies/.test(f) && f.includes("1.0.1")), rolled.join("; "));
-  // the window's plan: a@1.0.0 is on the stand-in registry, a@1.0.1 (the version HEAD names) is not
+  // the window's plan: a@1.0.0 is on the stand-in registry, a@1.0.1 (the version HEAD names) is not; real git, so
+  // the tree and HEAD checks run on the fixture as it is (skip-worktree keeps git status clean); pnpm is not run
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
   const lines: string[] = [];
   const plan = await checkWindow({ root: ws, out: mkdtempSync(join(work, "wsout-")), run: false, log: (l) => lines.push(l), env: {},
-    sh: (cmd) => (cmd === "git" ? { ok: true, out: "" } : { ok: false, out: "stand-in: not run" }),
+    sh: (cmd, args) => {
+      if (cmd !== "git") return { ok: false, out: "stand-in: not run" };
+      try { return { ok: true, out: git(...args) }; } catch (e) { return { ok: false, out: String(e) }; }
+    },
     registry: async (name: string, version: string) => ({ status: name === "@x/a" && version === "1.0.0" ? 200 : 404, meta: null }) });
   const planned = plan.order.map((p) => `${p.name}@${p.version}`).join();
   ok("the window plans the versions HEAD names (a@1.0.1 and b), not a@1.0.0 from disk", planned === "@x/a@1.0.1,@x/b@1.0.0", planned);
+  ok("its only failed checks are the stand-in pack and guard of the two planned packages (the tree and HEAD checks pass)",
+    plan.fails.length === 4 && plan.fails.every((f) => /^@x\/[ab]: (pnpm pack|publish guard)/.test(f)), plan.fails.join("; "));
 }
+
+type Checked = Awaited<ReturnType<typeof checkWindow>> & { out: string };
+// two checkWindow results the publish step below takes as they are, as main() hands them on
+let checked: { honest: Checked; verifyFailed: Checked } | undefined;
 
 console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
 {
   const CRYPTO = "@inversealtruism/csd-crypto";
-  const window = async (o: { guard?: boolean; onMaster?: boolean; verify?: typeof verifyTarball } = {}) => {
+  const HEAD = "a".repeat(40);
+  const window = async (o: { guard?: boolean; onMaster?: boolean; dirty?: boolean; env?: Record<string, string>; verify?: typeof verifyTarball } = {}) => {
     const out = mkdtempSync(join(work, "win-"));
     const sh = (cmd: string, args: string[], cwd: string) => {
-      if (cmd === "git") return { ok: args[0] === "merge-base" ? (o.onMaster ?? true) : true, out: "" };
+      if (cmd === "git" && args[0] === "status") return { ok: true, out: o.dirty ? " M packages/crypto/src/index.ts\n" : "" };
+      if (cmd === "git" && args[0] === "rev-parse") return { ok: true, out: `${HEAD}\n` };
+      if (cmd === "git" && args[0] === "rev-list") return { ok: true, out: `${"b".repeat(40)}\n${o.onMaster === false ? "" : `${HEAD}\n`}` };
+      if (cmd === "git") throw new Error(`unexpected git command: ${args.join(" ")}`);
       if (args[0] === "run" && args[1] === "prepublishOnly") return { ok: o.guard ?? true, out: "stand-in publish guard" };
       if (args[0] === "pack") {
         try { execFileSync(cmd, args, { cwd, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" }); return { ok: true, out: "" }; }
@@ -195,8 +210,8 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
     };
     const registry = async (name: string) => ({ status: name === CRYPTO ? 404 : 200, meta: null });
     const lines: string[] = [];
-    const r = await checkWindow({ root, out, run: false, log: (l) => lines.push(l), sh, registry, verify: o.verify ?? verifyTarball, env: {} });
-    return { ...r, lines: lines.join("\n") };
+    const r = await checkWindow({ root, out, run: false, log: (l) => lines.push(l), sh, registry, verify: o.verify ?? verifyTarball, env: o.env ?? {} });
+    return { ...r, out, lines: lines.join("\n") };
   };
 
   const honest = await window();
@@ -207,22 +222,125 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   ok("a failing publish guard fails the window, and nothing else does", guard.fails.length === 1 && /publish guard/.test(guard.fails[0]!), guard.fails.join("; "));
   const verify = await window({ verify: () => ["dist/index.js differs from the local build"] });
   ok("a failing verify-tarball fails the window, and nothing else does", verify.fails.length === 1 && /verify-tarball/.test(verify.fails[0]!), verify.fails.join("; "));
+  ok("a tarball that failed verify-tarball has no digest recorded (publishWindow publishes only recorded digests)",
+    verify.tarballs.length === 1 && verify.tarballs.every((t) => t.sha1 === undefined && t.integrity === undefined), JSON.stringify(verify.tarballs));
   const off = await window({ onMaster: false });
-  ok("a HEAD that is not on origin/master fails the window, and nothing else does", off.fails.length === 1 && /origin\/master/.test(off.fails[0]!), off.fails.join("; "));
+  ok("a HEAD off origin/master's first-parent line fails the window, and nothing else does", off.fails.length === 1 && /origin\/master/.test(off.fails[0]!), off.fails.join("; "));
+  // src/ is not in the tarball and verify-tarball compares dist/ with the build on disk, so an uncommitted source
+  // edit, built, passes every later check: the clean-tree check is what refuses it
+  const dirty = await window({ dirty: true });
+  ok("a tree with a local change fails the window, and nothing else does", dirty.fails.length === 1 && /no local change/.test(dirty.fails[0]!), dirty.fails.join("; "));
+  const skip = await window({ env: { CSD_PUBLISH_SKIP_TESTS: "1" } });
+  ok("CSD_PUBLISH_SKIP_TESTS=1 (the guard would skip the suites) fails the window, and nothing else does", skip.fails.length === 1 && /CSD_PUBLISH_SKIP_TESTS/.test(skip.fails[0]!), skip.fails.join("; "));
+  const sums = (c: { out: string }, f: string) => readFileSync(join(c.out, f), "utf8");
+  const t0 = honest.tarballs[0]!, b0 = readFileSync(t0.path), name0 = t0.path.slice(honest.out.length + 1);
+  ok("SHA1SUMS and SHA256SUMS list the tarball that passed, with the digests of its bytes",
+    sums(honest, "SHA1SUMS") === `${t0.sha1}  ${name0}\n` && sums(honest, "SHA256SUMS") === `${createHash("sha256").update(b0).digest("hex")}  ${name0}\n`,
+    sums(honest, "SHA1SUMS") + sums(honest, "SHA256SUMS"));
+  ok("SHA1SUMS and SHA256SUMS do not list a tarball that failed verify-tarball",
+    sums(verify, "SHA1SUMS") === "" && sums(verify, "SHA256SUMS") === "", sums(verify, "SHA1SUMS") + sums(verify, "SHA256SUMS"));
+  checked = { honest, verifyFailed: verify };
 }
 
-console.log("HEAD on origin/master (real git):");
+console.log("the tree and HEAD (real git):");
 {
   const repo = mkdtempSync(join(work, "repo-"));
   const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" });
+  const src = join(repo, "packages", "p", "src", "index.js");
+  mkdirSync(dirname(src), { recursive: true });
+  writeFileSync(join(repo, "packages", "p", "package.json"), JSON.stringify({ name: "@x/p", version: "1.0.0" }));
+  writeFileSync(src, "export const payee = \"reviewed\";\n");
   git("init", "-q", "-b", "master");
-  git("commit", "-q", "--allow-empty", "-m", "merged");
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "merged");
   git("update-ref", "refs/remotes/origin/master", "HEAD");
   ok("a commit that is origin/master passes", headOnOriginMaster(repo));
+  // the real git runner; @x/p@1.0.0 is on the stand-in registry, so the window ends after the plan with nothing to pack
+  const treeChecks = async () => (await checkWindow({ root: repo, out: mkdtempSync(join(work, "tree-")), run: true, log: () => undefined, env: {},
+    registry: async () => ({ status: 200, meta: null }) })).fails;
+  const clean = await treeChecks();
+  ok("a clean tree at origin/master passes the tree and HEAD checks", clean.length === 0, clean.join("; "));
+  writeFileSync(src, "export const payee = \"not reviewed\";\n");
+  const edited = await treeChecks();
+  ok("an uncommitted source edit fails the window on the clean-tree check, and nothing else does",
+    edited.length === 1 && edited[0] === "the tree has no local change", edited.join("; "));
+  writeFileSync(src, "export const payee = \"reviewed\";\n");
   git("checkout", "-q", "-b", "topic");
   git("commit", "-q", "--allow-empty", "-m", "unmerged");
   git("update-ref", "refs/remotes/origin/topic", "HEAD");
   ok("a commit pushed on a topic branch, not merged, is refused", !headOnOriginMaster(repo) && git("branch", "-r", "--contains", "HEAD").trim() !== "");
+  // master advanced by merge commits: every commit of a merged branch is an ancestor of origin/master, but only the
+  // merges (and direct commits) are on its first-parent line
+  const rev = (r: string) => git("rev-parse", r).trim();
+  const first = rev("master");
+  git("checkout", "-q", "-b", "fix", "master");
+  git("commit", "-q", "--allow-empty", "-m", "release 1.0.1, before the fix");
+  const inner = rev("HEAD");
+  git("commit", "-q", "--allow-empty", "-m", "the fix");
+  const branchTip = rev("HEAD");
+  git("checkout", "-q", "master");
+  git("merge", "-q", "--no-ff", "--no-edit", "fix");
+  const olderMerge = rev("HEAD");
+  git("checkout", "-q", "-b", "next");
+  git("commit", "-q", "--allow-empty", "-m", "a later change");
+  git("checkout", "-q", "master");
+  git("merge", "-q", "--no-ff", "--no-edit", "next");
+  const tip = rev("HEAD");
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
+  const at = (c: string) => { git("checkout", "-q", "--detach", c); return headOnOriginMaster(repo); };
+  const ancestor = (c: string) => { try { git("merge-base", "--is-ancestor", c, "origin/master"); return true; } catch { return false; } };
+  ok("the tip of origin/master, a merge commit, passes", at(tip));
+  ok("an older merge commit on origin/master's first-parent line passes (a release from an earlier merge)", at(olderMerge));
+  ok("a direct commit on the first-parent line, before the first merge, passes", at(first));
+  ok("an inner commit of a pull request merged with a merge commit (an ancestor of origin/master, before the branch's last fix) is refused",
+    ancestor(inner) && !at(inner));
+  ok("the merged branch's own tip (the merge's second parent) is refused: the release commit is the merge", ancestor(branchTip) && !at(branchTip));
+  // the stated limit: a fast-forwarded (or rebased) branch puts every one of its commits on the first-parent line
+  git("checkout", "-q", "-b", "ff", "master");
+  git("commit", "-q", "--allow-empty", "-m", "release 1.0.2, before the fix");
+  const ffInner = rev("HEAD");
+  git("commit", "-q", "--allow-empty", "-m", "the fix, fast-forwarded");
+  git("checkout", "-q", "master");
+  git("merge", "-q", "--ff-only", "ff");
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
+  ok("an inner commit of a fast-forwarded branch is on the first-parent line and is admitted (the documented limit)", ancestor(ffInner) && at(ffInner));
+}
+
+console.log("main() in check mode (the CLI on a throwaway repo; real git and pnpm, fetch stood in through NODE_OPTIONS):");
+{
+  const cli = mkdtempSync(join(work, "cli-"));
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: cli, encoding: "utf8" });
+  const put = (rel: string, body: string) => { mkdirSync(dirname(join(cli, rel)), { recursive: true }); writeFileSync(join(cli, rel), body); };
+  // main() takes the repo root from its own path, so the scripts are copied in and committed with the fixture
+  for (const f of ["npm-window.mjs", "verify-tarball.mjs", "workspace.mjs", "git-head.mjs", "published-dist.mjs"]) cpSync(join(root, "scripts", f), join(cli, "scripts", f));
+  put("pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+  put("package.json", JSON.stringify({ name: "fixture-cli", private: true }));
+  put(".gitignore", "node_modules/\npnpm-lock.yaml\n");
+  put("packages/p/package.json", JSON.stringify({ name: "@x/p", version: "1.0.0", files: ["index.js"], scripts: { prepublishOnly: "node -e 0" } }, null, 2));
+  put("packages/p/index.js", "export {};\n");
+  git("init", "-q", "-b", "master");
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "fixture");
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
+  // every registry read answers 404, so @x/p@1.0.0 is the one version to pack, guard and verify
+  const stub = 'globalThis.fetch = async () => new Response("", { status: 404 });';
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^npm_config_/i.test(k) && k !== "CSD_PUBLISH_SKIP_TESTS"));
+  const window = (env: Record<string, string> = {}) => {
+    const r = spawnSync(process.execPath, [join(cli, "scripts", "npm-window.mjs")], { cwd: cli, encoding: "utf8",
+      env: { ...base, ...env, NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(stub)}` } });
+    return { code: r.status, out: r.stdout + r.stderr };
+  };
+  const honest = window();
+  ok("honest: a clean tree at origin/master passes every check in check mode, exit 0",
+    honest.code === 0 && /pass: @x\/p: verify-tarball/.test(honest.out) && /check: every step passed \(check mode, nothing published\)/.test(honest.out), honest.out);
+  writeFileSync(join(cli, "stray.txt"), "not committed\n");
+  const dirty = window();
+  rmSync(join(cli, "stray.txt"));
+  ok("a local change: exit 1 and REFUSED naming the clean-tree check",
+    dirty.code === 1 && /REFUSED: 1 check\(s\) failed: the tree has no local change \(check mode, nothing published\)/.test(dirty.out), dirty.out);
+  const skip = window({ CSD_PUBLISH_SKIP_TESTS: "1" });
+  ok("CSD_PUBLISH_SKIP_TESTS=1 in the process environment: exit 1 and REFUSED naming it",
+    skip.code === 1 && /REFUSED: 1 check\(s\) failed: CSD_PUBLISH_SKIP_TESTS is not set/.test(skip.out), skip.out);
 }
 
 console.log("publish step (stand-in npm and registry):");
@@ -293,19 +411,20 @@ if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOK
   const mism = await run({ bad: "@x/b" });
   ok("a registry entry that is not the packed tarball fails the window", !mism.r.ok && mism.lines.some((l) => l.startsWith("@x/b@1.0.0") && l.endsWith("MISMATCH")));
 
+  // the registry serves what npm was handed, as the real one does
+  const servesWhatNpmGot = async () => {
+    const p = calls().find((c) => c.published);
+    return p ? { status: 200, meta: { dist: { shasum: p.published, integrity: p.integrity } } } : { status: 404, meta: null };
+  };
   // a tarball replaced after verification (another process repacking into the directory during the confirmation)
   const swap = async (o: { during: "confirm" | "publish" }) => {
     rmSync(record, { force: true });
     const t = [entry("@x/s", `s-${o.during}.tgz`)];
     const verifiedSha1 = t[0]!.sha1;
     const replace = () => writeFileSync(t[0]!.path, "replaced after verification");
-    // the registry serves what npm was handed, as the real one does; for "publish" the path is swapped once npm has run
+    // for "publish" the path is swapped once npm has run
     const lines: string[] = [];
-    const registry = async () => {
-      const p = calls().find((c) => c.published);
-      return p ? { status: 200, meta: { dist: { shasum: p.published, integrity: p.integrity } } } : { status: 404, meta: null };
-    };
-    const r = await publishWindow({ tarballs: t, tokenFile, npm, registry, waitMs: 0, pollMs: 0, log: (s: string) => { lines.push(s); if (o.during === "publish" && / publish @x\/s@/.test(s)) replace(); },
+    const r = await publishWindow({ tarballs: t, tokenFile, npm, registry: servesWhatNpmGot, waitMs: 0, pollMs: 0, log: (s: string) => { lines.push(s); if (o.during === "publish" && / publish @x\/s@/.test(s)) replace(); },
       confirm: async () => { if (o.during === "confirm") replace(); return "publish"; } });
     return { r, lines, verifiedSha1, publishedSha1: calls().find((c) => c.published)?.published as string | undefined, npmRan: calls().length };
   };
@@ -315,6 +434,43 @@ if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOK
   const after = await swap({ during: "publish" });
   ok("the registry is compared with the digests recorded at verification, not a re-read of the path: the verified bytes published, MATCH",
     after.r.ok && after.publishedSha1 === after.verifiedSha1 && after.lines.some((l) => l.endsWith("MATCH")), JSON.stringify({ r: after.r, lines: after.lines }));
+
+  // checkWindow's results through finishWindow, as main() runs them: real checks of csd-crypto, the stand-in npm
+  const { honest: honestChecked, verifyFailed } = checked!;
+  const finish = async (c: Checked, o: { run: boolean; publish?: typeof publishWindow }) => {
+    rmSync(record, { force: true });
+    const lines: string[] = [];
+    let publishCalls = 0;
+    // without o.publish, a stand-in that only counts: any call at all is the failure the refusal cases look for
+    const code = await finishWindow({ ...c, run: o.run, tokenFile, out: c.out, log: (s) => lines.push(s), confirm: async () => "publish",
+      publish: async (a) => { publishCalls++; return o.publish ? o.publish(a) : { ok: true, published: [], failures: [] }; } });
+    return { code, lines: lines.join("\n"), publishCalls, npm: calls() };
+  };
+  const real = (a: Parameters<typeof publishWindow>[0]) => publishWindow({ ...a, npm, registry: servesWhatNpmGot, waitMs: 0, pollMs: 0 });
+  const runHonest = await finish(honestChecked, { run: true, publish: real });
+  const crypto0 = honestChecked.tarballs[0]!;
+  ok("honest window run: every check passed, so csd-crypto's verified bytes are published and match, exit 0",
+    runHonest.code === 0 && runHonest.publishCalls === 1 && runHonest.npm.map((c) => c.argv[0]).join() === "whoami,publish"
+      && runHonest.npm[1]?.published === crypto0.sha1 && /published and verified: @inversealtruism\/csd-crypto@/.test(runHonest.lines), runHonest.lines);
+  const publishLog = existsSync(join(honestChecked.out, "publish.log")) ? readFileSync(join(honestChecked.out, "publish.log"), "utf8") : "";
+  ok("the publish step's lines are kept in <out>/publish.log", /^npm whoami: owner$/m.test(publishLog) && / publish @inversealtruism\/csd-crypto@\S+ exit 0 /.test(publishLog) && /MATCH$/m.test(publishLog), publishLog);
+  const incomplete = await finish(honestChecked, { run: true, publish: async () => ({ ok: false, published: [], failures: ["stand-in: npm publish failed"] }) });
+  ok("a publish step that did not complete exits 1 and names its failure",
+    incomplete.code === 1 && /FAIL: stand-in: npm publish failed/.test(incomplete.lines) && /STOP: the window did not complete/.test(incomplete.lines), incomplete.lines);
+  const nothing = (fails: string[]) => finishWindow({ fails, order: [], tarballs: [], run: true, tokenFile, out: honestChecked.out, log: () => undefined, confirm: async () => "publish",
+    publish: async () => { throw new Error("publish called with nothing to publish"); } });
+  const nothingOk = await nothing([]), nothingFailed = await nothing(["the tree has no local change"]);
+  ok("nothing to publish: exit 0 when every check passed, exit 1 when one failed", nothingOk === 0 && nothingFailed === 1, `${nothingOk} ${nothingFailed}`);
+  const checkOnly = await finish(honestChecked, { run: false });
+  ok("check mode with every check passed publishes nothing, exit 0", checkOnly.code === 0 && checkOnly.publishCalls === 0 && /check mode, nothing published/.test(checkOnly.lines), checkOnly.lines);
+  const refused = await finish(verifyFailed, { run: true });
+  ok("a run with a failed check (verify-tarball) never reaches the publish step, exit 1",
+    refused.code === 1 && refused.publishCalls === 0 && /REFUSED: 1 check\(s\) failed: .*verify-tarball; nothing was published/.test(refused.lines), refused.lines);
+  // the refusal above is the first stop; publishWindow is the second, whatever its caller checked
+  rmSync(record, { force: true });
+  const direct = await real({ tarballs: verifyFailed.tarballs, tokenFile, confirm: async () => "publish", log: () => undefined });
+  ok("publishWindow handed the tarball that failed verify-tarball refuses it and never runs npm",
+    !direct.ok && direct.published.length === 0 && /no digest was recorded at verification; nothing was published/.test(direct.failures.join()) && calls().length === 0, JSON.stringify(direct));
 }
 
 rmSync(work, { recursive: true, force: true });

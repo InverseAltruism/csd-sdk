@@ -8,9 +8,10 @@
 //       suite, test:crosslang for cairnx-core) and verify-tarball.mjs on the packed tarball; SHA1SUMS and
 //       SHA256SUMS. Without --out the tarballs go to a temporary directory that is removed.
 //   node scripts/npm-window.mjs --out <dir> --run --token-file <path>
-//       the same checks, which must all pass, on a clean tree whose HEAD is on origin/master; then a typed
-//       confirmation, `npm whoami`, `npm publish <tgz>` per package in order, and each registry dist.shasum and
-//       dist.integrity compared with the tarball. <dir> must be new or empty; it keeps the tarballs and the logs.
+//       the same checks, which must all pass, on a clean tree whose HEAD is on origin/master's first-parent line;
+//       then a typed confirmation, `npm whoami`, `npm publish <tgz>` per package in order, and each registry
+//       dist.shasum and dist.integrity compared with the tarball. <dir> must be new or empty; it keeps the tarballs
+//       and the logs.
 // The token file is the owner's one-time token, a file of mode 600 owned by the caller. Its content is copied into
 // a userconfig in a private temporary directory, passed to npm as a path and removed when the script exits; it is
 // not printed, not put in any argv and not written under this repo.
@@ -28,8 +29,8 @@ const USAGE = `usage: node scripts/npm-window.mjs [--out <dir>]
        node scripts/npm-window.mjs --out <dir> --run --token-file <path>`;
 
 /**
- * `sha1` and `integrity` (sha512 SRI) are the digests of the bytes verify-tarball checked; publishWindow publishes
- * only bytes that match them.
+ * `sha1` and `integrity` (sha512 SRI) are the digests of the bytes verify-tarball passed, absent when it failed;
+ * publishWindow publishes only bytes that match them.
  * @typedef {{ name: string, version: string, path: string, sha1?: string, integrity?: string }} Tarball
  */
 /** @typedef {(name: string, version: string) => Promise<{ status: number, meta: any }>} RegistryRead */
@@ -164,18 +165,23 @@ const sh = (cmd, args, cwd) => {
 };
 
 /**
- * Whether HEAD is reachable from origin/master as last fetched: the release ships merged code only, so a pushed topic
- * branch does not qualify.
+ * Whether HEAD is on the first-parent line of origin/master as last fetched: a merge commit or a direct commit on
+ * master, the tip or an older one. Every commit of a pull request merged with a merge commit is an ancestor of
+ * origin/master, and an inner one can name a version before the branch's last fix, so ancestry alone does not
+ * qualify; nor does a pushed topic branch. A rebased or fast-forwarded branch's commits are on the line and pass.
  * @param {string} root
  * @param {Sh} [run]
  */
 export function headOnOriginMaster(root, run = sh) {
-  return run("git", ["merge-base", "--is-ancestor", "HEAD", "origin/master"], root).ok;
+  const head = run("git", ["rev-parse", "--verify", "HEAD^{commit}"], root);
+  const line = run("git", ["rev-list", "--first-parent", "origin/master"], root);
+  const id = head.out.trim();
+  return head.ok && line.ok && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(id) && line.out.split("\n").includes(id);
 }
 
 /**
  * Every check of a window, logged, in order: the tree and HEAD, the plan, then per package pack, publish guard and
- * verify-tarball on the packed bytes. A failed check is logged and returned in `fails`; the caller refuses on any.
+ * verify-tarball on the packed bytes. A failed check is logged and returned in `fails`; finishWindow refuses on any.
  * `sh`, `registry`, `verify` and `env` default to the real ones; a test stands in for them.
  * @param {{ root: string, out: string, run: boolean, log: (line: string) => void, sh?: Sh, registry?: RegistryRead,
  *   verify?: typeof verifyTarball, env?: Record<string, string | undefined> }} o
@@ -195,7 +201,7 @@ export async function checkWindow(o) {
   };
   log(`== npm window ${o.run ? "run" : "check"} at ${exec("git", ["rev-parse", "--short", "HEAD"], root).out.trim()} (${new Date().toISOString()})`);
   chk("the tree has no local change", exec("git", ["status", "--porcelain"], root).out.trim() === "");
-  chk("HEAD is on origin/master", headOnOriginMaster(root, exec));
+  chk("HEAD is on the first-parent line of origin/master", headOnOriginMaster(root, exec));
   chk("CSD_PUBLISH_SKIP_TESTS is not set (the guard runs the suites)", (o.env ?? process.env).CSD_PUBLISH_SKIP_TESTS === undefined);
 
   log("\n== plan");
@@ -228,7 +234,7 @@ export async function checkWindow(o) {
     const g = exec("pnpm", ["run", "prepublishOnly"], join(root, "packages", p.__dir));
     chk(`${p.name}: publish guard (lockstep, tests${p.name.endsWith("/cairnx-core") ? ", test:crosslang" : ""})`, g.ok, g.out);
   }
-  /** @type {Map<string, Uint8Array>} the bytes each verification read, the only source of the digests */
+  /** @type {Map<string, Uint8Array>} the bytes of each tarball verify-tarball passed, the only input of the sums files */
   const verified = new Map();
   for (const [i, p] of order.entries()) {
     const tb = tarballs[i];
@@ -236,6 +242,8 @@ export async function checkWindow(o) {
     const bytes = new Uint8Array(readFileSync(tb.path));
     const v = verify(bytes, join(root, "packages", p.__dir), versions);
     chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
+    // no digest, no publish: publishWindow refuses this tarball even if a caller ignores `fails`
+    if (v.length) continue;
     tb.sha1 = sha("sha1", bytes); tb.integrity = sriOf(bytes);
     verified.set(tb.path, bytes);
   }
@@ -264,25 +272,41 @@ async function main() {
   const logFile = join(out, "window.log");
   const log = (/** @type {string} */ s) => { console.log(s); if (keep) appendFileSync(logFile, `${s}\n`); };
   try {
-    const { fails, order, tarballs } = await checkWindow({ root, out, run, log });
-    if (!order.length) return fails.length ? 1 : 0;
-
-    if (!run || fails.length) {
-      log(`\n${fails.length ? `REFUSED: ${fails.length} check(s) failed: ${fails.join("; ")}` : "check: every step passed"}${run ? "; nothing was published" : " (check mode, nothing published)"}`);
-      return fails.length ? 1 : 0;
-    }
-    log("\n== publish");
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const result = await publishWindow({
-      tarballs, tokenFile, log: (s) => { log(`  ${s}`); appendFileSync(join(out, "publish.log"), `${s}\n`); },
-      confirm: async (q) => { try { return await rl.question(q); } catch { return ""; } finally { rl.close(); } },
+    const checked = await checkWindow({ root, out, run, log });
+    return await finishWindow({
+      ...checked, run, tokenFile, out, log,
+      confirm: async (q) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try { return await rl.question(q); } catch { return ""; } finally { rl.close(); }
+      },
     });
-    for (const f of result.failures) log(`  FAIL: ${f}`);
-    log(result.ok ? `\npublished and verified: ${result.published.join(", ")}` : "\nSTOP: the window did not complete; see the FAIL lines");
-    return result.ok ? 0 : 1;
   } finally {
     if (!keep) rmSync(out, { recursive: true, force: true });
   }
+}
+
+/**
+ * What follows the checks: any failed check refuses the window, check mode stops, and only a run with no failed check
+ * reaches publishWindow. Returns the exit code. `publish` defaults to publishWindow; a test stands in for it.
+ * @param {{ fails: string[], order: any[], tarballs: Tarball[], run: boolean, tokenFile: string, out: string,
+ *   log: (line: string) => void, confirm: (question: string) => Promise<string>, publish?: typeof publishWindow }} o
+ * @returns {Promise<number>}
+ */
+export async function finishWindow(o) {
+  const { fails, order, tarballs, run, out, log } = o;
+  if (!order.length) return fails.length ? 1 : 0;
+  if (!run || fails.length) {
+    log(`\n${fails.length ? `REFUSED: ${fails.length} check(s) failed: ${fails.join("; ")}` : "check: every step passed"}${run ? "; nothing was published" : " (check mode, nothing published)"}`);
+    return fails.length ? 1 : 0;
+  }
+  log("\n== publish");
+  const result = await (o.publish ?? publishWindow)({
+    tarballs, tokenFile: o.tokenFile, confirm: o.confirm,
+    log: (s) => { log(`  ${s}`); appendFileSync(join(out, "publish.log"), `${s}\n`); },
+  });
+  for (const f of result.failures) log(`  FAIL: ${f}`);
+  log(result.ok ? `\npublished and verified: ${result.published.join(", ")}` : "\nSTOP: the window did not complete; see the FAIL lines");
+  return result.ok ? 0 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exit(await main());
