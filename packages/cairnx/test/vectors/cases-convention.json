@@ -1761,6 +1761,442 @@
      }
     }
    }
+  },
+  {
+   "name": "convention-bid-anchored-after-offer",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50056",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x06afa4ab117bc4d0bc5ccba146f79f39a92dbe7ab3741a2664189173ec0c7cf4",
+     "expiresEpoch": 9000000000,
+     "height": 99980,
+     "pos": 0,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50057",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x44f8ddc94f8dfac9a0c48c9d1c799efb67cdf3d9edc33394ad3d6020e7d7bb7b",
+     "expiresEpoch": 9000000000,
+     "height": 99981,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50055",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"bid\":\"0x00000000000000000000000000000000000000000000000000000000c0e50054\",\"give\":{\"amount\":\"5\",\"ticker\":\"AAA\"},\"t\":\"offer\",\"taker\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"v\":1,\"want\":{\"value\":\"1000\"}}",
+     "payloadHash": "0x5351ebe5fceb95d21b4edb47b861e0d533639c7a913c28ef07b770b13a23cbac",
+     "expiresEpoch": 3383,
+     "height": 100000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50054",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"give\":{\"value\":\"1000\"},\"t\":\"bid\",\"v\":1,\"want\":{\"amount\":\"5\",\"ticker\":\"AAA\"}}",
+     "payloadHash": "0xcbf9d39e60983f5d951663f32b4fde2232ffc795406f52fd33a597cf17d75855",
+     "expiresEpoch": 3383,
+     "height": 100001,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "attest",
+     "txid": "0x00000000000000000000000000000000000000000000000000000000c0e50058",
+     "proposalId": "0x00000000000000000000000000000000000000000000000000000000c0e50055",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 100002,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "25001005",
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "15"
+     }
+    }
+   ],
+   "tipHeight": 100005,
+   "expectedState": {
+    "balances": {
+     "AAA": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+       "available": "995",
+       "locked": "0"
+      },
+      "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+       "available": "5",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {
+     "0x00000000000000000000000000000000000000000000000000000000c0e50054": {
+      "bidder": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "expiresEpoch": 3383,
+      "give": {
+       "value": "1000"
+      },
+      "height": 100001,
+      "id": "0x00000000000000000000000000000000000000000000000000000000c0e50054",
+      "offers": [],
+      "status": "done",
+      "want": {
+       "amount": "5",
+       "ticker": "AAA"
+      }
+     }
+    },
+    "feesPaid": "100000015",
+    "names": {},
+    "offers": {
+     "0x00000000000000000000000000000000000000000000000000000000c0e50055": {
+      "bid": "0x00000000000000000000000000000000000000000000000000000000c0e50054",
+      "expiresEpoch": 3383,
+      "feeBps": 150,
+      "fill": {
+       "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "fee": "15",
+       "height": 100002,
+       "paid": "25001005",
+       "txid": "0x00000000000000000000000000000000000000000000000000000000c0e50058"
+      },
+      "give": {
+       "amount": "5",
+       "ticker": "AAA"
+      },
+      "height": 100000,
+      "id": "0x00000000000000000000000000000000000000000000000000000000c0e50055",
+      "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "status": "filled",
+      "taker": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "want": {
+       "payto": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "value": "1000"
+      }
+     }
+    },
+    "tipHeight": 100005,
+    "tokens": {
+     "AAA": {
+      "decimals": 0,
+      "deployId": "0x00000000000000000000000000000000000000000000000000000000c0e50056",
+      "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "height": 99980,
+      "mint": "issuer",
+      "minted": "1000",
+      "supply": "1000",
+      "ticker": "AAA"
+     }
+    }
+   }
+  },
+  {
+   "name": "convention-fee-bps-zero-below-v11",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e5005b",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"100\",\"t\":\"deploy\",\"ticker\":\"OLD\",\"v\":1}",
+     "payloadHash": "0x75f304e38636ec68d52f55562fd16b72867d8483457aac0fd76b264e5d9e9b48",
+     "expiresEpoch": 9000000000,
+     "height": 29870,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e5005c",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"amount\":\"100\",\"t\":\"mint\",\"ticker\":\"OLD\",\"v\":1}",
+     "payloadHash": "0xdc115db8a9445599877a52f5d59fe70e2a521b7a7e75d8a225deaefe24579c51",
+     "expiresEpoch": 9000000000,
+     "height": 29871,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50059",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"give\":{\"amount\":\"10\",\"ticker\":\"OLD\"},\"t\":\"offer\",\"v\":1,\"want\":{\"value\":\"1000\"}}",
+     "payloadHash": "0x1b87406ecd2849f1cbcf2c6d1550377db6a2395642d7f91408a09fd8d17fd255",
+     "expiresEpoch": 1045,
+     "height": 29880,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "attest",
+     "txid": "0x00000000000000000000000000000000000000000000000000000000c0e5005a",
+     "proposalId": "0x00000000000000000000000000000000000000000000000000000000c0e50059",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 29890,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "1000"
+     }
+    }
+   ],
+   "tipHeight": 29900,
+   "expectedState": {
+    "balances": {
+     "OLD": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+       "available": "90",
+       "locked": "0"
+      },
+      "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+       "available": "10",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "0",
+    "names": {},
+    "offers": {
+     "0x00000000000000000000000000000000000000000000000000000000c0e50059": {
+      "expiresEpoch": 1045,
+      "feeBps": 0,
+      "fill": {
+       "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "fee": "0",
+       "height": 29890,
+       "paid": "1000",
+       "txid": "0x00000000000000000000000000000000000000000000000000000000c0e5005a"
+      },
+      "give": {
+       "amount": "10",
+       "ticker": "OLD"
+      },
+      "height": 29880,
+      "id": "0x00000000000000000000000000000000000000000000000000000000c0e50059",
+      "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "status": "filled",
+      "want": {
+       "payto": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "value": "1000"
+      }
+     }
+    },
+    "tipHeight": 29900,
+    "tokens": {
+     "OLD": {
+      "decimals": 0,
+      "deployId": "0x00000000000000000000000000000000000000000000000000000000c0e5005b",
+      "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "height": 29870,
+      "mint": "issuer",
+      "minted": "100",
+      "supply": "100",
+      "ticker": "OLD"
+     }
+    }
+   }
+  },
+  {
+   "name": "convention-csd-want-zero",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e5005f",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x06afa4ab117bc4d0bc5ccba146f79f39a92dbe7ab3741a2664189173ec0c7cf4",
+     "expiresEpoch": 9000000000,
+     "height": 99980,
+     "pos": 0,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50060",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x44f8ddc94f8dfac9a0c48c9d1c799efb67cdf3d9edc33394ad3d6020e7d7bb7b",
+     "expiresEpoch": 9000000000,
+     "height": 99981,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e5005d",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"give\":{\"amount\":\"5\",\"ticker\":\"AAA\"},\"t\":\"offer\",\"taker\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"v\":1,\"want\":{\"value\":\"0\"}}",
+     "payloadHash": "0xb55169aea6c847d88240cdc6146207c57f88e2c42484c5aa906b0b4fc5bd6364",
+     "expiresEpoch": 3343,
+     "height": 100000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "attest",
+     "txid": "0x00000000000000000000000000000000000000000000000000000000c0e5005e",
+     "proposalId": "0x00000000000000000000000000000000000000000000000000000000c0e5005d",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 100001,
+     "pos": 0,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 100005,
+   "expectedState": {
+    "balances": {
+     "AAA": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+       "available": "995",
+       "locked": "0"
+      },
+      "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+       "available": "5",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "100000000",
+    "names": {},
+    "offers": {
+     "0x00000000000000000000000000000000000000000000000000000000c0e5005d": {
+      "expiresEpoch": 3343,
+      "feeBps": 150,
+      "fill": {
+       "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "fee": "0",
+       "height": 100001,
+       "paid": "0",
+       "txid": "0x00000000000000000000000000000000000000000000000000000000c0e5005e"
+      },
+      "give": {
+       "amount": "5",
+       "ticker": "AAA"
+      },
+      "height": 100000,
+      "id": "0x00000000000000000000000000000000000000000000000000000000c0e5005d",
+      "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "status": "filled",
+      "taker": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "want": {
+       "payto": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "value": "0"
+      }
+     }
+    },
+    "tipHeight": 100005,
+    "tokens": {
+     "AAA": {
+      "decimals": 0,
+      "deployId": "0x00000000000000000000000000000000000000000000000000000000c0e5005f",
+      "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "height": 99980,
+      "mint": "issuer",
+      "minted": "1000",
+      "supply": "1000",
+      "ticker": "AAA"
+     }
+    }
+   }
+  },
+  {
+   "name": "convention-reservation-at-finalize-by",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50061",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"commit\":\"0x413c0e4fe2ac72e59d6c4874994bbe5d7505d4217d8e2160eab6c47a8897dd40\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0x55d9cae7099eac47d5410116ebeb1a641900d7eaecfbd8011807d6bc84ef3a18",
+     "expiresEpoch": 9000000000,
+     "height": 100000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50062",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"commit\":\"0x67a4e602db8e4ba9812671fb327259da30b595d65e8bdfb6572eb228caf48e0a\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0x351f95478f99730e2ad6729306a3bc79f4e38ebf79ddfa31a2bfbca21350ddb4",
+     "expiresEpoch": 9000000000,
+     "height": 100000,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50063",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"lastcall\",\"salt\":\"1111222233334444aaaabbbbccccdddd\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0x04d61ecfe7d647955214711a91cdeb37a046d00b5b34ad8e962bf125f88427cb",
+     "expiresEpoch": 9000000000,
+     "height": 100001,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50064",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"justintime\",\"salt\":\"5555666677778888eeeeffff00001111\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0x339d6f56e118882b95fd21f5f9c0c621c7544f488297dbe5daf3a8d746132e45",
+     "expiresEpoch": 9000000000,
+     "height": 100001,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x00000000000000000000000000000000000000000000000000000000c0e50065",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"justintime\",\"salt\":\"5555666677778888eeeeffff00001111\",\"t\":\"nfinalize\",\"v\":1}",
+     "payloadHash": "0x868f30c0aaab5de83c2ba2f7ee015c4a155843f7300b4bfd327dfb34774a7449",
+     "expiresEpoch": 9000000000,
+     "height": 100028,
+     "pos": 0,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "300000000"
+     }
+    }
+   ],
+   "tipHeight": 100028,
+   "expectedState": {
+    "balances": {},
+    "bids": {},
+    "feesPaid": "300000000",
+    "names": {
+     "justintime": {
+      "claimId": "0x00000000000000000000000000000000000000000000000000000000c0e50064",
+      "effectiveHeight": 100000,
+      "height": 100001,
+      "locked": false,
+      "name": "justintime",
+      "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "paidThroughEpoch": 12094
+     }
+    },
+    "offers": {},
+    "tipHeight": 100028,
+    "tokens": {}
+   }
   }
  ]
 }

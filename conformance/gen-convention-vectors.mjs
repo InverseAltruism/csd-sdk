@@ -21,12 +21,16 @@
 //   ocancel-same-block-repost       §12b, §16: the give an ocancel releases is still locked in the cancel's block.
 //   fees-owed-and-fill-paid         §5, §10: feesPaid counts fees owed; a whole fill's `paid` is what it paid; a treasury
 //                                   offer names a payto.
+//   bid-anchored-after-offer        §13: `done` looks the bid up at the fill; an offer is linked only when it applies.
+//   fee-bps-zero-below-v11          §19: an offer anchored below V11 carries feeBps 0 and owes no trade fee.
+//   csd-want-zero                   §3, §4.4: a CSD-priced offer may want "0".
+//   reservation-at-finalize-by      §28: at a tip equal to finalizeBy the reservation is gone; a finalize there applied.
 import { writeFileSync } from "node:fs";
 import {
   resolve, canonicalState, canonicalJson, payloadHash, requiredFillOutputs, tradeFee, nameCommit, nameRegFee,
   expiredClaimFee, deploy, mint, transfer, offer, bid, offerCancelAll, nameCommitRecord, nameClaim, nameFinalize, nameSet,
-  nameProfile, nameRenew, nameXfer, epochOf, V29_HEIGHT, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, CONF_TOKEN_FILL,
-  TREASURY_ADDR, EPOCH_LEN, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS,
+  nameProfile, nameRenew, nameXfer, epochOf, V29_HEIGHT, V11_HEIGHT, ACTIVATION_HEIGHT, DEPLOY_FEE, SCORE_FILL,
+  SCORE_CANCEL, CONF_TOKEN_FILL, TREASURY_ADDR, EPOCH_LEN, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS,
 } from "../packages/cairnx/dist/index.js";
 
 const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), C = "0x" + "c3".repeat(20);
@@ -261,6 +265,57 @@ const add = (name, events, tipHeight, checks) => {
     ["feesPaid is the deploy fee and the fee the fill owed", s.feesPaid === String(BigInt(DEPLOY_FEE) + owed)],
     ["the fill's paid is the 3000 it paid to payto", s.offers[o.id].fill.paid === "3000" && s.offers[o.id].fill.fee === String(owed)],
     ["the treasury's offer without payto is refused, with payto created", codeOf(st, tNoPayto.id) === "OFFER_PAYTO_TREASURY" && s.offers[tPayto.id].status === "open"],
+  ]);
+}
+
+// §13: `done` looks the bid up at the fill; the link is made only when the offer applies
+{
+  const bidId = nid();
+  const o = PE(offer({ give: { ticker: "AAA", amount: "5" }, want: { value: "1000" }, taker: B, bid: bidId }), H, A, epochOf(H) + 50);
+  const b = PE(bid({ want: { ticker: "AAA", amount: "5" }, give: { value: "1000" } }), H + 1, B, epochOf(H) + 50, 0, {}, bidId);
+  const ev = [...tokenRoots(), o, b];
+  ev.push(AE(o.id, B, H + 2, outputs(resolve(ev, H + 1).offers[o.id], "1000")));
+  add("convention-bid-anchored-after-offer", ev, H + 5, (_st, s) => [
+    ["the bid anchored after the offer naming it ends done with no linked offer", s.offers[o.id].status === "filled" && s.bids[bidId].status === "done" && s.bids[bidId].offers.length === 0],
+  ]);
+}
+
+// §19: an offer anchored below V11 carries feeBps 0 and its fill owes no trade fee
+{
+  const h = V11_HEIGHT - 90;
+  const o = PE(offer({ give: { ticker: "OLD", amount: "10" }, want: { value: "1000" } }), h + 10, A, epochOf(h) + 50);
+  const f = AE(o.id, B, h + 20, { [A]: "1000" });
+  const ev = [PE(deploy({ ticker: "OLD", decimals: 0, supply: "100", mint: "issuer" }), h, A, FAR), PE(mint({ ticker: "OLD", amount: "100" }), h + 1, A, FAR), o, f];
+  add("convention-fee-bps-zero-below-v11", ev, h + 30, (st, s) => [
+    ["the offer is below V11 and above activation", o.height < V11_HEIGHT && h >= ACTIVATION_HEIGHT],
+    ["feeBps 0, filled with no treasury output, fee 0", s.offers[o.id].feeBps === 0 && codeOf(st, f.txid) === "FILL_APPLIED" && s.offers[o.id].fill.fee === "0" && s.feesPaid === "0"],
+  ]);
+}
+
+// §3, §4.4: a CSD-priced offer that wants "0"
+{
+  const o = PE(offer({ give: { ticker: "AAA", amount: "5" }, want: { value: "0" }, taker: B }), H, A, epochOf(H) + 10);
+  const f = AE(o.id, B, H + 1, {});
+  add("convention-csd-want-zero", [...tokenRoots(), o, f], H + 5, (st, s) => [
+    ["the taker's fill with no outputs applies", codeOf(st, f.txid) === "FILL_APPLIED" && s.balances.AAA[B].available === "5"],
+    ["it paid and owed nothing", s.offers[o.id].fill.paid === "0" && s.offers[o.id].fill.fee === "0"],
+  ]);
+}
+
+// §28: at a tip equal to finalizeBy an un-finalized reservation is gone, and a finalize mined at that height applied
+{
+  const [n1, n2] = ["lastcall", "justintime"], [s1, s2] = ["1111222233334444aaaabbbbccccdddd", "5555666677778888eeeeffff00001111"];
+  const ev = [
+    PE(nameCommitRecord({ commit: nameCommit(n1, s1, A) }), H, A, FAR, 0), PE(nameCommitRecord({ commit: nameCommit(n2, s2, A) }), H, A, FAR, 1),
+    PE(nameClaim({ name: n1, salt: s1 }), H + 1, A, FAR, 0), PE(nameClaim({ name: n2, salt: s2 }), H + 1, A, FAR, 1),
+  ];
+  const F = resolve(ev, H + 2).names[n1].finalizeBy;
+  const fin = PE(nameFinalize({ name: n2, salt: s2 }), F, A, FAR, 0, toTreasury(nameRegFee(n2, F)));
+  ev.push(fin);
+  add("convention-reservation-at-finalize-by", ev, F, (st, s) => [
+    ["both reservations end at the tip", F === resolve(ev.slice(0, 4), H + 2).names[n2].finalizeBy],
+    ["the un-finalized one is gone at the tip", !(n1 in s.names)],
+    ["the finalize at finalizeBy applied", codeOf(st, fin.id) === "NAME_FINALIZED" && !("pending" in s.names[n2])],
   ]);
 }
 

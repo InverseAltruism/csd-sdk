@@ -102,7 +102,7 @@ const REPLAY_CORPUS_PIN = {
 const ADDED_SINCE_BASELINE = {
   [`${VEC}/events.json`]: "0f61da38fb17a5eb758759b56410090a9491b54642102139d7e330275cb81f0b",
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
-  [`${VEC}/cases-convention.json`]: "e5e69bd3b6af1f3948566c76a21e3bf44735bb1305b8fb186a0f9e23d598d0c3",
+  [`${VEC}/cases-convention.json`]: "9cb61caf0ea391cc3cd370207d7623b99ac91485d34c051e763f671bb3ca76be",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");

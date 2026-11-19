@@ -59,6 +59,17 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core, next release (2026-11-19, Plan 91 audit; unreleased; no consensus-surface change) - the convention text follows the code
+
+Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are unchanged (`src/`
+and `dist/` untouched; `scripts/seal-differential.mjs` against cairnx-core 0.2.4 passes). CONVENTION.md now states
+ten rules it left out or contradicted (the pending reservation, the expiry sweep at `tipHeight + 1`, the
+zero-delivery partial fill, the commit height, the salt and hash forms, the bid link and `done`, the contest key, the
+zero token price, the recapture premium staircase and the recaptured record's anchor) and corrects its sentences on
+`feesPaid`, a whole fill's `paid`, the claim fields, `feeBps` below V11, the same-block re-post after an `ocancel`,
+reservation expiry and duplicate feeds below V29. Sixteen new vectors (`cases-convention.json`,
+`conformance/gen-convention-vectors.mjs`) pin them in JS and Python; no rule changed.
+
 ## cairnx-core 0.2.7 (2026-11-18, Plan 91 G1; unreleased; consensus-surface files edited, no state change) - replay cost
 
 No state change; replay cost. The replay's walks that grew with total state leave the per-event path: before each

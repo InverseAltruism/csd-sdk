@@ -21,8 +21,10 @@
   and `FILL_UNDERPAID`, `FILL_REBATE_UNPAID` and `TREASURY_FEE_UNPAID` say what they mean on the rebate lane (40.4).
   README.md gives the recapture premium as 19x stepping down to 1x over about 28 days, where it said 20x to 1x over
   about 30.
-- `test/vectors/cases-convention.json` (12 vectors, `conformance/gen-convention-vectors.mjs`) pins those rules, each
-  in a vector an implementation of the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
+- `test/vectors/cases-convention.json` (16 vectors, `conformance/gen-convention-vectors.mjs`) pins those rules and
+  three the text stated that no vector pinned (`feeBps` 0 below 29 960, a CSD-priced offer wanting `"0"`, and a bid
+  anchored after the offer that names it ending `done` with empty `offers`), each in a vector an implementation of
+  the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
   reference by `conformance/crosscheck-resolve.mjs`, and by the seal, which pins the file's sha256. A file of its own
   keeps the three case files the seal freezes at their bytes.
 - `test/holdcount.test.ts`: the honest path of `countOtherHoldsAtGrant`'s skip of the buyer's closed holds, with the
