@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-19)
 
-- The contract of the CairnX public read API, version 1, entry `.`: the envelope (`At`, `Page`, `Refusal`), the
+- First release, made for one consumer: the CairnX resolver, which is to mount the handlers. No public HTTP route
+  serves these reads yet, and this is not the 1.0 contract: any part of it can change in any release before 1.0.0.
+- Entry `.`, the types and parser of the CairnX read API, version 1, as they stand before 1.0: the envelope (`At`, `Page`, `Refusal`), the
   rows of the six lists over cairnx-core's state types (`fillCount` and `offerCount` in place of the unbounded
   arrays, no note text in `EventRow`, the growable status and mint unions `Open`), the error codes with their HTTP
   statuses, the closed parameter table of each route and `parseQuery`, which refuses an unknown, repeated, empty,

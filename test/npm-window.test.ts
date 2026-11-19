@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
-import { checkWindow, finishWindow, headOnOriginMaster, publishWindow } from "../scripts/npm-window.mjs";
+import { checkWindow, finishWindow, headOnOriginMaster, publishOrder, publishWindow } from "../scripts/npm-window.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -194,7 +194,7 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
 {
   const CRYPTO = "@inversealtruism/csd-crypto";
   const HEAD = "a".repeat(40);
-  const window = async (o: { guard?: boolean; onMaster?: boolean; dirty?: boolean; env?: Record<string, string>; verify?: typeof verifyTarball } = {}) => {
+  const window = async (o: { guard?: boolean; onMaster?: boolean; dirty?: boolean; env?: Record<string, string>; verify?: typeof verifyTarball; unpublished?: string } = {}) => {
     const out = mkdtempSync(join(work, "win-"));
     const sh = (cmd: string, args: string[], cwd: string) => {
       if (cmd === "git" && args[0] === "status") return { ok: true, out: o.dirty ? " M packages/crypto/src/index.ts\n" : "" };
@@ -208,7 +208,7 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
     };
-    const registry = async (name: string) => ({ status: name === CRYPTO ? 404 : 200, meta: null });
+    const registry = async (name: string) => ({ status: name === (o.unpublished ?? CRYPTO) ? 404 : 200, meta: null });
     const lines: string[] = [];
     const r = await checkWindow({ root, out, run: false, log: (l) => lines.push(l), sh, registry, verify: o.verify ?? verifyTarball, env: o.env ?? {} });
     return { ...r, out, lines: lines.join("\n") };
@@ -239,6 +239,22 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
     sums(honest, "SHA1SUMS") + sums(honest, "SHA256SUMS"));
   ok("SHA1SUMS and SHA256SUMS do not list a tarball that failed verify-tarball",
     sums(verify, "SHA1SUMS") === "" && sums(verify, "SHA256SUMS") === "", sums(verify, "SHA1SUMS") + sums(verify, "SHA256SUMS"));
+  // cairnx-api: an exact peer on cairnx-core, which pnpm packs from workspace:* as the version HEAD names
+  const peerFirst = publishOrder([{ name: "@inversealtruism/cairnx-api", peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }, { name: "@inversealtruism/cairnx-core" }]);
+  ok("a package is ordered after the workspace package it names as a peer (cairnx-core before cairnx-api, against the name order)",
+    peerFirst.map((p) => p.name).join() === "@inversealtruism/cairnx-core,@inversealtruism/cairnx-api", peerFirst.map((p) => p.name).join());
+  const API = "@inversealtruism/cairnx-api";
+  const api = await window({ unpublished: API });
+  const apiTgz = api.tarballs[0]?.path ?? "";
+  const apiPeers = existsSync(apiTgz) ? JSON.parse(execFileSync("tar", ["xzfO", apiTgz, "package/package.json"], { encoding: "utf8" })).peerDependencies : null;
+  ok("honest: cairnx-api is the one package to publish when it alone is unpublished, and every check passes",
+    api.fails.length === 0 && api.order.map((p) => p.name).join() === API && api.tarballs.every((t) => t.sha1 !== undefined), `${api.order.map((p) => p.name).join()} ${api.fails.join("; ")}`);
+  ok("its packed manifest pins cairnx-core as a peer at the version HEAD names",
+    JSON.stringify(apiPeers) === JSON.stringify({ "@inversealtruism/cairnx-core": versions.get("@inversealtruism/cairnx-core") }), JSON.stringify(apiPeers));
+  const REPLICA = "@inversealtruism/cairnx-replica";
+  const replica = await window({ unpublished: REPLICA });
+  ok("a private package (cairnx-replica) is never planned, even when its version is not on npm",
+    replica.fails.length === 0 && replica.order.length === 0 && replica.tarballs.length === 0, `${replica.order.map((p) => p.name).join()} ${replica.fails.join("; ")}`);
   checked = { honest, verifyFailed: verify };
 }
 

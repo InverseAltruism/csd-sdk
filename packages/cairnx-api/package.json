@@ -1,11 +1,10 @@
 {
   "name": "@inversealtruism/cairnx-api",
   "version": "0.1.0",
-  "private": true,
   "engines": {
     "node": ">=18"
   },
-  "description": "The contract of the CairnX public read API, version 1: row and envelope types, error codes, the parameter grammar and parser, and the cursor codec. No I/O; browser-safe.",
+  "description": "Pre-1.0 types, parameter parser, cursor codec and pure handlers of the CairnX read API, version 1, for the CairnX resolver to mount; the contract can change in any release before 1.0.0. No I/O; browser-safe.",
   "author": "InverseAltruism",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -1,11 +1,21 @@
 # @inversealtruism/cairnx-api
 
-The contract of the CairnX public read API, version 1: six paged list reads of CairnX state (`names`, `bids`,
-`tokens`, `events`, `holders`, `offers`), with their row and envelope types, error codes, parameter grammar and
-cursor codec. Not yet released. It does no I/O and imports no Node built-in, so it runs in a browser. Its rows are
-`@inversealtruism/cairnx-core`'s state types, and cairnx-core is an exact peer dependency: install the cairnx-core
-version this package was published against; any other installs a second core or runs this package on a core it was
-not built against.
+The types, parameter parser, cursor codec and pure handlers of the CairnX read API, version 1: six paged list reads
+of CairnX state (`names`, `bids`, `tokens`, `events`, `holders`, `offers`). It does no I/O and imports no Node
+built-in, so it runs in a browser. Its rows are `@inversealtruism/cairnx-core`'s state types, and cairnx-core is an
+exact peer dependency: install the cairnx-core version this package was published against; any other installs a
+second core or runs this package on a core it was not built against.
+
+## What 0.1.0 is
+
+- The handlers and types the CairnX resolver, its first consumer, will mount to answer the six reads.
+- Not a live HTTP API: as of 0.1.0 no public route serves these reads.
+- Not the 1.0 contract: until 1.0.0, any release may change a route, a parameter, a row or envelope field, an error
+  code or a cursor grammar, and CHANGELOG.md names each change. What an answer of the public API promises, and the
+  notice before a field or route is retired, start on the day the API's documentation is published, not with a
+  package version.
+
+The rest of this file describes 0.1.0 as built.
 
 ## What an answer means
 
@@ -49,6 +59,11 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   | `UPSTREAM_UNAVAILABLE`, `RESPONSE_TOO_LARGE` | 502 |
   | `NOT_READY` | 503 |
 
+  `answer` returns four of them: `NOT_FOUND`, `INVALID_QUERY`, `SNAPSHOT_NOT_HELD` and `NOT_READY`.
+  `METHOD_NOT_ALLOWED` and `INTERNAL` are for the host to send, and `INVALID_PATH`, `RATE_LIMITED`,
+  `UPSTREAM_UNAVAILABLE` and `RESPONSE_TOO_LARGE` for a proxy in front of it; this package only names them. A proxy
+  may also answer `NOT_FOUND` and `METHOD_NOT_ALLOWED` itself (`ERRORS` marks both `from: "both"`).
+
 - `ROUTES`, `isRoute`, `ROUTE_TABLE`, `paramsOf`, `LIMIT_DEFAULT`, `KEYS_MAX`, `NAME_STATUSES`, `OFFER_STATUSES`,
   `BID_STATUSES`, `OFFER_KINDS`: the closed parameter table of each route, as data.
 - `parseQuery(route, query)`: the parser. It returns `{ ok: true, query }`, typed per route and order, or
@@ -64,7 +79,7 @@ reason to allow one. A missing row is never an error: `rows` is empty.
 
 ## Handlers (`./handlers`)
 
-For a host that serves the API (the CairnX service; later a replica): the v1 reads over a prepared view. No I/O, no
+For a host that answers these reads (the CairnX resolver is the first): the v1 reads over a prepared view. No I/O, no
 clock, no randomness: equal inputs give byte-equal answers.
 
 - `prepareView(state, { height, hash, input, core })`: once per published state, builds every served list's rows in
@@ -101,18 +116,19 @@ What each list reads from the state:
   feed shows each copy, `keys` returns every entry of a transaction id, and a page never splits them. The entries
   at heights up to h are the same in every later state of one branch under one core: no rule of the replay reads
   the tip.
-- `holders`: for the required `ticker`, the addresses of `state.balances[ticker]`, which holds no zero balance.
+- `holders`: for the required `ticker`, the addresses of `state.balances[ticker]`, which holds no address whose
+  available and locked amounts are both zero (cairnx-core's `resolve.ts` leaves them out).
   A ticker with no balances, unknown or a token never held, reads an empty list and adds nothing to the view: the
   view has one entry per ticker the state holds and is frozen.
 
 Size of an answer. A row is bounded: every string in it is fixed-width (an address, a hash, a decimal) or was carried
 by one record of at most `MAX_RECORD_BYTES` (a name, a ticker, a token's name or metadata hash, a whole profile), so a
-row is at most about 1.5 KB. A page holds `limit` rows plus the remaining rows of its last row's key, and a `keys`
-read every row of each key it names. On every list but `events` a key has one row, so the excess is 0; on a feed
-without repeated events it is 0 on `events` too. cairnx-core drops a repeated event id at or above V29 (88,000;
+row's size does not grow with the state. A page holds `limit` rows plus the remaining rows of its last row's key, and
+a `keys` read every row of each key it names. On every list but `events` a key has one row, so the excess is 0; on a
+feed without repeated events it is 0 on `events` too. cairnx-core drops a repeated event id at or above V29 (88,000;
 `resolve.ts`), so a repeated event exists only in the history below V29, with as many copies as the host's feed
-carried. The one other way to a key of several entries is a feed with two transactions at one position, which
-no event list of CONVENTION section 33 holds: `pos` is a transaction's index in its block.
+carried. The one other way to a key of several entries is a feed with two transactions at one position, which no event
+list of CONVENTION section 33 holds: `pos` is a transaction's index in its block.
 
 Cost per request: an unfiltered page or a `keys` read is a binary search and a copy of the rows it returns; a
 filtered page scans the list until the page fills, and with an `owner` filter counts every row for `total` (every
