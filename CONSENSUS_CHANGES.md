@@ -84,9 +84,24 @@ the node's form) and values. Txids, sighashes, signatures and replay output are 
 CHANGELOG listed in `files`. Its one workspace dependent, cairnx-replica, is private and has no published version,
 so it keeps 0.1.0 and packs with csd-light 0.1.27.
 
-## cairnx-core, next release (2026-11-19, Plan 91 audit; unreleased; no consensus-surface change) - the convention text follows the code
+## cairnx-core 0.2.8, cairnx-api 0.1.1 (2026-11-19, Plan 91; unreleased; no consensus-surface change) - forward resolution, the version and the gate table; the convention text follows the code
 
-Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are unchanged (`src/`
+New root exports, each in a new file, none of which writes state: `resolveNameIn(names, name)` and `nameView(names,
+name)` in `src/forward.ts`, forward resolution moved from the reference service without a change to its body (the
+`nset` address, else the owner; null for an absent name or a pending reservation; `lapsed` from the name's `expired`)
+and the class, owner, address and profile a reader shows, both reading only `names` of a `resolve()` result;
+`CAIRNX_CORE_VERSION` in `src/version.ts`; `GATE_HEIGHTS` in `src/gates.ts`, the gate constants as one frozen table built
+from those of `types.ts`. `resolve.ts`, `resolve/`, `records.ts` and `types.ts` are byte-identical to 0.2.7: `git diff
+edc20e9` over them prints nothing, `edc20e9` being the commit 0.2.7 was published from. CONVENTION.md section 35.4
+states forward resolution and `test/vectors/forward.json` pins it. `scripts/seal-differential.mjs cairnx-core-0.2.4
+edc20e9` passes, now with each baseline build bound to npm (csd-codec 0.1.18 and cairnx-core 0.2.4 and 0.2.7: every
+`dist/` file byte-identical to npm's tarball of that version, after its sha512 integrity check): `canonicalState`
+byte-identical to 0.2.4 and the whole result identical once `code` is left out, and identical to 0.2.7 with `code`,
+over the 97 cases of the case files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of
+`codes.json` and the 53 growth-stream inputs; check mode clean on 21,090 inputs; `parseRecord` equal over 200,910
+records; 1,418 client-surface checks; crosslang green. cairnx-api 0.1.1 is a peer-only step onto this core.
+
+The convention text. Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are unchanged (`src/`
 and `dist/` untouched; `scripts/seal-differential.mjs` against cairnx-core 0.2.4 passes). CONVENTION.md now states
 ten rules it left out or contradicted (the pending reservation, the expiry sweep at `tipHeight + 1`, the
 zero-delivery partial fill, the commit height, the salt and hash forms, the bid link and `done`, the contest key, the
