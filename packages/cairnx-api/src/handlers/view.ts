@@ -36,6 +36,9 @@ export function prepareView(state: CairnXState, source: ViewSource): View {
   if (typeof core !== "string" || !VERSION_RE.test(core)) throw new TypeError("prepareView: core is not a version");
   return deepFreeze({
     at: { height, hash, rev: revOf(input, core, CAIRNX_API_VERSION) },
-    lists: { names: LISTS.names.build(state), bids: LISTS.bids.build(state), tokens: LISTS.tokens.build(state) },
+    lists: {
+      names: LISTS.names.build(state), bids: LISTS.bids.build(state), tokens: LISTS.tokens.build(state),
+      events: LISTS.events.build(state), holders: LISTS.holders.build(state), offers: LISTS.offers.build(state),
+    },
   });
 }

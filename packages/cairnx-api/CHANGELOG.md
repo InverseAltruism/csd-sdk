@@ -9,5 +9,8 @@
   malformed or out-of-range parameter with its name (heights and positions at most 15 digits), the cursor codec of
   each list order, and `CAIRNX_API_VERSION`. cairnx-core is an exact peer dependency.
 - `./handlers`: `prepareView(state, { height, hash, input, core })`, the frozen view of one published state with
-  `rev`, and `answer(held, route, query)`, the `{ status, body }` of a v1 read of `names`, `bids` or `tokens` from the
-  views held. Dependency: `@noble/hashes`, at cairnx-core's version.
+  `rev`, and `answer(held, route, query)`, the `{ status, body }` of a v1 read of any of the six lists from the views
+  held. `events` is the applied log in (height, pos) order, each entry once; `holders` reads an unknown ticker as an
+  empty list and adds nothing to the view; `offers` filters on `status` and `kind`. A page never ends between two rows
+  of one key, so a repeated event below V29 is never split across pages. Dependency: `@noble/hashes`, at
+  cairnx-core's version.

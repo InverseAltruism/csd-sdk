@@ -23,15 +23,19 @@ export const events: readonly ChainEvent[] = corpus.events;
 const offer = ({ fills, ...rest }: CairnXState["offers"][string]): OfferRow =>
   ({ ...rest, fillCount: fills !== undefined ? fills.length : rest.fill !== undefined ? 1 : 0 });
 const bid = ({ offers, ...rest }: CairnXState["bids"][string]): BidRow => ({ ...rest, offerCount: offers.length });
-const event = (e: CairnXState["events"][number]): EventRow =>
+/** A log entry as EventRow defines it. */
+export const eventRow = (e: CairnXState["events"][number]): EventRow =>
   ({ txid: e.id, height: e.height, pos: e.pos, kind: e.kind, applied: e.ok, code: e.code ?? null });
+/** The feed's order oracle: a log's rows stably sorted on the position, then on the height, so entries of one key keep
+ *  their log order. */
+export const feedOrder = (log: CairnXState["events"]): EventRow[] => log.map(eventRow).sort((a, b) => a.pos - b.pos).sort((a, b) => a.height - b.height);
 const holders: HolderRow[] = Object.values(state.balances).flatMap((m) => Object.entries(m).map(([address, b]) => ({ address, ...b })));
 
 export const rows: { [R in keyof RowOf]: RowOf[R][] } = {
   names: Object.values(state.names),
   bids: Object.values(state.bids).map(bid),
   tokens: Object.values(state.tokens),
-  events: state.events.map(event),
+  events: state.events.map(eventRow),
   holders,
   offers: Object.values(state.offers).map(offer),
 };

@@ -4,8 +4,9 @@ import type { Answer, At } from "../envelope.js";
 import { ERRORS, type ErrorCode } from "../errors.js";
 import { copyData } from "../freeze.js";
 import { parseQuery, type AtQuery, type Query } from "../params.js";
+import { isRoute } from "../routes.js";
 import type { RowOf } from "../rows.js";
-import { LISTS, isServed } from "./lists.js";
+import { LISTS } from "./lists.js";
 import type { PageRows } from "./page.js";
 import type { View } from "./view.js";
 
@@ -21,7 +22,7 @@ const pick = (held: readonly View[], at: AtQuery | null): View | undefined =>
 
 /** Answer `route` with `query` (the raw query string or `URL.searchParams`) from `held`, the views held, newest first. */
 export function answer(held: readonly View[], route: string, query: string | URLSearchParams): Answered {
-  if (typeof route !== "string" || !isServed(route)) return refusal("NOT_FOUND", "no such list under v1");
+  if (typeof route !== "string" || !isRoute(route)) return refusal("NOT_FOUND", "no such list under v1");
   const parsed = parseQuery(route, query);
   if (!parsed.ok) return { status: ERRORS.INVALID_QUERY.status, body: { ok: false, error: parsed.error } };
   const newest = held[0];
