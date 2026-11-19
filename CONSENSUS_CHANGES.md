@@ -101,8 +101,9 @@ over the 97 cases of the case files, the replay corpus at 795 heights, 20,000 fu
 `codes.json` and the 53 growth-stream inputs; check mode clean on 21,090 inputs; `parseRecord` equal over 200,910
 records; 1,418 client-surface checks; crosslang green. cairnx-api 0.1.1 is a peer-only step onto this core.
 
-The convention text. Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are unchanged (`src/`
-and `dist/` untouched; `scripts/seal-differential.mjs` against cairnx-core 0.2.4 passes). CONVENTION.md now states
+The convention text. Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are
+unchanged (that change touched neither `src/` nor `dist/`; `scripts/seal-differential.mjs` against cairnx-core 0.2.4
+passed). CONVENTION.md now states
 ten rules it left out or contradicted (the pending reservation, the expiry sweep at `tipHeight + 1`, the
 zero-delivery partial fill, the commit height, the salt and hash forms, the bid link and `done`, the contest key, the
 zero token price, the recapture premium staircase and the recaptured record's anchor) and corrects its sentences on

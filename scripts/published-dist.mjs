@@ -129,36 +129,46 @@ export function diffDist(tarFiles, distDir) {
   return out.sort();
 }
 
+/** @param {unknown} e */
+const why = (e) => (e instanceof Error ? e.message : String(e));
+
 /**
  * The tarball one version's registry document names, fetched, checked against its sha512 `dist.integrity` and read in
- * memory, then compared with `distDir`: `{ error }` when the tarball cannot be had, fails the integrity check or does
- * not read; else `{ diffs, files }`, the diffDist lines (empty when byte-identical) and the count of its dist/ files.
+ * memory, then compared with `distDir`: `{ error }` when the download throws or answers anything but success, or the
+ * bytes fail the integrity check or do not read; else `{ diffs, files }`, the diffDist lines (empty when
+ * byte-identical) and the count of its dist/ files.
  * @param {any} meta
  * @param {string} distDir
  * @returns {Promise<{ error: string } | { diffs: string[], files: number }>}
  */
 export async function publishedDistDiff(meta, distDir) {
   if (typeof meta?.dist?.tarball !== "string") return { error: "registry metadata names no tarball" };
-  const tgz = await fetch(meta.dist.tarball);
-  if (!tgz.ok) return { error: `tarball download returned HTTP ${tgz.status}` };
-  const bytes = new Uint8Array(await tgz.arrayBuffer());
+  let bytes;
+  try {
+    const tgz = await fetch(meta.dist.tarball);
+    if (!tgz.ok) return { error: `tarball download returned HTTP ${tgz.status}` };
+    bytes = new Uint8Array(await tgz.arrayBuffer());
+  } catch (e) { return { error: `tarball download failed (${why(e)})` }; }
   if (!integrityOk(bytes, meta.dist.integrity)) return { error: "tarball does not match the registry's sha512 integrity" };
   let files;
-  try { files = untar(bytes); } catch (e) { return { error: `tarball unreadable (${e instanceof Error ? e.message : String(e)})` }; }
+  try { files = untar(bytes); } catch (e) { return { error: `tarball unreadable (${why(e)})` }; }
   return { diffs: diffDist(files, distDir), files: [...files.keys()].filter((p) => p.startsWith("package/dist/")).length };
 }
 
 /**
  * Whether the build in `distDir` is the dist/ npm serves for `name@version`: `unpublished` when the registry answers
  * 404 for that version; `bound` when its tarball passes publishedDistDiff with no difference and holds a dist/ file;
- * otherwise `failed` with the reasons, another registry status among them.
+ * otherwise `failed` with the reasons: another registry status, a registry read that throws, and every failure of
+ * publishedDistDiff among them, so no failed download or integrity check reads as bound.
  * @param {string} name
  * @param {string} version
  * @param {string} distDir
  * @returns {Promise<{ state: "unpublished" } | { state: "bound", files: number } | { state: "failed", reasons: string[] }>}
  */
 export async function registryBind(name, version, distDir) {
-  const { status, meta } = await registryVersion(name, version);
+  let doc;
+  try { doc = await registryVersion(name, version); } catch (e) { return { state: "failed", reasons: [`npm registry read failed (${why(e)})`] }; }
+  const { status, meta } = doc;
   if (status === 404) return { state: "unpublished" };
   if (status !== 200) return { state: "failed", reasons: [`npm registry returned HTTP ${status}`] };
   const r = await publishedDistDiff(meta, distDir);

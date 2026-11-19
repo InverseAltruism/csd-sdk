@@ -1589,6 +1589,7 @@ sets an address. Read from `names` in the state of §5 at a tip:
 |---|---|
 | held, with `addr` | `addr` (`via: "nset"`) |
 | held, without `addr` (not set, or cleared by an `nset` to the zero address from V23) | the owner (`via: "owner"`) |
+| held, with the zero address as `addr` (an `nset` to it below V23 stored it, §26) | the zero address (`via: "nset"`); a wallet refuses to pay it (§26) |
 | in grace (§17: past `paidThroughEpoch`, without `expired`) | as held |
 | with `expired: true` (§17) | the record's address, flagged `lapsed: true`; a sender refuses it |
 | with `pending: true` (§28) | nothing: a reservation confers no address |

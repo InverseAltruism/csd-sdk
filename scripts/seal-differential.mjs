@@ -107,7 +107,7 @@ const ADDED_SINCE_BASELINE = {
   [`${VEC}/events.json`]: "0f61da38fb17a5eb758759b56410090a9491b54642102139d7e330275cb81f0b",
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
   [`${VEC}/cases-convention.json`]: "9cb61caf0ea391cc3cd370207d7623b99ac91485d34c051e763f671bb3ca76be",
-  [`${VEC}/forward.json`]: "19b5d7150e347ec60b9c0d9276c2b0edef267c418422aed8cc0221427b37b038",
+  [`${VEC}/forward.json`]: "bc56213e507fa6f6ba7c6f2da1f4180215cb8e3ea07c95c33177c1b688aa2b2c",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");
@@ -174,14 +174,20 @@ const buildAt = (ref) => {
   return w;
 };
 // The build of `ref` in `w` against npm's tarball of the same version, for the two packages the differential loads.
+// Each outcome is kept for the final lines, so a pass that ran on an unbound baseline says so where the verdict is.
+// A release tag names versions a window published (docs/release.md), so npm answering 404 for one fails the seal.
+const binds = [];
 const bindToNpm = async (ref, w) => {
   step(`registry bind (${ref}: each build against npm's tarball of its version)`);
   for (const dir of ["codec", "cairnx"]) {
     const { name, version } = JSON.parse(readFileSync(join(w, "packages", dir, "package.json"), "utf8"));
     const b = await registryBind(name, version, join(w, "packages", dir, "dist"));
     if (b.state === "failed") die(`${ref}: the build of ${name}@${version} is not what npm serves:\n    ${b.reasons.join("\n    ")}`);
-    console.log(b.state === "bound" ? `  ${name}@${version}: bound, ${b.files} dist files byte-identical to npm's tarball (sha512 integrity ok)`
-      : `  ${name}@${version}: not on npm, not bound`);
+    if (b.state === "unpublished" && /^cairnx-core-\d+\.\d+\.\d+$/.test(ref)) die(`${ref} is a release tag, yet npm answers 404 for ${name}@${version}`);
+    const line = b.state === "bound" ? `${ref}: ${name}@${version} bound to npm (${b.files} dist files byte-identical, sha512 integrity ok)`
+      : `${ref}: ${name}@${version} not on npm, not bound`;
+    binds.push({ bound: b.state === "bound", line });
+    console.log(`  ${line}`);
   }
 };
 const wt = buildAt(BASELINE_REF);
@@ -594,4 +600,7 @@ step("pnpm test:crosslang");
   if (r.status !== 0) die("test:crosslang failed");
 }
 
-console.log(`\nSEAL PASS: byte-identical ${BASELINE_REF} baseline differential + crosslang green. A bump/publish may proceed.`);
+if (binds.length !== 2 * (CODE ? 2 : 1)) die(`${binds.length} bind outcomes for ${CODE ? 2 : 1} baseline(s): a baseline ran without a bind`);
+for (const b of binds) console.log(`SEAL: bind ${b.line}`);
+const unbound = binds.filter((b) => !b.bound).length;
+console.log(`\nSEAL PASS: byte-identical ${BASELINE_REF} baseline differential + crosslang green; ${binds.length - unbound} of ${binds.length} baseline builds bound to npm${unbound ? `, ${unbound} NOT BOUND (not on npm)` : ""}. A bump/publish may proceed.`);

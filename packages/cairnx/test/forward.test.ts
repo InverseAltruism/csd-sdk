@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ADDR_RE, nameView, resolve, resolveNameIn, type ChainEvent, type NameView, type ResolvedName,
+  ADDR_RE, V15_HEIGHT, nameView, resolve, resolveNameIn, type ChainEvent, type NameView, type ResolvedName,
 } from "../src/index.js";
 
 // Each check runs to the end and is counted, so a mutation reports every check it turns red.
@@ -47,7 +47,7 @@ const oracle = (names: ReturnType<typeof resolve>["names"], name: string): Resol
 };
 const corpus = read("replay-corpus.json") as { tipHeight: number; events: ChainEvent[] };
 const heights = [...Object.keys((read("replay-hashes.json") as { hashes: Record<string, string> }).hashes).map(Number), corpus.tipHeight];
-let corpusNames = 0;
+let corpusNames = 0, belowV15 = 0;
 t(`the service's call shape over every corpus name at ${heights.length} heights equals the oracle; nameView agrees`, () => {
   for (const h of heights) {
     const names = resolve(corpus.events.filter((e) => e.height <= h), h).names;
@@ -58,10 +58,12 @@ t(`the service's call shape over every corpus name at ${heights.length} heights 
       const v = nameView(names, name)!;
       assert.equal(v.state, r === null ? "pending" : r.lapsed ? "lapsed" : "held", `${name} at ${h}: nameView's class`);
       assert.equal(v.addr, v.state === "held" ? r!.addr : null, `${name} at ${h}: nameView's address is resolveNameIn's, held only`);
+      assert.equal(v.paidThroughEpoch, v.state === "pending" ? null : names[name]!.paidThroughEpoch ?? null, `${name} at ${h}: nameView's paidThroughEpoch`);
+      if (h < V15_HEIGHT) { assert.equal(v.paidThroughEpoch, null, `${name} at ${h}: no lease below V15`); belowV15++; }
       corpusNames++;
     }
   }
-  assert.ok(corpusNames > 0, "the corpus has names");
+  assert.ok(corpusNames > 0 && belowV15 > 0, "the corpus has names, some at tips below V15");
 });
 
 t("no key a plain object inherits resolves, on a resolve() result", () => {
@@ -82,5 +84,5 @@ t("nameView refuses a non-string and copies the profile it returns", () => {
   assert.notEqual(names.prof1!.profile!.wallet, "changed", "the state's profile is not the view's object");
 });
 
-console.log(`forward resolution: ${pass} passed, ${fail} failed (${vectors.cases.length} vectors, ${asked} asks; ${corpusNames} corpus name reads at ${heights.length} heights)`);
+console.log(`forward resolution: ${pass} passed, ${fail} failed (${vectors.cases.length} vectors, ${asked} asks; ${corpusNames} corpus name reads at ${heights.length} heights, ${belowV15} below V15)`);
 if (fail) process.exit(1);

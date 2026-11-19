@@ -7,6 +7,7 @@
 //   held-owner            without an address it resolves to the owner; absent, prototype, upper-case and suffixed keys,
 //                         and an unregistered `constructor`, resolve to nothing.
 //   nset-cleared          an `nset` to the zero address (V23 and above) clears the address: the owner again.
+//   nset-zero-below-v23   below V23 the same record stores the zero address, and the name resolves to it (§26).
 //   grace-held            past paidThroughEpoch but inside the grace, the name is held.
 //   lapsed                past the grace: resolveNameIn flags it, nameView gives no address and no profile.
 //   pending               a reservation resolves to nothing; nameView names its reserver.
@@ -22,7 +23,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   resolve, resolveNameIn, nameView, canonicalJson, payloadHash, requiredFillOutputs, nameCommit, nameRegFee, nameCommitRecord,
   nameClaim, nameFinalize, nameSet, nameProfile, nameXfer, offer, epochOf, V29_HEIGHT, SCORE_FILL, TREASURY_ADDR, ZERO_ADDR,
-  EPOCH_LEN, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS,
+  EPOCH_LEN, NAME_TERM_EPOCHS, NAME_GRACE_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, V23_HEIGHT, V25_HEIGHT,
 } from "../packages/cairnx/dist/index.js";
 
 const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20), C = "0x" + "c3".repeat(20);
@@ -135,6 +136,12 @@ add("nxfer", [...register("gift1", A, H), PE(nameSet({ name: "gift1", addr: C })
 add("profile-not-target", [...register("prof1", A, H), PE(nameProfile({ name: "prof1", p: { wallet: C } }), H + 11, A)], H + 12,
   [{ query: "prof1", resolveNameIn: to("prof1", A, "owner", A), nameView: held("prof1", A, A, H, { wallet: C }) }],
   (st) => [["the profile holds C", st.names.prof1?.profile?.wallet === C]]);
+
+// below V23 (and above V25, so the sealed registration applies) an nset to the zero address is stored as written
+const L = V23_HEIGHT - 2_000;
+add("nset-zero-below-v23", [...register("zero1", A, L), PE(nameSet({ name: "zero1", addr: ZERO_ADDR }), L + 11, A)], L + 12,
+  [{ query: "zero1", resolveNameIn: to("zero1", ZERO_ADDR, "nset", A), nameView: held("zero1", A, ZERO_ADDR, L) }],
+  (st) => [["between V25 and V23", L > V25_HEIGHT && L + 11 < V23_HEIGHT], ["addr is the zero address", st.names.zero1?.addr === ZERO_ADDR]]);
 
 const path = new URL("../packages/cairnx/test/vectors/forward.json", import.meta.url);
 writeFileSync(path, `{"format":1,"cases":[\n${built.map((c) => JSON.stringify(c)).join(",\n")}\n]}\n`);

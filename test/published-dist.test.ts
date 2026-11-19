@@ -151,9 +151,10 @@ try {
   const readmeOnly = pack("ustar", pkgDir, ["package/README.md"]);
   const sriOf = (b: Uint8Array) => "sha512-" + createHash("sha512").update(b).digest("base64");
   const realFetch = globalThis.fetch;
-  const bindWith = async (doc: { status: number; tarball?: Uint8Array; integrity?: string }, dist: string) => {
+  const bindWith = async (doc: { status: number; tarball?: Uint8Array; integrity?: string; throws?: "registry" | "tarball" }, dist: string) => {
     globalThis.fetch = (async (u: string | URL) => {
       const url = String(u);
+      if (doc.throws === "registry" || (doc.throws === "tarball" && url.endsWith(".tgz"))) throw new TypeError("fetch failed");
       if (url === `${REGISTRY}/core/1.0.0`) return doc.status === 200
         ? new Response(JSON.stringify({ dist: { tarball: "https://registry.invalid/core-1.0.0.tgz", integrity: doc.integrity ?? sriOf(doc.tarball!) } }))
         : new Response("", { status: doc.status });
@@ -169,6 +170,12 @@ try {
     JSON.stringify(wrongBind) === JSON.stringify({ state: "failed", reasons: ["dist/index.js differs from the local build"] }));
   const forgedBind = await bindWith({ status: 200, tarball: sys, integrity: sriOf(wrong) }, localDist());
   ok("a tarball that fails its sha512 integrity fails", forgedBind.state === "failed" && /sha512 integrity/.test(JSON.stringify(forgedBind)));
+  ok("a tarball the registry names but does not serve fails", JSON.stringify(await bindWith({ status: 200, integrity: sriOf(sys) }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["tarball download returned HTTP 404"] }));
+  ok("a tarball download that throws fails", JSON.stringify(await bindWith({ status: 200, tarball: sys, throws: "tarball" }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["tarball download failed (fetch failed)"] }));
+  ok("a registry that cannot be reached fails", JSON.stringify(await bindWith({ status: 200, tarball: sys, throws: "registry" }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["npm registry read failed (fetch failed)"] }));
   ok("a version the registry does not hold is unpublished", (await bindWith({ status: 404 }, localDist())).state === "unpublished");
   ok("another registry status fails", JSON.stringify(await bindWith({ status: 500 }, localDist())) === JSON.stringify({ state: "failed", reasons: ["npm registry returned HTTP 500"] }));
   ok("a tarball without dist/ fails, even against an empty build", JSON.stringify(await bindWith({ status: 200, tarball: readmeOnly }, mkdtempSync(join(work, "empty-"))))
