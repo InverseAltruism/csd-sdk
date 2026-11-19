@@ -62,8 +62,12 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 ## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
 `bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose
-`prev_txid`, `script_sig`, `script_pubkey`, `payload_hash` or `proposal_id` is not `0x` and lower-case hex, or whose
-app type is not exactly `None`, `Propose` or `Attest`; the reason names the tx and the field. The node writes every
+`txid` field is absent or not exactly the id its body hashes to, whose `prev_txid`, `script_sig`, `script_pubkey`,
+`payload_hash` or `proposal_id` is not `0x` and lower-case hex, or whose app type is not exactly `None`, `Propose` or
+`Attest`; the reason names the tx and the field. No hash commits the `txid` field, and `verifyTxInclusion` returns the
+served JSON, so a body that kept a tx's bytes and replaced its `txid` was proven with the replaced id in
+`result.tx.txid`; every tx of the node's `/block` and `/tx` answers carries its txid (576 of 576 block txs and 21 of 21
+`/tx` answers in cairnx-replica's capture), so an absent one is refused too. The node writes every
 one of these fields as `format!("0x{}", hex::encode(..))` (compute-substrate `src/api/mod.rs`, `app_payload_json`
 and the `/block` handler, at cairn-v0.1.17). The codec reads a hex field with or without `0x` and in any case to the
 same bytes, and `rpcTxToTx` rebuilds every app type other than `None` and `Propose` as an Attest, so a body served in

@@ -1,8 +1,9 @@
-// The block bind accepts a served tx only in the node's text form. The node writes every hash, address and script as
-// 0x and lower-case hex; the codec reads a 32- or 20-byte field with or without 0x and in any case to the same bytes,
-// and rpcTxToTx rebuilds any app type other than None and Propose as an Attest. Such a body hashes to the honest
-// merkle root, and a consumer that compares the field as text (a Propose's payload_hash against a record's hash, an
-// Attest's proposal_id against an offer id) drops its record. Over the node capture of cairnx-replica (486 blocks,
+// The block bind accepts a served tx only as the node writes it. The node writes a tx's txid field as the id its body
+// hashes to and every hash, address and script as 0x and lower-case hex; no hash commits the txid field, the codec
+// reads a 32- or 20-byte field with or without 0x and in any case to the same bytes, and rpcTxToTx rebuilds any app
+// type other than None and Propose as an Attest. Such a body hashes to the honest merkle root, and a consumer that
+// reads the served text (verifyTxInclusion returns it; a Propose's payload_hash compared with a record's hash, an
+// Attest's proposal_id with an offer id) is told another id or drops a record. Over the node capture of cairnx-replica (486 blocks,
 // /block/height answers as the node served them; the two files' sha256 are pinned in its node-blocks.test.ts and
 // hosted-blocks.test.ts): every block binds exactly as the bind's parts give it, and every non-canonical form the
 // codec reads is refused.
@@ -139,9 +140,34 @@ console.log("forms the codec already tells apart, and spellings JSON.parse erase
   const r = bindBlockBody(spelled, V30048), honest = bindBlockBody(T30048, V30048);
   ok("100.0, 1e2 and -0 parse to the numbers 100, 100 and -0: the body binds and every bound tx reads as the honest one",
     spelled !== T30048 && r.ok && honest.ok && JSON.stringify(r.txs, (_k, x) => (typeof x === "bigint" ? String(x) : x)) === JSON.stringify(honest.txs, (_k, x) => (typeof x === "bigint" ? String(x) : x)));
-  const renamed = edited((b) => { b.txs[PI]!.txid = b.txs[PI]!.txid.slice(2).toUpperCase(); });
-  ok("the served txid field is not encoded: a body that respells it binds, and the bound txid is the one re-derived from the body",
-    renamed.ok && renamed.txs[PI]!.txid === B30048.txs[PI]!.txid);
+}
+
+console.log("the served txid field, which no hash commits:");
+{
+  const ID = B30048.txs[PI]!.txid;
+  const zero = edited((b) => { b.txs[PI]!.txid = "0x" + "00".repeat(32); });
+  ok("tx 1 served with the txid 0x00..00 and its body untouched is refused as body-mismatch naming the field", refusedFor(zero, `tx ${PI} serves txid`));
+  let respelled = 0;
+  for (const form of Object.values(FORMS)) if (refusedFor(edited((b) => { b.txs[PI]!.txid = form(ID); }), `tx ${PI} serves txid`)) respelled++;
+  ok(`the right id in each of the ${Object.keys(FORMS).length} other spellings (no 0x, upper or mixed case) is refused`, respelled === Object.keys(FORMS).length);
+  // Every tx in the node's /block and /tx answers carries its txid (all 576 of the capture, and the front door relays
+  // those bytes), so a tx without one is no node's answer.
+  ok("a tx served without a txid field is refused", refusedFor(edited((b) => { delete (b.txs[PI] as { txid?: string }).txid; }), `tx ${PI} serves txid`));
+  ok("the coinbase served with the Propose's txid is refused (before the repeated-txid check)", refusedFor(edited((b) => { b.txs[0]!.txid = ID; }), "tx 0 serves txid"));
+  // A key written twice is read once, by the parse whose objects the bind returns: the last value is the one hashed and
+  // the one a consumer reads. Only a consumer that parsed the text again with another parser could see the other.
+  const dup = (first: string, last: string) => {
+    const at = `"txid":"${ID}"`;
+    if (T30048.split(at).length !== 2) throw new Error("the txid key is not once in the block text");
+    return bindBlockBody(T30048.replace(at, `"txid":"${first}","txid":"${last}"`), V30048);
+  };
+  const lastHonest = dup("0x" + "00".repeat(32), ID), lastForged = dup(ID, "0x" + "00".repeat(32));
+  ok("a txid key written twice: the last value decides, so a forged first value binds with the honest id in the returned json and a forged last one is refused",
+    lastHonest.ok && lastHonest.txs[PI]!.json.txid === ID && refusedFor(lastForged, `tx ${PI} serves txid`));
+  // Keys outside RpcTxJson are as served and committed by nothing; the bind and verifyTxInclusion read none of them.
+  const extra = edited((b) => { Object.assign(b.txs[AI]!.app, { payload_hash: "0x" + "ee".repeat(32) }); Object.assign(b.txs[AI]!, { height: 1 }); });
+  ok("a stray payload_hash on the Attest and a stray key on the tx bind: the Attest's committed fields are unchanged", extra.ok && extra.txs[AI]!.tx.app.type === "Attest" &&
+    (extra.txs[AI]!.tx.app as { proposalId: string }).proposalId === (B30048.txs[AI]!.app as { proposal_id: string }).proposal_id);
 }
 
 console.log("verifyTxInclusion runs through the same rule:");
@@ -161,6 +187,18 @@ console.log("verifyTxInclusion runs through the same rule:");
   ok("a body serving that payload_hash without 0x proves nothing and surfaces no payload hash",
     !lied.included && lied.trustLevel === "rpc-trusted" && lied.appPayloadHash === undefined && lied.reason?.includes(`tx ${PI} serves app.payload_hash`) === true);
   ok("bindBlockTxs over the parsed body refuses it as bindBlockBody does", refusedFor(bindBlockTxs(bare.txs, V30048), `tx ${PI} serves app.payload_hash`));
+  const zeroed = JSON.parse(T30048) as Served;
+  zeroed.txs[PI]!.txid = "0x" + "00".repeat(32);
+  const forged = await lcOf(zeroed.txs).verifyTxInclusion(B30048.txs[PI]!.txid);
+  ok("a body serving the Propose with the txid 0x00..00 proves nothing and returns no tx", !forged.included && forged.trustLevel === "rpc-trusted" && forged.tx === undefined);
+  ok("honest: the returned tx carries the requested txid", honest.tx?.txid === B30048.txs[PI]!.txid);
+  const stray = JSON.parse(T30048) as Served;
+  Object.assign(stray.txs[AI]!.app, { payload_hash: "0x" + "ee".repeat(32) });
+  const lcAttest = new LightClient({ client: { tx: async () => ({ ok: true, txid: B30048.txs[AI]!.txid, height: 30_048 }), blockByHeight: async () => ({ ...B30048, txs: stray.txs }) } as never });
+  lcAttest.baseHeight = 30_048;
+  (lcAttest.chain as unknown as unknown[]).push(V30048);
+  const att = await lcAttest.verifyTxInclusion(B30048.txs[AI]!.txid);
+  ok("an Attest carrying a stray payload_hash is proven as the Attest it is, with no payload hash surfaced", att.included && att.appPayloadHash === undefined);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
