@@ -25,7 +25,8 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 
 Check mode (the default, `node scripts/npm-window.mjs [--out <dir>]`) publishes nothing. It:
 
-- lists every workspace version the HEAD commit's manifests name that is not yet on npm, dependencies first;
+- lists every workspace version the HEAD commit's manifests name that is not yet on npm, dependencies first; a
+  package whose manifest is marked `private` is never listed;
 - packs each with `pnpm pack` (prepack builds dist/);
 - runs the publish guard on each (`pnpm run prepublishOnly`: lockstep, the package suite, test:crosslang for
   cairnx-core);
@@ -53,10 +54,10 @@ recorded at verification.
 `test/npm-window.test.ts` pins these refusals: a local change in the tree (with real git), `CSD_PUBLISH_SKIP_TESTS`
 set, a HEAD off the first-parent line (with real git, an inner commit of a branch merged with a merge commit among
 them; a fast-forwarded inner commit is admitted), a failing publish guard and a failing verify-tarball each fail the
-window; the script run as a command in check mode exits 1 on a failed check; a run with a failed check never reaches
-the publish step, and a publish step that did not complete exits 1; a tarball that failed verify-tarball has no
-digest recorded, so publishWindow refuses it whatever its caller checked; a tarball replaced after verification is
-not published.
+window; a private package is never planned; the script run as a command in check mode exits 1 on a failed check; a run
+with a failed check never reaches the publish step, and a publish step that did not complete exits 1; a tarball that
+failed verify-tarball has no digest recorded, so publishWindow refuses it whatever its caller checked; a tarball
+replaced after verification is not published.
 
 ### What the window does not bind
 

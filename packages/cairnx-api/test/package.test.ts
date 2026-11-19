@@ -16,7 +16,11 @@ const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")) as 
 console.log("manifest:");
 ok(`CAIRNX_API_VERSION ${CAIRNX_API_VERSION} equals package.json's version`, CAIRNX_API_VERSION === manifest.version);
 ok("name, licence, author", manifest.name === "@inversealtruism/cairnx-api" && manifest.license === "MIT" && manifest.author === "InverseAltruism");
-ok("private until its first npm window", manifest.private === true);
+const scripts = manifest.scripts as Record<string, string>;
+ok("publishable: not private, public access, the repository directory, prepack builds and prepublishOnly is the publish guard",
+  manifest.private === undefined && show(manifest.publishConfig) === show({ access: "public" }) &&
+  show(manifest.repository) === show({ type: "git", url: "git+https://github.com/InverseAltruism/csd-sdk.git", directory: "packages/cairnx-api" }) &&
+  scripts.prepack === "pnpm build" && scripts.prepublishOnly === "node ../../scripts/publish-guard.mjs");
 const coreManifest = JSON.parse(readFileSync(join(dirname(createRequire(import.meta.url).resolve("@inversealtruism/cairnx-core")), "..", "package.json"), "utf8")) as { dependencies: Record<string, string> };
 ok("cairnx-core is its only peer and dev dependency, as workspace:*; @noble/hashes its one runtime dependency, at cairnx-core's pin",
   isDeepStrictEqual(manifest.peerDependencies, { "@inversealtruism/cairnx-core": "workspace:*" }) &&
