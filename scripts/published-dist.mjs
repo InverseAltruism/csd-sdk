@@ -1,5 +1,6 @@
 // Compare a published npm tarball's dist/ with a local build, in memory (nothing from the tarball is written to
-// disk or executed). Used by check-lockstep.mjs for every package version that is already on npm.
+// disk or executed). Used by check-lockstep.mjs for every package version that is already on npm, and by
+// seal-differential.mjs to bind each baseline it builds to the dist npm serves for that version (registryBind).
 //
 // What the check detects: a published version whose dist/ differs from this tree's build of the same version
 // (one version, two code states, the M4 accident class). What it does not: a hostile tarball crafted so that
@@ -17,6 +18,7 @@ import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { registryVersion } from "./workspace.mjs";
 
 /**
  * True when `bytes` match the registry's `dist.integrity` (an SRI "sha512-<base64>" string).
@@ -125,4 +127,42 @@ export function diffDist(tarFiles, distDir) {
   }
   for (const p of local.keys()) if (!published.has(p)) out.push(`dist/${p} is in the local build but not published`);
   return out.sort();
+}
+
+/**
+ * The tarball one version's registry document names, fetched, checked against its sha512 `dist.integrity` and read in
+ * memory, then compared with `distDir`: `{ error }` when the tarball cannot be had, fails the integrity check or does
+ * not read; else `{ diffs, files }`, the diffDist lines (empty when byte-identical) and the count of its dist/ files.
+ * @param {any} meta
+ * @param {string} distDir
+ * @returns {Promise<{ error: string } | { diffs: string[], files: number }>}
+ */
+export async function publishedDistDiff(meta, distDir) {
+  if (typeof meta?.dist?.tarball !== "string") return { error: "registry metadata names no tarball" };
+  const tgz = await fetch(meta.dist.tarball);
+  if (!tgz.ok) return { error: `tarball download returned HTTP ${tgz.status}` };
+  const bytes = new Uint8Array(await tgz.arrayBuffer());
+  if (!integrityOk(bytes, meta.dist.integrity)) return { error: "tarball does not match the registry's sha512 integrity" };
+  let files;
+  try { files = untar(bytes); } catch (e) { return { error: `tarball unreadable (${e instanceof Error ? e.message : String(e)})` }; }
+  return { diffs: diffDist(files, distDir), files: [...files.keys()].filter((p) => p.startsWith("package/dist/")).length };
+}
+
+/**
+ * Whether the build in `distDir` is the dist/ npm serves for `name@version`: `unpublished` when the registry answers
+ * 404 for that version; `bound` when its tarball passes publishedDistDiff with no difference and holds a dist/ file;
+ * otherwise `failed` with the reasons, another registry status among them.
+ * @param {string} name
+ * @param {string} version
+ * @param {string} distDir
+ * @returns {Promise<{ state: "unpublished" } | { state: "bound", files: number } | { state: "failed", reasons: string[] }>}
+ */
+export async function registryBind(name, version, distDir) {
+  const { status, meta } = await registryVersion(name, version);
+  if (status === 404) return { state: "unpublished" };
+  if (status !== 200) return { state: "failed", reasons: [`npm registry returned HTTP ${status}`] };
+  const r = await publishedDistDiff(meta, distDir);
+  if ("error" in r) return { state: "failed", reasons: [r.error] };
+  if (r.files === 0) return { state: "failed", reasons: ["the tarball holds no dist/ file"] };
+  return r.diffs.length ? { state: "failed", reasons: r.diffs } : { state: "bound", files: r.files };
 }

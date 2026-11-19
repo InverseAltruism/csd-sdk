@@ -17,7 +17,7 @@
 // CI's "REAL lockstep guard". Exits 1 with a report on violation.
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { integrityOk, untar, diffDist } from "./published-dist.mjs";
+import { publishedDistDiff } from "./published-dist.mjs";
 import { registryVersion, workspacePackages } from "./workspace.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -80,16 +80,9 @@ await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
       }
     }
   }
-  if (typeof meta.dist?.tarball !== "string") { errors.push(`${p.name}@${p.version}: registry metadata names no tarball`); return; }
-  const tgz = await fetch(meta.dist.tarball);
-  if (!tgz.ok) { errors.push(`${p.name}@${p.version}: tarball download returned HTTP ${tgz.status}`); return; }
-  const bytes = new Uint8Array(await tgz.arrayBuffer());
-  if (!integrityOk(bytes, meta.dist.integrity)) { errors.push(`${p.name}@${p.version}: tarball does not match the registry's sha512 integrity`); return; }
-  let files;
-  try { files = untar(bytes); } catch (e) { errors.push(`${p.name}@${p.version}: tarball unreadable (${e instanceof Error ? e.message : e})`); return; }
-  for (const d of diffDist(files, join(pkgsDir, p.__dir, "dist"))) {
-    errors.push(`${p.name}@${p.version}: ${d}; this tree builds different bytes at a published version (bump ${p.name})`);
-  }
+  const r = await publishedDistDiff(meta, join(pkgsDir, p.__dir, "dist"));
+  if ("error" in r) { errors.push(`${p.name}@${p.version}: ${r.error}`); return; }
+  for (const d of r.diffs) errors.push(`${p.name}@${p.version}: ${d}; this tree builds different bytes at a published version (bump ${p.name})`);
 }));
 
 if (errors.length) {

@@ -13,7 +13,10 @@
 //   2. every vector file present at the baseline is unchanged in the working tree; 2b content-pins the replay corpus
 //      and hashes, and the vector and fixture files added after the baseline;
 //   3. builds the BASELINE dist from the baseline ref in a throwaway git worktree (pnpm install --frozen-lockfile,
-//      build codec + cairnx), and the code baseline's the same way when one is given;
+//      build codec + cairnx), and the code baseline's the same way when one is given; binds each build to npm: for
+//      codec and cairnx-core at the version the ref's manifest names, when npm holds that version, its tarball must
+//      pass its sha512 integrity check and hold a dist/ byte-identical to the build (scripts/published-dist.mjs
+//      registryBind), so the old side that runs is what npm serves; a version npm does not hold is named, not bound;
 //   4. resolve differential, old vs new, over (a) the case files, (b) a seeded generated corpus with coverage floors
 //      read back from the BASELINE outputs, (c) the replay corpus at every pinned height and every event height,
 //      (d) the sequences of conformance/fuzz-resolve.mjs --emit, (e) the resolve cases of test/vectors/codes.json when
@@ -42,6 +45,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import { tmpdir } from "node:os";
+import { registryBind } from "./published-dist.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_REF = process.argv[2] ?? "cairnx-core-0.2.4";
@@ -80,9 +84,9 @@ step(`vector-file non-movement vs ${BASELINE_REF} (working tree)`);
 
 // ── 2b. content pins ───────────────────────────────────────────────────────────────────────────────
 // replay-corpus.json + replay-hashes.json: sha256 + floors, so a narrowed corpus cannot self-certify (vectors.test.ts
-// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule, hash and convention
-// vectors and the recorded block fixture) are pinned by sha256 here, since a diff against the baseline cannot see them
-// move.
+// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule, hash, convention and
+// forward-resolution vectors and the recorded block fixture) are pinned by sha256 here, since a diff against the
+// baseline cannot see them move.
 //
 // UPDATE POINT: REPLAY_CORPUS_PIN and ADDED_SINCE_BASELINE are the ONE place a sanctioned vector change touches, in the
 // SAME commit as the change. Floors only ever RISE (minEvents, minFclaim and minPinnedHeights up, heightSpan wider or
@@ -103,6 +107,7 @@ const ADDED_SINCE_BASELINE = {
   [`${VEC}/events.json`]: "0f61da38fb17a5eb758759b56410090a9491b54642102139d7e330275cb81f0b",
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
   [`${VEC}/cases-convention.json`]: "9cb61caf0ea391cc3cd370207d7623b99ac91485d34c051e763f671bb3ca76be",
+  [`${VEC}/forward.json`]: "19b5d7150e347ec60b9c0d9276c2b0edef267c418422aed8cc0221427b37b038",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");
@@ -168,9 +173,23 @@ const buildAt = (ref) => {
   }
   return w;
 };
+// The build of `ref` in `w` against npm's tarball of the same version, for the two packages the differential loads.
+const bindToNpm = async (ref, w) => {
+  step(`registry bind (${ref}: each build against npm's tarball of its version)`);
+  for (const dir of ["codec", "cairnx"]) {
+    const { name, version } = JSON.parse(readFileSync(join(w, "packages", dir, "package.json"), "utf8"));
+    const b = await registryBind(name, version, join(w, "packages", dir, "dist"));
+    if (b.state === "failed") die(`${ref}: the build of ${name}@${version} is not what npm serves:\n    ${b.reasons.join("\n    ")}`);
+    console.log(b.state === "bound" ? `  ${name}@${version}: bound, ${b.files} dist files byte-identical to npm's tarball (sha512 integrity ok)`
+      : `  ${name}@${version}: not on npm, not bound`);
+  }
+};
 const wt = buildAt(BASELINE_REF);
+await bindToNpm(BASELINE_REF, wt);
 const OLD = await import(pathToFileURL(join(wt, "packages", "cairnx", "dist", "index.js")).href);
-const CODE = CODE_BASELINE_REF ? await import(pathToFileURL(join(buildAt(CODE_BASELINE_REF), "packages", "cairnx", "dist", "index.js")).href) : null;
+const codeWt = CODE_BASELINE_REF ? buildAt(CODE_BASELINE_REF) : null;
+if (codeWt) await bindToNpm(CODE_BASELINE_REF, codeWt);
+const CODE = codeWt ? await import(pathToFileURL(join(codeWt, "packages", "cairnx", "dist", "index.js")).href) : null;
 const NEW = await import(pathToFileURL(join(ROOT, "packages", "cairnx", "dist", "index.js")).href);
 
 // ── 4. resolve differential ────────────────────────────────────────────────────────────────────────

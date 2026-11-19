@@ -17,7 +17,9 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
   reader in `scripts/published-dist.mjs` refuses every archive shape `pnpm pack` does not emit. It compares files, not
   a whole-tarball hash, because pnpm orders the packed package.json dependencies nondeterministically (see
   `docs/incidents/README.md`). `test/check-lockstep.test.ts` covers the compare and the integrity check on a stand-in
-  registry, `test/published-dist.test.ts` the reader.
+  registry, `test/published-dist.test.ts` the reader. `scripts/seal-differential.mjs` runs the same compare
+  (`registryBind`) on each baseline it builds, so a state-neutral release is proven against the dist npm serves for
+  the baseline's version; `test/published-dist.test.ts` pins that a wrong tarball fails it.
 - Dist freshness: `dist/` is not older than `src/`, for versions not yet on npm.
 - A package with a CHANGELOG.md lists it in `files`, since pnpm pack does not add it.
 
