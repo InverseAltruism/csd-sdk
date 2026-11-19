@@ -175,7 +175,7 @@ export function headOnOriginMaster(root, run = sh) {
 
 /**
  * Every check of a window, logged, in order: the tree and HEAD, the plan, then per package pack, publish guard and
- * verify-tarball on the packed bytes. A failed check is logged and returned in `fails`; the caller refuses on any.
+ * verify-tarball on the packed bytes. A failed check is logged and returned in `fails`; finishWindow refuses on any.
  * `sh`, `registry`, `verify` and `env` default to the real ones; a test stands in for them.
  * @param {{ root: string, out: string, run: boolean, log: (line: string) => void, sh?: Sh, registry?: RegistryRead,
  *   verify?: typeof verifyTarball, env?: Record<string, string | undefined> }} o
@@ -264,25 +264,41 @@ async function main() {
   const logFile = join(out, "window.log");
   const log = (/** @type {string} */ s) => { console.log(s); if (keep) appendFileSync(logFile, `${s}\n`); };
   try {
-    const { fails, order, tarballs } = await checkWindow({ root, out, run, log });
-    if (!order.length) return fails.length ? 1 : 0;
-
-    if (!run || fails.length) {
-      log(`\n${fails.length ? `REFUSED: ${fails.length} check(s) failed: ${fails.join("; ")}` : "check: every step passed"}${run ? "; nothing was published" : " (check mode, nothing published)"}`);
-      return fails.length ? 1 : 0;
-    }
-    log("\n== publish");
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const result = await publishWindow({
-      tarballs, tokenFile, log: (s) => { log(`  ${s}`); appendFileSync(join(out, "publish.log"), `${s}\n`); },
-      confirm: async (q) => { try { return await rl.question(q); } catch { return ""; } finally { rl.close(); } },
+    const checked = await checkWindow({ root, out, run, log });
+    return await finishWindow({
+      ...checked, run, tokenFile, out, log,
+      confirm: async (q) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try { return await rl.question(q); } catch { return ""; } finally { rl.close(); }
+      },
     });
-    for (const f of result.failures) log(`  FAIL: ${f}`);
-    log(result.ok ? `\npublished and verified: ${result.published.join(", ")}` : "\nSTOP: the window did not complete; see the FAIL lines");
-    return result.ok ? 0 : 1;
   } finally {
     if (!keep) rmSync(out, { recursive: true, force: true });
   }
+}
+
+/**
+ * What follows the checks: any failed check refuses the window, check mode stops, and only a run with no failed check
+ * reaches publishWindow. Returns the exit code. `publish` defaults to publishWindow; a test stands in for it.
+ * @param {{ fails: string[], order: any[], tarballs: Tarball[], run: boolean, tokenFile: string, out: string,
+ *   log: (line: string) => void, confirm: (question: string) => Promise<string>, publish?: typeof publishWindow }} o
+ * @returns {Promise<number>}
+ */
+export async function finishWindow(o) {
+  const { fails, order, tarballs, run, out, log } = o;
+  if (!order.length) return fails.length ? 1 : 0;
+  if (!run || fails.length) {
+    log(`\n${fails.length ? `REFUSED: ${fails.length} check(s) failed: ${fails.join("; ")}` : "check: every step passed"}${run ? "; nothing was published" : " (check mode, nothing published)"}`);
+    return fails.length ? 1 : 0;
+  }
+  log("\n== publish");
+  const result = await (o.publish ?? publishWindow)({
+    tarballs, tokenFile: o.tokenFile, confirm: o.confirm,
+    log: (s) => { log(`  ${s}`); appendFileSync(join(out, "publish.log"), `${s}\n`); },
+  });
+  for (const f of result.failures) log(`  FAIL: ${f}`);
+  log(result.ok ? `\npublished and verified: ${result.published.join(", ")}` : "\nSTOP: the window did not complete; see the FAIL lines");
+  return result.ok ? 0 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exit(await main());

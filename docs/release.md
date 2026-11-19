@@ -7,6 +7,7 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 ## What `scripts/check-lockstep.mjs` enforces
 
 - Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ever ships.
+  `test/check-lockstep.test.ts` covers this rule.
 - Published pins: every package version already on npm pins the current workspace versions of its deps and of its
   exact peers (cairnx-core under cairnx-api and the replica), so a core bump needs a bump of every package that peers
   on it. `test/check-lockstep.test.ts` covers the peer case.
@@ -15,7 +16,8 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
   states), not a hostile tarball crafted to extract differently under npm and not a newly published version. The
   reader in `scripts/published-dist.mjs` refuses every archive shape `pnpm pack` does not emit. It compares files, not
   a whole-tarball hash, because pnpm orders the packed package.json dependencies nondeterministically (see
-  `docs/incidents/README.md`). `test/published-dist.test.ts` covers the reader.
+  `docs/incidents/README.md`). `test/check-lockstep.test.ts` covers the compare and the integrity check on a stand-in
+  registry, `test/published-dist.test.ts` the reader.
 - Dist freshness: `dist/` is not older than `src/`, for versions not yet on npm.
 - A package with a CHANGELOG.md lists it in `files`, since pnpm pack does not add it.
 
@@ -40,8 +42,9 @@ verified tarball into its private directory, refuses before any npm call if a co
 checked, runs `npm publish` on that copy per package and compares each registry `dist.shasum` and `dist.integrity`
 with the digests recorded at verification.
 
-`test/npm-window.test.ts` pins this path, including that a failing guard, a failing verify-tarball, a HEAD off
-`origin/master` or a tarball replaced after verification refuses the window.
+`test/npm-window.test.ts` pins these refusals: a local change in the tree (with real git), `CSD_PUBLISH_SKIP_TESTS`
+set, a HEAD off `origin/master`, a failing publish guard and a failing verify-tarball each fail the window; a run with
+a failed check never reaches the publish step; a tarball replaced after verification is not published.
 
 ### What the window does not bind
 
@@ -67,7 +70,8 @@ worktree or the pnpm store while the window runs can change the build.
 - `npm publish <tgz>` runs no package hook, so the prepublishOnly guard does not run on the window path; the script
   runs it.
 - As a hook, `scripts/publish-guard.mjs` covers a publish from a package directory and refuses a non-pnpm client there
-  (raw npm once shipped unresolved `workspace:*`; see `docs/incidents/README.md`).
+  (raw npm once shipped unresolved `workspace:*`; see `docs/incidents/README.md`). `test/check-lockstep.test.ts` pins
+  the refusal.
 - Every package's prepack runs its build, so a packed tarball carries a dist built from the tree.
 
 ### The npm token
