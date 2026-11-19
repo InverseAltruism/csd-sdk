@@ -15,7 +15,8 @@ Only blocks sit above a pin: a pin over a feed does not compile, and `checkBasis
 throw `ReplicaConfigError` for one at run time. `basisKey` names a store without its pin, so a newer pin over the same
 root and bodies names the same store.
 
-- `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`.
+- `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
+  and the reader, `open` and `openLog` ("Reading" below).
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
   records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
 
@@ -143,7 +144,108 @@ replayed on demand.
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
   `"all"` (every transaction but the coinbase) or `"members"` (each Propose in the rule's domain and each Attest). It
   throws `SourceError`, `BRANCH_MOVED` for a block that does not link to the one before.
+- `nodeWitness({ node, fetch? })` and `hostedWitness({ origin, fetch? })`, in `./browser` and `./server`: witnesses for
+  the reader (below), a node's `/tip` and `/block/height/:h`, or our front door's `/api/rpc/tip` and
+  `/api/headers/:h/1`. A witness vouches for no record, so any http or https address without credentials, query or
+  fragment is accepted. Neither reports a gate table.
 - `./testing`: `fixtureSource(fixture)`, a level 1 source over a recorded block fixture such as cairnx-core's
   `test/fixtures/events-blocks.json` in this repository, and the event factories `fixtures()`.
+
+## Reading
+
+`open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
+`memoryStore()`): `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
+`dryRun(tx, author)`,
+`status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
+for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
+`advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
+when none is running and waits for it at most `waitMs` (default 0: it answers from what is held); a call of
+`advance()` while a run is in flight joins that run, and the status it returns can then come from a round begun before
+the call. A read waits for the advance it started and for a step's commit in flight together at most `waitMs`
+(counted from the read, or until its signal aborts). It answers from the state the last whole commit left, or, while a
+commit is still in flight when that bound passes, `NOT_SYNCED` with the detail "a step's commit is in flight" and
+nothing shown; `status()` answers the same during a commit. A store whose commit never settles leaves `advance()`
+pending: that is the store's failure, and reads still answer within their bound. Nothing runs on a timer: the caller
+drives `advance()` or reads.
+
+Each answer is `{ verified: true, value }` or `{ verified: false, value: null, shown }`, with `why` (the codes below),
+`notes`, `level`, `proof`, `vouch` (the basis) and `at` (the tip, the deep height `tip - minDepth` the value is read
+at, and the depth). A caller that gates value on an answer reads `value` and acts only when `verified` is true;
+`shown` is for display. The deep view is the state at `tip - minDepth`; `minDepth` defaults to cairnx-core's
+`FINAL_DEPTH` (12), the depth replicas compare at, which is not a depth that makes a payment safe: a caller crediting
+value chooses its own. `balance`, `state` and `events` answer the deep view; `balance` adds `atTip` when the balance at
+the tip differs. `primary` answers `SHALLOW` when the deep view and the tip view name different names, the tip view in
+`shown`. `events` pages in the order of CONVENTION section 33.3 from an exclusive `height:pos` cursor (`limit`
+default 100, at most 1,000); its `next` does not pass the deep height, also on an empty page.
+
+An answer is verified only when every condition holds. Each failed one adds its code, in this order:
+
+| Code | The condition that failed |
+|---|---|
+| `INPUT_INVALID` | the read's input is well formed (an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
+| `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
+| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
+| `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
+| `BEHIND` | the cursor is not below the tip |
+| `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
+| `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
+| `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
+| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `SHALLOW` | `primary`: the deep view and the tip view agree |
+
+The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
+`clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
+table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
+answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
+the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`SOURCE_UNAVAILABLE`, `UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED` and `LEVEL_DISPLAY` (a display
+basis is refused by `open`); the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and
+`REPLAY_SLOW`.
+
+A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
+with a valid header, gives another hash at the compared height, or cannot yet be compared within 12 blocks of the
+cursor, makes every answer unverified while it does. A witness more than 12 blocks below the cursor (or above it)
+neither confirms nor contradicts. A caller
+that sees `TIP_BEHIND_PEER` or `SOURCES_DISAGREE` from one witness alone reads `shown`, and drops or replaces that
+witness when it believes it lies; nothing in the reader decides that for it. `hostedWitness` and `nodeWitness` report
+no gate table, so `RULES_DIFFER` compares the local tables (built and loaded) and the tables of witnesses that the
+caller writes itself with `rules`; a witness on our front door can confirm a replica whose rules differ from the
+front door's without that showing.
+
+The clock rule has a cost: one clock read earlier than the one before (a set-back of any size) makes every answer
+under an anchor or caller root `NOT_WITNESSED` until the next witness round confirms again.
+
+No value a read returns shares a mutable object with the reader: the basis every answer carries as `vouch` is frozen,
+and `events()` pages, `state()` and `status()`'s cursor, last reorg and last error are copies (a page of 1,000 events
+cost about 2 ms to copy in Node on this host, 2026-11-19).
+
+The confirmation lives in memory. After a restart (a new `open` over a filled store) no answer under an anchor or
+caller root is verified until a witness answers again: `NOT_SYNCED` and `NOT_WITNESSED` before the first advance,
+`NOT_WITNESSED` while the witnesses are silent. The store's meta keeps no confirmation (`StoreMeta.witnessed` is
+written null).
+
+`BUILT_GATES`, the gate table this package was built against, is compared with the loaded cairnx-core's. A cairnx-core
+that adds a gate is answered as before below that gate's height and `RULES_DIFFER` from it on, until this package is
+rebuilt and released against it; every new gate therefore needs a release of the replica before its height.
+
+`open` throws `ReplicaConfigError` for a basis `checkBasis` refuses; a display basis; a basis that cannot give every
+event from activation (`code` `BELOW_FLOOR`: an anchor above the activation height less one, or a caller's floor
+above it, or above the pin under one); and a witness on the header source's origin (the front door's under an
+anchor root, the caller's `origin` under a caller root). A store that opens refused for its format, rule, basis or
+rows is reset and filled again; the newer-pin exception of the design is the disk store's slice.
+
+`dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
+cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
+whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, fetch? })`, in
+`./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
+address rule and `memoryStore()`.
+
+What the reader does not answer yet: `name()` needs a forward-resolution selector from cairnx-core (the address and
+profile a name gives, which CONVENTION sections 28 and 35.3 state and core 0.2.7 does not export), so it waits for
+0.2.8 rather than restating that rule here; `transfers` waits for cairnx-core to
+export the token movements of an address (a whole fill's delivered amount and a mint's amount are not fields of the
+state today, and deriving them here would restate the core's settlement); `./display` is not built. What it does
+not persist: the witness's confirmation and the source's header window live in memory.
 
 ESM only, `sideEffects: false`. `@inversealtruism/cairnx-core` is a peer dependency, so a process runs one `resolve()`.

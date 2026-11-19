@@ -39,5 +39,36 @@
   fails verification is read again past caches; a caller's fork is placed only where its `at` answered another hash.
 - 2026-11-18, a copy: `src/http.ts` holds a copy of csd-client's capped body read, which is private to `CsdClient`.
   Remove it when csd-client exports that read.
+- The reader: `open` and `openLog`, the answer types (`Answer`, `At`, `ReadOptions`, `BalanceValue`, `Page`,
+  `TransferCursor`, `ReplicaStatus`, `Witness`), the reads `balance` (deep view, `atTip`), `primary` (`SHALLOW`),
+  `state` and `events` with `minDepth`, and `advance`, `status`, `subscribe`, `close`. An answer is verified only
+  when the input is well formed, the basis is level 3, the gate tables agree at or below the tip (`RULES_DIFFER`;
+  `TWO_CORES` noted), the loop is synced at its tip (`NOT_SYNCED`, `BEHIND`, `BRANCH_UNRESOLVED`), the tip is at most
+  30 minutes old (`TIP_STALE`), no witness names a plausible higher tip (`TIP_BEHIND_PEER`) and, for an anchor or
+  caller root, a witness confirmed the branch within 30 minutes within 12 blocks of its tip (`NOT_WITNESSED`,
+  `WITNESS_SILENT`). `open` refuses `BELOW_FLOOR` (`ReplicaConfigError.code`) and a witness on the header source's
+  origin. `nodeWitness` and `hostedWitness` in `./browser` and `./server`. The floor rule has one home,
+  `floorBreak`, used by `open` and both roots. The loop gives `hashAt`, `rows` and an `onRollback` callback.
+- `dryRun(tx, author)`: a Propose or an Attest with its outputs replayed in the block above the cursor, answered with
+  `applied`, the code and the note of the applied log. `local({ node, fetch? })` in `./browser` and `./server`.
+- The witness rule after review: a witness is compared only at the lower of its tip and the cursor, within 12 blocks
+  of the higher, against a hash the replica holds there; a confirmation is stamped when the witness answered and bound
+  to the loop's generation, which every change of the chain but an extension moves (`chainExtends` guards the one
+  write); a disagreement and a clock read earlier than the last void it; any higher tip with a valid header is
+  `TIP_BEHIND_PEER` (no plausibility cap); a witness out of form is silent, noted `WITNESS_MALFORMED` (a new note
+  code); `advance()` joins a run in flight; a caller whose headers end below the
+  store is an idle step with the caller's tip, so the reader answers `BRANCH_UNRESOLVED`.
+- A read and a step's commit: `Loop.committing()` is checked in the turn the read answers in; a read waits for a
+  commit in flight at most its `waitMs` or until its signal aborts, then answers `NOT_SYNCED` ("a step's commit is in
+  flight") with nothing shown, and `status()` answers `NOT_SYNCED` during a commit. A commit that never settles leaves
+  `advance()` pending.
+- The loop keeps the block hashes of its cursor and the 12 heights below it (at most 13), emptied whenever the
+  generation moves, so a witness within 12 blocks below the cursor is always compared; one the loop cannot yet compare
+  (after a restart, reload or rollback) voids the confirmation.
+- No value a read returns shares a mutable object with the reader: the basis is frozen at `open`; `events()` pages
+  and `status()`'s cursor, last reorg and last error are copies.
+- Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
+  which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
+  `advance()` or reads).
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
   follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").

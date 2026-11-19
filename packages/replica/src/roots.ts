@@ -7,7 +7,9 @@
 // header at the cursor while the caller's tip is at or above it (a store that keeps a floor and a suffix) is a
 // refusal, never a rollback: a rollback needs another hash. Inside the search a null is "not held": the fork is
 // placed only where the caller answered another hash (fork.ts). A caller whose tip is below the cursor on the chain
-// the store holds rolls nothing back.
+// the store holds rolls nothing back: the step is idle with the caller's tip, so the loop reports a tip below its
+// cursor (the reader's BRANCH_UNRESOLVED) until the caller's headers reach the cursor again.
+import { floorBreak } from "./basis.js";
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
@@ -40,7 +42,7 @@ export function callerRoot(h: VerifiedHeaders): Root {
   const hashAt = async (height: number) => (await h.at(height))?.hash.toLowerCase() ?? null;
   const viewOf = (v: { height: number; hash: string; time: number }): TipView => ({ height: v.height, hash: v.hash.toLowerCase(), time: v.time });
   const fork = forkSearch({ probe: async (_s, height) => ({ hash: (await hashAt(height)) ?? "", prev: (await hashAt(height - 1)) ?? "" }), tipView: async () => tip!,
-    holds: async (height) => (await hashAt(height)) !== null, who: "the caller" });
+    holds: async (height) => (await hashAt(height)) !== null, who: "the caller", behindIdle: true });
   return {
     root: { kind: "caller", floor: h.floor, origin: h.origin },
     hashAt,
@@ -49,7 +51,8 @@ export function callerRoot(h: VerifiedHeaders): Root {
     async tip(signal) { const v = await h.sync(null, signal); return v === null ? null : (tip = viewOf(v)); },
     async begin(s, ctx, server) {
       const at = ctx.cursor;
-      if (h.floor > ctx.rule.activationHeight - 1) throw new SourceError("BELOW_FLOOR", `the caller's headers start at ${h.floor}, above the activation height less one`);
+      const low = floorBreak({ kind: "caller", floor: h.floor, origin: h.origin }, null, ctx.rule);
+      if (low !== null) throw new SourceError("BELOW_FLOOR", low);
       const v = await h.sync(server.height, ctx.signal);
       if (v === null) throw new SourceError("SOURCE_UNAVAILABLE", "the caller's headers do not know the tip");
       tip = viewOf(v);

@@ -15,6 +15,7 @@
 // is repaired by a walk without a work bar. A walk whose headers fail verification is dropped and starts afresh;
 // after a transport error it resumes.
 import { LWMA_WINDOW } from "@inversealtruism/csd-codec";
+import { floorBreak } from "./basis.js";
 import { headerOf } from "./block-read.js";
 import { SourceError } from "./errors.js";
 import type { Head } from "./fork.js";
@@ -25,7 +26,8 @@ import { HeaderWindow, type HeaderRow } from "./window.js";
 
 const BATCH = 512;
 type Walk = { fresh: HeaderWindow; bar: bigint | null; need: number; matched: { at: Cursor; work: bigint } | null; diverged: boolean; refusedAt: string | null };
-const rowsOf = (from: number, count: number) => (v: unknown): HeaderRow[] => {
+/** The rows of an /api/headers answer from `from`, each hashed and checked against its height. */
+export const rowsOf = (from: number, count: number) => (v: unknown): HeaderRow[] => {
   const rows = (v as { ok?: unknown; headers?: unknown } | null)?.headers;
   if (!Array.isArray(rows) || rows.length !== count) throw new SourceError("SOURCE_MALFORMED", `the headers from ${from} are not ${count} rows`);
   return rows.map((r, i) => headerOf(r, from + i, null));
@@ -126,7 +128,8 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
     hashAt: async (height) => w?.hashAt(height) ?? null,
     async begin(s, ctx, server) {
       const floor = ctx.rule.activationHeight - 1, at = ctx.cursor, h = at?.height ?? floor;
-      if (anchor.height > floor) throw new SourceError("BELOW_FLOOR", `the anchor ${anchor.height} lies above the activation height less one`);
+      const low = floorBreak({ kind: "anchor", anchor }, null, ctx.rule);
+      if (low !== null) throw new SourceError("BELOW_FLOOR", low);
       seed ??= await seedOf(s);
       const win = (w ??= HeaderWindow.seed(seed, anchor, depth));
       if (walk !== null && walk.refusedAt === server.hash) throw new SourceError("LESS_WORK", `the server's chain still has no more work than the held one at its tip ${server.height}`);

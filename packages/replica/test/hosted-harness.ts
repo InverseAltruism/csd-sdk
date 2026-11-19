@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { CAIRNX_EVENT_RULE, EVENTS_HASH_START, type EventRule } from "@inversealtruism/cairnx-core";
 import { checkStep, reorgBreak } from "../src/contract.js";
 import { hostedBlocks, type HostedBlocksOptions } from "../src/browser.js";
-import { memoryStore, replicaLoop, type BlocksSource, type Source, type Step, type Store } from "../src/index.js";
+import { memoryStore, replicaLoop, type BlocksSource, type Source, type Step, type Store, type VerifiedHeaders } from "../src/index.js";
 import { ROWS_HASH_START } from "../src/rowshash.js";
 import { blockAt, cap, json, type Answers } from "./node-harness.js";
 
@@ -59,3 +59,17 @@ export function driveHosted(s: Hosted, root: HostedBlocksOptions["root"], o: { m
   return { fr, inner, loop, steps, bad, store, run: () => loop.advance({ budgetMs: 600_000 }) };
 }
 export const kinds = (steps: { step: Step }[]) => steps.map((x) => (x.step.kind === "cannot" ? x.step.code : x.step.kind));
+
+/** A caller's verified headers over `answers` from 29,859 up to `tip` (null: the tip unknown), holding only the heights
+ *  `holds` accepts (default all), counting its calls. */
+export function callerHeaders(c: { answers: Answers; tip: number | null; holds?: (h: number) => boolean }) {
+  const n = { syncs: 0, offers: 0 };
+  const held = (h: number) => (c.tip !== null && h >= 29_859 && h <= c.tip && (c.holds?.(h) ?? true) ? blockAt(c.answers, h) : null);
+  const headers: VerifiedHeaders = {
+    floor: 29_859, origin: "https://headers.example",
+    async sync(to) { n.syncs++; if (c.tip === null) return null; const b = blockAt(c.answers, Math.min(to ?? c.tip, c.tip)); return { height: b.height, hash: b.hash, time: Number(b.header.time) }; },
+    async at(h) { const b = held(h); return b === null ? null : { hash: b.hash, merkle: String(b.header.merkle) }; },
+    async offer() { n.offers++; return true; },
+  };
+  return { c, n, headers };
+}

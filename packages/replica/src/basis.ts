@@ -1,6 +1,6 @@
 // A basis, its level and proof, and the name of the store kept under it. Every function here checks its basis first,
 // so a value that bypassed the types (a pin over a feed) is refused at run time instead of answering level 3.
-import { HASH_RE, canonicalJson } from "@inversealtruism/cairnx-core";
+import { HASH_RE, canonicalJson, type EventRule } from "@inversealtruism/cairnx-core";
 import { ReplicaConfigError } from "./errors.js";
 import type { Basis, BlocksBasis, Cursor, HeaderRoot, RecordProof } from "./types.js";
 
@@ -61,6 +61,18 @@ export function basisKey(b: Basis): string {
   if (c.kind !== "pinned") return canonicalJson(c);
   const { root, bodies } = c.above;
   return canonicalJson({ kind: "pinned", above: { kind: "blocks", root: root.kind === "anchor" ? { kind: "anchor" } : root, bodies } });
+}
+
+/** Why headers from `root` cannot give every event from the rule's activation height, or null (design section 2): an
+ *  anchor must lie at or below the activation height less one, and so must a caller's floor, or at or below the pin
+ *  under one. Under a pin an anchor root is the pin itself. One's own node is read from the activation height. */
+export function floorBreak(root: HeaderRoot, pin: Cursor | null, rule: EventRule): string | null {
+  const limit = pin?.height ?? rule.activationHeight - 1;
+  if (root.kind === "anchor" && pin === null && root.anchor.height > limit) return `the anchor ${root.anchor.height} lies above the activation height less one`;
+  if (root.kind === "caller" && root.floor > limit) {
+    return `the caller's headers start at ${root.floor}, above ${pin === null ? "the activation height less one" : `the pin ${limit}`}`;
+  }
+  return null;
 }
 
 /** Whether two bases are the same value, the pin included. */
