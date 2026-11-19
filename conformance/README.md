@@ -20,12 +20,18 @@ this directory, only the JS implementation existed, so the contract was asserted
   `parse_record` (every `onlyKeys` allow-set + shape rule) and `resolve()` (tokens / names with
   commit-reveal + lease / offers / bids / fills / fees) producing a byte-identical `canonical_state`.
 - **`crosscheck-resolve.mjs`:** feeds the shipping JS resolver and the Python port the SAME
-  language-neutral vectors (`packages/cairnx/test/vectors/cases.json`, and `cases-rules.json`) and asserts
+  language-neutral vectors (`packages/cairnx/test/vectors/cases.json`, `cases-rules.json` and
+  `cases-convention.json`) and asserts
   `canonicalState(JS.resolve) === Python.resolve === JSON.stringify(expectedState)` for every case.
   `cases-rules.json` (`gen-rule-vectors.mjs`, its own file so the frozen `cases.json` keeps its bytes) pins, in
   five vectors, three rules nothing else decided: a fill or a seller cancel in the block of the record it attests applies after it
   (proposals before attests), a uri that is not its canonical JSON is invalid even with the canonical hash, and a
-  token offer cannot give and want one ticker.
+  token offer cannot give and want one ticker. `cases-convention.json` (`gen-convention-vectors.mjs`, its own file for
+  the same reason) pins, in sixteen vectors, the rules CONVENTION.md states since its 2026-11-19 correction (the
+  pending reservation and its expiry at `finalizeBy`, the closing sweep, the zero-delivery partial fill, the commit
+  height, the salt and hash forms, the bid link and `done`, the contest key, the zero token and CSD prices, the
+  recapture premium, the same-block re-post after an `ocancel`, `feesPaid`, a whole fill's `paid` and `feeBps` 0
+  below V11); an implementation of the earlier text fails each.
   Real-chain co-sign: `cairnx/scripts/conformance-crosslang.mjs` scans the live indexer and replays
   the ACTUAL on-chain event stream through both impls at every pinned height.
 - **`replay-corpus-crosslang.mjs`:** the same co-sign offline, over the committed on-chain corpus

@@ -27,7 +27,7 @@ for (const r of vectors.records) {
 const uris = new Map<string, { uri: string; payloadHash: string }>();
 const take = (events: ChainEvent[]) => { for (const e of events) if (e.kind === "propose") uris.set(`${e.uri}\u0000${e.payloadHash}`, { uri: e.uri, payloadHash: e.payloadHash }); };
 take(json<{ events: ChainEvent[] }>("./vectors/replay-corpus.json").events);
-for (const f of ["cases.json", "cases-rules.json", "cases-v29.json"]) for (const c of json<{ cases: { events: ChainEvent[] }[] }>(`./vectors/${f}`).cases) take(c.events);
+for (const f of ["cases.json", "cases-rules.json", "cases-v29.json", "cases-convention.json"]) for (const c of json<{ cases: { events: ChainEvent[] }[] }>(`./vectors/${f}`).cases) take(c.events);
 for (const c of vectors.resolve) take(c.events);
 const inputs = [...uris.values()];
 const valid = inputs.map((u) => parseRecord(u.uri, u.payloadHash)).filter((r) => r !== null) as unknown as Record<string, unknown>[];

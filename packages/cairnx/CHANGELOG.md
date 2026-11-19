@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+- CONVENTION.md corrected to match the implementation; no behaviour changed (`src/` and `dist/` untouched, every
+  pinned replay hash and existing vector byte-identical). It now states: what a pending reservation refuses and how
+  it is materialized (sections 9, 17, 22, 28); the expiry sweep before each event and at `tipHeight + 1`, and that a
+  name's `expired` is read at the tip's epoch (section 5); the zero-delivery partial fill (12); the commit height as
+  the first anchoring of its hash, the salt form and the reveal's own position and id as the contest key (9, 28, 29);
+  the lowercase form of record hashes (3, 13, 18); the bid link and `done` (13); a token-priced offer's `"0"` price
+  (3, 11); the recapture premium as the integer staircase `1 + floor(19 * (720 - e) / 720)` and the recaptured
+  record's anchor (17, 29). Corrected sentences: `feesPaid` counts the fees applied records owed (10); a whole fill's
+  `paid` is what it paid to payto, and a completed partial offer's `fill` carries `got` (5, A3); the claim fields stay
+  after the hold and the offer end (20, A4); offers below 29 960 carry `feeBps` 0 (19); a same-block re-post of what
+  an `ocancel` releases is refused from V14, and section 16 no longer says the case cannot occur on chain (12b, 16);
+  the fclaim grant checks the expiry's 2^53 bound first and its order decides only the reason code (31); a list
+  holding a transaction id at two places with the first copy below V29 is not a list section 33 produces, no
+  conformance level covers it and the two reference implementations differ there (32); an un-finalized reservation
+  is gone from the state at a tip equal to `finalizeBy` (28); one key can anchor several records in one block (6,
+  16); the state's key order puts array-index keys first (5), the field lists of section 5 and A3/A4 are complete,
+  and `FILL_UNDERPAID`, `FILL_REBATE_UNPAID` and `TREASURY_FEE_UNPAID` say what they mean on the rebate lane (40.4).
+  README.md gives the recapture premium as 19x stepping down to 1x over about 28 days, where it said 20x to 1x over
+  about 30.
+- `test/vectors/cases-convention.json` (16 vectors, `conformance/gen-convention-vectors.mjs`) pins those rules and
+  three the text stated that no vector pinned (`feeBps` 0 below 29 960, a CSD-priced offer wanting `"0"`, and a bid
+  anchored after the offer that names it ending `done` with empty `offers`), each in a vector an implementation of
+  the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
+  reference by `conformance/crosscheck-resolve.mjs`, and by the seal, which pins the file's sha256. A file of its own
+  keeps the three case files the seal freezes at their bytes.
+- `test/holdcount.test.ts`: the honest path of `countOtherHoldsAtGrant`'s skip of the buyer's closed holds, with the
+  call shape the site and wallet send (`closed` from `myProvenFillClosedOffer`, the count into `verifyFillSpv`): three
+  completed fclaim buys inside one hold window, then a fourth, counted 0 and safe to fill. No test passed `closed`
+  before.
+
 ## 0.2.7
 
 - No state change; replay cost. `resolve()` no longer copies and walks every open offer, open bid, pending reservation

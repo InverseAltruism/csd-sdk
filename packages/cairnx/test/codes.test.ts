@@ -59,7 +59,7 @@ type Case = { name: string; events: ChainEvent[]; tipHeight: number };
 const inputs: Case[] = [];
 const corpus = json<{ events: ChainEvent[]; tipHeight: number }>("./vectors/replay-corpus.json");
 inputs.push({ name: "replay corpus at its tip", events: corpus.events, tipHeight: corpus.tipHeight });
-for (const f of ["cases.json", "cases-rules.json", "cases-v29.json"]) for (const c of json<{ cases: Case[] }>(`./vectors/${f}`).cases) inputs.push({ ...c, name: `${f}:${c.name}` });
+for (const f of ["cases.json", "cases-rules.json", "cases-v29.json", "cases-convention.json"]) for (const c of json<{ cases: Case[] }>(`./vectors/${f}`).cases) inputs.push({ ...c, name: `${f}:${c.name}` });
 for (const c of vectors.resolve) inputs.push({ ...c, name: `codes.json:${c.name}` });
 let entries = 0, coded = 0;
 const contradicting: string[] = [], missing: string[] = [];

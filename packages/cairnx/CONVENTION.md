@@ -72,10 +72,13 @@ signatures in v1: anchoring *from your key* is the authorization.
 
 ## 3. Common rules
 
-- **Amounts** are strings of decimal integers in base units, `"1"` ≤ x < `2^96`. Resolvers use
-  arbitrary-precision integers. `decimals` (0–8) is display-only.
+- **Amounts** are strings of decimal integers in base units, `"1"` ≤ x < `2^96`, except an offer's price: its
+  `want.value` (§4.4) and its `want.amount` (§11) may be `"0"`. Resolvers use arbitrary-precision integers.
+  `decimals` (0–8) is display-only.
 - **Tickers** match `^[A-Z][A-Z0-9]{2,11}$`.
 - **Addresses** are `0x` + 40 lowercase hex.
+- **Hashes and ids in records** (`ncommit`'s `commit`, `tmeta`'s `hash`, an offer's `bid`, an `fclaim`'s `offer`) are
+  `0x` + 64 lowercase hex (`HASH_RE`); any other form makes the record an invalid no-op (`RECORD_BAD_HASH`).
 - **Apply order:** events are replayed in consensus order: by block height; within a block,
   all `cairnx:v1` proposals in tx order (`pos`), then all attestations on CairnX proposals in tx
   order (the events of §33). (Mirrors the node’s propose/attest phases, C5.) Remaining ties (same height, phase, pos:
@@ -151,7 +154,7 @@ CairnX meaning for deploys. The **deployer** is the anchoring proposer.
 - `taker` (optional): if present, only this address can fill. **Taker-bound offers are the
   protected path** (see §6).
 - The anchoring proposal's **`expires_epoch` is the offer's validity window**: after it, the
-  chain itself rejects fill attempts (C5), and the resolver releases the lock. Offers SHOULD
+  chain itself rejects fill attempts (C5), and the resolver releases the lock (the expiry sweep of §5). Offers SHOULD
   use short windows (e.g. tip-epoch + 24 ≈ 1 day).
 - An offer is identified by its **proposal id (txid)**.
 - `memo` (64 UTF-16 units max) and `ts` are optional free fields with the same rules as
@@ -190,18 +193,48 @@ extension shipped at v1.7 (height 34 000) and uses **`score = 50`** (`SCORE_CLAI
 ## 5. Resolver state (normative output)
 
 ```
-tokens:   ticker → { deployId, deployer, name, decimals, supply, minted, mint, mintLimit, height }
+tokens:   ticker → { ticker, deployId, deployer, name?, decimals, supply, minted, mint, mintLimit?, height, tmeta? }
 balances: ticker → address → { available, locked }
-offers:   offerId → { seller, give, want, taker?, status: open|filled|cancelled|expired,
-                      expiresEpoch, height, fill?: { buyer, txid, height, paid } }
+names:    name → { name, owner, claimId, height, effectiveHeight, locked, addr?, viaFill?, profile?,
+                   paidThroughEpoch?, expired? }
+          or, for a pending reservation (§28):
+          name → { name, owner, claimId, height, effectiveHeight, locked, pending, finalizeBy }
+offers:   offerId → { id, seller, give, want: { value, payto } | { ticker, amount, payto }, taker?,
+                      status: open|filled|cancelled|expired, expiresEpoch, height, feeBps,
+                      min?, paid?, delivered?, fills?, bid?, claimedBy?, claimUntilHeight?, claimTxid?,
+                      fill?: { buyer, txid, height, paid, fee, got? } }
+bids:     bidId → { id, bidder, want, give: { value }, status: open|cancelled|expired|done,
+                    expiresEpoch, height, offers }
+feesPaid: the protocol fees owed by applied records (§10), a decimal string
 events:   ordered log of applied/no-op decisions (for explorers & audit; INFORMATIONAL,
           excluded from the canonical surface; each entry's `code` is stable (§40), its `note` text a diagnostic)
 ```
 
+An address whose `available` and `locked` are both 0 is left out of `balances`, and so is a ticker with no address
+remaining. `want.payto` is always present: the record's `payto`, or the seller when the record has none.
+
+**Fill records.** A whole fill sets `fill` once. Its `paid` is what the fill's transaction pays to `want.payto` (the
+`paidTo` sum of §33.4), overpayment included, and so the maker rebate as well when `payto` is the seller (§19); for a
+token-priced fill it is `want.amount`. Its `fee` is the fee the fill owed (§10, §14, §19). A partial fill (§12) appends
+`{buyer, txid, height, paid, fee, got}` to `fills`, with `paid` its effective payment `x` and `got` the give units it
+delivered; the partial fill that completes the offer also sets `fill` to that same entry, `got` included.
+
+**Expiry in the state.** Before each event at height h the resolver expires every open offer and bid whose effective
+expiry epoch (§24, §25) is below `epochOf(h)`, releasing an offer's give, and deletes every reservation (§28) and
+recapture reservation (§29) whose `finalizeBy` is below h. After the last event, and after the deferred cancels of its
+block (§16), it runs the same sweep once more at `tipHeight + 1`. So the state at a tip shows an offer or bid whose
+effective expiry epoch, as the sweep at `tipHeight + 1` computes it, is `epochOf(tipHeight)` as `expired` when
+`tipHeight` is the last height of that epoch (`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the
+epoch. For an offer or bid anchored below V22 that sweep applies the §24 cap once `tipHeight + 1` reaches V21
+(40 100), that is from tip 40 099 on. A name's `expired` (§17) is read at the tip's own epoch: it is present when
+`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
+
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
-Serialization is **canonical JSON**: object keys sorted in ordinal (code-unit) order at every
-depth, no insignificant whitespace, UTF-8, all amounts as decimal strings (no floats anywhere),
+Serialization is **canonical JSON** in the state form of §5.1: object keys sorted in ordinal (code-unit) order at every
+depth, except that keys which are array indices (the canonical decimal of an integer in [0, 2^32 − 2]: an all-digit
+name, an all-digit profile key) come first in ascending numeric order (§5.1 A2); arrays keep their order (`fills` and a
+bid's `offers` in apply order); no insignificant whitespace, UTF-8, all amounts as decimal strings (no floats anywhere),
 booleans/numbers in their shortest JS form. Two resolvers fed the events of §33 for the same chain prefix MUST produce
 byte-identical canonical state; `sha256(canonicalState)` at the activation heights is pinned in
 `test/vectors/replay-hashes.json`, and `test/vectors/cases.json` carries language-neutral replay
@@ -252,19 +285,24 @@ once a replay hash is pinned over data that exercises them, so they are stated h
     `_js_obj_key_order`/`_js_stringify` in `conformance/cairnx_ref.py`); a third impl MUST reproduce both.
 - **A3: Field types (bare number/boolean vs decimal string vs identity string).** Canonical state mixes
   raw JSON integers and booleans with decimal-string amounts and raw identity strings. Emit as **bare
-  integers**: `decimals, height, effectiveHeight, expiresEpoch, feeBps, tipHeight, paidThroughEpoch`, and
-  (v1.7) `claimUntilHeight` (all JS-safe, < 2^53). Emit as **bare booleans**: `locked, viaFill, expired`.
-  Emit as **decimal strings**: `supply, minted, mintLimit, feesPaid`, every `balances.*.available`/`.locked`,
-  `want.value`, `want.amount`, `min`, `paid`, `delivered`, and each fill's `paid`/`.fee` (plus `.got` ONLY on
-  a partial `fills[]` entry; see the fill shapes below). Emit as **raw 0x-hex identity strings**: the offer
-  `id` (32-byte txid), the name `claimId` (32-byte anchor txid, present on **every** name), and (v1.7) the
-  offer `claimedBy` (20-byte addr). Emit as a nested **object**: the name `profile` (v1.9 nprofile: a flat
-  string→string map). **Two distinct fill shapes (the `got`-presence rule):** a whole-offer fill is the
-  singular object `fill` = `{buyer, txid, height, paid, fee}` and **OMITS `got`**; a partial-fillable (`min`)
-  offer instead carries an **array** `fills`, each entry `{buyer, txid, height, paid, fee, got}` **WITH
-  `got`** (`got` = the give-asset units delivered by that partial). An implementer who adds `got` to the
-  singular `fill` (or drops it from a `fills[]` entry) forks `sha256(canonicalState)`. Never serialize an
-  amount as a number or an `f64`; never stringify an integer field.
+  integers**: `decimals, height, effectiveHeight, expiresEpoch, feeBps, tipHeight, paidThroughEpoch, finalizeBy`,
+  and (v1.7) `claimUntilHeight` (all JS-safe, < 2^53). Emit as **bare booleans**: `locked, viaFill, expired,
+  pending`. Emit as **decimal strings**: `supply, minted, mintLimit, feesPaid`, every
+  `balances.*.available`/`.locked`, an offer's `give.amount`, `want.value`, `want.amount`, `min`, `paid` and
+  `delivered`, a bid's `want.amount` and `give.value`, and each fill entry's `paid`, `fee` and `got` (see the fill
+  shapes below). Emit as **raw 0x-hex identity strings**: the 32-byte ids, that is the offer and bid `id`, the token
+  `deployId`, the name `claimId` (the anchor txid, present on **every** name), a fill's `txid`, the offer `bid` and
+  (v2.8) `claimTxid`, and the token `tmeta` (a content hash); and the 20-byte addresses `deployer`, `owner`, `addr`,
+  `seller`, `taker`, `want.payto`, `bidder`, `buyer` and (v1.7) `claimedBy`. Emit as plain strings: `ticker`, the
+  token `name`, `mint`, a name's `name` (also `give.name` and a bid's `want.name`) and `status`. Emit as **arrays**:
+  an offer's `fills` and a bid's `offers` (offer ids), in apply order. Emit as a nested **object**: the name `profile`
+  (v1.9 nprofile: a flat string→string map). **Two fill shapes (the `got`-presence rule):** a whole fill (of an offer
+  without `min`) is the singular object `fill` = `{buyer, txid, height, paid, fee}` with **no** `got`; a
+  partial-fillable (`min`) offer carries an **array** `fills`, each entry `{buyer, txid, height, paid, fee, got}`
+  **with** `got` (`got` = the give-asset units delivered by that partial), and the partial fill that completes it also
+  sets the singular `fill` to that same entry, `got` included (§5). An implementer who adds `got` to a whole fill, or
+  drops it from a `fills[]` entry or from a completed partial offer's `fill`, forks `sha256(canonicalState)`. Never
+  serialize an amount as a number or an `f64`; never stringify an integer field.
   > **⚠ v1.7/v1.9 are part of this byte contract on every live tip past their gate** (`V17_HEIGHT=34000`
   > claims, `V19_HEIGHT=36700` profiles). A second-language resolver built to an earlier copy of this list
   > (omitting `claimedBy`/`claimUntilHeight`/`claimId`/`profile`/`fills`) **forks `sha256(canonicalState)`
@@ -272,11 +310,14 @@ once a replay hash is pinned over data that exercises them, so they are stated h
   > `replay-hashes.json` at **every activation height through V20**: incl. 34 000 claims, 36 700 profiles,
   > 38 400 grace; V18/V21 auto-pin once the chain tip crosses them. The static `cases.json` bar additionally
   > pins the V20/V21/nprofile/name-op/lapse byte-contract with no live node required.)
-- **A4: Optional fields are OMITTED, never `null`.** A key whose value is absent is dropped entirely
-  (`addr, viaFill, min, bid, taker, paidThroughEpoch, expired`, token `name`/`mintLimit`/`tmeta`, and the
-  v1.7/v1.9 optionals `claimedBy`/`claimUntilHeight` (omitted unless the offer is claimed), `fill`
-  (omitted until first filled), `fills` (only on a `min` offer), `profile` (only when an nprofile is set)).
-  Never emit `"addr":null`.
+- **A4: Optional fields are OMITTED, never `null`.** A key whose value is absent is dropped entirely: the token
+  `name`, `mintLimit` and `tmeta`; the name `addr`, `viaFill`, `profile` (only when an nprofile is set, at v1.9+
+  tips), `paidThroughEpoch` (on every name at v1.5+ tips except a pending reservation), `expired`, and `pending` and
+  `finalizeBy` (only on a pending reservation, §28); the offer `taker`, `min`, `paid`, `delivered` and `fills` (only on
+  a `min` offer, from its creation), `bid`, `claimedBy` and `claimUntilHeight` (from the offer's first claim grant on,
+  and kept after the hold ends and after the offer closes, §20), `claimTxid` (from its first fclaim grant on, §31) and
+  `fill` (until a whole fill, or the partial fill that completes the offer); and a whole fill's `got`. A zero balance
+  is left out as §5 says. Never emit `"addr":null`.
 - **A5: The acceptance gate is a byte-exact round-trip (stronger than the hash check).** A record anchor
   is accepted iff **both** `canonicalJson(JSON.parse(uri)) === uri` (byte-for-byte) **and**
   `sha256(uri) === payload_hash`. The round-trip is what rejects duplicate keys, leading-zero amounts,
@@ -347,9 +388,10 @@ cap: ecosystem doc 16 §4; these are NOT in canonical state today.)*
   payment), so a losing claimer forfeits only the 0.05 CSD attest fee. On that basis v1.7 safely
   **re-opens** untaken CSD offers via claim-to-fill (§20), and v2.0/§23 bounds its late-fill edge.)
 - **No unconfirmed chaining (no CPFP).** The mempool only accepts txs whose inputs exist in the
-  confirmed UTXO set: you cannot spend change that hasn't been mined. Sequential CairnX actions
-  from one key require one confirmation between them; client software must serialize and surface
-  this ("next action available after 1 conf").
+  confirmed UTXO set: you cannot spend change that hasn't been mined. A key's next action needs a
+  confirmed coin: with one coin, one confirmation between actions; a key holding several confirmed
+  coins can anchor several records in one block (§16). Client software that spends one coin must
+  serialize its actions and surface this ("next action available after 1 conf").
 - **No native-CSD pools.** CSD itself cannot be locked by convention (real UTXOs obey only
   keys). CairnX trades CSD↔token atomically per-trade; it does not and cannot pool CSD.
 - **Reorgs:** state is a pure function of the chain; resolvers recompute (or roll back) on
@@ -391,20 +433,27 @@ owned purely on-chain: register, hold, point it at an address, transfer, or sell
   Reserved: `csd treasury admin official root www support` (`cairn`/`cairnx` are deliberately
   NOT reserved: the operator registered them as ordinary, tradeable names).
 - **`name` (claim):** `{v:1,t:"name",name,salt?}`. Owner = anchoring proposer. **Lowest
-  effective-anchor (height, pos, id) wins.** Requires the registration fee (§ below).
+  effective anchor (effHeight, pos, id) wins**, numeric on `effHeight` and `pos`, ordinal (code-unit) on `id`:
+  `effHeight` is the claim's own height, or a reveal's commit height (below); `pos` and `id` are always the claim or
+  reveal record's own position and transaction id, never the commit's. Requires the registration fee (§ below).
   - **Direct claim** (no `salt`): effective height = claim height. Simple, instant; front-runnable.
-  - **Commit-reveal** (`salt` present): a prior `ncommit` of `sha256({t:"cairnx:name:commit:v1",
-    name,salt,owner})` must exist at a strictly lower height within `COMMIT_MAX_BLOCKS` (8 epochs).
+  - **Commit-reveal** (`salt` present): `salt` is 16 to 128 hex digits in either case (`SALT_RE`,
+    `^[0-9a-fA-F]{16,128}$`); any other `salt` makes the record an invalid no-op (`RECORD_BAD_SALT`). A prior
+    `ncommit` of `sha256({t:"cairnx:name:commit:v1", name,salt,owner})` must exist at a strictly lower height within
+    `COMMIT_MAX_BLOCKS` (8 epochs): with the commit height the LOWEST height at which that commit hash was anchored,
+    the reveal is valid only when `0 < revealHeight − commitHeight ≤ COMMIT_MAX_BLOCKS` (`REG_COMMIT_MAX_BLOCKS = 8`
+    blocks from v2.5, §28). A later anchoring of the same commit hash leaves that height as it is, so it does not
+    reopen a window that has passed; a retry after the window needs a fresh salt.
     The reveal **back-dates** its effective height to the commit height, so a committer beats any
     direct-claim squatter who acts in between (the reveal **displaces** them). This is the
     front-run defense (ENS/Namecoin/Runes pattern adapted to a fee-ordered chain).
 - **`ncommit`:** `{v:1,t:"ncommit",commit}`: the commit hash (binds name+salt+owner, so it can't
   be reused by another address). Cheap; the reg fee is paid at reveal.
 - **`nxfer`:** `{v:1,t:"nxfer",name,to}`: owner gifts the name. Clears the resolver record. Fails
-  while the name is locked by an open offer.
+  while the name is locked by an open offer, and on a pending reservation (§28).
 - **`nset`:** `{v:1,t:"nset",name,addr}`: owner points the name at an address (the resolver
-  record). Reverse resolution (address → names owned) is computed by the resolver.
-- **Selling a name:** an `offer` with `give:{name}` (instead of `{ticker,amount}`). Anchoring it
+  record). Fails on a pending reservation (§28). Reverse resolution (address → names owned) is computed by the resolver.
+- **Selling a name:** an `offer` with `give:{name}` (instead of `{ticker,amount}`), not on a pending reservation (§28). Anchoring it
   **locks** the name (can't transfer/re-offer); a `fill` transfers ownership to the buyer and pays
   the seller (+ protocol fee), atomically, in one tx; cancel/expiry release the lock.
 - **Honest limits (v1.1, superseded):** names were **perpetual** through v1.4 (the registration fee
@@ -427,8 +476,12 @@ bearing action is a **no-op unless its own transaction pays the fee to the treas
 
 Mint, transfer, name-xfer, name-set, offer, commit and cancel pay only the chain's own anchor fee
 (to miners), not a protocol fee. An offer's `want.payto` may not be the treasury (keeps the
-payment and fee output buckets distinct). The resolver tracks `feesPaid` (total observed to the
-treasury), recomputable by anyone, like all CairnX state.
+payment and fee output buckets distinct); since `payto` defaults to the seller, an offer the treasury anchors names
+another `payto`. The resolver tracks `feesPaid`, recomputable by anyone like all CairnX state: the sum of the fees
+that applied fee-bearing records owed, not of what was paid to the treasury. Each applied deploy (from 29 960),
+registration or finalize, renewal and recapture adds its fee or premium, and each applied CSD-priced fill, whole or
+partial, adds its trade fee (§19); an overpayment, a treasury output on a record that owes no fee and the outputs of a
+refused record add nothing, and the in-kind fee of a token-priced fill is not counted (§14).
 
 ---
 
@@ -449,6 +502,9 @@ An offer's `want` may now be a **token amount** instead of a CSD value:
 - `want.ticker` must exist at fill time (checked at apply, like every balance rule); a
   token-priced offer over an unknown ticker simply can never fill until that ticker exists.
   `give.ticker ≠ want.ticker`. `give` may also be a **name** (sell a name for tokens).
+- `want.amount` may be `"0"` (§3), as `want.value` may (§4.4). Such an offer is filled for nothing: the fill debits
+  `0 + ceil(0)` = 0, so an attester holding none of `want.ticker` fills it (with the marker below, and as its taker
+  when it is taker-bound).
 - Anchoring locks `give` exactly as in v1 (§4.4). `want.payto` (default seller) receives the
   want-tokens; it may not be the treasury.
 - **Fill** = an `Attest` with `score = 100` **and `confidence = 1 000 000`** whose attester's
@@ -488,10 +544,13 @@ A CSD-priced **token** offer may opt into partial fills with `min`:
   `deliveredCum' = floor(give.amount × paidCum' / want.value)`: each fill delivers
   `deliveredCum' − deliveredCum`. The final fill (`paidCum' = want.value`) therefore delivers
   exactly the undelivered remainder; rounding dust never strands in the lock.
+- A partial fill that would deliver nothing (`deliveredCum' = deliveredCum`) is a no-op (`FILL_ZERO_DELIVERY`): it is
+  not appended, `paid`, `delivered` and `feesPaid` do not move, and its payment stays with `payto` (§4.5).
 - `fee = ceil(1% × x)` to the treasury in the same tx, per fill.
 - The offer stays `open` until `paidCum = want.value` → `filled`. Cancel/expiry release the
   undelivered remainder to the seller; completed partial fills stand.
-- Each fill is appended to the offer's `fills[]` (buyer, txid, height, paid, got, fee).
+- Each applied partial fill is appended to the offer's `fills[]` (buyer, txid, height, paid = `x`, got, fee); the one
+  that completes the offer is also its `fill` (§5).
 - Open partially-fillable offers race like v1 open offers (fee auction, §6), but losing a
   race now only costs the loser the *overlap*: their payment still buys whatever remained.
   Wallets must still warn on open-offer fills.
@@ -503,10 +562,16 @@ A CSD-priced **token** offer may opt into partial fills with `min`:
 ```
 
 Cancels **all of the proposer's open offers anchored strictly earlier in apply order**, releasing
-their locks, optionally filtered to one `give` asset (`ticker` or `name`, at most one). Without
+their locks, optionally filtered to one `give` asset (`ticker` or `name`, at most one), except what §31 exempts: a
+taker-bound offer anchored at V28 or above is not a target (Lane B), and from V28 the block-boundary flush skips a
+target under a live fclaim hold (Correction 2). Without
 cheap mass-cancel a market maker cannot keep a ladder of quotes honest (per-offer cancel = one tx
-each: the 0x `minValidSalt` lesson). Anchor an `ocancel`, then re-post the fresh ladder, even in
-the same block (proposals apply in tx order, so a later-pos ladder survives an earlier-pos cancel).
+each: the 0x `minValidSalt` lesson). Anchor an `ocancel`, then re-post the fresh ladder in a later block. From v1.4
+(height 31 400, §16) an `ocancel`'s effect waits for the end of its block, so the give it releases stays locked for the
+rest of that block: an offer of that give later in the same block is refused (`TOKEN_BALANCE_LOW` for tokens,
+`NAME_LOCKED` for a name) and its anchor fee is spent for nothing. A same-block offer at a later position is not a
+target of the `ocancel` (its targets are fixed when it applies), so it stands when the proposer's available balance
+covers it without the released amount.
 
 **Self-fills** (attester == seller) are **valid** and pay the protocol fee like any fill: wash
 trading is self-punishing, and a no-op rule would just complicate determinism. **Fill races on
@@ -529,12 +594,17 @@ of the book is instead built from **bids**, on-chain discovery records:
 - `memo` (64 UTF-16 units max) and `ts` are optional free fields, same rules as 4.3; `ts` MUST
   be a JS-safe integer (A8).
 - **Fulfillment** is the two-step RFQ: the asset owner anchors a **taker-bound offer**
-  (`taker = bidder`, price ≤ bid) optionally tagged `"bid":"<bidId>"`; the bidder's client
+  (`taker = bidder`, price ≤ bid) optionally tagged `"bid":"<bidId>"` (the bid's id, §3); the bidder's client
   detects the responding offer and fills it atomically. Two anchors + one fill: the
   scriptless ceiling for buy-side flow.
-- The resolver tracks `bids` (open/cancelled/expired) and links responding offers
-  (`offer.bid` → `bid.offers[]`). A bid whose linked offer is **filled by the bidder** is
-  marked `done` (purely informational).
+- The resolver tracks `bids` (open/cancelled/expired/done). An applied offer whose `bid` names a bid in `bids` is
+  appended to that bid's `offers` (in apply order) whatever its taker, its price and the bid's status: taker = bidder
+  and price ≤ bid describe an honest answer, not a condition of the link. An offer whose `bid` names no bid when it
+  applies is created with its `bid` and is never added to a bid's `offers`, then or later. A fill that closes an offer
+  carrying `bid` (a whole fill, or the partial fill that completes it) looks that id up in `bids` at the fill, not
+  through `offers`, and marks the bid `done` when it exists, the buyer is its bidder and it is still `open`; a bid
+  already cancelled or expired keeps its status, and a bid anchored after the offer naming it can be `done` with empty
+  `offers` (purely informational).
 - No protocol fee on bids (the anchor fee to miners is the spam price; the trade fee is paid
   when the responding offer fills).
 
@@ -642,10 +712,10 @@ From height **31 400**:
   after the flush.
 - **Why deferral, not reordering:** moving cancels after fills in the sort would break the
   global ordered loop and the "offers settle before fills" invariant for every other record
-  type. Deferring only the effect keeps apply order intact. The one non-physical edge (a
-  same-key `ocancel`-then-relist in one block observing pre-flush lock state) **cannot occur
-  on-chain**: anchor inputs must be confirmed (no CPFP), so one key cannot chain two anchors
-  into a single block.
+  type. Deferring only the effect keeps apply order intact. A relist by the same key later in
+  the cancel's block sees the lock state before the flush, so a relist that needs the give the
+  cancel releases is refused (§12b). One key can anchor several records in one block, each spending
+  its own confirmed coin.
 - **Determinism:** the deferred-cancel list is built and flushed in apply order, so the state
   (and the event log) remains a pure function of the chain prefix. Non-retroactive: pre-v1.4
   blocks never defer, so all historical replay is byte-identical.
@@ -659,17 +729,23 @@ lose more than the anchor fee: not to another buyer (race), and not to the selle
 **once, forever**: squatting is free to carry, and lapsed projects strand names permanently.
 From height **32 000** every name is a **lease**:
 
-- **Term:** a claim (or premium re-claim) is paid through `claimEpoch + 8 760` epochs (≈ 1 year).
+- **Term:** a claim (or premium re-claim) is paid through `claimEpoch + 8 760` epochs (≈ 1 year), with `claimEpoch`
+  the epoch of the claim or reveal record's own height, not of its back-dated effective height (from v2.5 the lease
+  starts at the finalize instead, §28, §29).
   Names claimed before v1.5 are **grandfathered** one full term from activation
   (`epochOf(32 000) + 8 760`), computed lazily, no state rewrite at the boundary.
 - **`nrenew` `{v:1,t:"nrenew",name}`:** extends the lease one term from its CURRENT end. Valid
   from **anyone** while the lease is live (third-party gifting, ENS-style) iff the same tx pays
-  `nameRegFee(name)` to the treasury. A renewal never changes ownership.
+  `nameRegFee(name)` to the treasury. A renewal never changes ownership. A pending reservation (§28) holds no lease and
+  is not renewed, by anyone.
 - **Grace (720 epochs ≈ 30 days):** past `paidThroughEpoch`, only the **owner** may renew;
   otherwise a squatter could extend a lapsing name they intend to take.
 - **Lapse → decaying-premium recapture:** past grace the name is unowned again. Anyone may claim
-  it by paying `expiredClaimFee(name, epochsPastGraceEnd)`: `nameRegFee × 20` linearly decaying
-  to `× 1` over 720 epochs (pure integer function: deterministic everywhere). The re-claim is a
+  it by paying `expiredClaimFee(name, e) = nameRegFee(name) × m(e)`, priced at height `h` (the finalize from v2.6,
+  §29), where `e = epochOf(h) − (paidThroughEpoch + 720)` counts the epochs past the grace end (at least 1, since the
+  name has lapsed) and, in integer division, `m(e) = 1 + floor(19 × (720 − e) / 720)` for `e < 720` and `m(e) = 1`
+  from `e = 720` on. `m` is a staircase that steps down from 19 at `e = 1` to 1 from `e = 683` on.
+  The 20 of `NAME_PREMIUM_START` would apply only at `e = 0`, where the name has not lapsed. The re-claim is a
   **fresh basis**: prior `viaFill` immunity is void (immunity protects a *paid* basis; an unpaid
   lease is an abandoned one), and any still-open offer on the name is voided with its lock freed.
 - **Guards:** `nxfer`/`nset` on a lapsed lease are no-ops. A name **offer** is a no-op unless the
@@ -677,14 +753,14 @@ From height **32 000** every name is a **lease**:
   never hit a mid-window lapse; the alternative (a no-op'd CSD fill whose payment already
   confirmed to the seller) would be a fund-loss shape, so it is made unrepresentable. Offers
   anchored before v1.5 are exempt (their windows all end long before any grandfathered lease).
-- **State:** at v1.5+ tips `names[x]` carries `paidThroughEpoch` (and `expired: true` once
-  lapsed; the record is kept for history until re-claimed). Pre-v1.5 canonical hashes are
+- **State:** at v1.5+ tips every name except a pending reservation (§28) carries `paidThroughEpoch` (and
+  `expired: true` once lapsed at the tip's epoch, §5; the record is kept for history until re-claimed). Pre-v1.5 canonical hashes are
   unchanged: the fields exist only at v1.5+ tips.
 
 ## 18. `tmeta`: issuer token metadata via the content layer (v1.5)
 
 `{v:1,t:"tmeta",ticker,hash}`: **issuer-only**, last write wins, no fee beyond the anchor.
-`hash` is a CSD Content Convention v1 hash (0x + 64 hex; `payloadHash` in csd-codec) pointing at
+`hash` is a CSD Content Convention v1 hash (0x + 64 lowercase hex, §3; `payloadHash` in csd-codec) pointing at
 the token's `{logo, description, links}` document: self-certifying content, so the record stays tiny
 (the 512-byte `uri` cap is untouched) and any copy of the document can be checked against the hash
 on read (`verifyContentBytes` in csd-codec). The csd-swarm content service this section was written
@@ -701,7 +777,8 @@ before v1.5 are no-ops.
 
 - **Fee bump.** The taker fee becomes `FEE_BPS_V16 = 150` (1.5%, `ceil`) instead of `FEE_BPS = 100` (1%).
   The rate is **captured per-offer at creation height** into `offers[id].feeBps` (a bare-int canonical field,
-  §5.1-A3): an offer anchored ≥ 33 600 carries `feeBps = 150`, an earlier one keeps `100`. Every fill of that
+  §5.1-A3): an offer anchored ≥ 33 600 carries `feeBps = 150`, one anchored in [29 960, 33 600) carries `100`, and one
+  anchored below 29 960 (v1.1) carries `0` and owes no trade fee (§10). Every fill of that
   offer (whole, partial, token-priced) uses the offer's own `feeBps`, so pre-v1.6 offers are byte-identical
   forever. A third-party resolver MUST select the fee by **offer-creation height**, not by fill height.
 - **Maker rebate (whole CSD-priced fills only).** On a whole fill of a **resting-liquidity** CSD-priced offer,
@@ -736,7 +813,9 @@ the 0.05 CSD attest fee, never a payment.
 - **Claim** = an `Attest` on the offer with **`score = SCORE_CLAIM = 50`** (∉ {fill 100, cancel 0}, so it is an
   inert no-op below V17, non-retroactive). It grants the attester an **exclusive hold** of the offer for
   `CLAIM_WINDOW_BLOCKS = 15` blocks: on grant the resolver records `offers[id].claimedBy = attester` and
-  `offers[id].claimUntilHeight = grantHeight + 15` (both canonical fields, §5.1-A3, present only while claimed).
+  `offers[id].claimUntilHeight = grantHeight + 15` (both canonical fields, §5.1-A3, written at each grant and kept
+  after the hold ends and after the offer closes: a hold's end is read from `claimUntilHeight`, not from the fields'
+  absence).
 - **Fill gate.** A `SCORE_FILL` fill on an **untaken** (`taker === undefined`) CSD-priced offer at height ≥ V17
   is valid **only if** the offer is currently held **and the filler is the holder**: `claimHeld(o, h) &&
   attester === o.claimedBy`, where `claimHeld(o, h) = (o.claimedBy !== undefined) && (h < o.claimUntilHeight)`
@@ -788,8 +867,8 @@ no-op that forfeits the treasury output.)
 - **Inert metadata.** `p` is a flat string→string map. It carries **no fee, no value, and is never a send
   target**: the address a name resolves to for payment stays in `nset` (`names[x].addr`). A resolver keeps
   no reserved keys; the app layer keeps send targets out of `p`.
-- **Owner-gated, last-write-wins.** Valid iff the proposer is the current name owner and the lease is not
-  lapsed (§17). The new `p` **replaces** the prior profile; an **empty `p` (`{}`) clears it**.
+- **Owner-gated, last-write-wins.** Valid iff the proposer is the current name owner, the lease is not
+  lapsed (§17) and the name is not a pending reservation (§28). The new `p` **replaces** the prior profile; an **empty `p` (`{}`) clears it**.
 - **Cleared on every ownership change**: `nxfer`, a name `fill`, and a lapsed-premium re-claim all clear
   `profile` exactly as they clear `addr`.
 - **Shape limits (deterministic):** keys match `PKEY = ^[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?$` (ASCII only,
@@ -867,9 +946,11 @@ The §24 lifetime cap proved to be an infrastructure symptom, not a market need,
 - **Anchor in [40 100, 41 300):** the §24 rules apply to that offer/bid FOREVER (creation gate at its
   anchor, capped `effExpiry` in every later sweep). Era membership is fixed by the anchor, so every
   replayer ages the same record identically regardless of when it replays.
-- **Anchor < 40 100:** raw `expires_epoch` binds (pre-V21 history, unchanged).
-- **Client closed form:** for anchor ≥ V22, `offerExpiryHeight = (expires_epoch+1)·30`; for the [V21, V22)
-  era use the §24 formula; below V21 use the raw form.
+- **Anchor < 40 100:** no creation gate (the record predates it), but every sweep at a height ≥ V21 reads it with the
+  capped `effExpiry` of §24, so over-cap inventory from before V21 expires at the first such sweep past its cap; a
+  sweep below V21 reads the raw `expires_epoch`, so every pre-V21 state is unchanged.
+- **Client closed form:** for anchor ≥ V22, `offerExpiryHeight = (expires_epoch+1)·30`; for every anchor below V22,
+  `min((expires_epoch+1)·30, max(40 100, (epochOf(anchor)+MAX_OFFER_EPOCHS+1)·30))` (`offerExpiryHeightOf`).
 - **Adoption note:** a relaxation. A v2.1-only replayer rejects (no-ops) a long-dated offer the chain
   accepts, so its book diverges from the canonical one from the first over-cap anchor onward. Every
   replayer must run the v2.2 core before the tip crosses 41 300 (already long past; stated for the record).
@@ -945,16 +1026,21 @@ the settled winner ever pays.
   is rejected at/after v2.5 (`v2.5: registration requires a commit-reveal (salt)`): an unsealed
   registration could not be finalized.
 - **Reveal (`name` record, height ≥ 46 440):** carries NO registration fee. Creates a PENDING reservation,
-  materialized in canonical state as the name with `pending: true` and
-  `finalizeBy = effHeight + 8 + 20` (`REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`).
+  materialized in canonical state (at v2.5+ tips) as exactly `{name, owner, claimId, height, effectiveHeight, locked,
+  pending: true, finalizeBy}`, with `finalizeBy = effHeight + 8 + 20` (`REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`).
+  It holds no lease, so it carries no `paidThroughEpoch` and no `expired`, and it carries no `addr`, `viaFill` or
+  `profile`.
+- **While pending** the reservation gives its owner only the right to finalize it: `nxfer`, `nset`, `nprofile` and a
+  name `offer` by the owner, and `nrenew` by anyone, are no-ops on it (`NAME_PENDING`). Only `nfinalize`, a displacing
+  reveal (below) and the expiry sweep act on a reservation.
 - **Contest while pending:** a rival reveal with a strictly earlier `(effHeight, pos, id)` (numeric on
-  `effHeight` and `pos`, ordinal code-unit on `id`; earliest wins) DISPLACES the reservation; the displaced party has lost only its
+  `effHeight` and `pos`, ordinal code-unit on `id`; `pos` and `id` the reveal's own, §9; earliest wins) DISPLACES the reservation; the displaced party has lost only its
   ~0.25 CSD anchor. A FINALIZED name can never be displaced: any window-valid challenger has an
   `effHeight` within 8 blocks of the current height, which is strictly later than a finalized name's
   (its freeze has passed). Names owned `viaFill` are likewise never displaced.
 - **Per-address cap:** at most `MAX_PENDING_REG = 3` concurrent un-finalized reservations per owner
   (expired ones and a re-reveal of the same name do not count); excess reveals are no-ops.
-- **Finalize (`nfinalize` record):** `{v:1, t:"nfinalize", name, salt}`. Valid iff ALL of: the name is
+- **Finalize (`nfinalize` record):** `{v:1, t:"nfinalize", name, salt}`, `salt` in the form of §9. Valid iff ALL of: the name is
   pending and owned by the sender; `salt` re-derives the SAME commit that anchored the reservation
   (`sha256` per §9, binding name + salt + owner, and the commit's height must equal the reservation's
   `effHeight`); the freeze has passed (`ev.height > effHeight + 8`); the reservation has not expired
@@ -962,9 +1048,10 @@ the settled winner ever pays.
   (§27, priced at the FINALIZE height). On success the `pending`/`finalizeBy` keys become ABSENT, the
   lease starts (`paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS`), and the name is NOT
   `viaFill`.
-- **Reservation expiry (lazy):** past `finalizeBy` an un-finalized reservation is swept exactly like a
-  lapsed lease (at each event height and at the tip+1 closing sweep): the name record is DELETED and the
-  name reopens. The would-be winner has lost only anchors, never the registration fee.
+- **Reservation expiry (lazy):** past `finalizeBy` an un-finalized reservation is deleted by the expiry sweep of §5
+  (before each event above `finalizeBy`, and at the closing sweep at `tipHeight + 1`, so it is gone from the state at
+  a tip equal to `finalizeBy`, although an `nfinalize` mined at that height still applies), and the name reopens. The
+  would-be winner has lost only anchors, never the registration fee.
 - **Client timing rule** (`FINALIZE_TIP_MARGIN = 2`, client-side only): sign the finalize at
   `effHeight + 8 + 2` or later so one reorg cannot un-freeze the contest under a fee-bearing tx. The
   20-block grace exists so a slow inclusion still lands before `finalizeBy`.
@@ -989,12 +1076,15 @@ decaying premium (up to hundreds of CSD).
   record in `names` is left untouched (it is the premium basis; an abandoned reservation can never
   bypass the premium). Below v2.6, recapture stays pay-now at reveal (§17, byte-identical).
 - **Same windows and contest:** reveal window and freeze are `REG_COMMIT_MAX_BLOCKS = 8`;
-  `finalizeBy = effHeight + 8 + 20`; lowest `(effHeight, pos, id)` displaces among reservations; its own
+  `finalizeBy = effHeight + 8 + 20`; lowest `(effHeight, pos, id)` (the reveal's own `pos` and `id`) displaces among reservations; its own
   `MAX_PENDING_REG = 3` per-address cap; overdue reservations are lazily swept.
 - **Finalize:** the same `nfinalize` record, salt-bound to the recapture commit. The winner pays the §17
   decaying premium priced at the FINALIZE height (slightly more decayed than at reveal: rounding favors
   the payer). On success the name becomes a normal fresh lease under the new owner, NOT `viaFill`
-  (displacement-immune by the same freeze arithmetic as §28).
+  (displacement-immune by the same freeze arithmetic as §28). The new record keeps the reveal's anchor: `claimId` is
+  the reveal's transaction id, `height` the reveal's height and `effectiveHeight` its commit's height (the finalize's
+  own id and height are not recorded), and `paidThroughEpoch = epochOf(finalize height) + NAME_TERM_EPOCHS`; it
+  carries no `addr` or `profile`, and `locked` is false.
 - **Replayer note:** because the reservation map is internal, pre-v2.6 canonical hashes are untouched,
   but a third-party resolver MUST still replicate the map (reveal, displacement, expiry) to agree on
   which later `nfinalize` succeeds. The map is defined by this section plus the reference resolver and
@@ -1060,15 +1150,16 @@ gate a parsed fclaim is inert (nfinalize precedent, §28).
   stays at the 0.05 attest floor; only the claim rises to the 0.25 propose floor.
 
 **Grant (the propose handler, at height `h >= V28_HEIGHT`).** A well-formed fclaim grants a hold iff, in order:
-the referenced offer exists AND is `open` AND untaken (`!taker`) AND CSD-priced; `E <= effExpiry(offer, h)`
+`E` is at most 2^53 − 1 (§33.4); the referenced offer exists AND is `open` AND untaken (`!taker`) AND CSD-priced; `E <= effExpiry(offer, h)`
 (§24 / §25, so the hold never outlives the offer); `E <= epochOf(h) + FCLAIM_MAX_EPOCH_AHEAD` (`= 2`, anti-squat,
 bounding a hold to `EPOCH_LEN*(2 + 1) - 1 = 89` blocks); `epochOf(h) <= E` (lower bound); the offer has no live
 hold (`!claimHeld`, unifying legacy and fclaim holds so one offer is never double-held); the same-offer cooldown
 has elapsed (`h >= o.claimUntilHeight + grace + CLAIM_COOLDOWN_BLOCKS` for the last holder, where `grace` is the
 prior hold's era grace per §20 / §23, i.e. 0 for a prior fclaim hold and `CLAIM_FILL_GRACE_BLOCKS` for a prior
 legacy hold; the cooldown runs from the END of the prior hold, so a straddling legacy hold and a fresh fclaim
-never disagree); and the proposer holds fewer than `MAX_ACTIVE_CLAIMS` (`= 3`) live holds. This clause order is
-normative (the from-spec oracle emits deny reasons in this order). On grant the resolver records `claimedBy = proposer`, `claimUntilHeight = (E + 1)*EPOCH_LEN`, and
+never disagree); and the proposer holds fewer than `MAX_ACTIVE_CLAIMS` (`= 3`) live holds. The grant is the
+conjunction of these clauses, so their order decides only the reason code of a denial: the code of the first clause
+broken (§40.1). The Python reference checks them in this order and writes no codes. On grant the resolver records `claimedBy = proposer`, `claimUntilHeight = (E + 1)*EPOCH_LEN`, and
 `claimTxid = fclaimTxid`.
 
 **Last-write-wins (fund-safety).** All three fields are last-write-wins: a later grant on the same offer (after
@@ -1179,7 +1270,12 @@ transaction can also be mined again: coinbase txids are not unique on this chain
 created again and the same spending transaction mined in a later block. Those copies sit in two blocks,
 possibly on both sides of the gate, and `resolve()` fed both drops the later copy only when both are at or
 above the gate. §33 keeps the first occurrence, so a feed built by its rule holds neither kind of duplicate;
-the drop above stays the rule for a feed that is not built by it.
+the drop above stays the rule for a feed that is not built by it. A list holding one transaction id at two places (a
+later height, or another position in the same block) with the first copy below the gate is not a list §33 produces
+(§33.2), and no level of §38 covers `resolve()` over it; there the two reference implementations differ: from V14, an
+offer among its seller's `ocancel` targets, fed again after that `ocancel` in its block, stays open past its expiry in
+cairnx-core and expires in the Python reference. Two copies at one height and position below the gate both apply in
+both, as `cases-v29.json` pins.
 
 **M5: the concurrent-hold cap counts only OPEN holds (relaxation).** §20/§31 cap an address at
 `MAX_ACTIVE_CLAIMS` (= 3) live holds, counted as `claimedBy === who && claimHeld(o, h)`. A FILLED offer
@@ -1476,7 +1572,7 @@ the name's profile, the `nprofile` record of §22, under the keys of §36.
   its current value.
 - A reader ignores the profile of a name that is expired or pending. In the state of §5 these are a name with
   `expired: true` (its lease and grace have lapsed, §17) and a name with `pending: true` (a reservation of §28 not yet
-  finalized). An expired name keeps its last profile in state until the name is claimed again; that profile is
+  finalized; `resolve()` materializes it without a profile). An expired name keeps its last profile in state until the name is claimed again; that profile is
   history, not the word of a current owner.
 
 Known limit: only the owner writes a profile (§22), and two writers for one owner (two applications, or two devices)
@@ -1591,7 +1687,7 @@ A result says which of three levels it is.
 
 A replica conforms at three levels.
 
-1. The vectors: `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json` (replay, §5), `events.json`
+1. The vectors: `test/vectors/cases.json`, `cases-v29.json`, `cases-rules.json` and `cases-convention.json` (replay, §5), `events.json`
    (§33.7) and `hashes.json` (§34.4). A conformant implementation reproduces every case byte for byte.
 2. The pinned replay hashes: `test/vectors/replay-hashes.json`, the state hash (§34.1) of the live chain at each
    pinned height.
@@ -1707,7 +1803,7 @@ NAME_NOT_LAPSED and INVARIANT_BROKEN (their rows say why).
 | TOKEN_SUPPLY_EXHAUSTED | refused | | nothing is left to mint |
 | TOKEN_MINT_AMOUNT_REQUIRED | refused | | an issuer mint without `amount` |
 | TOKEN_BALANCE_LOW | refused | | the available balance is short (a transfer, an offer's give, a token fill's price and fee) |
-| TREASURY_FEE_UNPAID | refused | | the output to the treasury is below the fee or premium |
+| TREASURY_FEE_UNPAID | refused | | the output to the treasury is below the fee or premium (where the treasury is the seller on a rebate lane, below the fee plus the maker rebate, which sum on its output) |
 | NAME_NO_COMMIT | refused | | no commit for this reveal below its height and inside the window |
 | NAME_SALT_REQUIRED | refused | | a `name` without salt at V25 and above (registration) or V26 and above (recapture) |
 | NAME_TAKEN_EARLIER | refused | | an earlier (effective height, position, id) holds the name or its reservation |
@@ -1746,8 +1842,8 @@ NAME_NOT_LAPSED and INVARIANT_BROKEN (their rows say why).
 | FILL_NO_LIVE_CLAIM | refused | | an open CSD fill without the filler's live hold |
 | FILL_BELOW_MIN | refused | | a partial payment below the effective minimum |
 | FILL_ZERO_DELIVERY | refused | | the payment delivers no unit |
-| FILL_UNDERPAID | refused | | the payment to payto is below want.value |
-| FILL_REBATE_UNPAID | refused | | the maker rebate output is short |
+| FILL_UNDERPAID | refused | | the payment to payto is below want.value (where payto is the seller and a maker rebate applies, a shortfall there is FILL_REBATE_UNPAID) |
+| FILL_REBATE_UNPAID | refused | | the payment to the seller is below the maker rebate, or, where payto is the seller, below want.value plus the rebate |
 | CLAIM_TAKER_BOUND | refused | | a taker-bound offer takes no claim |
 | CLAIM_TOKEN_PRICED | refused | | claims are for CSD-priced offers |
 | CLAIM_HOLD_LIVE | refused | | a hold (window and grace) is live, whoever holds it |
