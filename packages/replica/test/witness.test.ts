@@ -1,8 +1,9 @@
 // The witness rule and the reader's other paths that the review of 2026-11-19 found open: a witness behind the
 // replica confirms only at the compared height; a confirmation does not survive the chain being replaced (a rollback,
-// a reload, a reset); a disagreement voids it; any valid higher tip denies; a read never answers from a commit in
-// flight; a witness out of form is silent; a confirmation is stamped when the witness answered and a clock set back
-// voids it; a caller behind the store is BRANCH_UNRESOLVED. Every clock is the test's.
+// a reload, a reset); a disagreement voids it; any valid higher tip denies; a read with waitMs waits out a slow
+// commit; a witness out of form is silent; a confirmation is stamped when the witness answered and a clock set back
+// voids it; a caller behind the store is BRANCH_UNRESOLVED. Every clock is the test's. The read around a commit in
+// flight is commit.test.ts.
 import * as core from "@inversealtruism/cairnx-core";
 import { FINAL_DEPTH, TREASURY_ADDR, nameRegFee, resolve, stateHash, type CairnXState } from "@inversealtruism/cairnx-core";
 import { hostedBlocks, hostedWitness, nodeWitness } from "../src/browser.js";
@@ -166,12 +167,13 @@ console.log("S3, a read during a commit in flight:");
   const before = await r.primary(AL);
   await r.advance();   // the run the read started
   slow = true; mode = "reorg";
-  const mid = new Promise<Awaited<ReturnType<typeof r.primary>>>((go) => { inCommit = () => { void r.primary(AL).then(go); }; });
-  const adv = r.advance(), during = await mid;
+  type P = Awaited<ReturnType<typeof r.primary>>;
+  const mid = new Promise<[P, P]>((go) => { inCommit = () => { void Promise.all([r.primary(AL), r.primary(AL, { waitMs: 10_000 })]).then(go); }; });
+  const adv = r.advance(), [now0, waited] = await mid;
   await adv;
   const after = await r.primary(AL);
-  ok("primary read while a rollback's commit awaits a slow store: it waits and answers as after (SHALLOW, alice shown), never verified with no name",
-    codes(before) === "SHALLOW" && !during.verified && codes(during) === codes(after) && codes(after) === "SHALLOW" && during.shown?.name === "alice");
+  ok("primary read while a rollback's commit awaits a slow store: with waitMs 0 NOT_SYNCED (commit in flight), with waitMs it waits and answers as after (SHALLOW, alice shown)",
+    codes(before) === "SHALLOW" && codes(now0) === "NOT_SYNCED" && !now0.verified && codes(waited) === "SHALLOW" && codes(after) === "SHALLOW" && !waited.verified && waited.shown?.name === "alice");
 }
 
 console.log("S4, a witness out of form is silent, with a note:");

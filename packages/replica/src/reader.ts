@@ -80,7 +80,9 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
 
   function judge(minDepth: number): Pick<AnswerMeta, "why" | "notes" | "at"> & { codes: NotVerifiedCode[] } {
     const now = board.now(), s = loop.status(), w = board.witnessed(loop.generation());   // the clock first: a set-back voids
-    const synced = s.store === "open" && s.cursor !== null && s.tip !== null ? { cursor: s.cursor, tip: s.tip } : null;
+    // During a step's commit the loop holds a half state: it is not synced until the commit ends.
+    const busy = loop.committing();
+    const synced = !busy && s.store === "open" && s.cursor !== null && s.tip !== null ? { cursor: s.cursor, tip: s.tip } : null;
     const codes = verdict({
       level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
@@ -91,7 +93,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
-    return { codes, why: codes.map((code) => ({ code })), notes: notes.map((code) => ({ code })), at };
+    const why = codes.map((code) => (code === "NOT_SYNCED" && busy ? { code, detail: "a step's commit is in flight" } : { code }));
+    return { codes, why, notes: notes.map((code) => ({ code })), at };
   }
 
   function status(): ReplicaStatus {
@@ -117,32 +120,39 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     return run;
   }
 
-  // Starts an advance unless one runs and waits for it at most `waitMs`; the read's signal ends only this wait.
-  async function settle(o: ReadOptions): Promise<void> {
-    const step = (running ?? advance()).then(() => undefined, () => undefined), ms = o.waitMs ?? 0;
-    if (!(ms > 0) || o.signal?.aborted) return;
-    let t: ReturnType<typeof setTimeout> | undefined, stop: (() => void) | undefined;
-    await Promise.race([step, new Promise<void>((go) => { t = setTimeout(go, ms); stop = () => go(); o.signal?.addEventListener("abort", stop, { once: true }); })]);
+  // Waits until `done()` holds or a promise of `wake()` settles with it holding, at most until `deadline` (a time of
+  // Date.now) or the read's signal. The read's signal ends only this wait.
+  async function within(o: ReadOptions, deadline: number, done: () => boolean, wake: () => Promise<unknown>): Promise<void> {
+    const ms = deadline - Date.now();
+    if (done() || !(ms > 0) || o.signal?.aborted) return;
+    let t: ReturnType<typeof setTimeout> | undefined, stop = () => undefined as void, over = false;
+    const bound = new Promise<void>((go) => { stop = () => { over = true; go(); }; t = setTimeout(stop, ms); o.signal?.addEventListener("abort", stop, { once: true }); });
+    while (!done() && !over) await Promise.race([wake().then(() => undefined, () => undefined), bound]);
     clearTimeout(t);
-    if (stop !== undefined) o.signal?.removeEventListener("abort", stop);
+    o.signal?.removeEventListener("abort", stop);
   }
 
   async function read<T>(o: ReadOptions = {}, inputOk: boolean, f: (v: Views) => Out<T>): Promise<Answer<T>> {
     const minDepth = o.minDepth ?? FINAL_DEPTH, invalid = (): Answer<T> =>
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
-    await settle(o);
-    // Nothing is awaited from here on, so the state read is the one the last whole commit left.
-    await loop.quiet();
-    const j = judge(minDepth), s = loop.status();
+    // A read starts an advance unless one runs, then waits for it and for a commit in flight, together at most
+    // `waitMs` (default 0) from now. From the last check of committing() on nothing is awaited, so a read either
+    // answers from the state the last whole commit left or, with a commit still in flight, NOT_SYNCED with nothing shown.
+    const deadline = Date.now() + (o.waitMs ?? 0), step = running ?? advance();
+    let ran = false;
+    void step.then(() => { ran = true; }, () => { ran = true; });
+    await within(o, deadline, () => ran, () => step);
+    await within(o, deadline, () => !loop.committing(), () => loop.quiet());
+    const j = judge(minDepth), s = loop.status(), busy = loop.committing();
     if (s.tip !== null && minDepth > s.tip.height) return invalid();
     const deepHeight = j.at?.deepHeight ?? 0;
-    const views: Views = s.tip === null || s.cursor === null ? { deep: null, top: null, deepHeight }
+    const views: Views = busy || s.tip === null || s.cursor === null ? { deep: null, top: null, deepHeight }
       : { deep: loop.stateAt(s.tip.height, minDepth), top: loop.stateAt(Math.min(s.cursor.height, s.tip.height), 0), deepHeight };
-    const out = f(views), codes = [...j.codes, ...(out.why ?? [])];
-    if (codes.length === 0 && out.value === null) codes.push("NOT_SYNCED");
-    const why = codes.map((code) => ({ code })), notes = [...j.notes, ...(out.notes ?? []).map((code) => ({ code }))];
-    return codes.length === 0 ? { ...meta, why, notes, at: j.at, verified: true, value: out.value! } : { ...meta, why, notes, at: j.at, verified: false, value: null, shown: out.shown };
+    const out: Out<T> = busy ? { value: null, shown: null } : f(views), own = [...(out.why ?? [])];
+    if (j.codes.length + own.length === 0 && out.value === null) own.push("NOT_SYNCED");
+    const why = [...j.why, ...own.map((code) => ({ code }))], notes = [...j.notes, ...(out.notes ?? []).map((code) => ({ code }))];
+    return why.length === 0 ? { ...meta, why, notes, at: j.at, verified: true, value: out.value! } : { ...meta, why, notes, at: j.at, verified: false, value: null, shown: out.shown };
   }
 
   const log: EventLog = {

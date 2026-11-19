@@ -160,8 +160,13 @@ replayed on demand.
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
 when none is running and waits for it at most `waitMs` (default 0: it answers from what is held); a call of
-`advance()` while a run is in flight joins that run. A read that finds a step's commit in flight waits for it, so it
-answers from one whole state. Nothing runs on a timer: the caller drives `advance()` or reads.
+`advance()` while a run is in flight joins that run, and the status it returns can then come from a round begun before
+the call. A read waits for the advance it started and for a step's commit in flight together at most `waitMs`
+(counted from the read, or until its signal aborts). It answers from the state the last whole commit left, or, while a
+commit is still in flight when that bound passes, `NOT_SYNCED` with the detail "a step's commit is in flight" and
+nothing shown; `status()` answers the same during a commit. A store whose commit never settles leaves `advance()`
+pending: that is the store's failure, and reads still answer within their bound. Nothing runs on a timer: the caller
+drives `advance()` or reads.
 
 Each answer is `{ verified: true, value }` or `{ verified: false, value: null, shown }`, with `why` (the codes below),
 `notes`, `level`, `proof`, `vouch` (the basis) and `at` (the tip, the deep height `tip - minDepth` the value is read

@@ -49,7 +49,9 @@ export interface Loop {
   /** A number that changes whenever the chain held is replaced (a rollback, a reload from the store, a reset); an
    *  extension by a step's blocks keeps it. */
   generation(): number;
-  /** Resolves when no step is being committed, so that what is read next in the same turn is one whole state. */
+  /** Whether a step is being committed: its rows and state may be half applied until it ends. */
+  committing(): boolean;
+  /** Resolves when no step is being committed; a caller checks committing() again in the turn it reads in. */
   quiet(): Promise<void>;
   /** The materializer's state at `tip - depth`, or null when the store is not open or that height is not held. */
   stateAt(tip: number, depth: number): CairnXState | null;
@@ -93,7 +95,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     if (kind === "replace") generation++;
     else if (!chainExtends(before, held.rows, from, to)) throw new Error("loop: a change of the chain held that does not extend it must move the generation");
   }
-  // A step's commit runs alone with respect to reads: quiet() waits for it.
+  // A step's commit is marked from before its rows change until its tip is settled: committing() is true meanwhile.
   async function exclusive<T>(f: () => Promise<T>): Promise<T> {
     let done = () => undefined as void;
     busy = new Promise<void>((go) => { done = go; });
@@ -249,6 +251,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     status, eventsHashAt,
     hashAt: (h) => (opened === "open" ? hashAt(h) : null),
     generation: () => generation,
+    committing: () => busy !== null,
     async quiet() { while (busy !== null) await busy; },
     rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),

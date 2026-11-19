@@ -56,8 +56,12 @@
   to the loop's generation, which every change of the chain but an extension moves (`chainExtends` guards the one
   write); a disagreement and a clock read earlier than the last void it; any higher tip with a valid header is
   `TIP_BEHIND_PEER` (no plausibility cap); a witness out of form is silent, noted `WITNESS_MALFORMED` (a new note
-  code); `advance()` joins a run in flight; a read waits for a commit in flight; a caller whose headers end below the
+  code); `advance()` joins a run in flight; a caller whose headers end below the
   store is an idle step with the caller's tip, so the reader answers `BRANCH_UNRESOLVED`.
+- A read and a step's commit: `Loop.committing()` is checked in the turn the read answers in; a read waits for a
+  commit in flight at most its `waitMs` or until its signal aborts, then answers `NOT_SYNCED` ("a step's commit is in
+  flight") with nothing shown, and `status()` answers `NOT_SYNCED` during a commit. A commit that never settles leaves
+  `advance()` pending.
 - Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
   which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
   `advance()` or reads).
