@@ -38,6 +38,11 @@ console.log("B1, a witness behind the replica confirms only at the compared heig
 const b1 = await onChain(branch(30_287), TIP, [witnessOn(all, 30_290).witness]);
 ok("replica at 30,300 on a branch from 30,287, the witness at 30,290 on the recorded chain: NOT_WITNESSED, no confirmation",
   codes(b1.s) === "NOT_WITNESSED" && b1.s.witnessed === null && !b1.s.verified);
+now = timeAt(30_296) * 1000 + MIN;
+const near = await onChain(branch(30_290), 30_296, [witnessOn(all, 30_295).witness]);
+ok("replica at 30,296 on a branch from 30,290, the witness at 30,295 on the recorded chain (the chains differ at 30,295): NOT_WITNESSED",
+  codes(near.s) === "NOT_WITNESSED" && near.s.witnessed === null && !near.s.verified);
+now = timeAt(TIP) * 1000 + MIN;
 const held0 = await onChain(all, TIP, [witnessOn(all, 30_290).witness]);
 ok("an honest witness at 30,290, where the replica holds no hash: it cannot compare, so NOT_WITNESSED and no SOURCES_DISAGREE",
   codes(held0.s) === "NOT_WITNESSED" && !noted(held0.s, "SOURCES_DISAGREE"));
