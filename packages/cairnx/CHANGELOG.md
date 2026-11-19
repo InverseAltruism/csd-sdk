@@ -22,6 +22,10 @@
   in a vector an implementation of the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
   reference by `conformance/crosscheck-resolve.mjs`, and by the seal, which pins the file's sha256. A file of its own
   keeps the three case files the seal freezes at their bytes.
+- `test/holdcount.test.ts`: the honest path of `countOtherHoldsAtGrant`'s skip of the buyer's closed holds, with the
+  call shape the site and wallet send (`closed` from `myProvenFillClosedOffer`, the count into `verifyFillSpv`): three
+  completed fclaim buys inside one hold window, then a fourth, counted 0 and safe to fill. No test passed `closed`
+  before.
 
 ## 0.2.7
 

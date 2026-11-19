@@ -3,9 +3,11 @@
 // is mined after the first three, so it must not count against them (it did in both client counters).
 import assert from "node:assert/strict";
 import {
-  DEPLOY_FEE, LEGACY_HOLD_SUNSET_HEIGHT, SCORE_CLAIM, TREASURY_ADDR, V28_HEIGHT, V29_HEIGHT, countOtherHoldsAtGrant,
-  deploy, epochOf, fclaim, fclaimHoldEnd, mint, offer, resolve, verifyFillSpv,
-  type ChainEvent, type FillSpvIo, type HoldCandidate, type HoldCount, type ProvenEvent, type ProposeEvent,
+  DEPLOY_FEE, LEGACY_HOLD_SUNSET_HEIGHT, SCORE_CLAIM, SCORE_FILL, TREASURY_ADDR, V28_HEIGHT, V29_HEIGHT,
+  countOtherHoldsAtGrant, deploy, epochOf, fclaim, fclaimHoldEnd, mint, myProvenFillClosedOffer, offer,
+  requiredFillOutputs, resolve, verifyFillSpv,
+  type AttestEvent, type ChainEvent, type FillSpvIo, type HoldCandidate, type HoldCount, type ProvenEvent,
+  type ProposeEvent,
 } from "../src/index.js";
 
 let pass = 0;
@@ -122,5 +124,59 @@ await t("a hold ending exactly at the grant height counts; one ending a block ea
   assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 1 });
   assert.deepEqual(countOtherHoldsAtGrant(one, { id: id("d1"), height: end + 1, pos: 0, offer: offers[3]! }, ME), { ok: true, count: 0 });
 });
+
+// The honest path the `closed` skip serves (V29, CONVENTION section 32 M5): a buyer who completed three fclaim buys
+// inside one hold window takes a fourth. The resolver grants it, since a filled offer's hold no longer counts; the
+// client must count 0, with `closed` built as the site and wallet build it, from each proven fill of the buyer's own.
+{
+  const H1 = H0 + 300;
+  const ev: ChainEvent[] = [
+    PE(id("81"), deploy({ ticker: "BBB", decimals: 0, supply: "1000", mint: "issuer" }), H1 - 5, SELLER, 9e9, 0, { [TREASURY_ADDR]: String(DEPLOY_FEE) }),
+    PE(id("82"), mint({ ticker: "BBB", amount: "1000" }), H1 - 4, SELLER, 9e9),
+  ];
+  const offs = ["b1", "b2", "b3", "b4"].map((n, i) => {
+    const o = PE(id(n), offer({ give: { ticker: "BBB", amount: "10" }, want: { value: V, payto: SELLER } }), H1, SELLER, epochOf(H1) + 200, i);
+    ev.push(o);
+    return o;
+  });
+  const claimOf = (n: string, i: number, h: number, pos: number) => PE(id(n), fclaim({ offer: offs[i]!.id }), h, ME, epochOf(h) + 2, pos);
+  const done = [claimOf("d1", 0, H1 + 2, 0), claimOf("d2", 1, H1 + 2, 1), claimOf("d3", 2, H1 + 2, 2)];
+  ev.push(...done);
+  const pay = (i: number, h: number) => Object.fromEntries(requiredFillOutputs(resolve(ev, h - 1).offers[offs[i]!.id]!, V)!.map((x) => [x.to, String(x.value)]));
+  const fills: AttestEvent[] = done.map((fc, i) => ({ kind: "attest", txid: id(["e1", "e2", "e3"][i]!), proposalId: fc.id, attester: ME, score: SCORE_FILL, confidence: 0, height: H1 + 3, pos: i, paidTo: pay(i, H1 + 3) }));
+  ev.push(...fills);
+  const fourth = claimOf("d4", 3, H1 + 5, 0);
+  ev.push(fourth);
+  const tip4 = fclaimHoldEnd(fourth.expiresEpoch) - 5;
+  const st4 = resolve(ev, tip4);
+  const proven = (e: ChainEvent): ProvenEvent => ({ ...e, depth: tip4 - e.height + 1 } as ProvenEvent);
+  const cands: HoldCandidate[] = [...done, fourth].map((e) => ({ id: e.id, height: e.height, pos: e.pos, proposer: e.proposer, uri: e.uri, payloadHash: e.payloadHash, expiresEpoch: e.expiresEpoch }));
+  const target = { id: fourth.id, height: fourth.height, pos: fourth.pos, offer: offs[3]!.id };
+  const closed = new Set(done.filter((fc, i) => myProvenFillClosedOffer(proven(fills[i]!), { id: fc.id, height: fc.height, offer: offs[i]!.id }, proven(offs[i]!), ME, fourth.height)).map((fc) => fc.id));
+  const lane = [ev[0]!, ev[1]!, offs[3]!, fourth];
+  const io4: FillSpvIo = {
+    async tip() { return tip4; },
+    async offerEventIds() { return lane.map(idOf); },
+    async provenEvent(x: string) { const e = lane.find((y) => idOf(y) === x.toLowerCase()); return e ? proven(e) : null; },
+  };
+
+  await t("premise: three filled holds still inside their window, and the resolver grants the fourth", () => {
+    assert.ok(done.every((fc) => fclaimHoldEnd(fc.expiresEpoch) >= fourth.height), "the first three holds have not lapsed at the fourth grant");
+    assert.deepEqual(offs.slice(0, 3).map((o) => st4.offers[o.id]!.status), ["filled", "filled", "filled"]);
+    assert.equal(st4.events.find((e) => e.id === fourth.id)?.code, "CLAIM_GRANTED");
+  });
+  await t("the buyer's own proven fills close all three holds, so the fourth counts 0 and is safe to fill", async () => {
+    assert.equal(closed.size, 3);
+    const hc = countOtherHoldsAtGrant(cands, target, ME, closed);
+    assert.deepEqual(hc, { ok: true, count: 0 });
+    const v = await verdict(hc, offs[3]!.id, fourth.id, io4);
+    assert.equal(v.safe, true, v.reason);
+  });
+  await t("the same call without the closed set counts the three filled holds and refuses (fails closed)", async () => {
+    const hc = countOtherHoldsAtGrant(cands, target, ME);
+    assert.deepEqual(hc, { ok: true, count: 3 });
+    assert.equal((await verdict(hc, offs[3]!.id, fourth.id, io4)).safe, false);
+  });
+}
 
 console.log(`holdcount: ${pass} passed`);
