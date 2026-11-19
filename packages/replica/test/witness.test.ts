@@ -288,6 +288,37 @@ console.log("S5, time:");
     s.witnessed?.at === t0 && codes(s) === "WITNESS_SILENT");
 }
 
+{
+  const t0 = timeAt(TIP) * 1000 + MIN;
+  now = t0;
+  const w = witnessOn(all, TIP), x = await onChain(all, TIP, [w.witness]);
+  now = t0 - 1;
+  const back = x.r.status();
+  now = t0 + MIN;
+  const after = await x.r.advance();
+  ok("the clock's cost: one read 1 ms earlier than the last makes answers NOT_WITNESSED until the next witness round confirms again",
+    x.s.verified && codes(back) === "NOT_WITNESSED" && after.verified);
+}
+{
+  now = timeAt(TIP) * 1000 + MIN;
+  const store = memoryStore(), first = await callerReader(TIP, { store, witnesses: [witnessOn(all, TIP).witness], clock });
+  const f0 = await first.r.advance();
+  await first.r.close();
+  const w = witnessOn(all, TIP);
+  w.w.silent = true;
+  const x = await callerReader(TIP, { store, witnesses: [w.witness], clock });
+  closing.push(x.r);
+  await x.r.advance();
+  const rs = [await x.r.balance("CAIRN", HOLDER), await x.r.primary(HOLDER), await x.r.state(), await x.r.events(null)];
+  w.w.silent = false;
+  await x.r.advance();   // joins the run the last read started, a silent round
+  await x.r.advance();
+  const back = [await x.r.balance("CAIRN", HOLDER), await x.r.primary(HOLDER), await x.r.state(), await x.r.events(null)];
+  ok("after a reopen every read is NOT_WITNESSED (the value in shown) while the witness is silent, and verified once it answers",
+    f0.verified && rs.every((a) => codes(a) === "NOT_WITNESSED" && !a.verified && a.shown !== null) && back.every((a) => a.verified),
+    JSON.stringify({ f0: f0.verified, rs: rs.map((a) => [codes(a), a.verified ? "v" : a.shown !== null]), back: back.map((a) => codes(a)) }));
+}
+
 console.log("S7, a caller behind the store:");
 {
   now = timeAt(TIP) * 1000 + MIN;

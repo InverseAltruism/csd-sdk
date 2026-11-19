@@ -212,6 +212,13 @@ no gate table, so `RULES_DIFFER` compares the local tables (built and loaded) an
 caller writes itself with `rules`; a witness on our front door can confirm a replica whose rules differ from the
 front door's without that showing.
 
+The clock rule has a cost: one clock read earlier than the one before (a set-back of any size) makes every answer
+under an anchor or caller root `NOT_WITNESSED` until the next witness round confirms again.
+
+No value a read returns shares a mutable object with the reader: the basis every answer carries as `vouch` is frozen,
+and `events()` pages, `state()` and `status()`'s cursor, last reorg and last error are copies (a page of 1,000 events
+cost about 2 ms to copy in Node on this host, 2026-11-19).
+
 The confirmation lives in memory. After a restart (a new `open` over a filled store) no answer under an anchor or
 caller root is verified until a witness answers again: `NOT_SYNCED` and `NOT_WITNESSED` before the first advance,
 `NOT_WITNESSED` while the witnesses are silent. The store's meta keeps no confirmation (`StoreMeta.witnessed` is

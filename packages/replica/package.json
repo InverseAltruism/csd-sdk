@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts src/browser.ts src/server.ts src/testing.ts --format esm --dts --clean",
-    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts && tsx test/steps.test.ts && tsx test/loop.test.ts && tsx test/node-blocks.test.ts && tsx test/node-fork.test.ts && tsx test/node-address.test.ts && tsx test/window.test.ts && tsx test/hosted-blocks.test.ts && tsx test/hosted-work.test.ts && tsx test/hosted-pending.test.ts && tsx test/hosted-caller.test.ts && tsx test/reader.test.ts && tsx test/dryrun.test.ts && tsx test/witness.test.ts && tsx test/commit.test.ts && tsx test/bundle.test.ts",
+    "test": "tsx test/basis.test.ts && tsx test/memory-store.test.ts && tsx test/testing.test.ts && tsx test/steps.test.ts && tsx test/loop.test.ts && tsx test/node-blocks.test.ts && tsx test/node-fork.test.ts && tsx test/node-address.test.ts && tsx test/window.test.ts && tsx test/hosted-blocks.test.ts && tsx test/hosted-work.test.ts && tsx test/hosted-pending.test.ts && tsx test/hosted-caller.test.ts && tsx test/reader.test.ts && tsx test/dryrun.test.ts && tsx test/witness.test.ts && tsx test/commit.test.ts && tsx test/alias.test.ts && tsx test/bundle.test.ts",
     "test:live": "tsx test/node-blocks.live.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"

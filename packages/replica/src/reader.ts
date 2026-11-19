@@ -61,10 +61,16 @@ const rootOf = (b: Basis): { root: HeaderRoot; pin: Cursor | null } | null =>
   b.kind === "blocks" ? { root: b.root, pin: null } : b.kind === "pinned" ? { root: b.above.root, pin: b.pin } : null;
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
 // openLog's: another rule's events have no CairnX state, so a boundary keeps a null state hash.
+const deepFreeze = <T>(v: T): T => {
+  if (typeof v === "object" && v !== null && !Object.isFrozen(v)) { Object.freeze(v); for (const x of Object.values(v)) deepFreeze(x); }
+  return v;
+};
+const copy = <T>(v: T): T => (v === null ? v : structuredClone(v));
 const noState: Materializer = { load: () => undefined, apply: () => undefined, rollback: () => undefined, stateAt: () => null, replayMs: null };
 
 async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
-  const basis = checkBasis(o.source.basis), clock = o.clock ?? Date.now, witnesses = o.witnesses ?? [];
+  // Every answer's `vouch` is this object, so it is frozen; every other value a read returns is built for that read.
+  const basis = deepFreeze(checkBasis(o.source.basis)), clock = o.clock ?? Date.now, witnesses = o.witnesses ?? [];
   if (basis.kind === "display") throw new ReplicaConfigError("open: a display source is read through ./display");
   const r = rootOf(basis), low = r === null ? null : floorBreak(r.root, r.pin, rule);
   if (low !== null) throw new ReplicaConfigError(`open: ${low}`, "BELOW_FLOOR");
@@ -99,8 +105,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
 
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
-    return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: s.cursor,
-      witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: s.lastReorg, lastError: s.lastError, tuple: null, compare: null, replayMs: s.replayMs };
+    return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
+      witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
   }
 
   // A call while a run is in flight joins it (its own budget and signal are not applied), so two runs never overlap.
@@ -174,7 +180,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
         }
         const last = items.at(-1), mark: TransferCursor = `${v.deepHeight}:${Number.MAX_SAFE_INTEGER}`;
         const next: TransferCursor = more && last !== undefined ? `${last.height}:${last.pos}` : from !== null && h0 > v.deepHeight ? after! : mark;
-        const page = { items, next, more };
+        // The held events are the loop's and the materializer's own objects: a page carries copies.
+        const page = { items: structuredClone(items), next, more };
         return { value: page, shown: page, notes: from !== null && h0 > c.height ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },

@@ -3,8 +3,9 @@
 // of the two is at most FINAL_DEPTH above h. The hash compared is the witness's tip hash when h is W, else its hashAt(h)
 // (one more request in series), against the hash the loop holds at h, which the loop keeps for every height from
 // the cursor down FINAL_DEPTH once its steps have carried them; until they have (after a restart, a reload or a
-// rollback) a witness it cannot compare voids the confirmation, so that witness is never passed over unheard. A confirmation is stamped with the time the witness's tip answer arrived and
-// bound to the loop's generation, so a rollback, a reload or a reset of the chain voids it. A witness that answers
+// rollback) a witness it cannot compare voids the confirmation, so that witness is never passed over unheard. A
+// confirmation is stamped with the time the witness's tip answer arrived and bound to the loop's generation, so a
+// rollback, a reload or a reset of the chain voids it. A witness that answers
 // another hash at h voids the confirmation for every witness (one witness can withhold "verified", none can grant it
 // alone against another's word); so does a clock read earlier than the one before it, since the real time elapsed is
 // then unknown. A witness's higher tip denies (TIP_BEHIND_PEER) when its header hashes to the hash it named and meets
