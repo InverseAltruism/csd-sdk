@@ -40,6 +40,8 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
   fillOutputPlan.
 - `verifyfill.ts`: verifyFillSpv + bindOfferTerms, the shared fail-closed fill fund boundary.
 - `primary.ts`: pickPrimaryName.
+- `forward.ts`: CONVENTION section 35.4, forward resolution: resolveNameIn (the address a name receives at) and nameView
+  (the class, owner, address and profile a reader shows); both read `names` only.
 - `client.ts`: claim-burial depth helpers.
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
 - `events.ts`: CONVENTION section 33, the rule from a block to events (eventOfTx, blockMembers, blockEvents); the

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Forward resolution is a root export, moved from the reference service without a change to its body: `resolveNameIn(names,
+  name)` answers `{ name, addr, via, lapsed, owner }` for the name's `nset` address, else its owner, with `lapsed` from
+  the name's `expired`, and null for an absent name or a pending reservation; `nameView(names, name)` gives the class a
+  reader shows (`held`, `pending`, `lapsed`, `free`, `reserved`), the owner, and a held name's address and profile
+  (CONVENTION section 35.3), or null for a string that is not a name. Both live in `src/forward.ts` and read `names`
+  only; `resolve.ts`, `resolve/`, `records.ts` and `types.ts` are byte-identical to 0.2.7. CONVENTION.md section 35.4
+  states the rule, and section 36.3 now says a name pays to its `addr`, else its owner, as the reference service has
+  always answered. `test/vectors/forward.json` (13 cases, `conformance/gen-forward-vectors.mjs`, expectations written
+  by hand) pins both functions; `test/forward.test.ts` replays it and compares the service's call shape with an oracle
+  over every name of the replay corpus at each pinned height.
 - CONVENTION.md corrected to match the implementation; no behaviour changed (`src/` and `dist/` untouched, every
   pinned replay hash and existing vector byte-identical). It now states: what a pending reservation refuses and how
   it is materialized (sections 9, 17, 22, 28); the expiry sweep before each event and at `tipHeight + 1`, and that a

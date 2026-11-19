@@ -175,6 +175,11 @@ sequenceDiagram
   a name that does not resolve or whose lease lapsed, and at signing it re-checks and refuses an address change
   or a drop from verified to not verified. The wallet's `SECURITY.md` ("What happens when the sources
   disagree") is the full list.
+- **The rule a resolved name follows** is `resolveNameIn(state.names, name)` (CONVENTION §35.4): the `nset` address,
+  else the owner; a pending reservation and an absent name resolve to nothing; a lapsed lease resolves with
+  `lapsed: true`, which a sender refuses. `nameView` gives what a reader shows: the class (held, pending, lapsed, free,
+  reserved), the owner, and a held name's address and profile. The reference service's `/cairnx/resolve/:name` answers
+  with the first, and `test/vectors/forward.json` pins both.
 - **Reverse resolution (`address → primary name`, a display label) is server-trusted.** It is never a send
   target, an identity badge only, so it is cheaper and clearly bounded as "unverified label."
 - **Ownership has an unambiguous total order:** lowest `(effectiveHeight, position, ordinal-id)` wins, with
@@ -285,7 +290,8 @@ from a block to events, CONVENTION §33) · `src/hashes.ts` (the state and event
 height-gated client selectors) · `src/client.ts` (the claim-burial depth a payer waits for, sized against a minority miner) · `src/preflight.ts`
 (build-side helpers every host must compute identically: `requiredFillOutputs`, `previewFill`/`fillIsSafe`,
 `buildFeeHeight` + `NAME_FEE_GATES`, `finalizeWinnerCheck`) · `src/primary.ts` (`pickPrimaryName` /
-`primaryRankBefore`, the one primary-name selection every host must agree on) · `src/mm/` (the
+`primaryRankBefore`, the one primary-name selection every host must agree on) · `src/forward.ts` (`resolveNameIn` / `nameView`, forward
+resolution, §35.4) · `src/mm/` (the
 `@inversealtruism/cairnx-core/mm` subpath: the market maker's bid sizer, fill notional, Sunrise spot curve and
 order pricing, and the RFQ all-in sum; not consensus and not part of the root export) · `CONVENTION.md`
 (normative spec, §1–§39) · `test/vectors/` (portable conformance corpus).
