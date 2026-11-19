@@ -212,6 +212,8 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   ok("a failing publish guard fails the window, and nothing else does", guard.fails.length === 1 && /publish guard/.test(guard.fails[0]!), guard.fails.join("; "));
   const verify = await window({ verify: () => ["dist/index.js differs from the local build"] });
   ok("a failing verify-tarball fails the window, and nothing else does", verify.fails.length === 1 && /verify-tarball/.test(verify.fails[0]!), verify.fails.join("; "));
+  ok("a tarball that failed verify-tarball has no digest recorded (publishWindow publishes only recorded digests)",
+    verify.tarballs.length === 1 && verify.tarballs.every((t) => t.sha1 === undefined && t.integrity === undefined), JSON.stringify(verify.tarballs));
   const off = await window({ onMaster: false });
   ok("a HEAD that is not on origin/master fails the window, and nothing else does", off.fails.length === 1 && /origin\/master/.test(off.fails[0]!), off.fails.join("; "));
   // src/ is not in the tarball and verify-tarball compares dist/ with the build on disk, so an uncommitted source
@@ -369,6 +371,11 @@ if (a[0] === "publish") { if (a[1].includes("fail")) { console.error("E403 ${TOK
   const refused = await finish(verifyFailed, { run: true });
   ok("a run with a failed check (verify-tarball) never reaches the publish step, exit 1",
     refused.code === 1 && refused.publishCalls === 0 && /REFUSED: 1 check\(s\) failed: .*verify-tarball; nothing was published/.test(refused.lines), refused.lines);
+  // the refusal above is the first stop; publishWindow is the second, whatever its caller checked
+  rmSync(record, { force: true });
+  const direct = await real({ tarballs: verifyFailed.tarballs, tokenFile, confirm: async () => "publish", log: () => undefined });
+  ok("publishWindow handed the tarball that failed verify-tarball refuses it and never runs npm",
+    !direct.ok && direct.published.length === 0 && /no digest was recorded at verification; nothing was published/.test(direct.failures.join()) && calls().length === 0, JSON.stringify(direct));
 }
 
 rmSync(work, { recursive: true, force: true });

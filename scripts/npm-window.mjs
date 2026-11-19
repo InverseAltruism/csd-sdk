@@ -28,8 +28,8 @@ const USAGE = `usage: node scripts/npm-window.mjs [--out <dir>]
        node scripts/npm-window.mjs --out <dir> --run --token-file <path>`;
 
 /**
- * `sha1` and `integrity` (sha512 SRI) are the digests of the bytes verify-tarball checked; publishWindow publishes
- * only bytes that match them.
+ * `sha1` and `integrity` (sha512 SRI) are the digests of the bytes verify-tarball passed, absent when it failed;
+ * publishWindow publishes only bytes that match them.
  * @typedef {{ name: string, version: string, path: string, sha1?: string, integrity?: string }} Tarball
  */
 /** @typedef {(name: string, version: string) => Promise<{ status: number, meta: any }>} RegistryRead */
@@ -236,8 +236,10 @@ export async function checkWindow(o) {
     const bytes = new Uint8Array(readFileSync(tb.path));
     const v = verify(bytes, join(root, "packages", p.__dir), versions);
     chk(`${p.name}: verify-tarball`, v.length === 0, v.join("\n"));
-    tb.sha1 = sha("sha1", bytes); tb.integrity = sriOf(bytes);
     verified.set(tb.path, bytes);
+    // no digest, no publish: publishWindow refuses this tarball even if a caller ignores `fails`
+    if (v.length) continue;
+    tb.sha1 = sha("sha1", bytes); tb.integrity = sriOf(bytes);
   }
   const sums = (/** @type {string} */ alg) => tarballs.filter((tb) => verified.has(tb.path))
     .map((tb) => `${sha(alg, /** @type {Uint8Array} */ (verified.get(tb.path)))}  ${tb.path.slice(out.length + 1)}\n`).join("");

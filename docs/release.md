@@ -44,7 +44,8 @@ with the digests recorded at verification.
 
 `test/npm-window.test.ts` pins these refusals: a local change in the tree (with real git), `CSD_PUBLISH_SKIP_TESTS`
 set, a HEAD off `origin/master`, a failing publish guard and a failing verify-tarball each fail the window; a run with
-a failed check never reaches the publish step; a tarball replaced after verification is not published.
+a failed check never reaches the publish step; a tarball that failed verify-tarball has no digest recorded, so
+publishWindow refuses it whatever its caller checked; a tarball replaced after verification is not published.
 
 ### What the window does not bind
 
