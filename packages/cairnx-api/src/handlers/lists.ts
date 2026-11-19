@@ -1,12 +1,12 @@
 // Each served list: how its rows are prepared from a state, once per view, and how a page is read from them. A list
 // added here is served by `answer` and built by `prepareView` with no change to either signature.
-import type { CairnXState } from "@inversealtruism/cairnx-core";
+import type { AppliedEvent, CairnXState } from "@inversealtruism/cairnx-core";
 import { CURSORS } from "../cursor.js";
-import { copyData } from "../freeze.js";
+import { deepFreeze, copyData } from "../freeze.js";
 import type { Query } from "../params.js";
-import type { Route } from "../routes.js";
-import type { BidRow, NameRow, TokenRow } from "../rows.js";
-import { keyed, pageOf, record, sorted, type ListView, type PageRows } from "./page.js";
+import type { OfferKind, Route } from "../routes.js";
+import type { BidRow, EventRow, HolderRow, NameRow, OfferRow, RowOf, TokenRow } from "../rows.js";
+import { indexBy, keyed, pageOf, record, sorted, type ListView, type PageRows } from "./page.js";
 
 /** A list: its prepared form V, built from a state it copies and never keeps, and the read of a page from V. */
 export interface List<R extends Route, V, Row> {
@@ -25,7 +25,7 @@ const names: List<"names", ListView<NameRow, "name" | "newest">, NameRow> = {
     const byName = sorted(rows, CURSORS.name);
     return {
       orders: { name: byName, newest: sorted(rows, CURSORS.newest) },
-      index: record(byName.map((r, i) => [r.name, i] as const)),
+      index: indexBy(byName, (r) => r.name),
       counts: counts(byName, Object.fromEntries(Object.entries(NAME_STATUS).map(([s, f]) => [`status=${s}`, f]))),
     };
   },
@@ -50,7 +50,7 @@ const bids: List<"bids", ListView<BidRow, "newest">, BidRow> = {
     const statuses = [...new Set(rows.map((r) => r.status))];
     return {
       orders: { newest: byNewest },
-      index: record(byNewest.map((r, i) => [r.id, i] as const)),
+      index: indexBy(byNewest, (r) => r.id),
       counts: counts(byNewest, Object.fromEntries(statuses.map((s) => [`status=${s}`, (r: BidRow) => r.status === s]))),
     };
   },
@@ -65,7 +65,7 @@ const bids: List<"bids", ListView<BidRow, "newest">, BidRow> = {
 const tokens: List<"tokens", ListView<TokenRow, "ticker">, TokenRow> = {
   build(state) {
     const byTicker = sorted(Object.values(state.tokens).map((t) => copyData(t)), CURSORS.ticker);
-    return { orders: { ticker: byTicker }, index: record(byTicker.map((r, i) => [r.ticker, i] as const)), counts: record([["", byTicker.length]]) };
+    return { orders: { ticker: byTicker }, index: indexBy(byTicker, (r) => r.ticker), counts: record([["", byTicker.length]]) };
   },
   read(v, q) {
     if (q.keys !== null) return keyed(v.index, v.orders.ticker, q.keys);
@@ -73,7 +73,68 @@ const tokens: List<"tokens", ListView<TokenRow, "ticker">, TokenRow> = {
   },
 };
 
-/** The lists this release serves. */
-export const LISTS = { names, bids, tokens };
+const eventRow = (e: AppliedEvent): EventRow =>
+  ({ txid: e.id, height: e.height, pos: e.pos, kind: e.kind, applied: e.ok, code: e.code ?? null });
+
+// The log array is in apply order, not key order (a block's Proposes first, deferred cancels at the block's end), so
+// the feed is the log sorted by (height, pos); entries of one key, a repeated event below V29, keep their log order.
+const events: List<"events", ListView<EventRow, "position">, EventRow> = {
+  build(state) {
+    const byPosition = sorted(state.events.map(eventRow), CURSORS.event);
+    return { orders: { position: byPosition }, index: indexBy(byPosition, (r) => r.txid), counts: record([["", byPosition.length]]) };
+  },
+  read(v, q) {
+    if (q.keys !== null) return keyed(v.index, v.orders.position, q.keys);
+    return pageOf(v.orders.position, CURSORS.event, q.after, q.limit, null, v.orders.position.length);
+  },
+};
+
+type HolderList = ListView<HolderRow, "balance">;
+// The read of a ticker with no balances. Shared and frozen: an unknown ticker creates nothing, since TICKER_RE admits
+// far more tickers than a view could hold.
+const NO_HOLDERS: HolderList = deepFreeze({ orders: { balance: [] }, index: record([]), counts: record([["", 0]]) });
+
+const holders: List<"holders", Readonly<Record<string, HolderList>>, HolderRow> = {
+  build(state) {
+    return record(Object.entries(state.balances).map(([ticker, m]): [string, HolderList] => {
+      const byBalance = sorted(Object.entries(m).map(([address, b]): HolderRow => ({ address, available: b.available, locked: b.locked })), CURSORS.holder);
+      return [ticker, { orders: { balance: byBalance }, index: indexBy(byBalance, (r) => r.address), counts: record([["", byBalance.length]]) }];
+    }));
+  },
+  read(v, q) {
+    const { ticker } = q.filters;
+    const list = Object.hasOwn(v, ticker) ? (v[ticker] as HolderList) : NO_HOLDERS;
+    if (q.keys !== null) return keyed(list.index, list.orders.balance, q.keys);
+    return pageOf(list.orders.balance, CURSORS.holder, q.after, q.limit, null, list.orders.balance.length);
+  },
+};
+
+/** `kind` on offers: what the offer gives. */
+const OFFER_KIND: Readonly<Record<OfferKind, (r: OfferRow) => boolean>> = { name: (r) => "name" in r.give, token: (r) => "ticker" in r.give };
+const offerClass = (status: string | null, kind: string | null): string =>
+  [status === null ? "" : `status=${status}`, kind === null ? "" : `kind=${kind}`].filter((s) => s !== "").join("&");
+
+const offers: List<"offers", ListView<OfferRow, "newest">, OfferRow> = {
+  build(state) {
+    const rows = Object.values(state.offers).map((o): OfferRow => {
+      const { fills, ...rest } = copyData(o);
+      return { ...rest, fillCount: fills !== undefined ? fills.length : rest.fill !== undefined ? 1 : 0 };
+    });
+    const byNewest = sorted(rows, CURSORS.anchor);
+    const statuses = [null, ...new Set(rows.map((r) => r.status))], kinds = [null, ...(Object.keys(OFFER_KIND) as OfferKind[])];
+    const classes = statuses.flatMap((s) => kinds.filter((k) => s !== null || k !== null).map((k): [string, (r: OfferRow) => boolean] =>
+      [offerClass(s, k), (r) => (s === null || r.status === s) && (k === null || OFFER_KIND[k](r))]));
+    return { orders: { newest: byNewest }, index: indexBy(byNewest, (r) => r.id), counts: counts(byNewest, Object.fromEntries(classes)) };
+  },
+  read(v, q) {
+    if (q.keys !== null) return keyed(v.index, v.orders.newest, q.keys);
+    const { status, kind } = q.filters;
+    const match = status === null && kind === null ? null : (r: OfferRow) => (status === null || r.status === status) && (kind === null || OFFER_KIND[kind](r));
+    return pageOf(v.orders.newest, CURSORS.anchor, q.after, q.limit, match, v.counts[offerClass(status, kind)] ?? 0);
+  },
+};
+
+/** The lists this release serves: every v1 route. */
+export const LISTS = { names, bids, tokens, events, holders, offers } satisfies { [R in Route]: List<R, unknown, RowOf[R]> };
 export type Served = keyof typeof LISTS;
 export const isServed = (route: string): route is Served => Object.hasOwn(LISTS, route);

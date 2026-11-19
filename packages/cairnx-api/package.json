@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts src/handlers/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/params.test.ts && tsx test/cursor.test.ts && tsx test/errors.test.ts && tsx test/rows.test.ts && tsx test/handlers.test.ts && tsx test/walk.test.ts && tsx test/package.test.ts && tsx test/bundle.test.ts",
+    "test": "tsx test/params.test.ts && tsx test/cursor.test.ts && tsx test/errors.test.ts && tsx test/rows.test.ts && tsx test/handlers.test.ts && tsx test/walk.test.ts && tsx test/feed.test.ts && tsx test/package.test.ts && tsx test/bundle.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },

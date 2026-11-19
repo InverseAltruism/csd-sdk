@@ -78,21 +78,39 @@ clock, no randomness: equal inputs give byte-equal answers.
 - `answer(held, route, query)`: `held` is the views the host holds, newest first; `query` is the raw query string or
   `URL.searchParams`, never a parsed record (it merges a repeated parameter that must be refused). It returns
   `{ status, body }`, a fresh plain object that shares nothing with the view:
-  - a route this release does not serve: 404 `NOT_FOUND`; a refused parameter: the parser's 400; no view held: 503
-    `NOT_READY`;
+  - a route outside the six: 404 `NOT_FOUND`; a refused parameter: the parser's 400; no view held: 503 `NOT_READY`;
   - `at` absent: the newest view; else the newest view with that height and hash (and that `rev` when given), or 409
     `SNAPSHOT_NOT_HELD` with the newest `at` in the body;
   - a page: the filtered rows in the list's order after `after` (sought by comparing keys, so a cursor whose row is
-    gone still finds its place), `limit` of them, `next` from a one-row lookahead (null on the last page, full or
-    not), and `total`, the count of rows matching the filters;
-  - `keys`: the rows that exist, in the list's default order, a key with no row absent, `total` their count.
+    gone still finds its place), `limit` of them, `next` from a lookahead at the next matching row (null on the last
+    page, full or not), and `total`, the count of rows matching the filters. A page never ends between two rows of
+    one sort key, since `after` names a key and the next page starts past it: when the rows after the limit share
+    the last row's key, the page holds them too. Only `events` can have such rows (below);
+  - `keys`: the rows that exist, every row of each key, in the list's default order, a key with no row absent,
+    `total` their count.
 
-This release serves `names`, `bids` and `tokens`; the other three answer `NOT_FOUND` until the release that adds
-them. A page stays bounded: every string in a row is fixed-width (an address, a hash, a decimal) or was carried by one
+What each list reads from the state:
+
+- `names`, `bids`, `tokens`, `offers`: the rows of `state.names`, `state.bids`, `state.tokens` and `state.offers`.
+  `offers?kind=` matches what the offer gives (`name` or `token`). A name offer has no partial fills: only an offer
+  with `min` carries `fills`, and cairnx-core's record rule admits `min` on a token offer only (`records.ts`). So a
+  name offer's `fillCount` is 0 or 1, and a name listing loses nothing by the missing `fills`.
+- `events`: the applied log, every entry once, in (height, pos) order. The log array itself is in apply order (a
+  block's Proposes first, and from V14 a block's deferred cancels at its end), so it is sorted, and entries of one
+  key keep their log order. Below V29 a repeated event is applied and logged again at the same (height, pos); the
+  feed shows each copy, `keys` returns every entry of a transaction id, and a page never splits them. The entries
+  at heights up to h are the same in every later state of one branch under one core: no rule of the replay reads
+  the tip.
+- `holders`: for the required `ticker`, the addresses of `state.balances[ticker]`, which holds no zero balance.
+  A ticker with no balances, unknown or a token never held, reads an empty list and adds nothing to the view: the
+  view has one entry per ticker the state holds and is frozen.
+
+A page stays bounded: every string in a row is fixed-width (an address, a hash, a decimal) or was carried by one
 record of at most `MAX_RECORD_BYTES` (a name, a ticker, a token's name or metadata hash, a whole profile), so a row
 is at most about 1.5 KB and a page of 200 far under a 1 MiB response cap. Cost per request: an unfiltered page or a
 `keys` read is a binary search and a copy of at most `limit` rows; a filtered page scans the list until the page
-fills, and with an `owner` filter counts every row for `total`.
+fills, and with an `owner` filter counts every row for `total` (every other filter's count, each `status` and `kind`
+of offers alone and together included, is counted once per view).
 
 ## Parameters
 
