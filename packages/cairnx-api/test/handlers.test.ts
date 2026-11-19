@@ -106,6 +106,23 @@ const listed = page([view], "offers", "kind=name&limit=200");
 ok("so a name listing loses nothing: offers?kind=name holds every name offer, each fillCount 0 or 1 by its whole fill", listed.rows.length === nameOffers.length
   && listed.rows.every((r) => "name" in (r.give as object) && r.fillCount === (r.fill === undefined ? 0 : 1)));
 
+console.log("code null and empty offer classes:");
+const uncodedLog = state.events.map((e) => { const copy = { ...e }; delete copy.code; return copy; });
+const uncoded = prepareView(deepFreeze({ ...structuredClone(state), events: uncodedLog }), { ...src, input: "uncoded" });
+const plain = page([uncoded], "events", "limit=500"), plainKeyed = page([uncoded], "events", `keys=${uncodedLog[0]!.id}`);
+ok(`log entries without a code are served with code null, an own key (${plain.rows.length} rows by page, ${plainKeyed.rows.length} by keys)`,
+  plain.rows.length === 500 && [...plain.rows, ...plainKeyed.rows].every((r) => Object.hasOwn(r, "code") && r.code === null) && JSON.stringify(plain.rows[0]).includes('"code":null'));
+const EARLY = 31400, early = stateAt(EARLY);
+const earlyView = prepareView(deepFreeze(early), { height: EARLY, hash: H2, input: "early", core: "0.2.7" });
+const classes = [null, "open", "filled", "cancelled", "expired"].flatMap((st) => [null, "name", "token"].map((k) => [st, k] as const)).filter(([st, k]) => st !== null || k !== null);
+const queryOf = ([st, k]: (typeof classes)[number]) => [st === null ? "" : `status=${st}`, k === null ? "" : `kind=${k}`].filter(Boolean).join("&");
+const emptyClasses = classes.filter(([st, k]) => !Object.values(early.offers).some((o) => (st === null || o.status === st) && (k === null || ("name" in o.give) === (k === "name"))))
+  .map(queryOf);
+ok(`at ${EARLY} the offer classes without rows (${emptyClasses.join(", ")}) read total 0, no rows and next null`, emptyClasses.length > 0
+  && emptyClasses.every((q) => { const p = page([earlyView], "offers", q); return p.ok === true && p.total === 0 && p.rows.length === 0 && p.next === null; }));
+const fullClass = classes.map(queryOf).find((q) => !emptyClasses.includes(q))!, filled = page([earlyView], "offers", `${fullClass}&limit=200`);
+ok(`and a class with rows there (${fullClass}) reads them, total their count`, filled.rows.length > 0 && filled.total === filled.rows.length);
+
 console.log("freezing, aliasing, determinism:");
 const frozen = (v: unknown): boolean => typeof v !== "object" || v === null || (Object.isFrozen(v) && Object.values(v).every(frozen));
 ok("the view is frozen at every depth, and a write to it throws", frozen(view) && thrown(() => { (view.lists.names.orders.name[0] as { name: string }).name = "x"; }) instanceof TypeError);

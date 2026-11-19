@@ -90,6 +90,13 @@ const pinnedBad = pinned.filter((h) => show(feed(viewOf(stateAt(h), `h${h}`))) !
 ok(`at each of the ${pinned.length} pinned heights (${pinned[0]} to ${pinned.at(-1)}) the feed equals the tip feed cut there`, pinned.length >= 21 && pinnedBad.length === 0, show(pinnedBad));
 ok("the cuts are proper and reach the inversion: entries above every pinned height below the tip, 44,682 between two of them",
   pinned.filter((h) => h < tipHeight).every((h) => cut(tipFeed, h).length < tipFeed.length) && pinned.some((h) => h < 44682) && pinned.some((h) => h > 44682 && h < tipHeight));
+// No corpus record sits at a pinned height, so those cuts cannot see a handler that reads the tip. These heights carry
+// records (44,682, and the first, quarter, middle, three-quarter and last record heights); each is cut at h - 1 and h.
+const recordHeights = [...new Set(events.map((e) => e.height))].sort((a, b) => a - b);
+const carried = [...new Set([44682, ...[0, 0.25, 0.5, 0.75, 1].map((f) => recordHeights[Math.round(f * (recordHeights.length - 1))]!)])];
+const carriedBad = carried.flatMap((h) => [h - 1, h]).filter((h) => show(feed(viewOf(stateAt(h), `r${h}`))) !== show(cut(tipFeed, h)));
+ok(`at ${carried.length} heights that carry records (${carried.join(", ")}), cut at h - 1 and at h, the feed equals the tip feed cut there`,
+  carriedBad.length === 0 && carried.every((h) => cut(tipFeed, h).length > cut(tipFeed, h - 1).length), show(carriedBad));
 
 /** Streams whose feed at every height h of `heights` must equal their tip feed cut at h, read at limits 1 and 500. */
 function prefixes(label: string, streams: { events: ChainEvent[]; tipHeight: number; heights: number[]; at: (h: number) => CairnXState }[]): void {

@@ -1,6 +1,6 @@
 // Each served list: how its rows are prepared from a state, once per view, and how a page is read from them. A list
 // added here is served by `answer` and built by `prepareView` with no change to either signature.
-import type { AppliedEvent, CairnXState } from "@inversealtruism/cairnx-core";
+import { isNameGive, type AppliedEvent, type CairnXState } from "@inversealtruism/cairnx-core";
 import { CURSORS } from "../cursor.js";
 import { deepFreeze, copyData } from "../freeze.js";
 import type { Query } from "../params.js";
@@ -109,10 +109,13 @@ const holders: List<"holders", Readonly<Record<string, HolderList>>, HolderRow> 
   },
 };
 
-/** `kind` on offers: what the offer gives. */
-const OFFER_KIND: Readonly<Record<OfferKind, (r: OfferRow) => boolean>> = { name: (r) => "name" in r.give, token: (r) => "ticker" in r.give };
-const offerClass = (status: string | null, kind: string | null): string =>
+/** `kind` on offers: what the offer gives. Give is a name or a token amount, so a token offer is one that gives no name. */
+const OFFER_KIND: Readonly<Record<OfferKind, (r: OfferRow) => boolean>> = { name: (r) => isNameGive(r.give), token: (r) => !isNameGive(r.give) };
+/** The offers a status and a kind select (null: any), and the key of their count. */
+const offerClass = (status: string | null, kind: OfferKind | null): string =>
   [status === null ? "" : `status=${status}`, kind === null ? "" : `kind=${kind}`].filter((s) => s !== "").join("&");
+const offerMatch = (status: string | null, kind: OfferKind | null) => (r: OfferRow): boolean =>
+  (status === null || r.status === status) && (kind === null || OFFER_KIND[kind](r));
 
 const offers: List<"offers", ListView<OfferRow, "newest">, OfferRow> = {
   build(state) {
@@ -122,19 +125,16 @@ const offers: List<"offers", ListView<OfferRow, "newest">, OfferRow> = {
     });
     const byNewest = sorted(rows, CURSORS.anchor);
     const statuses = [null, ...new Set(rows.map((r) => r.status))], kinds = [null, ...(Object.keys(OFFER_KIND) as OfferKind[])];
-    const classes = statuses.flatMap((s) => kinds.filter((k) => s !== null || k !== null).map((k): [string, (r: OfferRow) => boolean] =>
-      [offerClass(s, k), (r) => (s === null || r.status === s) && (k === null || OFFER_KIND[k](r))]));
+    const classes = statuses.flatMap((s) => kinds.filter((k) => s !== null || k !== null).map((k) => [offerClass(s, k), offerMatch(s, k)] as const));
     return { orders: { newest: byNewest }, index: indexBy(byNewest, (r) => r.id), counts: counts(byNewest, Object.fromEntries(classes)) };
   },
   read(v, q) {
     if (q.keys !== null) return keyed(v.index, v.orders.newest, q.keys);
     const { status, kind } = q.filters;
-    const match = status === null && kind === null ? null : (r: OfferRow) => (status === null || r.status === status) && (kind === null || OFFER_KIND[kind](r));
+    const match = status === null && kind === null ? null : offerMatch(status, kind);
     return pageOf(v.orders.newest, CURSORS.anchor, q.after, q.limit, match, v.counts[offerClass(status, kind)] ?? 0);
   },
 };
 
-/** The lists this release serves: every v1 route. */
+/** The list of each v1 route. */
 export const LISTS = { names, bids, tokens, events, holders, offers } satisfies { [R in Route]: List<R, unknown, RowOf[R]> };
-export type Served = keyof typeof LISTS;
-export const isServed = (route: string): route is Served => Object.hasOwn(LISTS, route);

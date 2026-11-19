@@ -105,12 +105,18 @@ What each list reads from the state:
   A ticker with no balances, unknown or a token never held, reads an empty list and adds nothing to the view: the
   view has one entry per ticker the state holds and is frozen.
 
-A page stays bounded: every string in a row is fixed-width (an address, a hash, a decimal) or was carried by one
-record of at most `MAX_RECORD_BYTES` (a name, a ticker, a token's name or metadata hash, a whole profile), so a row
-is at most about 1.5 KB and a page of 200 far under a 1 MiB response cap. Cost per request: an unfiltered page or a
-`keys` read is a binary search and a copy of at most `limit` rows; a filtered page scans the list until the page
-fills, and with an `owner` filter counts every row for `total` (every other filter's count, each `status` and `kind`
-of offers alone and together included, is counted once per view).
+Size of an answer. A row is bounded: every string in it is fixed-width (an address, a hash, a decimal) or was carried
+by one record of at most `MAX_RECORD_BYTES` (a name, a ticker, a token's name or metadata hash, a whole profile), so a
+row is at most about 1.5 KB. A page holds `limit` rows plus the remaining rows of its last row's key, and a `keys`
+read every row of each key it names. On every list but `events` a key has one row, so the excess is 0; on a feed
+without repeated events it is 0 on `events` too. cairnx-core drops a repeated event id at or above V29 (88,000;
+`resolve.ts`), so a repeated event exists only in the history below V29, with as many copies as the host's feed
+carried. The one other way to a key of several entries is a feed with two transactions at one position, which
+no event list of CONVENTION section 33 holds: `pos` is a transaction's index in its block.
+
+Cost per request: an unfiltered page or a `keys` read is a binary search and a copy of the rows it returns; a
+filtered page scans the list until the page fills, and with an `owner` filter counts every row for `total` (every
+other filter's count, each `status` and `kind` of offers alone and together included, is counted once per view).
 
 ## Parameters
 
