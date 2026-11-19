@@ -1,8 +1,9 @@
 // The witnesses of a reader (design section 4). Each advance asks every witness for its tip while the loop steps,
 // then compares the replica's chain with each at one height: h = min(witness tip W, cursor C), and only when the higher
 // of the two is at most FINAL_DEPTH above h. The hash compared is the witness's tip hash when h is W, else its hashAt(h)
-// (one more request in series), against the hash the loop holds at h; when the loop holds none there, the witness
-// cannot compare and confirms nothing. A confirmation is stamped with the time the witness's tip answer arrived and
+// (one more request in series), against the hash the loop holds at h, which the loop keeps for every height from
+// the cursor down FINAL_DEPTH once its steps have carried them; until they have (after a restart, a reload or a
+// rollback) a witness it cannot compare voids the confirmation, so that witness is never passed over unheard. A confirmation is stamped with the time the witness's tip answer arrived and
 // bound to the loop's generation, so a rollback, a reload or a reset of the chain voids it. A witness that answers
 // another hash at h voids the confirmation for every witness (one witness can withhold "verified", none can grant it
 // alone against another's word); so does a clock read earlier than the one before it, since the real time elapsed is
@@ -58,12 +59,13 @@ export function witnessBoard(witnesses: readonly Witness[], clock: () => number)
     /** This round's comparisons against the chain the loop holds after its step. */
     async confirm(chain: Chain, signal: AbortSignal): Promise<void> {
       const gen = chain.generation();
-      let agreed = null as Witnessed | null, against = false;
+      let agreed = null as Witnessed | null, against = false, blind = false;
       for (const w of witnesses) {
         const a = heard.get(w), t = a?.tip, c = chain.cursor;
         if (a === undefined || t == null || c === null) continue;
         const h = Math.min(t.height, c.height), mine = chain.hashAt(h);
-        if (Math.max(t.height, c.height) - h > FINAL_DEPTH || mine === null) continue;
+        if (Math.max(t.height, c.height) - h > FINAL_DEPTH) continue;
+        if (mine === null) { blind = true; continue; }   // the loop has not yet carried that block in this generation
         let theirs: unknown;
         try { theirs = h === t.height ? t.hash : await w.hashAt(h, signal); } catch { theirs = null; }
         if (chain.generation() !== gen) return;   // the chain was replaced while the witness was asked
@@ -72,7 +74,7 @@ export function witnessBoard(witnesses: readonly Witness[], clock: () => number)
         else agreed = { height: h, hash: mine, by: w.id, at: Math.min(a.at, agreed?.at ?? a.at), generation: gen };
       }
       disagree = against;
-      if (against) witnessed = null;
+      if (against || blind) witnessed = null;
       else if (agreed !== null) witnessed = agreed;
     },
     /** The confirmation held, if it is of the chain the loop holds now. */

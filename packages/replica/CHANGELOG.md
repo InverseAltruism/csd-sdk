@@ -62,6 +62,9 @@
   commit in flight at most its `waitMs` or until its signal aborts, then answers `NOT_SYNCED` ("a step's commit is in
   flight") with nothing shown, and `status()` answers `NOT_SYNCED` during a commit. A commit that never settles leaves
   `advance()` pending.
+- The loop keeps the block hashes of its cursor and the 12 heights below it (at most 13), emptied whenever the
+  generation moves, so a witness within 12 blocks below the cursor is always compared; one the loop cannot yet compare
+  (after a restart, reload or rollback) voids the confirmation.
 - Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
   which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
   `advance()` or reads).

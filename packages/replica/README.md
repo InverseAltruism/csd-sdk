@@ -190,7 +190,7 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
 | `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
-| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h and the replica holds a hash at h (its cursor, or a block with an event or an epoch boundary); it confirms when it gives that hash, from its tip or by `hashAt`. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
 | `SHALLOW` | `primary`: the deep view and the tip view agree |
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
@@ -203,7 +203,9 @@ basis is refused by `open`); the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_R
 `REPLAY_SLOW`.
 
 A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
-with a valid header, or another hash at the compared height, makes every answer unverified while it does. A caller
+with a valid header, gives another hash at the compared height, or cannot yet be compared within 12 blocks of the
+cursor, makes every answer unverified while it does. A witness more than 12 blocks below the cursor (or above it)
+neither confirms nor contradicts. A caller
 that sees `TIP_BEHIND_PEER` or `SOURCES_DISAGREE` from one witness alone reads `shown`, and drops or replaces that
 witness when it believes it lies; nothing in the reader decides that for it. `hostedWitness` and `nodeWitness` report
 no gate table, so `RULES_DIFFER` compares the local tables (built and loaded) and the tables of witnesses that the

@@ -14,7 +14,7 @@ import { fixtureSource, fixtures, type BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus, fx } from "./core-files.js";
 import { all, ANCHOR, callerHeaders, front, ORIGIN } from "./hosted-harness.js";
-import { branchFrom, cap, json, node } from "./node-harness.js";
+import { branchFrom, cap, drive, json, node } from "./node-harness.js";
 import { callerReader, hashAt, nodeSource, OWN, synth, timeAt, witnessOn } from "./reader-harness.js";
 
 const codes = (a: { why: readonly { code: string }[] }) => a.why.map((w) => w.code).join(",");
@@ -44,8 +44,8 @@ ok("replica at 30,296 on a branch from 30,290, the witness at 30,295 on the reco
   codes(near.s) === "NOT_WITNESSED" && near.s.witnessed === null && !near.s.verified);
 now = timeAt(TIP) * 1000 + MIN;
 const held0 = await onChain(all, TIP, [witnessOn(all, 30_290).witness]);
-ok("an honest witness at 30,290, where the replica holds no hash: it cannot compare, so NOT_WITNESSED and no SOURCES_DISAGREE",
-  codes(held0.s) === "NOT_WITNESSED" && !noted(held0.s, "SOURCES_DISAGREE"));
+ok("an honest witness 10 behind, at a block with no event and no boundary: compared from the loop's recent hashes, verified at 30,290",
+  held0.s.verified && held0.s.witnessed?.height === 30_290);
 const b76 = await onChain(branch(30_225), TIP, [witnessOn(all, 30_224).witness]);
 ok("a witness 76 blocks behind, the replica on a branch from 30,225: NOT_WITNESSED", codes(b76.s) === "NOT_WITNESSED" && b76.s.witnessed === null);
 now = timeAt(30_298) * 1000 + MIN;
@@ -66,6 +66,62 @@ now = timeAt(TIP) * 1000 + MIN;
 const nullHash: Witness = { ...witnessOn(all, TIP).witness, hashAt: async () => null };
 const nh = await onChain(all, TIP - 3, [nullHash]);
 ok("a witness ahead whose hashAt answers null is no confirmation", nh.s.witnessed === null && codes(nh.s).includes("NOT_WITNESSED"));
+
+console.log("R4, the recent hashes: a witness within FINAL_DEPTH below the cursor is always compared:");
+for (const wtip of [30_288, 30_287, 30_286, 30_283, 30_280, 30_277]) {
+  now = timeAt(30_288) * 1000 - 20 * MIN;
+  const w = witnessOn(all, 30_275), x = await callerReader(30_275, { witnesses: [w.witness], clock });
+  closing.push(x.r);
+  const s0 = await x.r.advance();
+  x.served.answers = x.ch.c.answers = branch(30_276); x.ch.c.tip = 30_288; w.w.tip = wtip;
+  now = timeAt(30_288) * 1000 + MIN;
+  const s1 = await x.r.advance(), s2 = await x.r.advance();
+  ok(`confirmed at 30,275, the replica then on a branch to 30,288, the witness on the recorded chain at ${wtip}: NOT_WITNESSED with SOURCES_DISAGREE, and the next round too`,
+    s0.verified && codes(s1) === "NOT_WITNESSED" && noted(s1, "SOURCES_DISAGREE") && codes(s2) === "NOT_WITNESSED");
+}
+{
+  const d = drive({ answers: cap.answers });
+  await d.run();
+  ok("the loop keeps the hashes of the cursor and the 12 heights below it, and no more (30,288 kept, 30,287 not, neither a row)",
+    d.loop.hashAt(30_288) === hashAt(30_288) && d.loop.hashAt(30_287) === null && d.loop.hashAt(TIP) === hashAt(TIP));
+}
+{
+  now = timeAt(TIP) * 1000 + MIN;
+  const store = memoryStore(), first = await callerReader(30_290, { store, witnesses: [witnessOn(all, 30_290).witness], clock });
+  const s0 = await first.r.advance();
+  await first.r.close();
+  const w = witnessOn(all, 30_288), x = await callerReader(30_290, { store, witnesses: [w.witness], clock });
+  closing.push(x.r);
+  const before = x.r.status(), s1 = await x.r.advance();
+  x.ch.c.tip = TIP; w.w.tip = 30_297;
+  const s2 = await x.r.advance();
+  ok("after a reopen the loop has not carried the blocks below its cursor: a witness 2 behind voids (NOT_WITNESSED, no SOURCES_DISAGREE); once the loop advances past it, confirmed",
+    s0.verified && codes(before) === "NOT_SYNCED,NOT_WITNESSED" && codes(s1) === "NOT_WITNESSED" && !noted(s1, "SOURCES_DISAGREE") && s2.verified && s2.witnessed?.height === 30_297);
+}
+
+{
+  now = timeAt(TIP) * 1000 + MIN;
+  const store = memoryStore(), first = await callerReader(30_290, { store, witnesses: [witnessOn(all, 30_290).witness], clock });
+  await first.r.advance();
+  await first.r.close();
+  const x = await callerReader(30_290, { store, witnesses: [witnessOn(all, 30_290).witness, witnessOn(all, 30_288, { id: "behind", origin: "https://behind.example" }).witness], clock });
+  closing.push(x.r);
+  const s1 = await x.r.advance();
+  ok("after a reopen, one witness at the cursor and one 2 behind that cannot yet be compared: NOT_WITNESSED (the one not heard voids)", codes(s1) === "NOT_WITNESSED");
+}
+{
+  now = timeAt(TIP) * 1000 + MIN;
+  const store = memoryStore(), ch = callerHeaders({ answers: all, tip: TIP }), served = { answers: all };
+  const src = () => hostedBlocks({ origin: ORIGIN, root: { kind: "caller", headers: ch.headers }, fetch: front(served).f });
+  const a = await open({ source: src(), store, witnesses: [witnessOn(all, 30_297).witness], clock }), a0 = await a.advance();
+  ch.c.answers = served.answers = branch(30_295);
+  const b = await open({ source: src(), store, clock });
+  await b.advance();
+  const a1 = await a.advance();
+  ok("another writer replaces the chain under this reader: its recent hashes go with the reload, so a witness on the old chain at 30,297 is not taken as confirming",
+    a0.verified && a1.cursor?.hash === hashAt(TIP, branch(30_295)) && !a1.verified && a1.witnessed === null);
+  closing.push(a, b);
+}
 
 console.log("B2, a confirmation does not survive the chain being replaced:");
 {
