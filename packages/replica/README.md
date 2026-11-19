@@ -15,7 +15,8 @@ Only blocks sit above a pin: a pin over a feed does not compile, and `checkBasis
 throw `ReplicaConfigError` for one at run time. `basisKey` names a store without its pin, so a newer pin over the same
 root and bodies names the same store.
 
-- `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`.
+- `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
+  and the reader, `open` and `openLog` ("Reading" below).
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
   records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
 
@@ -143,7 +144,62 @@ replayed on demand.
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
   `"all"` (every transaction but the coinbase) or `"members"` (each Propose in the rule's domain and each Attest). It
   throws `SourceError`, `BRANCH_MOVED` for a block that does not link to the one before.
+- `nodeWitness({ node, fetch? })` and `hostedWitness({ origin, fetch? })`, in `./browser` and `./server`: witnesses for
+  the reader (below), a node's `/tip` and `/block/height/:h`, or our front door's `/api/rpc/tip` and
+  `/api/headers/:h/1`. A witness vouches for no record, so any http or https address without credentials, query or
+  fragment is accepted. Neither reports a gate table.
 - `./testing`: `fixtureSource(fixture)`, a level 1 source over a recorded block fixture such as cairnx-core's
   `test/fixtures/events-blocks.json` in this repository, and the event factories `fixtures()`.
+
+## Reading
+
+`open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
+`memoryStore()`): `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
+`status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
+for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
+`advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
+when none is running and waits for it at most `waitMs` (default 0: it answers from what is held). Nothing runs on a
+timer: the caller drives `advance()` or reads.
+
+Each answer is `{ verified: true, value }` or `{ verified: false, value: null, shown }`, with `why` (the codes below),
+`notes`, `level`, `proof`, `vouch` (the basis) and `at` (the tip, the deep height `tip - minDepth` the value is read
+at, and the depth). A caller that gates value on an answer reads `value` and acts only when `verified` is true;
+`shown` is for display. The deep view is the state at `tip - minDepth`; `minDepth` defaults to cairnx-core's
+`FINAL_DEPTH` (12), the depth replicas compare at, which is not a depth that makes a payment safe: a caller crediting
+value chooses its own. `balance`, `state` and `events` answer the deep view; `balance` adds `atTip` when the balance at
+the tip differs. `primary` answers `SHALLOW` when the deep view and the tip view name different names, the tip view in
+`shown`. `events` pages in the order of CONVENTION section 33.3 from an exclusive `height:pos` cursor (`limit`
+default 100, at most 1,000); its `next` does not pass the deep height, also on an empty page.
+
+An answer is verified only when every condition holds. Each failed one adds its code, in this order:
+
+| Code | The condition that failed |
+|---|---|
+| `INPUT_INVALID` | the read's input is well formed (an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
+| `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
+| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
+| `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
+| `BEHIND` | the cursor is not below the tip |
+| `BRANCH_UNRESOLVED` | the cursor is not above the tip (it is while a rollback is owed, or a caller's tip is below the store's) |
+| `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
+| `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named, meets its own bits and is at most 12 blocks ahead plus one per 120 s since the replica's tip (csd-light `tipHeaderPowOk`, `contenderPlausible`) |
+| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the branch within the last 30 minutes. A confirmation is a witness giving, at the highest height the replica holds a hash for within 12 blocks below the witness's tip and at or below the replica's cursor, the hash the replica holds there; a rollback below it clears it. Never confirmed (or cleared): `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `SHALLOW` | `primary`: the deep view and the tip view agree |
+
+The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
+`clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
+table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was asked), `CURSOR_ABOVE_TIP` (an `events`
+cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open).
+
+`open` throws `ReplicaConfigError` for a basis `checkBasis` refuses; a display basis; a basis that cannot give every
+event from activation (`code` `BELOW_FLOOR`: an anchor above the activation height less one, or a caller's floor
+above it, or above the pin under one); and a witness on the header source's origin (the front door's under an
+anchor root, the caller's `origin` under a caller root). A store that opens refused for its format, rule, basis or
+rows is reset and filled again; the newer-pin exception of the design is the disk store's slice.
+
+What the reader does not answer yet: `name()` needs a forward-resolution selector from cairnx-core (the address and
+profile a name gives, which CONVENTION sections 28 and 35.3 state and core 0.2.7 does not export), so it waits for
+0.2.8 rather than restating that rule here; `transfers`, `./display`, `local` and `dryRun` are the next parts of this
+slice. What it does not persist: the witness's confirmation and the source's header window live in memory.
 
 ESM only, `sideEffects: false`. `@inversealtruism/cairnx-core` is a peer dependency, so a process runs one `resolve()`.

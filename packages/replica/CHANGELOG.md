@@ -39,5 +39,17 @@
   fails verification is read again past caches; a caller's fork is placed only where its `at` answered another hash.
 - 2026-11-18, a copy: `src/http.ts` holds a copy of csd-client's capped body read, which is private to `CsdClient`.
   Remove it when csd-client exports that read.
+- The reader: `open` and `openLog`, the answer types (`Answer`, `At`, `ReadOptions`, `BalanceValue`, `Page`,
+  `TransferCursor`, `ReplicaStatus`, `Witness`), the reads `balance` (deep view, `atTip`), `primary` (`SHALLOW`),
+  `state` and `events` with `minDepth`, and `advance`, `status`, `subscribe`, `close`. An answer is verified only
+  when the input is well formed, the basis is level 3, the gate tables agree at or below the tip (`RULES_DIFFER`;
+  `TWO_CORES` noted), the loop is synced at its tip (`NOT_SYNCED`, `BEHIND`, `BRANCH_UNRESOLVED`), the tip is at most
+  30 minutes old (`TIP_STALE`), no witness names a plausible higher tip (`TIP_BEHIND_PEER`) and, for an anchor or
+  caller root, a witness confirmed the branch within 30 minutes within 12 blocks of its tip (`NOT_WITNESSED`,
+  `WITNESS_SILENT`). `open` refuses `BELOW_FLOOR` (`ReplicaConfigError.code`) and a witness on the header source's
+  origin. `nodeWitness` and `hostedWitness` in `./browser` and `./server`. The floor rule has one home,
+  `floorBreak`, used by `open` and both roots. The loop gives `hashAt`, `rows` and an `onRollback` callback.
+- Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`;
+  `./display`, `local` and `dryRun`; a poll timer (the caller drives `advance()` or reads).
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
   follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").

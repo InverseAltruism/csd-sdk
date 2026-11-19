@@ -24,6 +24,8 @@ export type LoopOpen = { ok: true } | { ok: false; reset: Reset };
 export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
   readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number;
+  /** Called after a reorg is committed, with the cursor rolled back to. */
+  readonly onRollback?: (to: Cursor) => void;
 }
 /** Internal. `store` is null before the first open; `retryAt` is when a backed-off loop next calls its source. */
 export interface LoopStatus {
@@ -42,6 +44,10 @@ export interface Loop {
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
   status(): LoopStatus;
   eventsHashAt(height: number): string | null;
+  /** The block hash the loop holds at `height` (a row's, or the cursor's), or null. */
+  hashAt(height: number): string | null;
+  /** The rows held at or above `fromHeight`, checked as every held row is; read-only. */
+  rows(fromHeight: number): readonly BlockRow[];
   /** The materializer's state at `tip - depth`, or null when the store is not open or that height is not held. */
   stateAt(tip: number, depth: number): CairnXState | null;
   close(): Promise<void>;
@@ -175,6 +181,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     });
     if (r !== "ok") return r;
     lastReorg = { from: at!, to: cursor()!, at: clock() };
+    o.onRollback?.(to);
     settled(s.tip);
     return "more";
   }
@@ -215,6 +222,8 @@ export function replicaLoop(o: LoopOptions): Loop {
     open: () => queued(load),
     advance: (a = {}) => queued(() => drive(a.budgetMs ?? Number.POSITIVE_INFINITY, a.signal)),
     status, eventsHashAt,
+    hashAt: (h) => (opened === "open" ? hashAt(h) : null),
+    rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),
     boundary(h) {
       const b = opened === "open" ? bounds.find((x) => x.height === h) : undefined;

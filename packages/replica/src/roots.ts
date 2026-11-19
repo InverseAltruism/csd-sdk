@@ -8,6 +8,7 @@
 // refusal, never a rollback: a rollback needs another hash. Inside the search a null is "not held": the fork is
 // placed only where the caller answered another hash (fork.ts). A caller whose tip is below the cursor on the chain
 // the store holds rolls nothing back.
+import { floorBreak } from "./basis.js";
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
@@ -49,7 +50,8 @@ export function callerRoot(h: VerifiedHeaders): Root {
     async tip(signal) { const v = await h.sync(null, signal); return v === null ? null : (tip = viewOf(v)); },
     async begin(s, ctx, server) {
       const at = ctx.cursor;
-      if (h.floor > ctx.rule.activationHeight - 1) throw new SourceError("BELOW_FLOOR", `the caller's headers start at ${h.floor}, above the activation height less one`);
+      const low = floorBreak({ kind: "caller", floor: h.floor, origin: h.origin }, null, ctx.rule);
+      if (low !== null) throw new SourceError("BELOW_FLOOR", low);
       const v = await h.sync(server.height, ctx.signal);
       if (v === null) throw new SourceError("SOURCE_UNAVAILABLE", "the caller's headers do not know the tip");
       tip = viewOf(v);

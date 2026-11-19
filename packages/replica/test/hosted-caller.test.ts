@@ -2,26 +2,11 @@
 // verified headers decide which blocks bind, the step reads only to the caller's tip, a caller reorg rolls back to a
 // held hash, a caller with no header at the cursor below its tip is refused rather than rolled back, and every step
 // the source emits is checked against the contract's own functions.
-import type { VerifiedHeaders } from "../src/index.js";
 import { done, ok } from "./check.js";
-import { all, driveHosted } from "./hosted-harness.js";
+import { all, callerHeaders, driveHosted } from "./hosted-harness.js";
 import { blockAt, branchFrom, cap, hashesOk, refused, type Answers } from "./node-harness.js";
 
 const branch = (fork: number): Answers => ({ ...all, ...branchFrom(fork) });
-
-/** A caller's verified headers over `answers` from 29,859 up to `tip` (null: the tip unknown), holding only the heights
- *  `holds` accepts (default all), counting its calls. */
-function callerHeaders(c: { answers: Answers; tip: number | null; holds?: (h: number) => boolean }) {
-  const n = { syncs: 0, offers: 0 };
-  const held = (h: number) => (c.tip !== null && h >= 29_859 && h <= c.tip && (c.holds?.(h) ?? true) ? blockAt(c.answers, h) : null);
-  const headers: VerifiedHeaders = {
-    floor: 29_859, origin: "https://headers.example",
-    async sync(to) { n.syncs++; if (c.tip === null) return null; const b = blockAt(c.answers, Math.min(to ?? c.tip, c.tip)); return { height: b.height, hash: b.hash, time: Number(b.header.time) }; },
-    async at(h) { const b = held(h); return b === null ? null : { hash: b.hash, merkle: String(b.header.merkle) }; },
-    async offer() { n.offers++; return true; },
-  };
-  return { c, n, headers };
-}
 
 console.log("the caller root:");
 const ch = callerHeaders({ answers: all, tip: cap.to }), cl = driveHosted({ answers: all }, { kind: "caller", headers: ch.headers }), cls = await cl.run();

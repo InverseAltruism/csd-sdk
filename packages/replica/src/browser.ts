@@ -8,6 +8,7 @@ export * from "./index.js";
 export type { HttpOptions } from "./http.js";
 export type { NodeBlocksOptions };
 export { hostedBlocks, type HostedBlocksOptions } from "./hosted-blocks.js";
+export { hostedWitness, nodeWitness } from "./http-witness.js";
 
 /** Complete blocks from one's own node at localhost, 127.0.0.1 or [::1]; any other address throws ReplicaConfigError. */
 export const nodeBlocks = (o: NodeBlocksOptions): BlocksSource => nodeBlocksAt(loopbackNode(o.node), o);
