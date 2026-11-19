@@ -1580,6 +1580,36 @@ that read the same profile and both write within one block interval lose one wri
 replaces the map, and the keys only the earlier write carried are gone. The convention has no per-key write; a writer
 that needs its write kept reads the profile again once its record is mined.
 
+### 35.4 Forward resolution: the address a name receives at
+
+A payment to a name goes to its `addr` (set by `nset`, §9, §26), else to its owner, so a name receives before its owner
+sets an address. Read from `names` in the state of §5 at a tip:
+
+| The name in `names` | Resolves to |
+|---|---|
+| held, with `addr` | `addr` (`via: "nset"`) |
+| held, without `addr` (not set, or cleared by an `nset` to the zero address from V23) | the owner (`via: "owner"`) |
+| held, with the zero address as `addr` (an `nset` to it below V23 stored it, §26) | the zero address (`via: "nset"`); a wallet refuses to pay it (§26) |
+| in grace (§17: past `paidThroughEpoch`, without `expired`) | as held |
+| with `expired: true` (§17) | the record's address, flagged `lapsed: true`; a sender refuses it |
+| with `pending: true` (§28) | nothing: a reservation confers no address |
+| absent | nothing |
+
+A name an open offer locks (§9) resolves as held. A sale and an `nxfer` clear `addr`, so the new owner receives until
+it sets one. The profile is not read (§36.3). A reserved name (`RESERVED_NAMES`) is absent from `names`, since a record
+that claims it does not parse (§9), so it resolves to nothing. The name is looked up as `names` writes it: a reader
+lowercases its input, drops a `.csd` suffix and refuses a string that does not match `NAME_RE` before it asks. In
+JavaScript `names` is a plain object and `constructor` matches `NAME_RE`, so a reader tests for an own key: a bare index
+on an unregistered `constructor` reads `Object.prototype.constructor`.
+
+cairnx-core exports the rule as `resolveNameIn(names, name)`, which answers `{name, addr, via, lapsed, owner}` or null,
+and `nameView(names, name)` for a reader that shows a name: its class (`held`, `pending`, `lapsed`, `free` when absent,
+`reserved`), its owner (the reserver of a pending name, the last owner of a lapsed one), its address and its profile (a
+held name's only, §35.3) and its `paidThroughEpoch`; null for a string that does not match `NAME_RE`.
+`test/vectors/forward.json` (`conformance/gen-forward-vectors.mjs`) holds the cases, one per line: the events, the tip,
+and for each name asked the answers of both functions over `resolve(events, tip).names`, written by hand. Neither
+function writes state, so this section has no gate.
+
 ## 36. The profile-key registry
 
 This is the registry of profile keys, the first version. The resolver validates keys by their form alone and keeps no
@@ -1623,7 +1653,7 @@ does not control. They are registered as the editor writes them and are the only
 - An address that a name's profile publishes is that name owner's node. What is read through it is at most single
   records, each proven for inclusion with its author bound to the coin it spent (§33.5; the record proof of §37),
   never a complete history, and never what marks any name, that one or another, as verified.
-- A profile is never a send target (§22): the address a name pays to is `addr`, set by `nset`.
+- A profile is never a send target (§22): the address a name pays to is `addr`, set by `nset`, else the owner (§35.4).
 - The profile of an expired or pending name is ignored (§35.3).
 
 ### 36.4 The byte budget
