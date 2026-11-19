@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { integrityOk, untar, diffDist } from "../scripts/published-dist.mjs";
+import { integrityOk, untar, diffDist, registryBind } from "../scripts/published-dist.mjs";
+import { REGISTRY } from "../scripts/workspace.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -140,6 +141,45 @@ try {
   cpSync(pkgDir, linkDir, { recursive: true });
   symlinkSync("index.js", join(linkDir, "package", "dist", "alias.js"));
   throws("a system-tar symlink entry", () => untar(pack("ustar", linkDir, [...FILES, "package/dist/alias.js"])), /entry type "2"/);
+
+  // The seal binds each baseline build to npm's tarball of its version; fetch answers from a stand-in registry here.
+  console.log("registryBind:");
+  const wrongDir = join(work, "wrong");
+  cpSync(pkgDir, wrongDir, { recursive: true });
+  writeFileSync(join(wrongDir, "package", "dist", "index.js"), "export const x = 3;\n");
+  const wrong = pack("ustar", wrongDir);
+  const readmeOnly = pack("ustar", pkgDir, ["package/README.md"]);
+  const sriOf = (b: Uint8Array) => "sha512-" + createHash("sha512").update(b).digest("base64");
+  const realFetch = globalThis.fetch;
+  const bindWith = async (doc: { status: number; tarball?: Uint8Array; integrity?: string; throws?: "registry" | "tarball" }, dist: string) => {
+    globalThis.fetch = (async (u: string | URL) => {
+      const url = String(u);
+      if (doc.throws === "registry" || (doc.throws === "tarball" && url.endsWith(".tgz"))) throw new TypeError("fetch failed");
+      if (url === `${REGISTRY}/core/1.0.0`) return doc.status === 200
+        ? new Response(JSON.stringify({ dist: { tarball: "https://registry.invalid/core-1.0.0.tgz", integrity: doc.integrity ?? sriOf(doc.tarball!) } }))
+        : new Response("", { status: doc.status });
+      if (url === "https://registry.invalid/core-1.0.0.tgz" && doc.tarball) return new Response(Buffer.from(doc.tarball));
+      return new Response("", { status: 404 });
+    }) as typeof fetch;
+    try { return await registryBind("core", "1.0.0", dist); } finally { globalThis.fetch = realFetch; }
+  };
+  const honestBind = await bindWith({ status: 200, tarball: sys }, localDist());
+  ok("honest: npm's tarball holds this build's dist/: bound, 2 files", JSON.stringify(honestBind) === JSON.stringify({ state: "bound", files: 2 }));
+  const wrongBind = await bindWith({ status: 200, tarball: wrong }, localDist());
+  ok("a wrong tarball (its integrity valid, its dist/index.js another) fails with the file named",
+    JSON.stringify(wrongBind) === JSON.stringify({ state: "failed", reasons: ["dist/index.js differs from the local build"] }));
+  const forgedBind = await bindWith({ status: 200, tarball: sys, integrity: sriOf(wrong) }, localDist());
+  ok("a tarball that fails its sha512 integrity fails", forgedBind.state === "failed" && /sha512 integrity/.test(JSON.stringify(forgedBind)));
+  ok("a tarball the registry names but does not serve fails", JSON.stringify(await bindWith({ status: 200, integrity: sriOf(sys) }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["tarball download returned HTTP 404"] }));
+  ok("a tarball download that throws fails", JSON.stringify(await bindWith({ status: 200, tarball: sys, throws: "tarball" }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["tarball download failed (fetch failed)"] }));
+  ok("a registry that cannot be reached fails", JSON.stringify(await bindWith({ status: 200, tarball: sys, throws: "registry" }, localDist()))
+    === JSON.stringify({ state: "failed", reasons: ["npm registry read failed (fetch failed)"] }));
+  ok("a version the registry does not hold is unpublished", (await bindWith({ status: 404 }, localDist())).state === "unpublished");
+  ok("another registry status fails", JSON.stringify(await bindWith({ status: 500 }, localDist())) === JSON.stringify({ state: "failed", reasons: ["npm registry returned HTTP 500"] }));
+  ok("a tarball without dist/ fails, even against an empty build", JSON.stringify(await bindWith({ status: 200, tarball: readmeOnly }, mkdtempSync(join(work, "empty-"))))
+    === JSON.stringify({ state: "failed", reasons: ["the tarball holds no dist/ file"] }));
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

@@ -21,6 +21,11 @@ export * from "./client.js";
 export * from "./preflight.js";
 // primary — the reverse-resolution (addr→primary name) selector every host must compute identically.
 export * from "./primary.js";
+// forward: CONVENTION §35.4, the address a name receives at (resolveNameIn) and the view of a name a reader shows (nameView).
+export { nameView, resolveNameIn, type NameView, type NameViewState, type ResolvedName } from "./forward.js";
+// version: this package's version, for a host that names the core it loaded. gates: every gate height by its name.
+export { CAIRNX_CORE_VERSION } from "./version.js";
+export { GATE_HEIGHTS, type GateName } from "./gates.js";
 // verifyfill: the shared client-side fill-SPV surface (§31), the fail-closed fund boundary for the
 // open-lane fclaim buy. Pure record re-derivation + mandatory grant REPLAY (replayLiveHold) + the offer/
 // fclaim/fill-basis depth gate (GAP_NEEDED) over an injected PoW-verified, merkle-proven FillSpvIo seam.
