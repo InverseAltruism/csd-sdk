@@ -225,8 +225,9 @@ recapture reservation (§29) whose `finalizeBy` is below h. After the last event
 block (§16), it runs the same sweep once more at `tipHeight + 1`. So the state at a tip shows an offer or bid whose
 effective expiry epoch, as the sweep at `tipHeight + 1` computes it, is `epochOf(tipHeight)` as `expired` when
 `tipHeight` is the last height of that epoch (`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the
-epoch; one anchored below V22 is read with its §24 cap from the tip 40 099 on, whose next height is V21. A name's `expired` (§17) is read at the tip's
-own epoch: it is present when `epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
+epoch. For an offer or bid anchored below V22 that sweep applies the §24 cap once `tipHeight + 1` reaches V21
+(40 100), that is from tip 40 099 on. A name's `expired` (§17) is read at the tip's own epoch: it is present when
+`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
 
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
@@ -945,9 +946,11 @@ The §24 lifetime cap proved to be an infrastructure symptom, not a market need,
 - **Anchor in [40 100, 41 300):** the §24 rules apply to that offer/bid FOREVER (creation gate at its
   anchor, capped `effExpiry` in every later sweep). Era membership is fixed by the anchor, so every
   replayer ages the same record identically regardless of when it replays.
-- **Anchor < 40 100:** raw `expires_epoch` binds (pre-V21 history, unchanged).
-- **Client closed form:** for anchor ≥ V22, `offerExpiryHeight = (expires_epoch+1)·30`; for the [V21, V22)
-  era use the §24 formula; below V21 use the raw form.
+- **Anchor < 40 100:** no creation gate (the record predates it), but every sweep at a height ≥ V21 reads it with the
+  capped `effExpiry` of §24, so over-cap inventory from before V21 expires at the first such sweep past its cap; a
+  sweep below V21 reads the raw `expires_epoch`, so every pre-V21 state is unchanged.
+- **Client closed form:** for anchor ≥ V22, `offerExpiryHeight = (expires_epoch+1)·30`; for every anchor below V22,
+  `min((expires_epoch+1)·30, max(40 100, (epochOf(anchor)+MAX_OFFER_EPOCHS+1)·30))` (`offerExpiryHeightOf`).
 - **Adoption note:** a relaxation. A v2.1-only replayer rejects (no-ops) a long-dated offer the chain
   accepts, so its book diverges from the canonical one from the first over-cap anchor onward. Every
   replayer must run the v2.2 core before the tip crosses 41 300 (already long past; stated for the record).
