@@ -186,11 +186,14 @@ let checked: { honest: Checked; verifyFailed: Checked } | undefined;
 console.log("window checks (stand-in git and publish guard; real pack and verify-tarball of csd-crypto):");
 {
   const CRYPTO = "@inversealtruism/csd-crypto";
+  const HEAD = "a".repeat(40);
   const window = async (o: { guard?: boolean; onMaster?: boolean; dirty?: boolean; env?: Record<string, string>; verify?: typeof verifyTarball } = {}) => {
     const out = mkdtempSync(join(work, "win-"));
     const sh = (cmd: string, args: string[], cwd: string) => {
       if (cmd === "git" && args[0] === "status") return { ok: true, out: o.dirty ? " M packages/crypto/src/index.ts\n" : "" };
-      if (cmd === "git") return { ok: args[0] === "merge-base" ? (o.onMaster ?? true) : true, out: "" };
+      if (cmd === "git" && args[0] === "rev-parse") return { ok: true, out: `${HEAD}\n` };
+      if (cmd === "git" && args[0] === "rev-list") return { ok: true, out: `${"b".repeat(40)}\n${o.onMaster === false ? "" : `${HEAD}\n`}` };
+      if (cmd === "git") throw new Error(`unexpected git command: ${args.join(" ")}`);
       if (args[0] === "run" && args[1] === "prepublishOnly") return { ok: o.guard ?? true, out: "stand-in publish guard" };
       if (args[0] === "pack") {
         try { execFileSync(cmd, args, { cwd, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" }); return { ok: true, out: "" }; }
@@ -252,6 +255,32 @@ console.log("the tree and HEAD (real git):");
   git("commit", "-q", "--allow-empty", "-m", "unmerged");
   git("update-ref", "refs/remotes/origin/topic", "HEAD");
   ok("a commit pushed on a topic branch, not merged, is refused", !headOnOriginMaster(repo) && git("branch", "-r", "--contains", "HEAD").trim() !== "");
+  // master advanced by merge commits: every commit of a merged branch is an ancestor of origin/master, but only the
+  // merges (and direct commits) are on its first-parent line
+  const rev = (r: string) => git("rev-parse", r).trim();
+  const first = rev("master");
+  git("checkout", "-q", "-b", "fix", "master");
+  git("commit", "-q", "--allow-empty", "-m", "release 1.0.1, before the fix");
+  const inner = rev("HEAD");
+  git("commit", "-q", "--allow-empty", "-m", "the fix");
+  const branchTip = rev("HEAD");
+  git("checkout", "-q", "master");
+  git("merge", "-q", "--no-ff", "--no-edit", "fix");
+  const olderMerge = rev("HEAD");
+  git("checkout", "-q", "-b", "next");
+  git("commit", "-q", "--allow-empty", "-m", "a later change");
+  git("checkout", "-q", "master");
+  git("merge", "-q", "--no-ff", "--no-edit", "next");
+  const tip = rev("HEAD");
+  git("update-ref", "refs/remotes/origin/master", "HEAD");
+  const at = (c: string) => { git("checkout", "-q", "--detach", c); return headOnOriginMaster(repo); };
+  const ancestor = (c: string) => { try { git("merge-base", "--is-ancestor", c, "origin/master"); return true; } catch { return false; } };
+  ok("the tip of origin/master, a merge commit, passes", at(tip));
+  ok("an older merge commit on origin/master's first-parent line passes (a release from an earlier merge)", at(olderMerge));
+  ok("a direct commit on the first-parent line, before the first merge, passes", at(first));
+  ok("an inner commit of a merged pull request (an ancestor of origin/master, before the branch's last fix) is refused",
+    ancestor(inner) && !at(inner));
+  ok("the merged branch's own tip (the merge's second parent) is refused: the release commit is the merge", ancestor(branchTip) && !at(branchTip));
 }
 
 console.log("publish step (stand-in npm and registry):");

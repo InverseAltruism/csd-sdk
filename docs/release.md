@@ -36,27 +36,36 @@ Check mode (the default, `node scripts/npm-window.mjs [--out <dir>]`) publishes 
   file, or a manifest rolled back on disk, fails; dist/ is the tree's build;
 - writes SHA1SUMS and SHA256SUMS.
 
-Run mode (`--out <dir> --run --token-file <path>`) also needs a clean tree whose HEAD is reachable from
-`origin/master` (as last fetched; a pushed topic branch does not qualify) and a typed `publish`. It then copies each
-verified tarball into its private directory, refuses before any npm call if a copy is not the bytes verify-tarball
-checked, runs `npm publish` on that copy per package and compares each registry `dist.shasum` and `dist.integrity`
-with the digests recorded at verification.
+Both modes also fail on a local change in the tree, on `CSD_PUBLISH_SKIP_TESTS` set, and on a HEAD that is not on
+the first-parent line of `origin/master` as last fetched (`git rev-list --first-parent origin/master` lists it): a
+merge commit or a direct commit on master, the tip or an older one. A commit inside a merged pull request is an
+ancestor of `origin/master` but not on that line, and is refused: it can name the release's version without the
+branch's later commits. A pushed topic branch is refused too. So the release commit is the merge commit of the pull
+request that carries the version, or a later commit on that line.
+
+Run mode (`--out <dir> --run --token-file <path>`) also needs a typed `publish`. It then copies each verified tarball
+into its private directory, refuses before any npm call if a copy is not the bytes verify-tarball checked, runs
+`npm publish` on that copy per package and compares each registry `dist.shasum` and `dist.integrity` with the digests
+recorded at verification.
 
 `test/npm-window.test.ts` pins these refusals: a local change in the tree (with real git), `CSD_PUBLISH_SKIP_TESTS`
-set, a HEAD off `origin/master`, a failing publish guard and a failing verify-tarball each fail the window; a run with
-a failed check never reaches the publish step; a tarball that failed verify-tarball has no digest recorded, so
-publishWindow refuses it whatever its caller checked; a tarball replaced after verification is not published.
+set, a HEAD off the first-parent line (with real git, an inner commit of a merged branch among them), a failing
+publish guard and a failing verify-tarball each fail the window; a run with a failed check never reaches the publish
+step; a tarball that failed verify-tarball has no digest recorded, so publishWindow refuses it whatever its caller
+checked; a tarball replaced after verification is not published.
 
 ### What the window does not bind
 
 The window binds the tarball's files, the manifests, their scripts and the workspace pins to HEAD, not the build's
 inputs: dist/ is built from src/ on disk with the build tools in node_modules, and a file changed there under
 skip-worktree, or a changed tool, does not show in `git status`. So the maintainer runs a window only from a fresh
-worktree created at the release commit, never from a working checkout:
+worktree created at the release commit, never from a working checkout, and checks that the worktree is at that
+commit before the window:
 
 ```bash
 git worktree add --detach <path> <commit>
 cd <path>
+git rev-parse HEAD               # must print the full id of <commit>
 pnpm install --frozen-lockfile --offline
 pnpm -r build                    # check-lockstep refuses a package without dist/
 ```

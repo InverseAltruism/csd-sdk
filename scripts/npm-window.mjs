@@ -8,9 +8,10 @@
 //       suite, test:crosslang for cairnx-core) and verify-tarball.mjs on the packed tarball; SHA1SUMS and
 //       SHA256SUMS. Without --out the tarballs go to a temporary directory that is removed.
 //   node scripts/npm-window.mjs --out <dir> --run --token-file <path>
-//       the same checks, which must all pass, on a clean tree whose HEAD is on origin/master; then a typed
-//       confirmation, `npm whoami`, `npm publish <tgz>` per package in order, and each registry dist.shasum and
-//       dist.integrity compared with the tarball. <dir> must be new or empty; it keeps the tarballs and the logs.
+//       the same checks, which must all pass, on a clean tree whose HEAD is on origin/master's first-parent line;
+//       then a typed confirmation, `npm whoami`, `npm publish <tgz>` per package in order, and each registry
+//       dist.shasum and dist.integrity compared with the tarball. <dir> must be new or empty; it keeps the tarballs
+//       and the logs.
 // The token file is the owner's one-time token, a file of mode 600 owned by the caller. Its content is copied into
 // a userconfig in a private temporary directory, passed to npm as a path and removed when the script exits; it is
 // not printed, not put in any argv and not written under this repo.
@@ -164,13 +165,18 @@ const sh = (cmd, args, cwd) => {
 };
 
 /**
- * Whether HEAD is reachable from origin/master as last fetched: the release ships merged code only, so a pushed topic
- * branch does not qualify.
+ * Whether HEAD is on the first-parent line of origin/master as last fetched: a merge commit or a direct commit on
+ * master, the tip or an older one. Every commit of a merged pull request is an ancestor of origin/master, and an inner
+ * one can name a version before the branch's last fix, so ancestry alone does not qualify; nor does a pushed topic
+ * branch.
  * @param {string} root
  * @param {Sh} [run]
  */
 export function headOnOriginMaster(root, run = sh) {
-  return run("git", ["merge-base", "--is-ancestor", "HEAD", "origin/master"], root).ok;
+  const head = run("git", ["rev-parse", "--verify", "HEAD^{commit}"], root);
+  const line = run("git", ["rev-list", "--first-parent", "origin/master"], root);
+  const id = head.out.trim();
+  return head.ok && line.ok && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(id) && line.out.split("\n").includes(id);
 }
 
 /**
@@ -195,7 +201,7 @@ export async function checkWindow(o) {
   };
   log(`== npm window ${o.run ? "run" : "check"} at ${exec("git", ["rev-parse", "--short", "HEAD"], root).out.trim()} (${new Date().toISOString()})`);
   chk("the tree has no local change", exec("git", ["status", "--porcelain"], root).out.trim() === "");
-  chk("HEAD is on origin/master", headOnOriginMaster(root, exec));
+  chk("HEAD is on the first-parent line of origin/master", headOnOriginMaster(root, exec));
   chk("CSD_PUBLISH_SKIP_TESTS is not set (the guard runs the suites)", (o.env ?? process.env).CSD_PUBLISH_SKIP_TESTS === undefined);
 
   log("\n== plan");
