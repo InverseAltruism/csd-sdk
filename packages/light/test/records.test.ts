@@ -22,7 +22,12 @@ const slice = (from: number, to: number) => ALL.slice((from - FX.from) * HEADER_
 const CP = FX.from + LWMA_WINDOW - 1;
 const CHECKPOINTS = { [CP]: hashAt(CP), [FX.tip]: hashAt(FX.tip) };
 const mcPorts = () => process.getActiveResourcesInfo().filter((r) => r === "MessagePort").length;
-const nextTask = () => new Promise((r) => setTimeout(r, 0));
+// port.close() returns with the port still counted: Node releases the handle in libuv's close-callbacks
+// phase. setTimeout(0) is not ordered after that phase (before the loop starts, libuv runs due timers
+// first), so it can read a correctly closed port as open. The close phase follows the check phase in every
+// iteration and an immediate queued from a check callback waits for the next iteration, so the second
+// immediate runs after a close phase that follows the close() call, whatever phase made the call.
+const afterClosePhase = () => new Promise<void>((r) => setImmediate(() => setImmediate(r)));
 const sameChain = (a: LightClient, b: LightClient) => a.baseHeight === b.baseHeight && a.chain.length === b.chain.length &&
   a.chain.every((v, i) => { const w = b.chain[i]!; return v.height === w.height && v.hash === w.hash && v.chainwork === w.chainwork && !!v.trusted === !!w.trusted; });
 
@@ -72,14 +77,14 @@ console.log("- fromRecords -");
   const ports0 = mcPorts();
   const r = await LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
   ok("fromRecords equals fromSnapshot on the fixture (heights, hashes, chainwork, trusted seed)", !r.failed && sameChain(r.client, fromSnap) && r.client.tip!.height === FX.tip);
-  await nextTask();
+  await afterClosePhase();
   ok("the MessageChannel is closed after a completed restore", mcPorts() === ports0);
 
   const t = await LightClient.fromRecords(new Uint8Array([...slice(FX.from, CP + 9), ...pack([{ ...byH.get(CP + 10)!.header, nonce: 1 }]), ...slice(CP + 11, FX.tip)]),
     { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS });
   ok("a bad suffix record stops the restore there and keeps the verified records below it",
     t.failed?.height === CP + 10 && /PoW/.test(t.failed.reason) && t.client.tip!.height === CP + 9 && t.client.tip!.hash === hashAt(CP + 9));
-  await nextTask();
+  await afterClosePhase();
   ok("the MessageChannel is closed after a stopped restore", mcPorts() === ports0);
 
   const pinned = await LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: { ...CHECKPOINTS, [CP + 20]: hashAt(CP + 21) } });
@@ -95,7 +100,7 @@ console.log("- fromRecords -");
   const seed46 = await LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP + 1 }, { checkpoints: { [CP + 1]: hashAt(CP + 1) } });
   ok("honest: a 46-record seed restores to the tip", !seed46.failed && seed46.client.tip!.hash === hashAt(FX.tip) && seed46.client.chain.length === FX.tip - FX.from + 1);
   ok("a yieldEvery of 0 is refused", /yieldEvery/.test(await thrown(() => LightClient.fromRecords(ALL, { firstHeight: FX.from, anchorHeight: CP }, { checkpoints: CHECKPOINTS }, 0))));
-  await nextTask();
+  await afterClosePhase();
   ok("a refused restore opens no MessageChannel", mcPorts() === ports0);
 
   const [a, b] = await Promise.race([
