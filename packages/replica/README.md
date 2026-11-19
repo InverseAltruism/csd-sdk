@@ -159,8 +159,9 @@ replayed on demand.
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
-when none is running and waits for it at most `waitMs` (default 0: it answers from what is held). Nothing runs on a
-timer: the caller drives `advance()` or reads.
+when none is running and waits for it at most `waitMs` (default 0: it answers from what is held); a call of
+`advance()` while a run is in flight joins that run. A read that finds a step's commit in flight waits for it, so it
+answers from one whole state. Nothing runs on a timer: the caller drives `advance()` or reads.
 
 Each answer is `{ verified: true, value }` or `{ verified: false, value: null, shown }`, with `why` (the codes below),
 `notes`, `level`, `proof`, `vouch` (the basis) and `at` (the tip, the deep height `tip - minDepth` the value is read
@@ -181,16 +182,37 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
 | `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
 | `BEHIND` | the cursor is not below the tip |
-| `BRANCH_UNRESOLVED` | the cursor is not above the tip (it is while a rollback is owed, or a caller's tip is below the store's) |
+| `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
 | `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
-| `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named, meets its own bits and is at most 12 blocks ahead plus one per 120 s since the replica's tip (csd-light `tipHeaderPowOk`, `contenderPlausible`) |
-| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the branch within the last 30 minutes. A confirmation is a witness giving, at the highest height the replica holds a hash for within 12 blocks below the witness's tip and at or below the replica's cursor, the hash the replica holds there; a rollback below it clears it. Never confirmed (or cleared): `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
+| `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h and the replica holds a hash at h (its cursor, or a block with an event or an epoch boundary); it confirms when it gives that hash, from its tip or by `hashAt`. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
 | `SHALLOW` | `primary`: the deep view and the tip view agree |
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
-table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was asked), `CURSOR_ABOVE_TIP` (an `events`
-cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open).
+table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
+answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
+the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`SOURCE_UNAVAILABLE`, `UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED` and `LEVEL_DISPLAY` (a display
+basis is refused by `open`); the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and
+`REPLAY_SLOW`.
+
+A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
+with a valid header, or another hash at the compared height, makes every answer unverified while it does. A caller
+that sees `TIP_BEHIND_PEER` or `SOURCES_DISAGREE` from one witness alone reads `shown`, and drops or replaces that
+witness when it believes it lies; nothing in the reader decides that for it. `hostedWitness` and `nodeWitness` report
+no gate table, so `RULES_DIFFER` compares the local tables (built and loaded) and the tables of witnesses that the
+caller writes itself with `rules`; a witness on our front door can confirm a replica whose rules differ from the
+front door's without that showing.
+
+The confirmation lives in memory. After a restart (a new `open` over a filled store) no answer under an anchor or
+caller root is verified until a witness answers again: `NOT_SYNCED` and `NOT_WITNESSED` before the first advance,
+`NOT_WITNESSED` while the witnesses are silent. The store's meta keeps no confirmation (`StoreMeta.witnessed` is
+written null).
+
+`BUILT_GATES`, the gate table this package was built against, is compared with the loaded cairnx-core's. A cairnx-core
+that adds a gate is answered as before below that gate's height and `RULES_DIFFER` from it on, until this package is
+rebuilt and released against it; every new gate therefore needs a release of the replica before its height.
 
 `open` throws `ReplicaConfigError` for a basis `checkBasis` refuses; a display basis; a basis that cannot give every
 event from activation (`code` `BELOW_FLOOR`: an anchor above the activation height less one, or a caller's floor

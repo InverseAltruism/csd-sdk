@@ -7,8 +7,9 @@ import * as loaded from "@inversealtruism/cairnx-core";
 export type Gates = Readonly<Record<string, number>>;
 export type CoreModule = typeof import("@inversealtruism/cairnx-core");
 
-/** The gate table this package was built and tested against. test/gates.test.ts keeps it equal to the workspace
- *  cairnx-core's, so at run time it differs from the loaded core's only when another cairnx-core is installed. */
+/** The gate table this package was built and tested against. test/reader.test.ts keeps it equal to the workspace
+ *  cairnx-core's, so at run time it differs from the loaded core's only when another cairnx-core is installed; a core
+ *  with a new gate then answers RULES_DIFFER from that gate's height until this package is rebuilt against it. */
 export const BUILT_GATES: Gates = Object.freeze({
   ACTIVATION_HEIGHT: 29_860, V11_HEIGHT: 29_960, V12_HEIGHT: 30_300, V13_HEIGHT: 31_100, V14_HEIGHT: 31_400,
   V15_HEIGHT: 32_000, V16_HEIGHT: 33_600, V17_HEIGHT: 34_000, V18_HEIGHT: 40_000, V19_HEIGHT: 36_700,

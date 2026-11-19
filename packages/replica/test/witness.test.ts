@@ -37,6 +37,9 @@ console.log("B1, a witness behind the replica confirms only at the compared heig
 const b1 = await onChain(branch(30_287), TIP, [witnessOn(all, 30_290).witness]);
 ok("replica at 30,300 on a branch from 30,287, the witness at 30,290 on the recorded chain: NOT_WITNESSED, no confirmation",
   codes(b1.s) === "NOT_WITNESSED" && b1.s.witnessed === null && !b1.s.verified);
+const held0 = await onChain(all, TIP, [witnessOn(all, 30_290).witness]);
+ok("an honest witness at 30,290, where the replica holds no hash: it cannot compare, so NOT_WITNESSED and no SOURCES_DISAGREE",
+  codes(held0.s) === "NOT_WITNESSED" && !noted(held0.s, "SOURCES_DISAGREE"));
 const b76 = await onChain(branch(30_225), TIP, [witnessOn(all, 30_224).witness]);
 ok("a witness 76 blocks behind, the replica on a branch from 30,225: NOT_WITNESSED", codes(b76.s) === "NOT_WITNESSED" && b76.s.witnessed === null);
 now = timeAt(30_298) * 1000 + MIN;
@@ -294,10 +297,10 @@ ok("a feed with inclusion proofs (level 2): LEVEL_FEED", l2.level === 2 && codes
   ok("after close() the reader answers NOT_SYNCED", codes(r.status()) === "NOT_SYNCED");
 }
 {
-  const older: Record<string, unknown> = { ...gatesOf(core) };
+  const older: Record<string, number> = { ...gatesOf(core) };
   delete older.V29_HEIGHT;
   const alt = { ...core, resolve: (...a: Parameters<typeof resolve>) => resolve(...a), V29_HEIGHT: 99_999 };
-  const r = await open({ source: nodeSource(), core: alt, clock });
+  const r = await open({ source: nodeSource(), core: alt as never, clock });
   closing.push(r);
   ok("a gate one table lacks makes them differ from that gate on; before a tip the tables are compared whole",
     coreCheck(undefined, older).differ(88_000) && !coreCheck(undefined, older).differ(87_999) && codes(r.status()) === "RULES_DIFFER,NOT_SYNCED");

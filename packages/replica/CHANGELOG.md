@@ -51,6 +51,13 @@
   `floorBreak`, used by `open` and both roots. The loop gives `hashAt`, `rows` and an `onRollback` callback.
 - `dryRun(tx, author)`: a Propose or an Attest with its outputs replayed in the block above the cursor, answered with
   `applied`, the code and the note of the applied log. `local({ node, fetch? })` in `./browser` and `./server`.
+- The witness rule after review: a witness is compared only at the lower of its tip and the cursor, within 12 blocks
+  of the higher, against a hash the replica holds there; a confirmation is stamped when the witness answered and bound
+  to the loop's generation, which every change of the chain but an extension moves (`chainExtends` guards the one
+  write); a disagreement and a clock read earlier than the last void it; any higher tip with a valid header is
+  `TIP_BEHIND_PEER` (no plausibility cap); a witness out of form is silent, noted `WITNESS_MALFORMED` (a new note
+  code); `advance()` joins a run in flight; a read waits for a commit in flight; a caller whose headers end below the
+  store is an idle step with the caller's tip, so the reader answers `BRANCH_UNRESOLVED`.
 - Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
   which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
   `advance()` or reads).
