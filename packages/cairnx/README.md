@@ -334,8 +334,8 @@ Match the code, never the `note` text, which may change; a code your release doe
 1. Implement `CONVENTION.md` §1–§34 (the events of a block, apply order, every record type, the `V*_HEIGHT`
    activations (using the re-pinned v2.4–v2.7 heights), the canonical-state format, ordinal key ordering, data
    surface only).
-2. Reproduce `test/vectors/events.json` (§33.7). Replay `test/vectors/cases.json`, `cases-v29.json` and
-   `cases-rules.json`: your canonical state must equal `expectedState` **byte-for-byte**.
+2. Reproduce `test/vectors/events.json` (§33.7). Replay `test/vectors/cases.json`, `cases-v29.json`,
+   `cases-rules.json` and `cases-convention.json`: your canonical state must equal `expectedState` **byte-for-byte**.
 3. Replay the live chain and compare the state hash (§34.1) against `test/vectors/replay-hashes.json`, and reproduce
    `test/vectors/hashes.json` (§34.4).
 4. Only if you publish reason codes (§40): reproduce `test/vectors/codes.json`.

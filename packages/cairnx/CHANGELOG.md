@@ -18,6 +18,10 @@
   reference implementations differ there (32); the state's key order puts array-index keys first (5), the field
   lists of section 5 and A3/A4 are complete, and `FILL_UNDERPAID` and `FILL_REBATE_UNPAID` say what they mean on the
   rebate lane (40.4).
+- `test/vectors/cases-convention.json` (12 vectors, `conformance/gen-convention-vectors.mjs`) pins those rules, each
+  in a vector an implementation of the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
+  reference by `conformance/crosscheck-resolve.mjs`, and by the seal, which pins the file's sha256. A file of its own
+  keeps the three case files the seal freezes at their bytes.
 
 ## 0.2.7
 

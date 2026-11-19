@@ -14,12 +14,16 @@ assert.equal(v29.format, 2);
 // canonical-uri check and the same-ticker offer refusal, each of which no other vector decides.
 const rules = JSON.parse(readFileSync(new URL("./vectors/cases-rules.json", import.meta.url), "utf8"));
 assert.equal(rules.format, 2);
+// The convention vectors (conformance/gen-convention-vectors.mjs, also in the Python crosscheck): rules CONVENTION.md
+// states since its 2026-11-19 correction, which an implementation of the earlier text fails.
+const conv = JSON.parse(readFileSync(new URL("./vectors/cases-convention.json", import.meta.url), "utf8"));
+assert.equal(conv.format, 2);
 let pass = 0;
-for (const c of [...cases, ...v29.cases, ...rules.cases]) {
+for (const c of [...cases, ...v29.cases, ...rules.cases, ...conv.cases]) {
   assert.equal(canonicalState(resolve(c.events, c.tipHeight)), JSON.stringify(c.expectedState), `vector ${c.name} diverged`);
   pass++;
 }
-console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length + rules.cases.length} vectors byte-identical (${cases.length} B6-era + ${v29.cases.length} v29 + ${rules.cases.length} rule)`);
+console.log(`cairnx-core conformance: ${pass}/${cases.length + v29.cases.length + rules.cases.length + conv.cases.length} vectors byte-identical (${cases.length} B6-era + ${v29.cases.length} v29 + ${rules.cases.length} rule + ${conv.cases.length} convention)`);
 
 // The replay-hash artifact is LOAD-BEARING, not mirror-only. replay-corpus.json is the real on-chain
 // event sequence truncated at a finalized height (capturedAt/tipHeight in the file); recompute

@@ -23,7 +23,7 @@ const run = (name: string, evs: ChainEvent[], tip: number) => {
   inputs++; events += evs.length;
 };
 
-for (const f of ["cases.json", "cases-rules.json", "cases-v29.json"]) for (const c of read(f).cases) run(`${f}:${c.name}`, c.events, c.tipHeight);
+for (const f of ["cases.json", "cases-rules.json", "cases-v29.json", "cases-convention.json"]) for (const c of read(f).cases) run(`${f}:${c.name}`, c.events, c.tipHeight);
 const corpus = read("replay-corpus.json"), pins = Object.keys(read("replay-hashes.json").hashes).map(Number);
 const byHeight = [...corpus.events].sort((a: ChainEvent, b: ChainEvent) => a.height - b.height);
 let upto = 0;

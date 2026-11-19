@@ -80,8 +80,9 @@ step(`vector-file non-movement vs ${BASELINE_REF} (working tree)`);
 
 // ── 2b. content pins ───────────────────────────────────────────────────────────────────────────────
 // replay-corpus.json + replay-hashes.json: sha256 + floors, so a narrowed corpus cannot self-certify (vectors.test.ts
-// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule and hash vectors and the
-// recorded block fixture) are pinned by sha256 here, since a diff against the baseline cannot see them move.
+// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule, hash and convention
+// vectors and the recorded block fixture) are pinned by sha256 here, since a diff against the baseline cannot see them
+// move.
 //
 // UPDATE POINT: REPLAY_CORPUS_PIN and ADDED_SINCE_BASELINE are the ONE place a sanctioned vector change touches, in the
 // SAME commit as the change. Floors only ever RISE (minEvents, minFclaim and minPinnedHeights up, heightSpan wider or
@@ -101,6 +102,7 @@ const REPLAY_CORPUS_PIN = {
 const ADDED_SINCE_BASELINE = {
   [`${VEC}/events.json`]: "0f61da38fb17a5eb758759b56410090a9491b54642102139d7e330275cb81f0b",
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
+  [`${VEC}/cases-convention.json`]: "e5e69bd3b6af1f3948566c76a21e3bf44735bb1305b8fb186a0f9e23d598d0c3",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");
@@ -230,7 +232,7 @@ const diffCase = (name, events, tip) => {
 step("resolve differential (a): the case files, old vs new and vs their frozen expectedState");
 {
   let n = 0;
-  for (const f of ["cases.json", "cases-rules.json", "cases-v29.json"]) {
+  for (const f of ["cases.json", "cases-rules.json", "cases-v29.json", "cases-convention.json"]) {
     const { format, cases } = readJson(`${VEC}/${f}`);
     if (format !== 2) die(`unexpected ${f} format ${format}`);
     for (const c of cases) {

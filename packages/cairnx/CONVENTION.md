@@ -1676,7 +1676,7 @@ A result says which of three levels it is.
 
 A replica conforms at three levels.
 
-1. The vectors: `test/vectors/cases.json`, `cases-v29.json` and `cases-rules.json` (replay, §5), `events.json`
+1. The vectors: `test/vectors/cases.json`, `cases-v29.json`, `cases-rules.json` and `cases-convention.json` (replay, §5), `events.json`
    (§33.7) and `hashes.json` (§34.4). A conformant implementation reproduces every case byte for byte.
 2. The pinned replay hashes: `test/vectors/replay-hashes.json`, the state hash (§34.1) of the live chain at each
    pinned height.

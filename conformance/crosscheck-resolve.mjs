@@ -1,7 +1,7 @@
-// META-1 (resolve half) — cross-IMPLEMENTATION conformance for the FULL ledger.
+// META-1 (resolve half): cross-IMPLEMENTATION conformance for the FULL ledger.
 // Feed the shipping JS resolver and the independent Python port (cairnx_ref.py) the SAME
-// language-neutral vectors (packages/cairnx/test/vectors/cases.json, and cases-rules.json, the rule vectors of
-// gen-rule-vectors.mjs) and assert byte-identity:
+// language-neutral vectors (packages/cairnx/test/vectors/cases.json, cases-rules.json, the rule vectors of
+// gen-rule-vectors.mjs, and cases-convention.json, those of gen-convention-vectors.mjs) and assert byte-identity:
 //   canonicalState(JS.resolve)  ===  Python.resolve  ===  JSON.stringify(expectedState)
 // A JS-only ledger fork (a fee/sort/rounding/serialization divergence) diverges HERE.
 import { spawnSync } from "node:child_process";
@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 
 const load = (name) => JSON.parse(readFileSync(new URL(`../packages/cairnx/test/vectors/${name}`, import.meta.url), "utf8"));
-const files = [load("cases.json"), load("cases-rules.json")];
+const files = [load("cases.json"), load("cases-rules.json"), load("cases-convention.json")];
 if (files.some((f) => f.format !== 2)) { console.error("expected vectors format 2"); process.exit(1); }
 const cases = files.flatMap((f) => f.cases);
 
@@ -32,9 +32,9 @@ for (let i = 0; i < cases.length; i++) {
   if (jsVsExp && pyVsJs) { pass++; console.log(`  ✓ ${name}`); continue; }
   fail++;
   console.error(`  ✗ ${name}`);
-  if (!jsVsExp) console.error(`     JS != expectedState (vector self-check failed — JS/dist stale?)`);
+  if (!jsVsExp) console.error(`     JS != expectedState (vector self-check failed: JS/dist stale?)`);
   if (!pyVsJs) {
-    console.error(`     Python != JS — FIRST DIVERGENCE:`);
+    console.error(`     Python != JS, FIRST DIVERGENCE:`);
     const a = jsOut[i], b = pyOut[i];
     let k = 0; while (k < a.length && k < b.length && a[k] === b[k]) k++;
     console.error(`       at offset ${k}:`);
