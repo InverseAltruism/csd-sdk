@@ -13,7 +13,7 @@ import * as root from "../src/index.js";
 import {
   CAIRNX_EVENT_RULE, CAP_CODES, CONF_TOKEN_FILL, EVENTS_HASH_START, FCLAIM_MAX_HOLD_SPAN, FINAL_DEPTH, REASON_CODES, REASON_CODE_OUTCOME, RecordError,
   applyOrder, blockEvents, blockMembers, eventId, eventOfTx, eventsHash, eventsHashStep, explainRecord, fillEndorsement, nameView, offerFillTooLate,
-  resolveNameIn, stateHash,
+  resolveNameIn, stateHash, CAIRNX_CORE_VERSION, GATE_HEIGHTS,
 } from "../src/index.js";
 
 assert.equal(CONF_TOKEN_FILL, 1_000_000, "CONF_TOKEN_FILL must be the 1_000_000 sentinel (a different value forks token-fill acceptance)");
@@ -49,9 +49,13 @@ assert.equal(typeof explainRecord, "function", "explainRecord is a root export")
 assert.ok(new RecordError("RECORD_BAD_TICKER") instanceof Error, "RecordError is a root export");
 // Forward resolution (CONVENTION §35.4): the service re-exports resolveNameIn, the replica's name() reads nameView.
 for (const [name, fn] of [["resolveNameIn", resolveNameIn], ["nameView", nameView]] as const) assert.equal(typeof fn, "function", `${name} is a root export`);
+// The core's version and its gate table: the resolver hands the version to cairnx-api, the replica compares tables.
+assert.equal(typeof CAIRNX_CORE_VERSION, "string", "CAIRNX_CORE_VERSION is a root export");
+assert.ok(Object.isFrozen(GATE_HEIGHTS), "GATE_HEIGHTS is a root export");
 const names = ["fillEndorsement", "offerFillTooLate", "FCLAIM_MAX_HOLD_SPAN", "eventOfTx", "blockMembers", "blockEvents", "CAIRNX_EVENT_RULE", "applyOrder", "eventId",
   "stateHash", "eventsHashStep", "eventsHash", "EVENTS_HASH_START", "FINAL_DEPTH", "REASON_CODES", "REASON_CODE_OUTCOME", "CAP_CODES", "ReasonCode", "AppliedCode",
-  "RefusalCode", "RecordCode", "explainRecord", "RecordError", "resolveNameIn", "nameView", "ResolvedName", "NameView", "NameViewState"];
+  "RefusalCode", "RecordCode", "explainRecord", "RecordError", "resolveNameIn", "nameView", "ResolvedName", "NameView", "NameViewState",
+  "CAIRNX_CORE_VERSION", "GATE_HEIGHTS", "GateName"];
 for (const name of names) assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `dist/index.d.ts must export ${name}`);
 
 // The replay's private store and its check mode stay internal: resolve() is the root export's only resolver.
@@ -61,4 +65,4 @@ for (const name of ["replay", "createStore", "createContext"]) {
   assert.ok(!new RegExp(`declare (function|const) ${name}\\b`).test(dts), `dist/index.d.ts declares no ${name}`);
 }
 
-console.log(`cairnx-core export surface: ${10 + 4 + 2 + 5 + 2 + names.length + 7} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and its applyOrder and eventId, the §34 hashes' four, the §40 codes' nine and the §35.4 forward resolution's five pinned in src and dist .d.ts; replay, createStore and createContext absent)`);
+console.log(`cairnx-core export surface: ${10 + 4 + 2 + 5 + 2 + 2 + names.length + 7} passed (CONF_TOKEN_FILL, fillEndorsement, offerFillTooLate, FCLAIM_MAX_HOLD_SPAN, the §33 rule's four names and its applyOrder and eventId, the §34 hashes' four, the §40 codes' nine, the §35.4 forward resolution's five, the version and the gate table pinned in src and dist .d.ts; replay, createStore and createContext absent)`);

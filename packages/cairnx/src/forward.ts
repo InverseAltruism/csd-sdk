@@ -20,8 +20,8 @@ export function resolveNameIn(names: Record<string, NameState>, name: string): R
   return { name, addr: n.addr ?? n.owner, via: n.addr ? "nset" : "owner", lapsed: n.expired === true, owner: n.owner };
 }
 
-/** The classes of `nameView`: `free` is a name absent from `names`; `reserved` one in RESERVED_NAMES, which no record
- *  can claim (§9). */
+/** The classes of `nameView`: `free` is a name absent from `names`; `reserved` one in RESERVED_NAMES, whose record does
+ *  not parse (§9), so it is never in `names`. */
 export type NameViewState = "held" | "pending" | "lapsed" | "free" | "reserved";
 
 /** A name as a reader shows it. `addr` and `profile` are a held name's only: a pending or lapsed name gives no address,

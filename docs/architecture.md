@@ -42,6 +42,9 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 - `primary.ts`: pickPrimaryName.
 - `forward.ts`: CONVENTION section 35.4, forward resolution: resolveNameIn (the address a name receives at) and nameView
   (the class, owner, address and profile a reader shows); both read `names` only.
+- `version.ts`: CAIRNX_CORE_VERSION, the package's version (equal to package.json's).
+- `gates.ts`: GATE_HEIGHTS, the gate table (ACTIVATION_HEIGHT and every V<n>_HEIGHT by name), built from the constants of
+  `types.ts`.
 - `client.ts`: claim-burial depth helpers.
 - `paidto.ts`: outputs to paidTo aggregation for ChainEvent builders.
 - `events.ts`: CONVENTION section 33, the rule from a block to events (eventOfTx, blockMembers, blockEvents); the
