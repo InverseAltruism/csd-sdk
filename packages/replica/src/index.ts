@@ -10,5 +10,5 @@ export { memoryStore } from "./memory-store.js";
 export { readBlocks } from "./read-blocks.js";
 export { fullReplay } from "./replay.js";
 export { replicaLoop, type Loop, type LoopOpen, type LoopOptions, type LoopStatus } from "./loop.js";
-export { open, openLog, type EventLog, type OpenOptions, type Reader } from "./reader.js";
+export { open, openLog, type DryRunTx, type EventLog, type OpenOptions, type Reader } from "./reader.js";
 export type { Answer, AnswerMeta, At, BalanceValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness, WitnessTip } from "./answer.js";

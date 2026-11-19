@@ -155,6 +155,7 @@ replayed on demand.
 
 `open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
 `memoryStore()`): `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
+`dryRun(tx, author)`,
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
@@ -197,9 +198,18 @@ above it, or above the pin under one); and a witness on the header source's orig
 anchor root, the caller's `origin` under a caller root). A store that opens refused for its format, rule, basis or
 rows is reset and filled again; the newer-pin exception of the design is the disk store's slice.
 
+`dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
+cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
+whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, fetch? })`, in
+`./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
+address rule and `memoryStore()`.
+
 What the reader does not answer yet: `name()` needs a forward-resolution selector from cairnx-core (the address and
 profile a name gives, which CONVENTION sections 28 and 35.3 state and core 0.2.7 does not export), so it waits for
-0.2.8 rather than restating that rule here; `transfers`, `./display`, `local` and `dryRun` are the next parts of this
-slice. What it does not persist: the witness's confirmation and the source's header window live in memory.
+0.2.8 rather than restating that rule here; `transfers` waits for cairnx-core to
+export the token movements of an address (a whole fill's delivered amount and a mint's amount are not fields of the
+state today, and deriving them here would restate the core's settlement); `./display` is not built. What it does
+not persist: the witness's confirmation and the source's header window live in memory.
 
 ESM only, `sideEffects: false`. `@inversealtruism/cairnx-core` is a peer dependency, so a process runs one `resolve()`.

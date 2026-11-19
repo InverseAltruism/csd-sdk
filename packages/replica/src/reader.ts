@@ -4,7 +4,7 @@
 // timer, so a caller drives advance() or reads. No value is computed from a source's tip(): depth is counted from the
 // tip the loop's last step reported.
 import {
-  ADDR_RE, CAIRNX_EVENT_RULE, FINAL_DEPTH, TICKER_RE, type CairnXState, type ChainEvent, type EventRule,
+  ADDR_RE, CAIRNX_EVENT_RULE, FINAL_DEPTH, TICKER_RE, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
 import type { Answer, AnswerMeta, At, BalanceValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
@@ -37,7 +37,15 @@ export interface Reader extends EventLog {
   primary(address: string, o?: ReadOptions): Promise<Answer<{ readonly address: string; readonly name: string | null }>>;
   /** The deep view, a copy. */
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
+  /** What cairnx-core's resolve() does with `tx`, a Propose or an Attest by `author`, in the block above the cursor
+   *  after every event held: whether it applies, with the reason code and note of the applied log. */
+  dryRun(tx: DryRunTx, author: string, o?: ReadOptions): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
 }
+/** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
+export type DryRunTx = EventRuleTx["tx"];
+// The id a tried transaction takes. Its entry in the applied log is found by this id at the height above the cursor,
+// where no held event lies.
+const TRY_TXID = `0x${"f".repeat(64)}`;
 
 type Views = { deep: CairnXState | null; top: CairnXState | null; deepHeight: number };
 type Out<T> = { value: T | null; shown: T | null; why?: NotVerifiedCode[]; notes?: NoteCode[] };
@@ -161,7 +169,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     advance,
     async close() { await running?.catch(() => undefined); await loop.close(); },
   };
-  return { log, read };
+  return { log, read, loop };
 }
 
 /** A replica of another rule's events (design section 5, M12): the event log and its status, no resolved state. */
@@ -172,7 +180,7 @@ export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Pr
 /** A CairnX replica: the event log and the reads over cairnx-core's resolve(). Throws ReplicaConfigError for a basis
  *  that cannot give every event from activation (`code` BELOW_FLOOR) or a witness on the header source's origin. */
 export async function open(o: OpenOptions): Promise<Reader> {
-  const { log, read } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
+  const { log, read, loop } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
   return {
     ...log,
     balance(ticker, address, ro) {
@@ -196,6 +204,19 @@ export async function open(o: OpenOptions): Promise<Reader> {
     },
     state(ro) {
       return read(ro, true, (v) => { const s = v.deep === null ? null : structuredClone(v.deep); return { value: s, shown: s }; });
+    },
+    dryRun(tx, author, ro) {
+      const a = addressOf(author);
+      let ev: ChainEvent | null = null;
+      try { ev = a === null ? null : eventOfTx({ pos: 1, txid: TRY_TXID, tx }, Number.MAX_SAFE_INTEGER - 1, a); } catch { ev = null; }   // refused by the rule
+      return read(ro, ev !== null, () => {
+        const c = log.status().cursor;
+        if (c === null) return { value: null, shown: null };
+        const h = c.height + 1, events = [...loop.rows(0).flatMap((r) => r.events), { ...ev!, height: h }];
+        const entry = resolve(events, h).events.find((e) => e.id === TRY_TXID && e.height === h);
+        const value = { applied: entry?.ok === true, code: entry?.code ?? null, note: entry?.note ?? null };
+        return { value, shown: value };
+      });
     },
   };
 }

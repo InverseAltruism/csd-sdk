@@ -49,7 +49,10 @@
   `WITNESS_SILENT`). `open` refuses `BELOW_FLOOR` (`ReplicaConfigError.code`) and a witness on the header source's
   origin. `nodeWitness` and `hostedWitness` in `./browser` and `./server`. The floor rule has one home,
   `floorBreak`, used by `open` and both roots. The loop gives `hashAt`, `rows` and an `onRollback` callback.
-- Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`;
-  `./display`, `local` and `dryRun`; a poll timer (the caller drives `advance()` or reads).
+- `dryRun(tx, author)`: a Propose or an Attest with its outputs replayed in the block above the cursor, answered with
+  `applied`, the code and the note of the applied log. `local({ node, fetch? })` in `./browser` and `./server`.
+- Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
+  which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
+  `advance()` or reads).
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
   follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").
