@@ -223,8 +223,9 @@ delivered; the partial fill that completes the offer also sets `fill` to that sa
 expiry epoch (§24, §25) is below `epochOf(h)`, releasing an offer's give, and deletes every reservation (§28) and
 recapture reservation (§29) whose `finalizeBy` is below h. After the last event, and after the deferred cancels of its
 block (§16), it runs the same sweep once more at `tipHeight + 1`. So the state at a tip shows an offer or bid whose
-expiry epoch is `epochOf(tipHeight)` as `expired` when `tipHeight` is the last height of that epoch
-(`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the epoch. A name's `expired` (§17) is read at the tip's
+effective expiry epoch, as the sweep at `tipHeight + 1` computes it, is `epochOf(tipHeight)` as `expired` when
+`tipHeight` is the last height of that epoch (`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the
+epoch; one anchored below V22 is read with its §24 cap from the tip 40 099 on, whose next height is V21. A name's `expired` (§17) is read at the tip's
 own epoch: it is present when `epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
 
 **Canonical state (format 2, normative):** the canonical surface is
@@ -386,9 +387,10 @@ cap: ecosystem doc 16 §4; these are NOT in canonical state today.)*
   payment), so a losing claimer forfeits only the 0.05 CSD attest fee. On that basis v1.7 safely
   **re-opens** untaken CSD offers via claim-to-fill (§20), and v2.0/§23 bounds its late-fill edge.)
 - **No unconfirmed chaining (no CPFP).** The mempool only accepts txs whose inputs exist in the
-  confirmed UTXO set: you cannot spend change that hasn't been mined. Sequential CairnX actions
-  from one key require one confirmation between them; client software must serialize and surface
-  this ("next action available after 1 conf").
+  confirmed UTXO set: you cannot spend change that hasn't been mined. A key's next action needs a
+  confirmed coin: with one coin, one confirmation between actions; a key holding several confirmed
+  coins can anchor several records in one block (§16). Client software that spends one coin must
+  serialize its actions and surface this ("next action available after 1 conf").
 - **No native-CSD pools.** CSD itself cannot be locked by convention (real UTXOs obey only
   keys). CairnX trades CSD↔token atomically per-trade; it does not and cannot pool CSD.
 - **Reorgs:** state is a pure function of the chain; resolvers recompute (or roll back) on
@@ -559,7 +561,9 @@ A CSD-priced **token** offer may opt into partial fills with `min`:
 ```
 
 Cancels **all of the proposer's open offers anchored strictly earlier in apply order**, releasing
-their locks, optionally filtered to one `give` asset (`ticker` or `name`, at most one). Without
+their locks, optionally filtered to one `give` asset (`ticker` or `name`, at most one), except what §31 exempts: a
+taker-bound offer anchored at V28 or above is not a target (Lane B), and from V28 the block-boundary flush skips a
+target under a live fclaim hold (Correction 2). Without
 cheap mass-cancel a market maker cannot keep a ladder of quotes honest (per-offer cancel = one tx
 each: the 0x `minValidSalt` lesson). Anchor an `ocancel`, then re-post the fresh ladder in a later block. From v1.4
 (height 31 400, §16) an `ocancel`'s effect waits for the end of its block, so the give it releases stays locked for the
@@ -594,10 +598,12 @@ of the book is instead built from **bids**, on-chain discovery records:
   scriptless ceiling for buy-side flow.
 - The resolver tracks `bids` (open/cancelled/expired/done). An applied offer whose `bid` names a bid in `bids` is
   appended to that bid's `offers` (in apply order) whatever its taker, its price and the bid's status: taker = bidder
-  and price ≤ bid describe an honest answer, not a condition of the link. An offer whose `bid` names no bid is created
-  with its `bid` and linked to nothing. A fill that closes an offer carrying `bid` (a whole fill, or the partial fill
-  that completes it) marks that bid `done` when the buyer is its bidder and the bid is still `open` at the fill; a bid
-  already cancelled or expired keeps its status (purely informational).
+  and price ≤ bid describe an honest answer, not a condition of the link. An offer whose `bid` names no bid when it
+  applies is created with its `bid` and is never added to a bid's `offers`, then or later. A fill that closes an offer
+  carrying `bid` (a whole fill, or the partial fill that completes it) looks that id up in `bids` at the fill, not
+  through `offers`, and marks the bid `done` when it exists, the buyer is its bidder and it is still `open`; a bid
+  already cancelled or expired keeps its status, and a bid anchored after the offer naming it can be `done` with empty
+  `offers` (purely informational).
 - No protocol fee on bids (the anchor fee to miners is the spam price; the trade fee is paid
   when the responding offer fills).
 
@@ -706,8 +712,8 @@ From height **31 400**:
 - **Why deferral, not reordering:** moving cancels after fills in the sort would break the
   global ordered loop and the "offers settle before fills" invariant for every other record
   type. Deferring only the effect keeps apply order intact. A relist by the same key later in
-  the cancel's block sees the lock state before the flush, so a relist of the give the cancel
-  releases is refused (§12b). One key can anchor several records in one block, each spending
+  the cancel's block sees the lock state before the flush, so a relist that needs the give the
+  cancel releases is refused (§12b). One key can anchor several records in one block, each spending
   its own confirmed coin.
 - **Determinism:** the deferred-cancel list is built and flushed in apply order, so the state
   (and the event log) remains a pure function of the chain prefix. Non-retroactive: pre-v1.4
@@ -1039,9 +1045,10 @@ the settled winner ever pays.
   (§27, priced at the FINALIZE height). On success the `pending`/`finalizeBy` keys become ABSENT, the
   lease starts (`paidThroughEpoch = epochOf(ev.height) + NAME_TERM_EPOCHS`), and the name is NOT
   `viaFill`.
-- **Reservation expiry (lazy):** past `finalizeBy` an un-finalized reservation is swept exactly like a
-  lapsed lease (at each event height and at the tip+1 closing sweep): the name record is DELETED and the
-  name reopens. The would-be winner has lost only anchors, never the registration fee.
+- **Reservation expiry (lazy):** past `finalizeBy` an un-finalized reservation is deleted by the expiry sweep of §5
+  (before each event above `finalizeBy`, and at the closing sweep at `tipHeight + 1`, so it is gone from the state at
+  a tip equal to `finalizeBy`, although an `nfinalize` mined at that height still applies), and the name reopens. The
+  would-be winner has lost only anchors, never the registration fee.
 - **Client timing rule** (`FINALIZE_TIP_MARGIN = 2`, client-side only): sign the finalize at
   `effHeight + 8 + 2` or later so one reorg cannot un-freeze the contest under a fee-bearing tx. The
   20-block grace exists so a slow inclusion still lands before `finalizeBy`.
@@ -1260,11 +1267,12 @@ transaction can also be mined again: coinbase txids are not unique on this chain
 created again and the same spending transaction mined in a later block. Those copies sit in two blocks,
 possibly on both sides of the gate, and `resolve()` fed both drops the later copy only when both are at or
 above the gate. §33 keeps the first occurrence, so a feed built by its rule holds neither kind of duplicate;
-the drop above stays the rule for a feed that is not built by it. `resolve()` over a list that holds one transaction
-id twice where the drop keeps both copies (the first copy below the gate, the second at a later height or at another
-position in the same block) is outside the conformance domain (§38), and there the two reference implementations
-differ: an offer whose id is fed again after its seller's `ocancel` in that block stays open past its expiry in
-cairnx-core and expires in the Python reference.
+the drop above stays the rule for a feed that is not built by it. A list holding one transaction id at two places (a
+later height, or another position in the same block) with the first copy below the gate is not a list §33 produces
+(§33.2), and no level of §38 covers `resolve()` over it; there the two reference implementations differ: from V14, an
+offer among its seller's `ocancel` targets, fed again after that `ocancel` in its block, stays open past its expiry in
+cairnx-core and expires in the Python reference. Two copies at one height and position below the gate both apply in
+both, as `cases-v29.json` pins.
 
 **M5: the concurrent-hold cap counts only OPEN holds (relaxation).** §20/§31 cap an address at
 `MAX_ACTIVE_CLAIMS` (= 3) live holds, counted as `claimedBy === who && claimHeld(o, h)`. A FILLED offer
@@ -1792,7 +1800,7 @@ NAME_NOT_LAPSED and INVARIANT_BROKEN (their rows say why).
 | TOKEN_SUPPLY_EXHAUSTED | refused | | nothing is left to mint |
 | TOKEN_MINT_AMOUNT_REQUIRED | refused | | an issuer mint without `amount` |
 | TOKEN_BALANCE_LOW | refused | | the available balance is short (a transfer, an offer's give, a token fill's price and fee) |
-| TREASURY_FEE_UNPAID | refused | | the output to the treasury is below the fee or premium |
+| TREASURY_FEE_UNPAID | refused | | the output to the treasury is below the fee or premium (where the treasury is the seller on a rebate lane, below the fee plus the maker rebate, which sum on its output) |
 | NAME_NO_COMMIT | refused | | no commit for this reveal below its height and inside the window |
 | NAME_SALT_REQUIRED | refused | | a `name` without salt at V25 and above (registration) or V26 and above (recapture) |
 | NAME_TAKEN_EARLIER | refused | | an earlier (effective height, position, id) holds the name or its reservation |

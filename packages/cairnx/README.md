@@ -101,7 +101,7 @@ stateDiagram-v2
   Active --> Grace: lease term ends (~1 year)
   Grace --> Active: nrenew · OWNER ONLY, ~30-day window
   Grace --> Lapsed: grace ends un-renewed
-  Lapsed --> Active: recapture · anyone re-claims at a DECAYING premium (20x to 1x over ~30 days), fresh lease
+  Lapsed --> Active: recapture · anyone re-claims at a DECAYING premium (19x stepping down to 1x over about 28 days), fresh lease
   Active --> [*]
 ```
 
@@ -115,7 +115,7 @@ stateDiagram-v2
    (`nprofile`), transfer it (`nxfer`), renew it (`nrenew`), or list it for sale.
 3. **Grace (~30 days).** When the term ends, **only the current owner** may renew during a grace window,    your name is never sniped out from under you while you still hold it.
 4. **Lapsed → decaying-premium recapture.** If grace passes un-renewed, anyone may re-claim, but at a
-   **premium that decays 20× → 1×** over ~30 days (a Dutch auction back to the floor price). This prices
+   **premium of 19× stepping down to 1×** over about 28 days (CONVENTION section 17; a Dutch auction back to the floor price). This prices
    in genuine demand without a permanent squatting tax, and a recaptured name gets a fresh ownership basis
    so a stale pre-lapse commit can't steal it.
 
@@ -137,7 +137,7 @@ stateDiagram-v2
 |---|---|---|
 | Lease term | ~1 year (`NAME_TERM_EPOCHS = 8760`) | 1 epoch ≈ 1 h (30 blocks) |
 | Grace window | ~30 days (`NAME_GRACE_EPOCHS = 720`) | owner-only renewal |
-| Recapture premium | **20× → 1×** over ~30 days | decaying Dutch auction on lapsed names |
+| Recapture premium | **19× stepping down to 1×** over about 28 days (CONVENTION section 17) | decaying Dutch auction on lapsed names |
 | Reveal window | ~16 min (`REG_COMMIT_MAX_BLOCKS = 8`, v2.5+; was 240 blocks below v2.5) | commit-reveal deadline; doubles as the displacement freeze |
 | Registration fee | **15 / 10 / 5 / 3 CSD** by length (≤3 / 4 / 5-9 / ≥10 chars, v2.4) | length-graded (was flat 6.7 / 3 CSD under v1.8); paid to the treasury at finalize (v2.5+) |
 

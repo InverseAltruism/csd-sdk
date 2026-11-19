@@ -14,10 +14,13 @@
   after the hold and the offer end (20, A4); offers below 29 960 carry `feeBps` 0 (19); a same-block re-post of what
   an `ocancel` releases is refused from V14, and section 16 no longer says the case cannot occur on chain (12b, 16);
   the fclaim grant checks the expiry's 2^53 bound first and its order decides only the reason code (31); a list
-  holding a transaction id twice where the V29 drop keeps both is outside the conformance domain, and the two
-  reference implementations differ there (32); the state's key order puts array-index keys first (5), the field
-  lists of section 5 and A3/A4 are complete, and `FILL_UNDERPAID` and `FILL_REBATE_UNPAID` say what they mean on the
-  rebate lane (40.4).
+  holding a transaction id at two places with the first copy below V29 is not a list section 33 produces, no
+  conformance level covers it and the two reference implementations differ there (32); an un-finalized reservation
+  is gone from the state at a tip equal to `finalizeBy` (28); one key can anchor several records in one block (6,
+  16); the state's key order puts array-index keys first (5), the field lists of section 5 and A3/A4 are complete,
+  and `FILL_UNDERPAID`, `FILL_REBATE_UNPAID` and `TREASURY_FEE_UNPAID` say what they mean on the rebate lane (40.4).
+  README.md gives the recapture premium as 19x stepping down to 1x over about 28 days, where it said 20x to 1x over
+  about 30.
 - `test/vectors/cases-convention.json` (12 vectors, `conformance/gen-convention-vectors.mjs`) pins those rules, each
   in a vector an implementation of the earlier text fails; replayed by `test/vectors.test.ts`, against the Python
   reference by `conformance/crosscheck-resolve.mjs`, and by the seal, which pins the file's sha256. A file of its own
