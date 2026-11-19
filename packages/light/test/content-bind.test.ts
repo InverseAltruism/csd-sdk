@@ -38,6 +38,9 @@ const proposeGenuine: RpcTxJson = {
 // re-derive the REAL ids/root from the bodies (exactly what verifyTxInclusion now does internally)
 const coinbaseId = codecTxid(rpcTxToTx(coinbase));
 const proposeId = codecTxid(rpcTxToTx(proposeGenuine));
+// The node serves each tx's txid as the id its body hashes to; the bind refuses any other.
+coinbase.txid = coinbaseId;
+proposeGenuine.txid = proposeId;
 const derivedIds = [coinbaseId, proposeId];
 const root = merkleRoot(derivedIds);
 const HEIGHT = 40000;
@@ -60,7 +63,7 @@ function clientWith(txs: RpcTxJson[]) {
 
 // 1) HONEST block: the proven Propose tx + its committed payload_hash are surfaced.
 {
-  // server reports honest .txid fields (the id it claims) — verifyTxInclusion ignores them and re-derives
+  // server reports honest .txid fields; verifyTxInclusion re-derives each id from its body and requires them equal
   const honestTxs = [{ ...coinbase, txid: coinbaseId }, { ...proposeGenuine, txid: proposeId }];
   const lc = clientWith(honestTxs);
   const res = await lc.verifyTxInclusion(proposeId);
@@ -112,6 +115,7 @@ console.log("the block bind: repeated txid and exact u64");
     locktime: 0, app: { type: "Attest", proposal_id: proposeId, score: 1, confidence: 0 },
   };
   const attestId = codecTxid(rpcTxToTx(attest));
+  attest.txid = attestId;
   const root3 = merkleRoot([coinbaseId, proposeId, attestId]);
   const header3: BlockHeader = { ...header, merkle: root3 };
   const verified3 = { height: HEIGHT, hash: blockHash, header: header3, chainwork: 1n };
@@ -133,6 +137,7 @@ console.log("the block bind: repeated txid and exact u64");
   const EE = 9007199254740993n;
   const bigTx = { ...proposeGenuine, app: { ...proposeGenuine.app, expires_epoch: EE } } as unknown as RpcTxJson;
   const bigId = codecTxid(rpcTxToTx(bigTx));
+  bigTx.txid = bigId;
   const verifiedBig = { height: HEIGHT, hash: blockHash, header: { ...header, merkle: merkleRoot([coinbaseId, bigId]) }, chainwork: 1n };
   const text = (txs: RpcTxJson[]) => JSON.stringify({ ok: true, hash: blockHash, height: HEIGHT, header, txs }, (_k, v) => (typeof v === "bigint" ? `@@${v}@@` : v)).replace(/"@@(\d+)@@"/g, "$1");
   const honest = bindBlockBody(text([coinbase, bigTx]), verifiedBig);
@@ -146,8 +151,11 @@ console.log("the block bind: repeated txid and exact u64");
   ok("bindBlockBody: a tx served without app binds as app None", bindBlockBody(text([coinbaseNoApp as RpcTxJson, bigTx]), verifiedBig).ok);
   const rep = bindBlockBody(text([coinbase, proposeGenuine, attest, attest]), verified3);
   ok("bindBlockBody: a body repeating a txid is refused as duplicate-txid", !rep.ok && rep.kind === "duplicate-txid");
-  const swapped = bindBlockBody(text([coinbase, { ...bigTx, outputs: [{ value: 8, script_pubkey: "0x" + "44".repeat(20) }] }]), verifiedBig);
-  ok("bindBlockBody: an altered body is refused as body-mismatch", !swapped.ok && swapped.kind === "body-mismatch");
+  const altered = { ...bigTx, outputs: [{ value: 8, script_pubkey: "0x" + "44".repeat(20) }] };
+  altered.txid = codecTxid(rpcTxToTx(altered));
+  const swapped = bindBlockBody(text([coinbase, altered]), verifiedBig);
+  ok("bindBlockBody: an altered body, served with its own txid, is refused as body-mismatch against the merkle root",
+    !swapped.ok && swapped.kind === "body-mismatch" && /merkle root/.test(swapped.reason));
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);

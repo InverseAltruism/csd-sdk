@@ -59,6 +59,31 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
+
+`bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose
+`txid` field is absent or not exactly the id its body hashes to, whose `prev_txid`, `script_sig`, `script_pubkey`,
+`payload_hash` or `proposal_id` is not `0x` and lower-case hex, or whose app type is not exactly `None`, `Propose` or
+`Attest`; the reason names the tx and the field. No hash commits the `txid` field, and `verifyTxInclusion` returns the
+served JSON, so a body that kept a tx's bytes and replaced its `txid` was proven with the replaced id in
+`result.tx.txid`; every tx of the node's `/block` and `/tx` answers carries its txid (576 of 576 block txs and 21 of 21
+`/tx` answers in cairnx-replica's capture), so an absent one is refused too. The node writes every
+one of these fields as `format!("0x{}", hex::encode(..))` (compute-substrate `src/api/mod.rs`, `app_payload_json`
+and the `/block` handler, at cairn-v0.1.17). The codec reads a hex field with or without `0x` and in any case to the
+same bytes, and `rpcTxToTx` rebuilds every app type other than `None` and `Propose` as an Attest, so a body served in
+such a spelling hashed to the honest merkle root while a consumer that compares the field as text (a record's payload
+hash, an offer id) dropped the record from its replay: a block source could remove a name transfer, an offer cancel
+or a competing claim with every hash check passing. Over cairnx-replica's node capture (486 blocks, 29,815 to
+30,300, 576 txs), each `payload_hash` and `proposal_id` in three spellings (129 bodies) bound under the previous bind
+and 89 of the 126 whose record a consumer keeps were dropped by that consumer's text check (cairnx-core `parseRecord`
+for a Propose, id equality for an Attest); none binds now. The same 486 blocks bind byte-identically before and after
+and give the same 41 events in the same order (CONVENTION section 33 `blockEvents`, authors by `authorOf`).
+`rpcTxToTx`, the codec and the builders accept what they accepted: a source tx read by txid is unaffected, and its
+only fields consumers use are the spent output's `script_pubkey` (through `authorOf`, which returns the address in
+the node's form) and values. Txids, sighashes, signatures and replay output are unchanged. csd-light gets a
+CHANGELOG listed in `files`. Its one workspace dependent, cairnx-replica, is private and has no published version,
+so it keeps 0.1.0 and packs with csd-light 0.1.27.
+
 ## cairnx-core, next release (2026-11-19, Plan 91 audit; unreleased; no consensus-surface change) - the convention text follows the code
 
 Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are unchanged (`src/`

@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/csd-light",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "engines": {
     "node": ">=18"
   },
@@ -24,11 +24,12 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "tsx test/light-offline.test.ts && tsx test/records.test.ts && tsx test/content-bind.test.ts && tsx test/lwma-memo.test.ts && tsx test/route.test.ts && tsx test/route-consumers.test.ts",
+    "test": "tsx test/light-offline.test.ts && tsx test/records.test.ts && tsx test/content-bind.test.ts && tsx test/bind-canonical.test.ts && tsx test/lwma-memo.test.ts && tsx test/route.test.ts && tsx test/route-consumers.test.ts",
     "test:live": "tsx test/light.test.ts",
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
