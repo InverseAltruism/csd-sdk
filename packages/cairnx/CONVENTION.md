@@ -228,7 +228,10 @@ effective expiry epoch, as the sweep at `tipHeight + 1` computes it, is `epochOf
 `tipHeight` is the last height of that epoch (`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the
 epoch. For an offer or bid anchored below V22 that sweep applies the §24 cap once `tipHeight + 1` reaches V21
 (40 100), that is from tip 40 099 on. A name's `expired` (§17) is read at the tip's own epoch: it is present when
-`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
+`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`. The state at a tip does not depend on the heights at
+which sweeps ran between events: an event that writes nothing (§40.1) adds only a sweep at its height and changes no
+state, so a resolver may apply each expiry at the first height it is due, as the reference implementation does, or
+apply every due expiry before each event.
 
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
