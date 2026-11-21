@@ -59,12 +59,12 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## cairnx-core, unreleased (rides 0.2.9; 2026-11-21, Plan 91 G6 slice 1; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
+## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
 
 No rule changes. `resolve.ts` runs the replay as a fold: one step per event in apply order, and an end at the tip
 (the last flush of deferred cancels, the closing sweep at `tipHeight + 1`, the materialized state) that is the only
 step reading the tip. No export and no type changed; `dist/index.d.ts` differs from 0.2.8's by two colons in
-`canonicalState`'s comment, where em dashes were.
+`canonicalState`'s comment, where em dashes were, and by the version literal of `CAIRNX_CORE_VERSION`.
 
 `resolve/store.ts` sweeps by due height. Before the batch at its own height a sweep runs one batch at each lower
 height at which the head of an expiry queue falls due, in ascending order: an offer or bid keyed k from
@@ -86,16 +86,14 @@ being due depend on another item. Each also makes a replay depend on events that
 The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.8`, each baseline bound to npm:
 `canonicalState` byte-identical to 0.2.4 and the whole result identical to 0.2.8 including codes and moves over the
 97 cases of the case files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of
-`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 60 stream inputs (the growth streams at full size
-and the seven of `conformance/sweep-streams.mjs`), and the 3,000 sequences of the new `fuzz-resolve.mjs --expiry`
+`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 61 stream inputs (the growth streams at full size
+and the eight of `conformance/sweep-streams.mjs`), and the 3,000 sequences of the new `fuzz-resolve.mjs --expiry`
 mode (an expired offer with a later event in 2,170 of them, a bid in 1,744, a swept reservation in 1,398, a swept
 recapture reservation in 301, an expiry under the V21 cap in 403; floor 60 each, read from 0.2.8), each also resolved
 with 842,620 events that write nothing added in all, none changing a result; a dense walk over those sequences and the
-sweep streams, 871,730 tips, each equal to 0.2.8's whole result; check mode clean on 24,097 inputs; the token moves of
-25,724 inputs; `parseRecord` equal over 248,754 records; 1,418 client-surface checks; crosslang green, with the
-inert-event check in both fuzz modes. The seal ran in a clone of this tree with cairnx-core set to 0.2.9 and
-cairnx-api to 0.1.2, because `scripts/check-lockstep.mjs` refuses a source change at a published version and the
-version bump belongs to the release.
+sweep streams, 871,934 tips, each equal to 0.2.8's whole result; check mode clean on 24,098 inputs; the token moves of
+25,725 inputs; `parseRecord` equal over 248,759 records; 1,418 client-surface checks; crosslang green, with the
+inert-event check in both fuzz modes. cairnx-api 0.1.2 is a peer-only step onto this core.
 
 ## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
