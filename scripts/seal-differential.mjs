@@ -465,7 +465,7 @@ const malformedSeqs = [];
     for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
   });
   const floor = Math.floor(MALFORMED_N / 50);
-  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw in both builds alike` : ""}; reach (sequences in which the baseline met a malformed field of that kind; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height held across V21): ${JSON.stringify(reach)}, floor ${floor} each`);
+  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw in both builds alike` : ""}; reach (sequences in which the baseline met a malformed field of that kind; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it): ${JSON.stringify(reach)}, floor ${floor} each`);
   for (const [k, n] of Object.entries(reach)) if (n < floor) problems.push(`malformed reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
 }
 

@@ -283,8 +283,9 @@ const malformed = (e) => !Number.isSafeInteger(e.height) || (e.kind === "propose
 /** What the replay read of the malformed fields in `events`, from its log and state: an offer, bid, reservation or
  *  recapture reservation entry whose event (or, for a reveal or finalize, whose commit) is malformed; such an entry in
  *  a sequence that crosses V21 (an event below it, the tip at or above it) or lies wholly at or above it; an offer
- *  stored with a NaN height in a sequence that crosses V21 (the class whose expiry rises across V21). Reservations and
- *  recapture reservations are told apart by the generator's name prefixes (`em`, `rm`). */
+ *  with a NaN height open at a tip at or above V21 though its raw expiry fell due below V21 (the class whose expiry
+ *  rises across V21, where a batch at that due height would have expired it). Reservations and recapture reservations
+ *  are told apart by the generator's name prefixes (`em`, `rm`). */
 export function malformedKinds(R, events, state) {
   const byId = new Map(events.map((e) => [e.kind === "propose" ? e.id : e.txid, e]));
   const commits = new Map(events.filter((e) => e.kind === "propose").map((e) => [R.parseRecord(e.uri, e.payloadHash)?.commit, e]).filter(([c]) => c !== undefined));
@@ -304,6 +305,7 @@ export function malformedKinds(R, events, state) {
   const safe = events.map((e) => e.height).filter(Number.isSafeInteger);
   out.crossV21 = any && safe.some((h) => h < R.V21_HEIGHT) && state.tipHeight >= R.V21_HEIGHT;
   out.aboveV21 = any && safe.every((h) => h >= R.V21_HEIGHT);
-  out.nanOffer = out.crossV21 && Object.values(state.offers).some((o) => Number.isNaN(o.height));
+  out.nanOffer = state.tipHeight >= R.V21_HEIGHT && Object.values(state.offers)
+    .some((o) => Number.isNaN(o.height) && o.status === "open" && (o.expiresEpoch + 1) * R.EPOCH_LEN < R.V21_HEIGHT);
   return out;
 }

@@ -464,7 +464,8 @@ function recaptureExpirySeq() {
 
 // --malformed. A seller's offers and bids, sealed reservations and recapture reservations, each carrying now and then a
 // height or an expiry from the malformed lists, around a base height on either side of V21 and next to an epoch edge;
-// NaN-height offers get expiries due below V21 (the class whose expiry rises across V21); transfers and tips around
+// NaN-height offers get expiries due below V21 (the class whose expiry rises across V21), and some sequences hold
+// them across V21 with no event between their raw due height and V21; transfers and tips around
 // V21 and the epoch edges read what the sweeps released. Recapture reservations need a lapsed lease, so theirs lie far
 // above V21. Heights and expiries kept valid elsewhere so that the malformed field is the one the replay meets; a
 // sequence's tip is an integer read from its valid heights.
@@ -475,7 +476,24 @@ function malformedSeq() {
   const posAt = (hh) => { const k = String(hh); const p = at.get(k) ?? 0; at.set(k, p + 1); return p; };
   const S = "0x" + "c1".repeat(20), B = "0x" + "c3".repeat(20), C = "0x" + "c4".repeat(20), X = "0x" + "c5".repeat(20);
   const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
-  // two sequences in five carry only integers, so that the reference (which refuses every float) replays them too
+  if (chance(0.15)) {
+    // offers with a NaN height whose raw expiry falls due below V21, and (half the time) no event from that height up
+    // to V21: 0.2.8 leaves such an offer open from V21 on (its cap is NaN), where a sweep that ran a batch at its raw
+    // due height would have expired it; with an event between, it expires below V21 either way
+    const T = "N" + ri(100, 999), base = R.V21_HEIGHT - ri(200, 6000);
+    P(validOr(() => R.deploy({ ticker: T, decimals: 0, supply: "1000", mint: "issuer" })), S, base, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+    P(validOr(() => R.mint({ ticker: T, amount: "1000" })), S, base + 1, FAR);
+    let due = R.V21_HEIGHT;
+    for (let j = ri(1, 3); j > 0; j--) {
+      const E = ri(R.epochOf(base + 1), R.epochOf(R.V21_HEIGHT) - 2);
+      due = Math.min(due, (E + 1) * L);
+      P(validOr(() => R.offer({ give: { ticker: T, amount: String(ri(1, 400)) }, want: { value: "1000" } })), S, Number.NaN, E);
+    }
+    if (chance(0.5)) P(validOr(() => R.transfer({ ticker: T, to: X, amount: String(ri(1, 400)) })), S, ri(due, R.V21_HEIGHT - 1), FAR);
+    for (let j = ri(1, 3); j > 0; j--) P(validOr(() => R.transfer({ ticker: T, to: X, amount: String(ri(1, 1000)) })), S, R.V21_HEIGHT + ri(0, 60), FAR);
+    return { events: ev, tipHeight: Math.max(...ev.map((e) => e.height).filter(Number.isSafeInteger)) + ri(0, 90) };
+  }
+  // two sequences in five carry only integers, so that the reference (given only those) replays them too
   const ints = chance(0.4), okInt = (v) => !ints || (Number.isInteger(v) && Math.abs(v) < 1e21);
   const badH = (h) => { const v = chance(0.25) && !ints ? Number.NaN : pick(BAD_H.filter(okInt)); return v === 0.5 ? h + 0.5 : v; };
   const badE = (e) => { const v = pick(BAD_E.filter(okInt)); return v === 0.5 ? e + 0.5 : v; };
@@ -696,7 +714,7 @@ console.log(`events that write nothing: ${inertN} added over ${twins.filter(Bool
 if (inertJs || inertPy) process.exit(1);
 if (MALFORMED) {
   // the floors: sequences in which the replay met a malformed field on each kind, on each side of V21, and an offer
-  // with a NaN height held across it
+  // with a NaN height open past it though its raw expiry fell due below it
   const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, crossV21: 0, aboveV21: 0, nanOffer: 0 };
   seqs.forEach((s, i) => { if (!runs[i].st) return; const k = malformedKinds(R, s.events, runs[i].st); for (const x of Object.keys(reach)) if (k[x]) reach[x]++; });
   const floor = Math.max(1, Math.floor(N / 50));
