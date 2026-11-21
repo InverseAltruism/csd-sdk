@@ -5,23 +5,19 @@
 import { readFileSync } from "node:fs";
 import { CAIRNX_EVENT_RULE, stateHash } from "@inversealtruism/cairnx-core";
 import { headerHash } from "@inversealtruism/csd-codec";
-import { rpcHeaderToHeader, type RpcTxJson } from "@inversealtruism/csd-client";
+import { rpcHeaderToHeader } from "@inversealtruism/csd-client";
 import { nodeBlocks } from "../src/browser.js";
 import { memoryStore, replicaLoop, type Loop, type StepContext } from "../src/index.js";
 import { pinned } from "./core-files.js";
+import { blockAt, json, type Answers, type Block } from "./front-door.js";
+
+export { blockAt, json, type Answers, type Block };
 
 export const FILE = new URL("./fixtures/node-blocks-29860-30300.json", import.meta.url), bytes = readFileSync(FILE);
 export const cap = JSON.parse(bytes.toString("utf8")) as { format: 1; from: number; to: number; answers: Record<string, string> };
 export const NODE = "http://127.0.0.1:8789";
-export type Answers = Record<string, string>;
-export type Block = { height: number; hash: string; chainwork: string; header: Record<string, unknown> & { prev: string; nonce: number; merkle: string };
-  txs: (RpcTxJson & { spent_tx?: unknown })[] };
 export type Served = { answers: Answers; tip?: number; tipOf?: () => unknown; fail?: (path: string, n: number) => Response | Promise<Response> | null };
-export const blockAt = (a: Answers, h: number) => JSON.parse(a[`/block/height/${h}`]!) as Block;
 export const edit = (a: Answers, h: number, f: (b: Block) => void): Answers => { const b = blockAt(a, h); f(b); return { [`/block/height/${h}`]: JSON.stringify(b) }; };
-export const json = (text: string, status = 200, headers: Record<string, string> = {}) =>
-  new Response(text, { status, headers: { "content-type": "application/json", ...headers } });
-
 export function node(s: Served) {
   const log: { path: string; at: number; init: RequestInit | undefined }[] = [];
   const f: typeof fetch = async (input, init) => {

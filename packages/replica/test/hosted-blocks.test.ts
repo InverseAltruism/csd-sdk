@@ -3,7 +3,7 @@
 // pages; the tip it reports is a header the window verified, never the server's claim; a page an edge cache holds
 // stale is read again past it; a header with bad proof of work, a page that does not link and a branch with bad
 // proof of work, inside and below the window, are refused with the store kept; a store the window does not hold is
-// verified from workRoot; a walk from workRoot progresses at any budget; a server behind rolls nothing back. Every
+// verified from workRoot, one that keeps the window is not; a walk from workRoot progresses at any budget; a server behind rolls nothing back. Every
 // step the source emits is checked against the contract's own functions. The work rule on two real branches is
 // hosted-work.test.ts; the caller root is hosted-caller.test.ts.
 import { createHash } from "node:crypto";
@@ -13,7 +13,7 @@ import { hostedBlocks } from "../src/browser.js";
 import { anchorRoot } from "../src/anchor-root.js";
 import { nodeBlocks } from "../src/browser.js";
 import { httpSessions } from "../src/http.js";
-import { levelOf, memoryStore, readBlocks, replicaLoop, ReplicaConfigError, SourceError, type Source } from "../src/index.js";
+import { levelOf, memoryStore, readBlocks, replicaLoop, ReplicaConfigError, SourceError, type Source, type Store } from "../src/index.js";
 import { done, ok, thrown } from "./check.js";
 import { ANCHOR, all, belowBytes, driveHosted, front, ORIGIN } from "./hosted-harness.js";
 import { NODE, blockAt, branchFrom, cap, ctx, edit, hashesOk, json, node, refused, type Answers } from "./node-harness.js";
@@ -156,8 +156,12 @@ console.log("a store the window does not hold:");
 const kept = memoryStore(), first = driveHosted({ answers: all }, anchor, { store: kept });
 await first.run();
 const again = driveHosted({ answers: all }, anchor, { store: kept }), ags = await again.run();
-ok("a new source over a store at 30,300: verified from workRoot to the cursor, nothing rolled back, then idle",
-  ags.lastError === null && ags.lastReorg === null && ags.cursor?.height === cap.to && again.fr.reads(/^\/api\/headers\/29860\/441$/) === 1 && hashesOk(again.loop));
+ok("a new source over a store at 30,300 that keeps the window: no header read, nothing rolled back, then idle",
+  ags.lastError === null && ags.lastReorg === null && ags.cursor?.height === cap.to && again.fr.reads(/^\/api\/headers\//) === 0 && hashesOk(again.loop));
+const withheld: Store = { ...kept, rows: (x) => kept.rows(x), headerWindow: async () => null };
+const blind = driveHosted({ answers: all }, anchor, { store: withheld }), bls = await blind.run();
+ok("the same store with its window withheld: verified from workRoot to the cursor, nothing rolled back, then idle",
+  bls.lastError === null && bls.lastReorg === null && bls.cursor?.height === cap.to && blind.fr.reads(/^\/api\/headers\/29860\/441$/) === 1 && hashesOk(blind.loop));
 // A store filled on the branch from 30,200 by nodeBlocks under the same store basis, then read by the anchor root from
 // a server that serves the recorded chain.
 const onBranch = memoryStore(), viaNode = nodeBlocks({ node: NODE, fetch: node({ answers: branchFrom(30_200) }).f });

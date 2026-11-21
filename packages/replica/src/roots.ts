@@ -14,7 +14,7 @@ import { floorOf } from "./contract.js";
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
-import type { HeaderRoot, StepContext, Step, TipView, VerifiedHeaders } from "./types.js";
+import type { Cursor, HeaderRoot, HeldWindow, StepContext, Step, TipView, VerifiedHeaders } from "./types.js";
 import type { HeaderRow } from "./window.js";
 
 /** Internal. How many leading rows of a page are verified, and the error that ends them, if any. */
@@ -27,7 +27,8 @@ export type Checked = { readonly verified: number; readonly error: SourceError |
  *  past caches before a refusal. `hashAt` is the verified hash at a height, or null. `tipView` is the tip the root
  *  vouches for (types.ts, TipView), null before it has one; `tip` may read the root for it. `owed` is a rollback the
  *  store still owes the root, returned before anything is read: while one is owed no tip above its target is
- *  reported and no step ends otherwise. Each throws SourceError. */
+ *  reported and no step ends otherwise. Each throws SourceError. `windowAt` and `restoreWindow`, a self-verified root's
+ *  only, are the source's (types.ts, Source). */
 export interface Root {
   readonly root: HeaderRoot;
   begin(s: Session, ctx: StepContext, server: Head): Promise<Step | { readonly to: number }>;
@@ -36,6 +37,8 @@ export interface Root {
   tipView(): TipView | null;
   tip(signal: AbortSignal): Promise<TipView | null>;
   owed(ctx: StepContext): Step | null;
+  windowAt?(cursor: Cursor): HeldWindow | null;
+  restoreWindow?(w: HeldWindow | null): void;
 }
 
 export function callerRoot(h: VerifiedHeaders): Root {

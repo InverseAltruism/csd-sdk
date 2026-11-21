@@ -12,6 +12,17 @@
   name-history selector (`nameHistory`, exported from `.`), with 22 of the Scanner's suites and the selector's three;
   `scripts/move-residual.mjs` prints the residual against the resolver at a commit. The Scanner now reads at most
   `MAX_TX_OUTPUTS` (512) outputs of a /tx answer, where it read 1,024.
+- Under an anchor root the store keeps the source's header window: each commit of blocks carries the window's headers
+  up to the cursor and sets `StoreMeta.work` and `workRoot`, and a source started over a filled store takes the
+  stored window instead of walking the headers from the anchor, once csd-light has verified it again and it holds
+  the cursor's block under this anchor; any other window is dropped and the walk runs as before. A taken window's
+  work is the bar another chain must beat, so a restart over a store on a branch the server no longer serves rolls
+  back only to a heavier one (until now it followed any chain that reached the cursor). `headerWindow()` of the disk
+  and browser stores gives nothing when the bytes it reads are missing or not the record's, and their open no longer
+  reads the window: a window damaged at rest costs the walk from the anchor, not a reset and refill of the store. A
+  `headerWindow()` that rejects is taken as no window. The disk store removes at open a window file its record does
+  not name (a commit cut before its meta landed). `StoreMeta.windowSha256`, never set or read, is removed: a record
+  written before keeps the field, which is ignored. Internal: `Source.windowAt`, `Source.restoreWindow`, `HeldWindow`.
 - `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
   contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
   `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not

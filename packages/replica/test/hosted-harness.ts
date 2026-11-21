@@ -1,43 +1,21 @@
-// Our front door served from the recorded node answers of 29,815 to 30,300 (two captures by
-// scripts/capture-node-blocks.mjs), for the tests of hostedBlocks: /api/rpc/tip answers the block at `tip` (default
-// 30,300), /api/blocks/:from/:count the node's block bodies inside {ok, from, count, blocks} and a 502 for a range past
-// the tip, /api/headers/:from/:count {height, header, hash} rows, /api/rpc/tx/:id the source transactions. A request
-// without the `fresh` parameter is answered from `edge` first, as an edge cache holding stale pages would answer it.
-// Every request is logged.
+// Our front door (front-door.ts) served from the recorded node answers of 29,815 to 30,300 (two captures by
+// scripts/capture-node-blocks.mjs), the tip by default 30,300, for the tests of hostedBlocks.
 import { readFileSync } from "node:fs";
 import { CAIRNX_EVENT_RULE, EVENTS_HASH_START, type EventRule } from "@inversealtruism/cairnx-core";
 import { checkStep, reorgBreak } from "../src/contract.js";
 import { hostedBlocks, type HostedBlocksOptions } from "../src/browser.js";
 import { memoryStore, replicaLoop, type BlocksSource, type Source, type Step, type Store, type VerifiedHeaders } from "../src/index.js";
 import { ROWS_HASH_START } from "../src/rowshash.js";
-import { blockAt, cap, json, type Answers } from "./node-harness.js";
+import { frontDoor, type Hosted } from "./front-door.js";
+import { blockAt, cap, type Answers } from "./node-harness.js";
 
 export const BELOW = new URL("./fixtures/node-blocks-29815-29859.json", import.meta.url), belowBytes = readFileSync(BELOW);
 export const all: Answers = { ...(JSON.parse(belowBytes.toString("utf8")) as { answers: Answers }).answers, ...cap.answers };
 export const ORIGIN = "https://front.example";
 export const ANCHOR = { height: 29_859, hash: blockAt(all, 29_859).hash };
-export type Hosted = { answers: Answers; tip?: number; edge?: Answers; fail?: (path: string, fresh: boolean) => Response | null };
+export type { Hosted } from "./front-door.js";
 
-export function front(s: Hosted) {
-  const log: { path: string; fresh: boolean; init: RequestInit | undefined }[] = [];
-  const f: typeof fetch = async (input, init) => {
-    const u = new URL(String(input)), path = u.pathname, fresh = u.searchParams.has("fresh");
-    log.push({ path, fresh, init });
-    init?.signal?.throwIfAborted();
-    const failed = s.fail?.(path, fresh) ?? null;
-    if (failed !== null) return failed;
-    const a = fresh ? s.answers : { ...s.answers, ...s.edge }, tip = s.tip ?? cap.to;
-    if (path === "/api/rpc/tip") { const b = blockAt(a, tip); return json(JSON.stringify({ tip: b.hash, height: b.height, chainwork: b.chainwork })); }
-    if (path.startsWith("/api/rpc/tx/")) { const t = a[path.slice("/api/rpc".length)]; return t === undefined ? json('{"ok":false,"err":"not found"}') : json(t); }
-    const m = /^\/api\/(blocks|headers)\/([0-9]+)\/([0-9]+)$/.exec(path);
-    if (m === null) return json("{}", 404);
-    const from = Number(m[2]), count = Number(m[3]), hs = Array.from({ length: count }, (_, i) => from + i);
-    if (hs.some((h) => h > tip || a[`/block/height/${h}`] === undefined)) return json('{"ok":false,"error":"unavailable"}', 502);
-    if (m[1] === "blocks") return json(`{"ok":true,"from":${from},"count":${count},"blocks":[${hs.map((h) => a[`/block/height/${h}`]).join(",")}]}`);
-    return json(JSON.stringify({ ok: true, from, count, headers: hs.map((h) => { const b = blockAt(a, h); return { height: h, header: b.header, hash: b.hash }; }) }));
-  };
-  return { f, log, reads: (p: RegExp, fresh?: boolean) => log.filter((l) => p.test(l.path) && (fresh === undefined || l.fresh === fresh)).length };
-}
+export const front = (s: Hosted) => frontDoor(s, cap.to);
 
 /** The loop over hostedBlocks with a memory store. Every step the source emits is checked against the contract's own
  *  functions (checkStep for blocks, reorgBreak for a reorg) and kept with the cursor it was asked from. */

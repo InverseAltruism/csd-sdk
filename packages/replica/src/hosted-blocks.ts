@@ -12,6 +12,7 @@
 // the failing block, keeping them; blocks bound earlier in the step that the root no longer holds (it adopted a
 // branch below them) are dropped, and a step they empty returns the root's rollback. A rollback the root is owed is
 // returned before the server is read. The step's tip is the root's (types.ts, TipView); the server's height is `reach`.
+// The root's header window, where it keeps one, goes to the loop and back through the source (types.ts, Source).
 import { anchorRoot } from "./anchor-root.js";
 import { checkBasis } from "./basis.js";
 import { bindServed, eventsOf, headerOf, memberPick, pickOf, readHead, type Served } from "./block-read.js";
@@ -110,6 +111,7 @@ export function hostedBlocks(o: HostedBlocksOptions): BlocksSource {
       }
     },
     tip: (signal) => root.tip(signal),
+    ...(root.windowAt === undefined || root.restoreWindow === undefined ? {} : { windowAt: root.windowAt, restoreWindow: root.restoreWindow }),
     async block(height, b) {
       const s = session(b.signal), hash = await root.hashAt(height);
       if (hash === null) throw new SourceError("SOURCE_UNAVAILABLE", `no verified header is held at ${height}`);

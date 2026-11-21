@@ -1,18 +1,22 @@
 // The service worker of the test extension (idb-store.test.ts bundles it): the store suite over idbStore, fills of a
 // stub chain through the loop and the reader, a fill held at a point of a commit, and the store-level cases, each one
-// command a control page sends with chrome.runtime.sendMessage.
+// command a control page sends with chrome.runtime.sendMessage. hosted() under its anchor root reads a front door
+// served in the worker from the recorded captures (front-door.ts), so no request leaves it.
 import * as core from "@inversealtruism/cairnx-core";
 import { CAIRNX_EVENT_RULE, EVENTS_HASH_START, canonicalJson, eventsHashStep, payloadHash, resolve, stateHash } from "@inversealtruism/cairnx-core";
 import { rpcHeaderToHeader } from "@inversealtruism/csd-client";
 import { gatesOf } from "../../src/gates.js";
 import { pinned } from "../../src/pinned.js";
 import { idbStore, idbStoreWith, sessionSlot } from "../../src/idb-store.js";
+import { hosted } from "../../src/presets.js";
 import { open, replicaLoop, type Boundary, type BlockRow, type BlocksSource, type Commit, type Pin, type Step, type Store, type TrustedSlot, type Witness } from "../../src/index.js";
 import { rowsHashStep } from "../../src/rowshash.js";
 import { boundsHashStep, BOUNDS_HASH_START } from "../../src/store-format.js";
 import { fixtures } from "../../src/testing.js";
 import { FEED, at, commit, key, row, storeSuite } from "../store-suite.js";
 import below from "../fixtures/node-blocks-29815-29859.json";
+import capture from "../fixtures/node-blocks-29860-30300.json";
+import { blockAt, frontDoor, type Answers } from "../front-door.js";
 
 type Chrome = {
   runtime: { onMessage: { addListener(f: (m: { cmd?: string; args?: Args }, s: unknown, reply: (v: unknown) => void) => boolean): void } };
@@ -47,6 +51,15 @@ function source(top: number, k: Kind = {}): BlocksSource {
   };
 }
 const slotKey = (name: string) => `slot:${name}`;
+// The recorded chain 29,815 to 30,300, served by the front door; a witness over it at `tip`.
+const recorded: Answers = { ...(below as { answers: Answers }).answers, ...(capture as { answers: Answers }).answers }, REC_TIP = 30_300;
+const recordedWitness = (tip: number): Witness => ({
+  id: "w-rec", origin: "https://witness.example",
+  async tip() { const b = blockAt(recorded, tip); return { height: b.height, hash: b.hash, time: Number(b.header.time), header: rpcHeaderToHeader(b.header as never) }; },
+  async hashAt(h) { return h <= tip && recorded[`/block/height/${h}`] !== undefined ? blockAt(recorded, h).hash : null; },
+});
+type PinArgs = Omit<Pin, "log"> & { logText: string };
+
 // A witness on another origin at the stub chain's top; `offline` throws, as a witness with no network.
 const witness = (offline: boolean): Witness => ({
   id: "w1", origin: "https://witness.example",
@@ -183,6 +196,40 @@ const denials: Record<string, (name: string) => Promise<{ codes: string[]; fille
 };
 
 const cmds: Record<string, (a: Args) => Promise<unknown>> = {
+  // hosted({ pin, origin, witness, store: idbStore }) on `name`, the clock at `now`: opened, then its first read, which
+  // waits for the advance it starts. `withhold`: the store's window withheld, as a store that keeps none. Returns the
+  // front door's paths and the times from the worker's start and from the open.
+  async hostedRead(a) {
+    const { logText, ...p } = a.pin as PinArgs, fr = frontDoor({ answers: recorded }, REC_TIP), name = a.name!;
+    const inner = idbStore({ name, slot: sessionSlot(slotKey(name)) });
+    const store: Store = a.withhold === true ? { ...inner, rows: (h) => inner.rows(h), headerWindow: async () => null } : inner;
+    const t0 = performance.now();
+    const r = await open({ ...hosted({ pin: { ...p, log: async () => new TextEncoder().encode(logText) }, origin: "https://front.example", witness: recordedWitness(REC_TIP), store, fetch: fr.f }),
+      clock: () => Number(a.now) });
+    const t1 = performance.now(), st = await r.state({ waitMs: 60_000 }), t2 = performance.now(), s = r.status();
+    await r.close();
+    const paths = fr.log.map((l) => l.path);
+    return { verified: st.verified, why: codesOf(st), cursor: s.cursor?.height ?? null, heads: paths.filter((x) => x.startsWith("/api/headers/")), requests: paths,
+      sinceStart: t2, openMs: t1 - t0, readMs: t2 - t1, origin: performance.timeOrigin };
+  },
+  // How many rows `name`'s database holds and its window's size in bytes.
+  async dbSize(a) {
+    const db = await raw(a.name!), rows = (await all<BlockRow>(db, "rows")).length, w = await one<ArrayBuffer | undefined>(db, "window", "window");
+    db.close();
+    return { rows, window: w?.byteLength ?? 0 };
+  },
+  // The window's bytes overwritten in the database under an open store: headerWindow() gives none.
+  async windowSwap() {
+    const name = fresh("window-swap"), s = idbStore({ name, slot: sessionSlot(slotKey(name)) });
+    await s.open(key(FEED));
+    await s.commit(commit(null, [row(30_001, null)], at(30_010), { headerWindow: new Uint8Array([1, 2]) }));
+    const before = [...((await s.headerWindow()) ?? [])].join(), db = await raw(name);
+    await put(db, [["window", new Uint8Array([3]).buffer, "window"]]);
+    db.close();
+    const swapped = await s.headerWindow();
+    s.close();
+    return { before, swapped: swapped === null ? null : [...swapped].join() };
+  },
   async denyKeep(a) { resetEnv(); const name = fresh(`deny-${a.code!.toString().toLowerCase().replaceAll("_", "-")}`), d = await denials[String(a.code)]!(name);
     return { name, ...d, held: await heldIn(name), now: env.now }; },
   // After a worker stop: the first read with the view the slot holds, and with it removed (a fresh reader).

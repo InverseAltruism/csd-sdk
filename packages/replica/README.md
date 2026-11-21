@@ -137,15 +137,29 @@ replayed on demand.
   it keys on the whole URL, query included, so the fresh re-read reaches the origin. Neither is checked by the
   source.
 
-  What a store must keep (not yet done; the disk and browser stores' slices): the window, `work` and `workRoot`.
-  Until a store persists them, a source started over a filled store has no held work: it walks from workRoot to the
-  store's cursor and adopts any chain from the anchor, valid in proof of work, that reaches the cursor's height,
-  rolling back to the highest held block on it. A running source never does this. The store needs a channel to take
-  `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
-  `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
-  the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
-  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. A boundary's stored state hash is not
-  checked at open; a pinned source's bind replays its own ("Pins" below).
+  What a store must keep: under an anchor root, the source's header window, so that a source started over a filled
+  store (a server restarted, an extension's worker woken) does not walk the headers from the anchor again. Each commit
+  of blocks carries the window's headers up to the step's cursor (the lowest height in 4 bytes, then 84 bytes a
+  header: with the default window 765 headers, 64,264 bytes) and sets `StoreMeta.work`, the work above workRoot at
+  the stored window's top, and `workRoot`; a rollback carries none, and the stored window stays, so its top can lie
+  above the cursor. The disk and browser stores name the window by its digest in their record; the open does not
+  read the window, and `headerWindow()` gives nothing when the bytes it reads are missing or not the record's, so a
+  window damaged at rest costs the walk, not a refill. A window file a cut commit left behind, which the record does
+  not name, is removed at the disk store's next open. A `headerWindow()` that rejects is taken as no window. The source's first step takes the stored window instead of reading the seed, once it holds together:
+  `workRoot` is this source's anchor (a store kept from an older pin keeps that pin's window, which is not taken);
+  csd-light verifies the headers again as far as it can without the ones below them (the first 45 for links and
+  proof of work, each later one for its link, time rules, LWMA bits and proof of work); and the window holds the
+  cursor's block at or above its lowest forkable height. It is then rewound to the cursor, and above it the source
+  reads only the new blocks' pages. Taken from the record without a check: the first 45 headers' bits, `work`, and
+  that the window descends from `workRoot`. Verifying 486 recorded headers again took 14.83 ms (median of 9, Node 26 on the maintainers' host,
+  2026-11-21). A window that fails any check is dropped, never refused: the source walks from workRoot as with no
+  window, to the store's cursor and with no work to beat, adopting any chain from the anchor, valid in proof of work,
+  that reaches the cursor's height, and rolling back to the highest held block on it (`test/hosted-window.test.ts`).
+  A taken window's work is the bar another chain must beat, as for a running source, so a store on a branch the
+  server no longer serves rolls back only to a heavier one (`test/hosted-work.test.ts`). A browser store whose slot
+  does not name its record is reset, its window with it, and refilled under `STORE_UNCONFIRMED`. Under a caller root
+  nothing is kept: the headers are the caller's. A boundary's stored state hash is not checked at open; a pinned
+  source's bind replays its own ("Pins" below).
 
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
@@ -270,7 +284,9 @@ domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replic
 in `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
 address rule, above `pin` when one is given ("Pins" below), and `memoryStore()`.
 
-What the reader does not persist: the witness's confirmation and the source's header window live in memory.
+What the reader keeps beyond its store's rows: under an anchor root the source's header window, with every commit ("What a
+store must keep" above); the witness's confirmation lives in memory, except in the browser store's kept view ("The
+browser store" below).
 
 ## Transfers
 
@@ -422,14 +438,16 @@ pin or rule) on one directory can reset each other's store whenever the lease ch
 each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
 directory; a rollback is that rename alone. While one holder's directory syncs return, nothing is written below the
 lengths of a meta that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
-(`test/disk-kill.test.ts` kills a process at every point of a 20-commit sequence with a rollback, 209 times); the
+(`test/disk-kill.test.ts` kills a process at every point of a 20-commit sequence with a rollback, 266 times, every extend
+carrying a header window, and each store opens with the window of the meta it opened with); the
 order of the syncs, which a kill cannot show, is what carries this past a power loss (`test/disk-store.test.ts`). An
 extend after a rollback whose directory sync did not land, or a refill after a reset cut short, can leave files that
 open `corrupt`; the store is then refilled, as for any file that fails its checks.
 
 At open, in order: the format, the rule, the basis and the gate table the rows were written under (another table at or
 below the cursor resets the store, reason `rule`); then the files (a file shorter than its committed length, a line
-out of form, a boundary chain or window digest other than the meta's: `corrupt`, and the reader resets and refills);
+out of form, a boundary chain other than the meta's: `corrupt`, and the reader resets and refills; the header window
+is checked where it is read, "What a store must keep" above);
 then the loop's checks of every row against the contract and both running hashes, and under a pin the bind above. A
 store refused for any reason but `unavailable` is reset and refilled whenever the reader loads it, also when it first
 found the store held by another process. The checks prove that the files agree with each other, not where they came
@@ -522,8 +540,8 @@ the new record's hashes, after it the new one alone, so a worker stopped at any 
 random times).
 
 At open, in order, as the code runs: the record's tag, format and form, the chain over the boundaries (each in form:
-three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null) and the
-window's digest (`corrupt`, `format`); then the slot: a record whose hash it does not name is `unconfirmed`, and the
+three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null)
+(`corrupt`, `format`; the header window is checked where it is read); then the slot: a record whose hash it does not name is `unconfirmed`, and the
 reader resets the store and refills it; then the format, rule and basis key (`format`, `rule`, `basis`); then the loop's
 checks of every row (`corrupt`), the gate table (`rule`) and the newer-pin rule (`basis`), and under a pin the bind. The
 slot is what tells this package's commits from a profile written by another program: an edit of the database, however
@@ -572,6 +590,15 @@ its two replays 34.7 ms. Without a kept view (a browser start), the first verifi
 shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, the design pass measured 235 and 258 ms
 (medians of 7), three replays of about 36 ms each among them; the plan's 150 ms row for a worker restart is missed
 until cairnx-core's resumable replay lets one pass serve the bind and both views.
+
+Under an anchor root, measured on 2026-11-21 in the same rig: `hosted({ pin, origin, witness, store: idbStore })` with
+the pin at 30,000 over the recorded chain to 30,300 (not the rig's synthetic chain: the anchor root verifies real
+proof of work), the front door served inside the worker, so no time below includes a network. The store held 31 rows
+and a window of 28,984 bytes (345 headers). From a wake to the first verified read, which waits for the advance it
+starts, medians of 7: with the store's window, 72 ms (64 to 74), of it the read with its advance 26.0 ms, and 1
+request (the server's tip), no header read; with the window withheld, as before the store kept it, 74 ms (70 to 91),
+the read with its advance 37.1 ms, and 3 requests, the seed and 300 headers from the pin. Over a network the
+difference is those requests: the walk reads the seed and one request per 512 headers above the pin.
 
 ## Display
 

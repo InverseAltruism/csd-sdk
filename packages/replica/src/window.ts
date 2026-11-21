@@ -4,13 +4,17 @@
 // LWMA_WINDOW + `depth` headers, or more while `keep` asks. Every header check is csd-light's. `work` is the work of
 // the held chain above workRoot; a window seeded from the same headers counts it from the same place, so two
 // windows compare. A branch forks from a held header with its LWMA_WINDOW headers of context held (`low` or above),
-// and csd-light's tryReorg adopts it only with more work than the tip.
-import { LWMA_WINDOW, type BlockHeader } from "@inversealtruism/csd-codec";
+// and csd-light's tryReorg adopts it only with more work than the tip. A store keeps a window as `encode` writes it
+// (the lowest height in 4 bytes little-endian, then each header's 84 consensus bytes) beside its work above workRoot,
+// and `restore` re-verifies it with csd-light as far as it can without the headers below it.
+import { HEADER_BYTES, LWMA_WINDOW, deserializeHeader, headerHash, serializeHeader, type BlockHeader } from "@inversealtruism/csd-codec";
 import { LightClient, type VerifiedHeader } from "@inversealtruism/csd-light";
 import { SourceError, messageOf } from "./errors.js";
 import type { Cursor } from "./types.js";
 
 export interface HeaderRow { readonly height: number; readonly header: BlockHeader; readonly hash: string }
+
+const refuse = (why: string): never => { throw new SourceError("HEADER_INVALID", `the stored header window: ${why}`); };
 
 export class HeaderWindow {
   private constructor(private readonly lc: LightClient, readonly depth: number, readonly root: Cursor, private readonly rootWork: bigint) {}
@@ -32,6 +36,40 @@ export class HeaderWindow {
     }
     return new HeaderWindow(lc, depth, from.root, lc.chainwork - from.work);
   }
+
+  /** A window from `bytes` (encode's form) whose top carries `work` above `root`, at `at`, the store's cursor. Re-verified
+   *  by csd-light without the headers below it: seedTrusted over the first LWMA_WINDOW (links and proof of work), ingest
+   *  over the rest (link, time rules, LWMA bits, proof of work). It must hold `at`'s hash at `at`'s height, at or above
+   *  `low`, and is rewound to `at`. Trusted: the first LWMA_WINDOW headers' bits, `work`, and that the window descends
+   *  from `root`, which the store's record carries. Anything else is HEADER_INVALID. */
+  static restore(bytes: Uint8Array, at: Cursor, depth: number, root: Cursor, work: bigint): HeaderWindow {
+    const n = (bytes.length - 4) / HEADER_BYTES;
+    if (!Number.isInteger(n) || n < LWMA_WINDOW) refuse(`${bytes.length} bytes are not 4 and at least ${LWMA_WINDOW} headers`);
+    const base = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true), lc = new LightClient();
+    const rows = Array.from({ length: n }, (_, i) => ({ height: base + i, header: deserializeHeader(bytes.subarray(4 + i * HEADER_BYTES, 4 + (i + 1) * HEADER_BYTES)) }));
+    try {
+      lc.seedTrusted(rows.slice(0, LWMA_WINDOW), headerHash(rows[LWMA_WINDOW - 1]!.header));
+      for (const r of rows.slice(LWMA_WINDOW)) lc.ingest(r.height, r.header);
+    } catch (e) {
+      refuse(messageOf(e));
+    }
+    const w = new HeaderWindow(lc, depth, root, lc.chainwork - work);
+    if (w.hashAt(at.height) !== at.hash.toLowerCase() || at.height < w.low) refuse(`it does not hold the cursor ${at.height} ${at.hash} at or above ${w.low}`);
+    w.rewind(at.height);
+    w.trim(at.height);
+    return w;
+  }
+
+  /** The headers from the lowest held up to `height` (held, at or above `low`) as a store keeps them. */
+  encode(height: number): Uint8Array {
+    const rows = this.lc.chain.slice(0, height - this.lc.baseHeight + 1), out = new Uint8Array(4 + rows.length * HEADER_BYTES);
+    new DataView(out.buffer).setUint32(0, this.lc.baseHeight, true);
+    rows.forEach((r, i) => out.set(serializeHeader(r.header), 4 + i * HEADER_BYTES));
+    return out;
+  }
+
+  /** The work above workRoot at a held height. */
+  workAt(height: number): bigint { return this.at(height)!.chainwork - this.rootWork; }
 
   get tip(): VerifiedHeader { return this.lc.tip!; }
   get work(): bigint { return this.lc.chainwork - this.rootWork; }

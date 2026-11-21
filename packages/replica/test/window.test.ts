@@ -2,11 +2,12 @@
 // offline test), with workRoot at 27,585 and a window of 8. The headers are one chain, so a branch is a run of it
 // offered again from a held block (as csd-light's own tryReorg tests offer them): a run that ends below the tip is
 // less work, one that ends above it more. A branch with other bodies cannot be expressed by these headers; the loop's
-// rows on a second branch are slice 2's (steps.test.ts, loop.test.ts) and hosted-blocks.test.ts.
+// rows on a second branch are slice 2's (steps.test.ts, loop.test.ts) and hosted-blocks.test.ts. A window as a store keeps
+// it: encode and restore, and a restore that re-verifies the headers.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { LWMA_WINDOW, headerHash, workForBits, type BlockHeader } from "@inversealtruism/csd-codec";
+import { HEADER_BYTES, LWMA_WINDOW, headerHash, serializeHeader, workForBits, type BlockHeader } from "@inversealtruism/csd-codec";
 import { SourceError } from "../src/index.js";
 import { HeaderWindow, type HeaderRow } from "../src/window.js";
 import { done, ok, thrown } from "./check.js";
@@ -68,5 +69,28 @@ fresh.extend(run(27_645, 27_645));
 ok("to 27,645: equal work, not adopted (a tie keeps the held chain)", fresh.work === held.work && !fresh.outworks(held.work));
 fresh.extend(run(27_646, 27_650));
 ok("to 27,650: more work, adopted", fresh.outworks(held.work) && fresh.work === workTo(27_650));
+
+console.log("a window as a store keeps it (encode, restore):");
+const cur = (h: number) => ({ height: h, hash: byH.get(h)!.hash });
+const live = at(27_650), back = HeaderWindow.restore(live.encode(27_650), cur(27_650), DEPTH, ROOT, live.workAt(27_650));
+ok("restore(encode) at the tip gives the live window's work, low and tip, the work the headers' own from workRoot",
+  back.work === live.work && back.work === workTo(27_650) && back.low === live.low && back.tip.hash === live.tip.hash);
+const deep = HeaderWindow.seed(SEED, ROOT, 60);
+deep.extend(run(27_586, 27_650));
+const below = HeaderWindow.restore(deep.encode(27_650), cur(27_640), 60, ROOT, deep.workAt(27_650));
+ok("encoded at 27,650 and restored at the cursor 27,640: rewound there, its work the headers' own to 27,640", below.tip.height === 27_640 && below.work === workTo(27_640));
+// A header mined again (its proof of work gone), each header above it linked to it, and the cursor naming the new top.
+const relinked = (h0: number) => {
+  const w = HeaderWindow.seed(SEED, ROOT, 60);
+  w.extend(run(27_586, 27_650));
+  const bytes = w.encode(27_650), base = new DataView(bytes.buffer).getUint32(0, true), i0 = h0 - base;
+  const rows = run(base, 27_650).map((r) => ({ height: r.height, header: { ...r.header } as BlockHeader, hash: r.hash }));
+  rows[i0] = remined(rows[i0]!);
+  for (let i = i0 + 1; i < rows.length; i++) { const header = { ...rows[i]!.header, prev: rows[i - 1]!.hash }; rows[i] = { height: rows[i]!.height, header, hash: headerHash(header) }; }
+  rows.forEach((r, i) => bytes.set(serializeHeader(r.header), 4 + i * HEADER_BYTES));
+  return codeOf(() => HeaderWindow.restore(bytes, { height: 27_650, hash: rows.at(-1)!.hash }, 60, ROOT, w.workAt(27_650)));
+};
+ok("a header above the first 45 mined again and the headers above it relinked, the cursor naming the new top: HEADER_INVALID", relinked(27_611) === "HEADER_INVALID (PoW)", String(relinked(27_611)));
+ok("the same for a header inside the first 45: HEADER_INVALID", relinked(27_551) === "HEADER_INVALID (PoW)", String(relinked(27_551)));
 
 done("cairnx-replica window");

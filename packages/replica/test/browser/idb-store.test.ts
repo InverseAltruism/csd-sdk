@@ -2,7 +2,8 @@
 // a worker stop; the worker stopped at each point of a commit's slot writes, mid-transaction and at random times, each
 // reopening confirmed and running on to the uninterrupted cursor and events hash; a browser start (the slot empty) and
 // a consistent forgery of the profile, each reset and refilled, beside the forgery with the slot made to name it, which
-// opens; the Web Lock against a second store and an extension page; and the store-level cases (worker.ts). Needs a
+// opens; the Web Lock against a second store and an extension page; the store-level cases (worker.ts); and hosted()
+// under its anchor root across worker stops, with and without the store's header window. Needs a
 // Chromium: CHROME_PATH names it. Without one it SKIPs, except under CI, where it fails: CI must run it.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -10,6 +11,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { done, ok } from "../check.js";
+import { derivePin } from "../../src/derive-pin.js";
+import type { BlockFixture } from "../../src/testing.js";
+import { fx } from "../core-files.js";
+import { hashAt, timeAt } from "../reader-harness.js";
 import { launch, type Browser, type Page } from "./chrome.js";
 
 const binary = process.env.CHROME_PATH;
@@ -182,6 +187,37 @@ try {
   ok("another extension page of the extension reads the slot (it is the extension's own context)", seen === "string", show(seen));
   const rf = await page.call("refusals");
   ok("ReplicaConfigError for a name outside [a-z0-9-]{1,64}, a missing slot and an empty slot key", show(rf) === show({ badName: "ReplicaConfigError", noSlot: "ReplicaConfigError", emptyKey: "ReplicaConfigError" }), show(rf));
+  const ws = await page.call("windowSwap");
+  ok("the window's bytes overwritten in the database under an open store: headerWindow() gives none", ws.before === "1,2" && ws.swapped === null, show(ws));
+
+  console.log("hosted() under its anchor root (the pin at 30,000, the recorded chain to 30,300) across worker stops:");
+  const upTo: BlockFixture = { ...fx, to: 30_000, toHash: hashAt(30_000), blocks: fx.blocks.filter((x) => x.height <= 30_000) };
+  const dp = await derivePin(upTo), pin = { ...dp.pin, log: undefined, logText: new TextDecoder().decode(dp.log) }, hnow = timeAt(30_300) * 1000 + 60_000;
+  const hf = await page.call("hostedRead", { name: "hosted", pin, now: hnow });
+  ok(`filled from the pin: verified at 30,300, its headers the seed alone (${hf.heads?.join(" ")})`, hf.verified && hf.cursor === 30_300 && hf.heads?.join() === "/api/headers/29956/45", show(hf));
+  type Wake = { verified: boolean; heads: string[]; requests: string[]; sinceStart: number; openMs: number; readMs: number; wall: number; origin: number };
+  const wakes = async (withhold: boolean): Promise<Wake[]> => {
+    const out: Wake[] = [];
+    for (let i = 0; i < 7; i++) {
+      await b.stopWorker(page);
+      const t = Date.now(), v = await page.call("hostedRead", { name: "hosted", pin, now: hnow, withhold });
+      out.push({ ...v, wall: Date.now() - t });
+    }
+    return out;
+  };
+  const kept = await wakes(false), blind = await wakes(true);
+  ok("after each of 7 worker stops, the store keeping its window: the first read verified with no header read, only the server's tip",
+    kept.every((w) => w.verified && w.heads.length === 0 && w.requests.length > 0 && w.requests.every((x) => x === "/api/rpc/tip")) && new Set(kept.map((w) => w.origin)).size === 7,
+    show(kept.map((w) => w.requests)));
+  ok("the same with the window withheld: verified after the walk from the pin, the seed and 300 headers",
+    blind.every((w) => w.verified && w.heads.join() === "/api/headers/29956/45,/api/headers/30001/300"), show(blind.map((w) => w.heads)));
+  for (const [how, ws2] of [["window kept", kept], ["window withheld", blind]] as const) {
+    console.log(`    ${how}: wake to verified read, medians of 7: ${median(ws2.map((w) => w.wall))} ms (range ${Math.min(...ws2.map((w) => w.wall))} to ${Math.max(...ws2.map((w) => w.wall))});` +
+      ` worker start to read ${median(ws2.map((w) => w.sinceStart)).toFixed(1)} ms, open ${median(ws2.map((w) => w.openMs)).toFixed(1)} ms, read with its advance ${median(ws2.map((w) => w.readMs)).toFixed(1)} ms;` +
+      ` requests ${median(ws2.map((w) => w.requests.length))}, of them header reads ${median(ws2.map((w) => w.heads.length))}`);
+  }
+  const hsize = await page.call("dbSize", { name: "hosted" });
+  console.log(`    the store: ${hsize.rows} rows, its window ${hsize.window} bytes`);
 } finally {
   await b.close();
 }
