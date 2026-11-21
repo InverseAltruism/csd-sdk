@@ -163,7 +163,7 @@ const cmds: Record<string, (a: Args) => Promise<unknown>> = {
       honest: () => undefined,
       record: (v) => { v.record = other; },
       tipAbove: (v) => { v.tip.height += 5; },
-      tipBlock: (v) => { v.tip.hash = other; },
+      tipBlock: (v) => { v.tip.hash = other; v.witnessed.tip = other; },   // the confirmation moved with it: only the block binds
       tipOld: (v) => { v.tip.time -= old; },
       witBlock: (v) => { v.witnessed.hash = other; },
       witOld: (v) => { v.witnessed.at -= old * 1000; },
