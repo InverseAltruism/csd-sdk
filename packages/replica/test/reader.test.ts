@@ -54,22 +54,30 @@ async function caller(tip: number, witnesses: Witness[] = [], extra = {}) {
   await x.r.advance();
   return x;
 }
-const balanceWhy = async (x: { r: Awaited<ReturnType<typeof open>> }, o = {}) => codes(await x.r.balance("CAIRN", HOLDER, o));
+// name() answers through the same verdict as balance(): each condition below is asserted on both reads. NAMED is held
+// with one record over the whole capture, so its two views agree and no SHALLOW enters.
+const NAMED = "xname-8ma941";
+const balanceWhy = async (x: { r: Awaited<ReturnType<typeof open>> }, o = {}) => {
+  const b = codes(await x.r.balance("CAIRN", HOLDER, o)), n = codes(await x.r.name(NAMED, o));
+  return b === n ? b : `balance ${b}, name ${n}`;
+};
 
 console.log("each condition alone:");
 const fx300: BlockFixture = { ...fx, to: TIP, toHash: hashAt(TIP), blocks: fx.blocks.filter((b) => b.height <= TIP) };
 const feed = await open({ source: fixtureSource(fx300, { tipTime: timeAt(TIP) }), clock });
 await feed.advance();
-const fb = await feed.balance("CAIRN", HOLDER);
-ok("a feed: LEVEL_FEED alone, the value in shown", codes(fb) === "LEVEL_FEED" && !fb.verified && fb.shown?.available === deepTruth.balances.CAIRN![HOLDER]!.available && fb.level === 1);
+const fb = await feed.balance("CAIRN", HOLDER), fn = await feed.name(NAMED);
+ok("a feed: LEVEL_FEED alone, the value in shown (balance and name)", codes(fb) === "LEVEL_FEED" && !fb.verified && fb.shown?.available === deepTruth.balances.CAIRN![HOLDER]!.available && fb.level === 1 &&
+  codes(fn) === "LEVEL_FEED" && !fn.verified && fn.shown?.state === "held" && fn.shown.owner === deepTruth.names[NAMED]!.owner);
 
 let tipCalls = 0;
 const own = await open({ source: { ...nodeSource(), tip: async () => { tipCalls++; return null; } }, clock });
-const statusBefore = own.status(), before = await own.balance("CAIRN", HOLDER);
+const statusBefore = own.status(), before = await own.balance("CAIRN", HOLDER), nameBefore = await own.name(NAMED);
 await own.advance();
 const ownAfter = await own.balance("CAIRN", HOLDER);
 ok("before any step: NOT_SYNCED alone, nothing shown; one's own node needs no witness, so after the advance it is verified",
-  codes(statusBefore) === "NOT_SYNCED" && !statusBefore.verified && codes(before) === "NOT_SYNCED" && before.at === null && !before.verified && before.shown === null && ownAfter.verified);
+  codes(statusBefore) === "NOT_SYNCED" && !statusBefore.verified && codes(before) === "NOT_SYNCED" && before.at === null && !before.verified && before.shown === null && ownAfter.verified &&
+  codes(nameBefore) === "NOT_SYNCED" && !nameBefore.verified && nameBefore.shown === null);
 await own.events(null); await own.primary(HOLDER); await own.state(); await own.advance();
 ok("the reader takes no tip from Source.tip(): none asked through open, advances and reads", tipCalls === 0 && own.status().verified);
 await own.close();
@@ -117,9 +125,10 @@ await silent.r.advance();
 now = timeAt(H1) * 1000 + 29 * MIN;
 const at29 = await silent.r.balance("CAIRN", HOLDER);
 now = timeAt(H1) * 1000 + 31 * MIN;
-const at31 = await silent.r.balance("CAIRN", HOLDER);
+const at31 = await silent.r.balance("CAIRN", HOLDER), name31 = await silent.r.name(NAMED);
 ok(`confirmed at ${H1}, the witness silent since, the replica on to ${H2}: verified at 29 minutes, WITNESS_SILENT alone at 31, the value in shown`,
-  confirmed && at29.verified && codes(at31) === "WITNESS_SILENT" && !at31.verified && at31.shown !== null && silent.r.status().cursor?.height === H2);
+  confirmed && at29.verified && codes(at31) === "WITNESS_SILENT" && !at31.verified && at31.shown !== null && silent.r.status().cursor?.height === H2 &&
+  codes(name31) === "WITNESS_SILENT" && !name31.verified && name31.shown?.name === NAMED);
 now = timeAt(TIP) * 1000 + MIN;
 
 const rw = witnessOn(all, TIP), rolled = await caller(TIP, [rw.witness]);

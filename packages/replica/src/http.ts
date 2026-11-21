@@ -32,7 +32,7 @@ const pause = (ms: number, signal: AbortSignal): Promise<void> => new Promise((g
   signal.addEventListener("abort", quit, { once: true });
 });
 // Without AbortSignal.any (Node before 20.3) a request keeps only its timeout, and an abort waits for that.
-const either = (a: AbortSignal, b: AbortSignal): AbortSignal => (typeof AbortSignal.any === "function" ? AbortSignal.any([a, b]) : b);
+export const either = (a: AbortSignal, b: AbortSignal): AbortSignal => (typeof AbortSignal.any === "function" ? AbortSignal.any([a, b]) : b);
 // csd-client's own timeout would start before the pace wait, so it is set past any wait and ours is used instead.
 const CLIENT_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -41,7 +41,7 @@ const CLIENT_TIMEOUT_MS = 2 ** 31 - 1;
 // stream reader as text and check its bytes, and parse u64 literals exactly. Unlike csd-client it throws
 // SourceError SOURCE_MALFORMED, so a step reports a code.
 const MAX_BYTES = 16 * 1024 * 1024;
-async function cappedJson(r: Response, what: string): Promise<unknown> {
+export async function cappedJson(r: Response, what: string): Promise<unknown> {
   const over = () => new SourceError("SOURCE_MALFORMED", `${what}: the answer is over ${MAX_BYTES} bytes`);
   if (Number(r.headers.get("content-length") ?? 0) > MAX_BYTES) throw over();
   const parse = (text: string) => { try { return parseJsonExact(text); } catch (e) { throw new SourceError("SOURCE_MALFORMED", `${what}: ${messageOf(e)}`); } };

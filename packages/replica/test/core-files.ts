@@ -13,3 +13,7 @@ export const corpus = read("test/vectors/replay-corpus.json") as { tipHeight: nu
 type Pinned = { corpus: { heights: Record<string, { eventsHash: string; stateHash: string }> } };
 /** Both hashes at each height test/vectors/hashes.json pins over the corpus. */
 export const pinned = (read("test/vectors/hashes.json") as Pinned).corpus.heights;
+/** cairnx-core's forward-resolution cases (CONVENTION section 35.4): events, a tip and each name's nameView there. */
+export const forward = read("test/vectors/forward.json") as {
+  cases: { name: string; tipHeight: number; events: ChainEvent[]; asks: { query: string; nameView: unknown }[] }[];
+};

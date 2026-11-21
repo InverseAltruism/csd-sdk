@@ -17,6 +17,8 @@ root and bodies names the same store.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
   and the reader, `open` and `openLog` ("Reading" below).
+- `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
+  `resolve()` or the block machinery.
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
   records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
 
@@ -154,7 +156,7 @@ replayed on demand.
 ## Reading
 
 `open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
-`memoryStore()`): `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
+`memoryStore()`): `name(name)`, `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
 `dryRun(tx, author)`,
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
@@ -174,15 +176,25 @@ at, and the depth). A caller that gates value on an answer reads `value` and act
 `shown` is for display. The deep view is the state at `tip - minDepth`; `minDepth` defaults to cairnx-core's
 `FINAL_DEPTH` (12), the depth replicas compare at, which is not a depth that makes a payment safe: a caller crediting
 value chooses its own. `balance`, `state` and `events` answer the deep view; `balance` adds `atTip` when the balance at
-the tip differs. `primary` answers `SHALLOW` when the deep view and the tip view name different names, the tip view in
-`shown`. `events` pages in the order of CONVENTION section 33.3 from an exclusive `height:pos` cursor (`limit`
+the tip differs. `name` and `primary` answer `SHALLOW` when the deep view and the tip view differ, the tip view in
+`shown`.
+
+`name(name)` is cairnx-core's `nameView` (CONVENTION section 35.4) over the deep view: `state` (`held`, `pending`,
+`lapsed`, `free` when absent, `reserved`), `owner` (the reserver of a pending name, the last owner of a lapsed one),
+`addr` and `profile` (a held name's only) and `paidThroughEpoch`. The replica restates none of that rule. A verified
+`free`, `pending` or `lapsed` is as true as a verified `held`: the verdict is about the replica, not the name. The
+name is asked as `names` writes it: a caller lowercases its input and drops a `.csd` suffix first (CONVENTION
+section 35.4), since any string that does not match `NAME_RE` is `INPUT_INVALID`; cairnx-core exports no normalizer to
+reuse. `constructor` and other prototype keys are names like any other (`nameView` tests for an own key). `addr` is
+where a payment to the name goes, and a sender refuses a lapsed name's; `profile` is display data, never a send
+target (CONVENTION section 36.3). `events` pages in the order of CONVENTION section 33.3 from an exclusive `height:pos` cursor (`limit`
 default 100, at most 1,000); its `next` does not pass the deep height, also on an empty page.
 
 An answer is verified only when every condition holds. Each failed one adds its code, in this order:
 
 | Code | The condition that failed |
 |---|---|
-| `INPUT_INVALID` | the read's input is well formed (an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
+| `INPUT_INVALID` | the read's input is well formed (a name matching `NAME_RE`, an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
 | `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
 | `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
 | `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
@@ -191,16 +203,16 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
-| `SHALLOW` | `primary`: the deep view and the tip view agree |
+| `SHALLOW` | `name` and `primary`: the deep view and the tip view agree |
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
 the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
-`SOURCE_UNAVAILABLE`, `UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED` and `LEVEL_DISPLAY` (a display
-basis is refused by `open`); the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and
-`REPLAY_SLOW`.
+`UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
+`TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
+`./display` (a display basis is refused by `open`).
 
 A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
 with a valid header, gives another hash at the compared height, or cannot yet be compared within 12 blocks of the
@@ -241,11 +253,50 @@ domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replic
 `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
 address rule and `memoryStore()`.
 
-What the reader does not answer yet: `name()` needs a forward-resolution selector from cairnx-core (the address and
-profile a name gives, which CONVENTION sections 28 and 35.3 state and core 0.2.7 does not export), so it waits for
-0.2.8 rather than restating that rule here; `transfers` waits for cairnx-core to
-export the token movements of an address (a whole fill's delivered amount and a mint's amount are not fields of the
-state today, and deriving them here would restate the core's settlement); `./display` is not built. What it does
-not persist: the witness's confirmation and the source's header window live in memory.
+What the reader does not answer yet: `transfers` waits for cairnx-core to export the token movements of an address (a
+whole fill's delivered amount and a mint's amount are not fields of the state today, and deriving them here would
+restate the core's settlement). What it does not persist: the witness's confirmation and the source's header window
+live in memory.
+
+## Display
+
+```ts
+import { open, ourApi } from "@inversealtruism/cairnx-replica/display";
+const d = await open({ source: ourApi({ origin: "https://cairn-substrate.com" }) });
+const a = await d.name("alice");   // a.verified is false; show a.shown with a.why
+```
+
+`ourApi({ origin, fetch?, timeoutMs? })` is our front door's `/trade/api/cairnx/name/:name` and
+`/trade/api/cairnx/token/:ticker` at `origin` (an http or https URL without credentials, query or fragment), one
+request per read, redirects refused, `timeoutMs` (default 10 s) per request. `open({ source })` from this entry gives
+`name(name, { signal? })` and `balance(ticker, address, { signal? })`, the same `NameValue` (cairnx-core's `nameView`
+over the served name record) and `BalanceValue` (without `atTip`) a replica answers. It refuses every source but a
+display one with `ReplicaConfigError`, and the root entry's `open` refuses a display source.
+
+These are the resolver's legacy routes. When the versioned API's reads are live, the display entry moves to them.
+`balance` reads the token's whole `holders` map and takes one entry, so its answer grows with the number of holders:
+on the pinned corpus at its tip 117,000 the largest of its 19 tokens, CAIRN, has 25 holders and a 2,463-byte answer.
+Past 16 MiB the front door and this entry both refuse it. The versioned API's `holders?keys=` read, which names the
+addresses asked, replaces it when live.
+
+What a display answer proves: nothing beyond what the server said. It is the server's state at the server's tip, with
+no record checked, no depth and no witness. Every answer is `{ verified: false, value: null, shown }` with
+`level: 1`, `proof: "served"`, `at: null`, the display basis as `vouch`, and `why` led by `LEVEL_DISPLAY` (the
+verified rule's level condition, `levelCode` in `verdict.ts`). `DisplayAnswer`'s type has no verified member, the
+answer is built with `verified: false`, and no option can change it: the tests cross every server behaviour they
+model (an honest answer, a body that claims `verified` and level 3, errors, bodies out of form, a fetch that throws
+or never answers) with each origin form, timeout and read option the entry takes. A further `why` code:
+`INPUT_INVALID` for a name or ticker out of form, `SOURCE_UNAVAILABLE` (with a detail) for no answer, a status other
+than 200, a 404 other than the resolver's refusal for that read, or a body out of form (a JSON `null` included);
+`shown` is then null. Only the exact refusal `{"ok":false,"error":"unregistered name"}` of the name route is an absent
+name (`free`, or `reserved`), and only `{"ok":false,"error":"unknown ticker"}` of the token route an unknown ticker
+(no balance). Any other 404, such as the resolver's catch-all or the front door's allowlist refusal, is
+`SOURCE_UNAVAILABLE`, so an origin set to the wrong server shows nothing rather than every name free; a reworded
+refusal fails the same way. A caller that needs
+`verified` reads the name from a replica of level 3 (`open` of the root entry).
+
+The minified bundle of `./display` measured 5,208 bytes gzip on 2026-11-21 and is pinned under 6 KB by
+`test/bundle.test.ts`. Of that, 2,290 bytes is what any import from cairnx-core costs: module-level statements of its
+build and csd-codec's that a bundler cannot drop.
 
 ESM only, `sideEffects: false`. `@inversealtruism/cairnx-core` is a peer dependency, so a process runs one `resolve()`.
