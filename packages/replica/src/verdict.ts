@@ -21,9 +21,13 @@ export interface VerdictInput {
   readonly witness: { readonly at: number | null } | null;
 }
 
+/** The level condition, the first of the rule: null at level 3, else a feed's LEVEL_FEED or a display's LEVEL_DISPLAY.
+ *  `./display` states its answers' level with it. */
+export const levelCode = (level: 1 | 2 | 3, feed: boolean): NotVerifiedCode | null => (level === 3 ? null : feed ? "LEVEL_FEED" : "LEVEL_DISPLAY");
+
 export function verdict(v: VerdictInput): NotVerifiedCode[] {
-  const why: NotVerifiedCode[] = [];
-  if (v.level < 3) why.push(v.feed ? "LEVEL_FEED" : "LEVEL_DISPLAY");
+  const why: NotVerifiedCode[] = [], lv = levelCode(v.level, v.feed);
+  if (lv !== null) why.push(lv);
   if (v.rulesDiffer(v.synced?.tip.height ?? Number.POSITIVE_INFINITY)) why.push("RULES_DIFFER");
   const s = v.synced;
   if (s === null) why.push("NOT_SYNCED");

@@ -1,5 +1,6 @@
 // What a reader answers (design section 5). `value` is null unless the answer is verified; the unverified value is in
 // `shown`. Every answer carries its level, the proof of its records and the basis that vouches for them.
+import type { NameView } from "@inversealtruism/cairnx-core";
 import type { BlockHeader } from "@inversealtruism/csd-codec";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import type { Basis, Cursor, RecordProof, TipView } from "./types.js";
@@ -29,6 +30,9 @@ export interface BalanceValue {
   readonly ticker: string; readonly deployId: string | null; readonly address: string; readonly available: string; readonly locked: string;
   readonly atTip?: { readonly available: string; readonly locked: string };
 }
+/** A name as a reader shows it: cairnx-core's NameView (CONVENTION section 35.4). `state` is `held`, `pending`, `lapsed`,
+ *  `free` (absent) or `reserved`; `addr` and `profile` are a held name's only. */
+export type NameValue = NameView;
 /** A position in the event order, height and transaction position, exclusive when it starts a page. */
 export type TransferCursor = `${number}:${number}`;
 export interface Page<T> { readonly items: readonly T[]; readonly next: TransferCursor; readonly more: boolean }
