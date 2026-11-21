@@ -7,6 +7,7 @@
 // request budget resumes at the next step instead of starting again. With `holds`, only the rows the chain's keeper
 // holds are probed, so a fork is concluded only where it answered another hash; when none of them is on its chain
 // and it lacks some held row, the fork may lie in that gap and the step is a refusal, not a rollback to the floor.
+import { floorOf } from "./contract.js";
 import type { Session } from "./http.js";
 import type { Cursor, Step, StepContext, TipView } from "./types.js";
 
@@ -70,7 +71,7 @@ export function forkSearch(io: IO) {
         const idx = st.stride > 0 ? Math.max(st.lo + 1, st.hi - st.stride) : (st.lo + st.hi) >> 1, height = st.held[idx]!;
         if ((await io.probe(s, height)).hash === ctx.hashAt(height)) { st.lo = idx; st.stride = 0; } else { st.hi = idx; st.stride *= 2; }
       }
-      const { lo, held, partial } = st, floor = ctx.rule.activationHeight - 1, to = lo >= 0 ? held[lo]! : floor;
+      const { lo, held, partial } = st, floor = floorOf(ctx), to = lo >= 0 ? held[lo]! : floor;
       st = null;
       if (lo < 0 && partial) return cannot("SOURCE_UNAVAILABLE", `${who} holds no block of the store on its chain and lacks some, so its fork cannot be placed`);
       if (to >= at.height) {

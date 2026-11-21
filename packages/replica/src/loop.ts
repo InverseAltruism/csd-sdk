@@ -79,6 +79,7 @@ function linked(a: AbortSignal, b: AbortSignal | undefined): { signal: AbortSign
 /** Internal. A loop over one source and one store; the materializer defaults to fullReplay(). */
 export function replicaLoop(o: LoopOptions): Loop {
   const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? fullReplay(), clock = o.clock ?? Date.now;
+  const floor = source.floor?.height ?? rule.activationHeight - 1;
   const limits = { maxBlocks: o.maxBlocks ?? 64, maxRequests: o.maxRequests ?? 10 };
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
@@ -208,7 +209,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   async function onReorg(s: Extract<Step, { kind: "reorg" }>): Promise<"more" | "stop"> {
-    const at = cursor(), why = reorgBreak(s.to, at, source.floor?.height ?? rule.activationHeight - 1, hashAt);
+    const at = cursor(), why = reorgBreak(s.to, at, floor, hashAt);
     if (why !== null) return backOff("SOURCE_MALFORMED", why, null);
     const to = { height: s.to.height, hash: s.to.hash }, r = await commit(() => {
       change("replace", 0, 0, () => held.truncate(to.height));
@@ -224,7 +225,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   async function step(signal: AbortSignal, deadlineAt: number): Promise<"more" | "stop"> {
     let s: Step;
     try {
-      s = await source.next({ rule, cursor: cursor(), sofar: held, hashAt, eventsHashAt, budget: { deadlineAt, ...limits }, signal, now: clock });
+      s = await source.next({ rule, cursor: cursor(), sofar: held, floor, hashAt, eventsHashAt, budget: { deadlineAt, ...limits }, signal, now: clock });
     } catch (e) {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }

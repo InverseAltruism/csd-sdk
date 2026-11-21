@@ -40,9 +40,10 @@ export interface TipView { readonly height: number; readonly hash: string; reado
  *  from a feed. */
 export interface BlockEvents { readonly height: number; readonly hash: string | null; readonly events: ChainEvent[] }
 
-/** Internal. What the loop gives a source for one step; `sofar` holds the events below the cursor. */
+/** Internal. What the loop gives a source for one step; `sofar` holds the events below the cursor. `floor` is the lowest
+ *  height a step may roll back to: the source's pin, or, when absent, the rule's activation height less one (floorOf). */
 export interface StepContext {
-  readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar;
+  readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar; readonly floor?: number;
   hashAt(height: number): string | null; eventsHashAt(height: number): string | null;
   readonly budget: { readonly deadlineAt: number; readonly maxRequests: number; readonly maxBlocks: number };
   readonly signal: AbortSignal; now(): number;
@@ -50,7 +51,7 @@ export interface StepContext {
 
 /** Internal. Why a source could not take a step. */
 export type SourceCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "SOURCE_MALFORMED" | "BODY_MISMATCH" | "AUTHOR_UNBOUND"
-  | "HEADER_INVALID" | "LESS_WORK" | "BRANCH_MOVED" | "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "BELOW_FLOOR";
+  | "HEADER_INVALID" | "LESS_WORK" | "BRANCH_MOVED" | "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "BELOW_FLOOR" | "RULES_DIFFER";
 
 /** Internal. One step of a source. A `blocks` cursor hash is null only at or below a pin. `reach`, when present, is how
  *  far the source expects to read on a server's unverified word: the loop may take more steps toward it, and it

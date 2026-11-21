@@ -10,6 +10,7 @@
 // the store holds rolls nothing back: the step is idle with the caller's tip, so the loop reports a tip below its
 // cursor (the reader's BRANCH_UNRESOLVED) until the caller's headers reach the cursor again.
 import { floorBreak } from "./basis.js";
+import { floorOf } from "./contract.js";
 import { SourceError } from "./errors.js";
 import { forkSearch, type Head } from "./fork.js";
 import type { Session } from "./http.js";
@@ -51,7 +52,7 @@ export function callerRoot(h: VerifiedHeaders): Root {
     async tip(signal) { const v = await h.sync(null, signal); return v === null ? null : (tip = viewOf(v)); },
     async begin(s, ctx, server) {
       const at = ctx.cursor;
-      const low = floorBreak({ kind: "caller", floor: h.floor, origin: h.origin }, null, ctx.rule);
+      const low = floorBreak({ kind: "caller", floor: h.floor, origin: h.origin }, floorOf(ctx), ctx.rule);
       if (low !== null) throw new SourceError("BELOW_FLOOR", low);
       const v = await h.sync(server.height, ctx.signal);
       if (v === null) throw new SourceError("SOURCE_UNAVAILABLE", "the caller's headers do not know the tip");

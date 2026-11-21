@@ -63,15 +63,13 @@ export function basisKey(b: Basis): string {
   return canonicalJson({ kind: "pinned", above: { kind: "blocks", root: root.kind === "anchor" ? { kind: "anchor" } : root, bodies } });
 }
 
-/** Why headers from `root` cannot give every event from the rule's activation height, or null (design section 2): an
- *  anchor must lie at or below the activation height less one, and so must a caller's floor, or at or below the pin
- *  under one. Under a pin an anchor root is the pin itself. One's own node is read from the activation height. */
-export function floorBreak(root: HeaderRoot, pin: Cursor | null, rule: EventRule): string | null {
-  const limit = pin?.height ?? rule.activationHeight - 1;
-  if (root.kind === "anchor" && pin === null && root.anchor.height > limit) return `the anchor ${root.anchor.height} lies above the activation height less one`;
-  if (root.kind === "caller" && root.floor > limit) {
-    return `the caller's headers start at ${root.floor}, above ${pin === null ? "the activation height less one" : `the pin ${limit}`}`;
-  }
+/** Why headers from `root` cannot give every event above `floor`, the pin or the activation height less one, or null
+ *  (design section 2): an anchor must lie at or below it (under a pin an anchor root is the pin itself), and so must
+ *  a caller's floor. One's own node is read from the activation height. */
+export function floorBreak(root: HeaderRoot, floor: number, rule: EventRule): string | null {
+  const what = floor === rule.activationHeight - 1 ? "the activation height less one" : `the pin ${floor}`;
+  if (root.kind === "anchor" && root.anchor.height > floor) return `the anchor ${root.anchor.height} lies above ${what}`;
+  if (root.kind === "caller" && root.floor > floor) return `the caller's headers start at ${root.floor}, above ${what}`;
   return null;
 }
 

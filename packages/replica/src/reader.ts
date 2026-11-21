@@ -81,7 +81,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   // Every answer's `vouch` is this object, so it is frozen; every other value a read returns is built for that read.
   const basis = deepFreeze(checkBasis(o.source.basis)), clock = o.clock ?? Date.now, witnesses = o.witnesses ?? [];
   if (basis.kind === "display") throw new ReplicaConfigError("open: a display source is read through ./display");
-  const r = rootOf(basis), low = r === null ? null : floorBreak(r.root, r.pin, rule);
+  const r = rootOf(basis), low = r === null ? null : floorBreak(r.root, r.pin?.height ?? rule.activationHeight - 1, rule);
   if (low !== null) throw new ReplicaConfigError(`open: ${low}`, "BELOW_FLOOR");
   const headers = r === null || r.root.kind === "own-node" ? null : r.root.kind === "caller" ? r.root.origin : (basis.kind === "pinned" ? basis.above : basis as { bodies: string }).bodies;
   const same = headers === null ? undefined : witnesses.find((w) => originOf(w.origin) === originOf(headers));
