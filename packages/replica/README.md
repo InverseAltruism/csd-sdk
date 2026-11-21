@@ -13,7 +13,7 @@ level of every answer (CairnX `CONVENTION.md` section 37) is a function of that 
 
 Only blocks sit above a pin: a pin over a feed does not compile, and `checkBasis`, `levelOf`, `proofOf` and `basisKey`
 throw `ReplicaConfigError` for one at run time. `basisKey` names a store without its pin, so a newer pin over the same
-root and bodies names the same store.
+root and bodies names the same store, which is kept only on the conditions of "Pins" below.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
   the reader, `open` and `openLog` ("Reading" below), and `checkPin` and `pinned` ("Pins" below).
@@ -36,6 +36,8 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
+- `./server` also has `diskStore({ dir })` ("The disk store" below) and `ownNode({ node, dir, pin?, witness? })`
+  ("One's own node on disk" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
   accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
@@ -140,10 +142,8 @@ replayed on demand.
   `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
   `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
   the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
-  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. Nothing checks a stored boundary's state
-  hash at open, and a pinned source's bind compares the one kept on the pin's boundary: a store that could hold a
-  wrong one there (a disk store, written under another core) must recheck it at open, which is the disk store's
-  slice to do. A memory store holds only what the loop computed.
+  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. A boundary's stored state hash is not
+  checked at open; a pinned source's bind replays its own ("Pins" below).
 
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
@@ -217,7 +217,11 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; the note's `detail` names why from a
+fixed list: another process holds it, it refuses its directory, a read or write failed, or a reset it needed failed;
+the store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
+`storeError`, that message in full: it is for the server's own logs and is not forwarded to clients, since it can hold
+paths. Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -252,7 +256,7 @@ rebuilt and released against it; every new gate therefore needs a release of the
 event from activation (`code` `BELOW_FLOOR`: an anchor above the activation height less one, or a caller's floor
 above it, or above the pin under one); and a witness on the header source's origin (the front door's under an
 anchor root, the caller's `origin` under a caller root). A store that opens refused for its format, rule, basis or
-rows is reset and filled again; the newer-pin exception of the design is the disk store's slice.
+rows is reset and filled again, except a store filled under an older pin that a newer one keeps ("Pins" below).
 
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
@@ -299,26 +303,19 @@ replica (which answers `NOT_SYNCED` or `BEHIND` until it has read to the tip aga
 cursor binds the events, not the rules that turn them into moves: a cairnx-core release that changed what an older
 entry's moves report would not refuse a stored cursor, and such a release says so in cairnx-core's CHANGELOG.
 
-A server crediting deposits from its own node, the example `test/transfers-reorg.test.ts` runs over a 20-block reorg:
+A server crediting deposits from its own node is `examples/deposits.ts` in this repository: `openReplica` (`open` over
+`ownNode`, the store on disk, so a restart reads on from the stored cursor), `creditDeposits` (each verified page
+credited once by the key `(txid, leg)`, its cursor stored with its credits in one transaction, `CURSOR_OFF_BRANCH`
+raised to the operator) and `recover` (below). `test/deposits.test.ts` runs it over the recorded node across a
+restart, a 20-block reorg while running and one while closed, and a newer pin; `test/deposits-recover.test.ts` stops
+`recover` at each of its steps and runs the server again; `test/transfers-reorg.test.ts` runs the two calls over a
+memory store at two depths.
 
 ```ts
-import { local, open } from "@inversealtruism/cairnx-replica/server";
-const replica = await open(local({ node: "http://127.0.0.1:8789" }));
-async function creditDeposits(address: string) {
-  for (;;) {
-    const a = await replica.transfers(address, await db.cursor(address), { minDepth: MIN_DEPTH });
-    if (!a.verified) {
-      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery below, and its operator is told.
-      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) await db.alert(address, "CURSOR_OFF_BRANCH");
-      return a;                                      // nothing credited, the cursor stays
-    }
-    await db.transaction(async (t) => {
-      for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) await t.credit(x);   // (txid, leg) a unique key
-      await t.setCursor(address, a.value.next);
-    });
-    if (!a.value.more) return a;
-  }
-}
+import { PIN } from "@inversealtruism/cairnx-pin";
+import { creditDeposits, openReplica } from "./deposits";   // examples/deposits.ts
+const replica = await openReplica({ node: "http://127.0.0.1:8789", dir: "/var/lib/deposits/replica", pin: PIN });
+for (const address of addresses) await creditDeposits(replica, db, address, { minDepth: MIN_DEPTH, pinned: PINNED });
 ```
 
 What `transfers` gives that server: each move to its address once across pages, only from a verified answer, only at
@@ -330,17 +327,25 @@ do itself:
 - Choose `minDepth` for value. The default, `FINAL_DEPTH` (12), is the depth replicas compare at; a row is credited only
   once it is that deep, and a reorg deeper than it can still take back a credited row.
 - Store `next` with its credits in one transaction, only from a verified answer (`shown` carries a page too), and keep
-  `(txid, leg)` unique: one entry can move two legs to one address.
+  `(txid, leg)` unique: one entry can move two legs to one address. Store a memo as bytes or escaped, so that a
+  database refusing U+0000 in text does not stop the address.
 - Drive the replica: nothing runs on a timer, and a read with the default `waitMs` of 0 answers from what is held.
 - On `CURSOR_OFF_BRANCH`: rows it credited may be gone and rows it has not seen may lie below its cursor. Retrying
-  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the server recovers it: it keeps
-  its earlier cursors, takes the newest one the read still accepts (verified, not `CURSOR_OFF_BRANCH`; null when none
-  is) as the cursor, and reads on from there crediting by the unique key. A credit above that cursor that the reread
-  does not give again is no longer on the chain; one it gives again with another amount changed under its key. Both go
-  to the operator. A capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
+  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the
+  server recovers it. It keeps its earlier cursors and takes the newest one the read still accepts (verified, not
+  `CURSOR_OFF_BRANCH`; null when none is) as the start. It reads the pages after the start without writing, then, in
+  one transaction, raises each credit written after the transaction that stored the start (not compared by height:
+  a page's cursor lies below the deep height its answer was read at) that the pages do not give, and stores the start
+  as the cursor; then it reads on crediting by the unique key. Until that transaction nothing it stores has moved, so
+  a recovery stopped anywhere runs again over the same range. A credit raised so is not at `minDepth` or deeper on the
+  branch the replica holds: it may be gone, or mined again in a block not yet that deep, in which case a later page
+  offers it again and the key refuses a second credit; the raise is for the operator to look at, not to reverse a
+  credit on. A credit offered again with another amount has changed under its key; that goes to the operator too. A
+  capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
   before it) can change under one `(txid, leg)`, which `test/transfers.test.ts` shows. A transfer's, a sale's and a
   fee's do not, by the core's code (read, not tested here): a transfer moves its record's amount, a sale the price of
-  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). `test/transfers-reorg.test.ts` runs that recovery.
+  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). The
+  example's `recover` is that recovery.
 
 ## Pins
 
@@ -365,18 +370,28 @@ an anchor root a header above the pin that names another parent is `HEADER_INVAL
 the pin, and `PIN_OFF_CHAIN` once the window has moved up. The log's rows and that step are committed together, so the log loads in one step:
 at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
 a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
-43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Later steps go to `then`; a reorg
+43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Loading in steps would not shorten
+it, since no row counts before the whole log's sha256, events hash and state hash hold; when to revisit is under
+"Limits" in "One's own node on disk" below. Later steps go to `then`; a reorg
 below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A node that moves to a branch forking below the
 pin whose tip is still below the pin's height reads as behind the cursor (`SOURCE_UNAVAILABLE`), so the answer stays
 as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
 the answer to every later step of that source, so a later step cannot clear it, and the answers carry its code in
 `why`. A store reopened under the same basis (the pin's height and block hash and the log's `logSha256`) is bound to
-the descriptor once per source without reading the log: the block hash, the events hash and the state hash at the pin
-must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at or below the pin (`RULES_DIFFER`).
-The state hash is the one the store keeps on the pin's boundary when it keeps one, compared without a replay; else it
-is replayed from the stored rows. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
-checked against the contract and their own running hashes when they were read back. A store reopened under another
-basis is reset.
+the descriptor once per source without reading the log: the block hash, the events hash, the digest of the stored
+events at or below the pin (payloadHash, so their content, which the events hash does not cover, must give the
+`logSha256`) and the state hash at the pin must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded
+core's at or below the pin (`RULES_DIFFER`). The state hash is replayed from the stored rows, never read from the pin's
+boundary, which a store can hold wrong. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
+checked against the contract and their own running hashes when they were read back.
+
+A store reopened under another basis is reset, with one exception: a store filled under an older pin is kept under a
+newer one when both are pinned with one `basisKey` (the same root and bodies), the new pin lies above the old, the
+store's cursor is at or above the new pin, and the stored rows give the new pin's block hash, events hash and log
+digest; the bind above then replays the state hash at the new pin (`PIN_MISMATCH` when it is not the pin's). A kept store answers without reading the new log
+and records the new pin with its next commit. Every other change resets it and refills from the new log: an older pin,
+another log at the same height, a cursor below the new pin, rows that give another value at it, another node or body
+origin, an anchor root in place of one's own node, a feed's or an unpinned store (`test/disk-pins.test.ts`).
 
 What the checks prove: they tie the log to its descriptor and the descriptor's block to the header chain, not the
 log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
@@ -387,6 +402,76 @@ by design: below the pin the trust is the release, and a second derivation on an
 as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
 anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
 the witness's to confirm.
+
+## The disk store
+
+`diskStore({ dir })`, in `./server`, keeps a store in `dir`, an absolute path on a local filesystem (created with mode
+700 at open; a relative path, or one that is a file or cannot be created, throws `ReplicaConfigError`). Pass it as
+`store` to `open` or `openLog`. Files: `meta.json` (the store's tag and format, the meta without `witnessed`, the
+committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
+`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
+writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
+`open` throw `ReplicaConfigError` naming it, with nothing removed. Give the store a directory of its own all the same:
+a file named `lock` is taken for a lease (and moved aside once it has gone 20 s untouched), and a `meta.json` that is not JSON for
+the store's own damaged meta, replaced at the next reset. Two processes of different configuration (another node,
+pin or rule) on one directory can reset each other's store whenever the lease changes hands. A commit appends at the committed lengths, syncs
+each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
+directory; a rollback is that rename alone. While one holder's directory syncs return, nothing is written below the
+lengths of a meta that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
+(`test/disk-kill.test.ts` kills a process at every point of a 20-commit sequence with a rollback, 209 times); the
+order of the syncs, which a kill cannot show, is what carries this past a power loss (`test/disk-store.test.ts`). An
+extend after a rollback whose directory sync did not land, or a refill after a reset cut short, can leave files that
+open `corrupt`; the store is then refilled, as for any file that fails its checks.
+
+At open, in order: the format, the rule, the basis and the gate table the rows were written under (another table at or
+below the cursor resets the store, reason `rule`); then the files (a file shorter than its committed length, a line
+out of form, a boundary chain or window digest other than the meta's: `corrupt`, and the reader resets and refills);
+then the loop's checks of every row against the contract and both running hashes, and under a pin the bind above. A
+store refused for any reason but `unavailable` is reset and refilled whenever the reader loads it, also when it first
+found the store held by another process. The checks prove that the files agree with each other, not where they came
+from: rows above a pin, and every row without one, are not compared with the chain at open, so a consistent edit of
+them passes. For a server that credits deposits from the replica, the directory is as sensitive as its table of
+credits. Do not use a store someone else wrote.
+
+One process writes a directory at a time, by a lease on `lock`: the holder touches it every 5 s, and one not touched
+for 20 s is stale and taken over. While another process holds it, `open` is `unavailable` (the answers carry
+`NOT_SYNCED` and the note `STORE_UNAVAILABLE`) and the next advance tries again. A holder whose lease was taken
+over while it waited between commits fails its next commit and writes nothing; one stopped after that commit's check
+of its lease finishes the commit over the taker's files, and the store then opens `corrupt` and is refilled. The package installs no signal handler: a server calls `close()` at
+shutdown, which releases the lease; after a crash the next start waits until the lease is stale.
+
+## One's own node on disk
+
+`ownNode({ node, dir, pin?, witness?, fetch?, paceMs?, timeoutMs? })`, in `./server`, is what `open` takes for a
+server's replica of its own node kept across restarts: the source of `local` (`nodeBlocks` at `node` under the
+server's address rule, above `pin` when one is given; the caller imports the pin, from `@inversealtruism/cairnx-pin`
+for ours), `diskStore({ dir })`, the witness when one is given, and a step budget of 512 blocks and 600 requests in
+place of the loop's 64 and 10, since every commit on disk costs its syncs. A node outside the rule or a relative `dir`
+throws `ReplicaConfigError`, and `open` throws it for a `dir` that is a file or cannot be created; a lock another
+process holds, or a disk error at open, is `NOT_SYNCED` with the note `STORE_UNAVAILABLE`, tried again at the next
+advance.
+
+```ts
+import { PIN } from "@inversealtruism/cairnx-pin";
+import { hostedWitness, open, ownNode } from "@inversealtruism/cairnx-replica/server";
+const replica = await open(ownNode({ node: "http://127.0.0.1:8789", dir: "/var/lib/deposits/replica", pin: PIN,
+  witness: hostedWitness({ origin: "https://cairn-substrate.com" }) }));   // the witness line is optional
+```
+
+No witness is set unless the caller names one: the package asks no host the caller did not name. One's own node is
+the header root, so its answers need no witness to be verified. A witness on another origin only withholds
+`verified`: it adds `TIP_BEHIND_PEER` when it names a higher tip with a valid header (one's node is behind,
+or on a branch the witness does not follow) and the note `SOURCES_DISAGREE` when it holds another block at the height
+compared.
+
+A day of blocks (720) above a pin, read through `open` on a disk store from a node serving the recorded capture to
+30,300 and blocks holding 30,300's transactions above it: with `ownNode`'s budget 2 steps and 2 commits, the advance
+0.34 to 0.39 s; with `local`'s source over the same `diskStore` (the loop's budget) 81 steps and 81 commits, 2.42 to
+2.45 s (three runs each, Node 26 on this host, 2026-11-21).
+
+Limits: the pin's log loads in one step ("Pins" above). Revisit that when a first step takes over 5 s on a server or
+a browser store's transaction is found too large; the answer then is a resumable replay context and a log fetched by
+its hash, not steps.
 
 ## Display
 

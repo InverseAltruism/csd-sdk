@@ -76,6 +76,24 @@ export function floorBreak(root: HeaderRoot, floor: number, rule: EventRule): st
 /** Whether two bases are the same value, the pin included. */
 export const sameBasis = (a: Basis, b: Basis): boolean => canonicalJson(checkBasis(a)) === canonicalJson(checkBasis(b));
 
+/** What a store's rows give at a height, each null above its cursor. */
+export interface RowsAt {
+  readonly cursor: Cursor | null;
+  hashAt(height: number): string | null; eventsHashAt(height: number): string | null; logSha256At(height: number): string | null;
+}
+
+/** Whether a store filled under `stored` is kept under `wanted`, the one exception to the rule that another basis resets
+ *  it (design section 5): both are pinned with one key, `wanted`'s pin lies above `stored`'s, the store's cursor is at
+ *  or above it, and the rows give its block hash, its events hash (`eventsHash`, the wanted pin's) and its log's
+ *  sha256. The state at the pin is replayed at the bind, as for every reopen under a pin (pinned.ts). */
+export function keepsStore(stored: Basis, wanted: Basis, eventsHash: string | null, rows: RowsAt): boolean {
+  const s = checkBasis(stored), w = checkBasis(wanted);
+  if (s.kind !== "pinned" || w.kind !== "pinned" || basisKey(s) !== basisKey(w) || !(w.pin.height > s.pin.height)) return false;
+  const h = w.pin.height;
+  return rows.cursor !== null && rows.cursor.height >= h && rows.hashAt(h) === w.pin.hash && eventsHash !== null && rows.eventsHashAt(h) === eventsHash &&
+    rows.logSha256At(h) === w.logSha256;
+}
+
 /** `v` as a pin holding only its own fields, or a ReplicaConfigError naming the rule it breaks: format 1, a rule, a
  *  height at an epoch boundary at or above the rule's activation, four hashes in form, a gate table, a core version
  *  and a log function. It checks the form only; pinned() checks the log against it. */

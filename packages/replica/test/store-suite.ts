@@ -8,25 +8,30 @@ import { fixtures } from "../src/testing.js";
 
 export type Check = { name: string; ok: boolean };
 
-const FEED: Basis = { kind: "feed", feed: "https://feed.example", inclusion: false };
-const BLOCKS: Basis = { kind: "blocks", root: { kind: "own-node", node: "http://127.0.0.1:8789" }, bodies: "http://127.0.0.1:8789" };
-const key = (basis: Basis) => ({ format: 1, rule: CAIRNX_EVENT_RULE, basis }) as const;
-const at = (height: number, c = "1"): Cursor => ({ height, hash: `0x${c.repeat(64 - String(height).length)}${height}` });
+export const FEED: Basis = { kind: "feed", feed: "https://feed.example", inclusion: false };
+export const BLOCKS: Basis = { kind: "blocks", root: { kind: "own-node", node: "http://127.0.0.1:8789" }, bodies: "http://127.0.0.1:8789" };
+export const key = (basis: Basis) => ({ format: 1, rule: CAIRNX_EVENT_RULE, basis }) as const;
+export const at = (height: number, c = "1"): Cursor => ({ height, hash: `0x${c.repeat(64 - String(height).length)}${height}` });
 const f = fixtures();
 // A row after `prev`, the row below it (null for the first), with both running hashes.
-const row = (height: number, prev: BlockRow | null, c = "1"): BlockRow => {
+export const row = (height: number, prev: BlockRow | null, c = "1"): BlockRow => {
   const events = [f.prop({ v: 1, t: "nrenew", name: "alice" }, { proposer: `0x${"a1".repeat(20)}`, height, pos: 1 })], hash = at(height, c).hash;
   return { height, hash, events, eventsHash: eventsHashStep(prev?.eventsHash ?? EVENTS_HASH_START, height, events),
     rowsHash: rowsHashStep(prev?.rowsHash ?? ROWS_HASH_START, { height, hash, events }) };
 };
-const bound = (height: number, stateHash: string | null = EVENTS_HASH_START): Boundary => ({ height, hash: at(height).hash, eventsHash: EVENTS_HASH_START, stateHash });
+export const bound = (height: number, stateHash: string | null = EVENTS_HASH_START): Boundary =>
+  ({ height, hash: at(height).hash, eventsHash: EVENTS_HASH_START, rowsHash: ROWS_HASH_START, stateHash });
 // A meta whose running hashes are those of `last`, the last row held after the commit.
-const meta = (cursor: Cursor | null, rows: BlockRow[], basis: Basis = FEED, rule: EventRule = CAIRNX_EVENT_RULE, last = rows.at(-1)): StoreMeta => ({
+export const meta = (cursor: Cursor | null, rows: BlockRow[], basis: Basis = FEED, rule: EventRule = CAIRNX_EVENT_RULE, last = rows.at(-1)): StoreMeta => ({
   format: 1, rule, basis, cursor, eventsHash: last?.eventsHash ?? EVENTS_HASH_START, rowsHash: last?.rowsHash ?? ROWS_HASH_START,
-  eventCount: rows.reduce((n, r) => n + r.events.length, 0), witnessed: null, windowSha256: null, work: null, workRoot: null,
+  eventCount: rows.reduce((n, r) => n + r.events.length, 0), witnessed: null, windowSha256: null, work: null, workRoot: null, gates: { V12_HEIGHT: 30_300 },
 });
-const commit = (expect: Cursor | null, rows: BlockRow[], cursor: Cursor | null, more: Partial<Commit> = {}): Commit =>
+export type Extend = Exclude<Commit, { rollbackTo: unknown }>;
+export const commit = (expect: Cursor | null, rows: BlockRow[], cursor: Cursor | null, more: Partial<Extend> = {}): Extend =>
   ({ expect, rows, boundaries: [], meta: meta(cursor, rows), ...more });
+// A rollback to `to`, whose meta holds `kept`'s hashes: the last row kept.
+export const rollback = (expect: Cursor | null, to: Cursor | null, kept: BlockRow | undefined): Commit =>
+  ({ expect, rollbackTo: to, meta: meta(to, [], FEED, CAIRNX_EVENT_RULE, kept) });
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 
 /** Everything a store holds, read back through its interface; reopens it under FEED. */
@@ -67,7 +72,9 @@ export async function storeSuite(make: () => Store | Promise<Store>): Promise<Ch
     ["rows out of height order", commit(at(30_060), [r3, row(30_090, r2)], at(30_100))],
     ["a cursor below the last row", commit(at(30_060), [r3], at(30_099))],
     ["a boundary not above the last one kept", commit(at(30_060), [r3], at(30_100), { boundaries: [bound(30_000)] })],
-    ["a rollback above the stored cursor", { ...commit(at(30_060), [], at(30_070), { rollbackTo: at(30_070) }), meta: meta(at(30_070), [r2]) }],
+    ["a rollback above the stored cursor", { ...rollback(at(30_060), at(30_070), r2), meta: meta(at(30_070), [r2]) }],
+    ["a rollback whose meta's cursor is not where it rolls back to", { ...rollback(at(30_060), at(30_050), r2), meta: meta(at(30_060), [r2]) }],
+    ["a rollback that also carries rows (outside the types)", { ...rollback(at(30_060), at(30_050), r2), rows: [r3], boundaries: [] } as unknown as Commit],
     ["a meta whose events hash is not the last row's", { ...commit(at(30_060), [r3], at(30_100)), meta: { ...meta(at(30_100), [r3]), eventsHash: r2.eventsHash } }],
     ["a meta whose rows hash is not the last row's", { ...commit(at(30_060), [r3], at(30_100)), meta: { ...meta(at(30_100), [r3]), rowsHash: r2.rowsHash } }],
     ["a meta with no new rows whose hashes are not those of the last row kept", commit(at(30_060), [], at(30_070))],
@@ -82,10 +89,12 @@ export async function storeSuite(make: () => Store | Promise<Store>): Promise<Ch
   check("a commit with no new rows is taken with the last row's hashes in its meta", still.ok);
 
   const r2b = row(30_040, r1, "b");
-  const back = await s.commit(commit(at(30_110), [r2b], at(30_045), { rollbackTo: { height: r1.height, hash: r1.hash! } }));
-  check("a rollback onto a held row keeps it and what lies below, drops the rows and boundaries above, and appends",
-    back.ok && same(await held(s), { rows: [r1, r2b], boundaries: [bound(30_000)], window: [1, 2, 3], meta: meta(at(30_045), [r2b]) }));
-  const none = await s.commit(commit(at(30_045), [], null, { rollbackTo: null }));
+  const onR1 = { height: r1.height, hash: r1.hash! }, back = rollback(at(30_110), onR1, r1);
+  check("a rollback onto a held row keeps it and what lies below and drops the rows and boundaries above",
+    (await s.commit(back)).ok && same(await held(s), { rows: [r1], boundaries: [bound(30_000)], window: [1, 2, 3], meta: back.meta }));
+  const ahead = await s.commit(commit(onR1, [r2b], at(30_045)));
+  check("the next extend appends after the rows kept", ahead.ok && same(await held(s), { rows: [r1, r2b], boundaries: [bound(30_000)], window: [1, 2, 3], meta: meta(at(30_045), [r2b]) }));
+  const none = await s.commit(rollback(at(30_045), null, undefined));
   check("a rollback to nothing drops every row and boundary",
     none.ok && same(await held(s), { rows: [], boundaries: [], window: [1, 2, 3], meta: meta(null, []) }));
 

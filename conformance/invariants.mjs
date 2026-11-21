@@ -21,6 +21,7 @@
 // to fire (the checker is broken); a real-corpus violation is a finding printed for triage, not a build break.
 
 import { resolve, TREASURY_ADDR, V16_HEIGHT, V17_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, DEPLOY_FEE, COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, nameRegFee, nameClaim, nameCommit, nameCommitRecord, nameXfer, nameSet, nameRenew, nameFinalize, deploy, mint, transfer, offer, bid, offerCancelAll, tradeFee, FEE_BPS_V16, fclaim, fclaimEpochFor, makerRebate } from "../packages/cairnx/dist/index.js";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const T = TREASURY_ADDR;
@@ -327,7 +328,7 @@ function runStdin() {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const argv = process.argv.slice(2);
   if (argv.includes("--selftest")) selftest();
   else if (argv.includes("--stdin")) runStdin();

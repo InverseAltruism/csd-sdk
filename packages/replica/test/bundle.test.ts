@@ -2,7 +2,7 @@
 // esbuild tsup carries, no dependency of its own), with its imports, dynamic imports and re-exports resolved under the
 // browser and import conditions. A Node built-in fails the bundle; the output is then scanned for Buffer, require and
 // the process global. Two controls show the checks see what they ban: an entry importing node:fs fails, and ./server,
-// which reads process.env, is caught by the scan. ./display carries neither resolve() nor the block machinery, and its
+// which reads process.env, is caught by the scan (bundled with the Node built-ins its disk store imports left out). ./display carries neither resolve() nor the block machinery, and its
 // minified bundle stays under 6 KB gzip. The design's 4 KB is not reached while cairnx-core's and csd-codec's builds keep
 // module-level statements a bundler cannot drop (the reason-code table, the gate table, the chain id): an entry that
 // imports only NAME_RE from cairnx-core bundled minified to 2,290 bytes gzip on 2026-11-21. Run after the build.
@@ -18,10 +18,10 @@ const pkg = join(dirname(fileURLToPath(import.meta.url)), ".."), req = createReq
 const esbuild = createRequire(req.resolve("tsup"))("esbuild") as { build: Build; version: string };
 const BANNED = /\bBuffer\b|\brequire\s*\(|(?<![.\w$])process\s*(?:\.|\?\.|\[)|\btypeof\s+process\b|globalThis\s*(?:\.|\?\.)\s*process\b/;
 
-async function bundle(entry: { file: string } | { contents: string }, minify = false): Promise<{ text: string } | { error: string }> {
+async function bundle(entry: { file: string } | { contents: string }, minify = false, external: string[] = []): Promise<{ text: string } | { error: string }> {
   try {
     const where = "file" in entry ? { entryPoints: [join(pkg, "dist", entry.file)] } : { stdin: { contents: entry.contents, resolveDir: pkg } };
-    const r = await esbuild.build({ ...where, bundle: true, platform: "browser", format: "esm", write: false, logLevel: "silent", minify });
+    const r = await esbuild.build({ ...where, bundle: true, platform: "browser", format: "esm", write: false, logLevel: "silent", minify, external });
     return { text: r.outputFiles.map((f) => f.text).join("\n") };
   } catch (e) {
     return { error: e instanceof Error ? e.message.split("\n")[0]! : String(e) };
@@ -44,7 +44,9 @@ ok(`./display carries neither resolve() nor the block reads, and minified is ${g
   !display.text.includes("function resolve(") && !display.text.includes("/api/blocks/") && display.text.includes("/trade/api/cairnx/"));
 const nodeOnly = await bundle({ contents: 'import { readFileSync } from "node:fs"; export const f = readFileSync;' });
 ok("control: an entry importing node:fs does not bundle for the browser", "error" in nodeOnly);
-const server = await bundle({ file: "server.js" });
+// ./server imports Node built-ins (diskStore; the build writes them without the node: prefix), left outside its bundle
+// here so that the scan runs.
+const server = await bundle({ file: "server.js" }, false, ["node:*", "crypto", "fs", "fs/promises", "path"]);
 ok("control: the scan finds process.env in ./server", "text" in server && BANNED.test(server.text) && server.text.includes("process.env.CAIRNX_OWN_NODE_HOSTS"));
 
 done("cairnx-replica bundle");

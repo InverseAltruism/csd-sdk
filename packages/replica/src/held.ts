@@ -1,7 +1,7 @@
 // The rows a loop holds and the two sets of CONVENTION section 33.2 derived from them. Rows read back from a store are
 // checked before anything is replayed: they keep the contract a step keeps (contract.ts); the events hash stepped
 // again from the start equals each row's, the meta's and each boundary's; and the rows hash stepped again equals each
-// row's and the meta's. The rows hash covers every field of every event and each row's height and block hash
+// row's, the meta's and each boundary's. The rows hash covers every field of every event and each row's height and block hash
 // (rowshash.ts), so a row changed in any field, dropped, added or moved makes the store corrupt.
 import { EVENTS_HASH_START, type EventRule } from "@inversealtruism/cairnx-core";
 import { checkBlocks } from "./contract.js";
@@ -45,6 +45,7 @@ export class Held {
     return lo - 1;
   }
   eventsHashAt(height: number): string { return this.rows[this.below(height)]?.eventsHash ?? EVENTS_HASH_START; }
+  rowsHashAt(height: number): string { return this.rows[this.below(height)]?.rowsHash ?? ROWS_HASH_START; }
   hashAt(height: number): string | null {
     const r = this.rows[this.below(height)];
     return r?.height === height ? r.hash : null;
@@ -65,7 +66,8 @@ export function verifyRows(rows: readonly BlockRow[], boundaries: readonly Bound
   const held = new Held();
   held.add(rows);
   const top = meta.cursor?.height ?? -1;
-  const fits = (b: Boundary) => b.height <= top && b.eventsHash === held.eventsHashAt(b.height) && (held.hashAt(b.height) ?? b.hash) === b.hash;
+  const fits = (b: Boundary) => b.height <= top && b.eventsHash === held.eventsHashAt(b.height) && b.rowsHash === held.rowsHashAt(b.height) &&
+    (held.hashAt(b.height) ?? b.hash) === b.hash;
   return c.eventsHash === meta.eventsHash && held.count === meta.eventCount && (rows.at(-1)?.height ?? -1) <= top && boundaries.every(fits)
     ? held : null;
 }

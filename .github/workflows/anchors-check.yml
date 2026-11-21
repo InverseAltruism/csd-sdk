@@ -1,0 +1,43 @@
+name: anchors-check
+
+# Re-walks the committed anchors table (packages/anchors/anchors.json) from a headers source and requires the floor,
+# the activation root and every entry to be canonical at a second RPC. It is started by hand with both bases as
+# inputs, and a release of the package requires it green on the commit to be published (docs/release.md). It has no
+# push, pull request or schedule trigger: ci.yml stays offline.
+on:
+  workflow_dispatch:
+    inputs:
+      headers:
+        description: Base URL of the headers source (serves /api/headers/<from>/<count>)
+        required: true
+        type: string
+      rpc:
+        description: Base URL of the second RPC (serves /block/height/<height> and /tip)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  anchors:
+    runs-on: ubuntu-24.04
+    # Paced at 550 ms a request, one request per 512 blocks of headers plus one per entry: this leaves room for several
+    # Retry-After waits, not a wedged run.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0; version read from package.json "packageManager"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The generator imports csd-light from the workspace, which reads its built dist and its dependencies'.
+      - run: pnpm --filter "@inversealtruism/csd-light..." build
+      - run: node packages/anchors/scripts/generate-anchors.mjs --check --headers "$HEADERS" --rpc "$RPC"
+        env:
+          HEADERS: ${{ inputs.headers }}
+          RPC: ${{ inputs.rpc }}

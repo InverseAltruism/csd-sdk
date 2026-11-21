@@ -13,7 +13,7 @@ import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
-import { replicaLoop } from "./loop.js";
+import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
@@ -23,9 +23,11 @@ import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
 /** `source`: a block source (or, in tests, a feed); `store` defaults to memoryStore(); `witnesses` are asked with each
- *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms. */
+ *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms.
+ *  `step`, internal: the budget of each step, default the loop's (64 blocks, 10 requests). */
 export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
+  readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
 export interface EventLog {
   /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
@@ -55,6 +57,16 @@ export interface Reader extends EventLog {
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
+/** Internal. The detail of STORE_UNAVAILABLE for each reason a load gives (loop.ts StoreReason). */
+export const STORE_DETAILS: Readonly<Record<StoreReason, string>> = Object.freeze({
+  held: "another process holds the store",
+  foreign: "the store refuses its directory: another program's file is there",
+  io: "a read or write of the store failed",
+  format: "the store is of another format and its reset failed",
+  rule: "the store was written under another rule or gate table and its reset failed",
+  basis: "the store was filled under another basis and its reset failed",
+  corrupt: "the store's files fail their checks and its reset failed",
+});
 // The id a tried transaction takes. Its entry in the applied log is found by this id at the height above the cursor,
 // where no held event lies.
 const TRY_TXID = `0x${"f".repeat(64)}`;
@@ -92,9 +104,9 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   const same = headers === null ? undefined : witnesses.find((w) => originOf(w.origin) === originOf(headers));
   if (same !== undefined) throw new ReplicaConfigError(`open: the witness ${same.id} is on the header source's origin ${originOf(headers!)}`);
   const core = coreCheck(o.core), board = witnessBoard(witnesses, clock), store = o.store ?? memoryStore();
-  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock });
-  let opened = await loop.open();
-  if (!opened.ok && opened.reset !== "unavailable") { await store.reset(); opened = await loop.open(); }
+  // A store refused for a reason other than `unavailable` is reset and refilled at whichever load finds it (loop.ts).
+  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true, ...o.step });
+  await loop.open();
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;
 
@@ -110,18 +122,22 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
-    const notes: NoteCode[] = [...(core.two ? ["TWO_CORES" as const] : []), ...(s.store === "unavailable" ? ["STORE_UNAVAILABLE" as const] : []),
-      ...(board.disagree() ? ["SOURCES_DISAGREE" as const] : []), ...(board.malformed() ? ["WITNESS_MALFORMED" as const] : [])];
+    // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
+    // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
+    const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
+    const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
+      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
     const why = codes.map((code) => (code === "NOT_SYNCED" && busy ? { code, detail: "a step's commit is in flight" } : { code }));
-    return { codes, why, notes: notes.map((code) => ({ code })), at };
+    return { codes, why, notes, at };
   }
 
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
+      storeReason: s.storeReason, storeError: s.storeError,
       witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
   }
 

@@ -70,7 +70,7 @@ for (const [name, lie] of lies) {
 const low = memoryStore(), lowSrc = scripted(), lowKey = { format: 1, rule: CAIRNX_EVENT_RULE, basis: lowSrc.basis } as const;
 await low.open(lowKey);
 await low.commit({ expect: null, rows: [], boundaries: [], meta: { ...lowKey, cursor: { height: 100, hash: hash(100) }, eventsHash: EVENTS_HASH_START,
-  rowsHash: ROWS_HASH_START, eventCount: 0, witnessed: null, windowSha256: null, work: null, workRoot: null } });
+  rowsHash: ROWS_HASH_START, eventCount: 0, witnessed: null, windowSha256: null, work: null, workRoot: null, gates: {} } });
 lowSrc.queue.push(step([blk(29_000, [X])]));
 const below = await replicaLoop({ source: lowSrc, store: low, clock }).advance();
 ok("from a stored cursor below the activation height, a block below that height is still refused", below.lastError?.code === "SOURCE_MALFORMED" &&
