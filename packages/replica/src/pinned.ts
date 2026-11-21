@@ -6,8 +6,9 @@
 // a caller's headers must hold it; a root whose tip is below the pin cannot, and the step is SOURCE_UNAVAILABLE. The
 // log's rows and that step are one step, so one commit. A reorg below the pin or to its height with another hash, and
 // a chain that does not hold the pin's block, are PIN_OFF_CHAIN. A store that already holds the pin's rows (reopened
-// under this pin, or kept from an older one by the loop, basis.ts keepsStore) is bound to the descriptor once per source instead, without reading the log: the block hash, events hash, log digest and state
-// hash (replayed) its rows give at the pin (no state hash where the loop holds no state), and the gate table. A refusal of the pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer
+// under this pin, or kept from an older one by the loop, basis.ts keepsStore) is bound to the descriptor once per
+// source instead, without reading the log: the block hash, events hash, log digest and state hash (replayed) its rows
+// give at the pin (no state hash where the loop holds no state), and the gate table. A refusal of the pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer
 // to every later step of this source: none clears it.
 import * as loaded from "@inversealtruism/cairnx-core";
 import { EVENTS_HASH_START, canonicalJson, resolve, stateHash, type ChainEvent, type EventRule, type EventsSoFar } from "@inversealtruism/cairnx-core";
