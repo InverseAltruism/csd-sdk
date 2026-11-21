@@ -199,3 +199,30 @@ export function inertEvents(heights, tag = "fe") {
   return heights.map((h, i) => ({ kind: "attest", txid: "0x" + tag + (i + 1).toString(16).padStart(62, "0"), proposalId: "0x" + "dd".repeat(32),
     attester: "0x" + "ab".repeat(20), score: 77, confidence: 0, height: h, pos: 4_000_000, paidTo: {} }));
 }
+
+/** The heights at which the offers and bids `events` propose would first be expired (offerExpiryHeightOf of each
+ *  Propose's expiry and anchor), for a walk to stop beside. */
+export function dueHeights(R, events) {
+  return events.filter((e) => e.kind === "propose" && Number.isSafeInteger(e.expiresEpoch) && e.expiresEpoch < 1e12 && Number.isSafeInteger(e.height))
+    .map((e) => R.offerExpiryHeightOf(e.expiresEpoch, e.height));
+}
+
+/** What expired in `state` (= resolve(events, tip)) with a later event of `events` at or above its expiry height: an
+ *  offer; a bid; a reservation, seen as a second NAME_RESERVED of its name; a recapture reservation, seen as a second
+ *  NAME_RECAPTURE_RESERVED of its name; an offer or bid that expired under the V21 cap before its raw expiry. */
+export function expiryKinds(R, events, state) {
+  const last = Math.max(-1, ...events.map((e) => e.height).filter(Number.isFinite));
+  const at = (x) => R.offerExpiryHeightOf(x.expiresEpoch, x.height);
+  const ended = (x) => x.status === "expired" && at(x) <= last;
+  const capped = (x) => ended(x) && at(x) < (x.expiresEpoch + 1) * R.EPOCH_LEN;
+  const proposes = new Map(events.filter((e) => e.kind === "propose").map((e) => [e.id, e]));
+  const nameOf = (id) => { const e = proposes.get(id); return e ? R.parseRecord(e.uri, e.payloadHash)?.name : undefined; };
+  const twice = (code) => {
+    const n = new Map();
+    for (const x of state.events) if (x.code === code) { const nm = nameOf(x.id); if (nm !== undefined) n.set(nm, (n.get(nm) ?? 0) + 1); }
+    return [...n.values()].some((k) => k >= 2);
+  };
+  const offers = Object.values(state.offers), bids = Object.values(state.bids);
+  return { offer: offers.some(ended), bid: bids.some(ended), reservation: twice("NAME_RESERVED"), recapture: twice("NAME_RECAPTURE_RESERVED"),
+    v21: offers.some(capped) || bids.some(capped) };
+}

@@ -5,10 +5,15 @@
 //   node conformance/fuzz-resolve.mjs [N] [seed]
 //   node conformance/fuzz-resolve.mjs N seed --emit <file>   writes the N generated sequences as JSON and exits before the
 //                                                            differential (scripts/seal-differential.mjs replays them)
+//   --expiry   sequences built so that offers, bids, reservations and recapture reservations end inside them, at heights
+//              with no event, and later events read what each released; a floor per kind of expiry fails a thin run.
+// Every run also checks that events which write nothing change nothing (CONVENTION section 5): each sequence is
+// resolved again with an Attest on an unknown proposal at many heights, by JS (whole result) and by the reference.
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
+import { denseTips, dueHeights, expiryKinds, inertEvents } from "./sweep-streams.mjs";
 let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
 // REBIND B0a: v2.8 fclaim GENERATION-SIDE counters. These record what the generator INTENDED to emit; they
 // are NOT evidence that the resolver reached the branch. Denied fclaims are not canonically observable
@@ -27,6 +32,9 @@ const ARGS = process.argv.slice(2);
 const EMIT_AT = ARGS.indexOf("--emit");
 const EMIT = EMIT_AT >= 0 ? ARGS.splice(EMIT_AT, 2)[1] : undefined;
 if (EMIT_AT >= 0 && !EMIT) { console.error("--emit needs a file path"); process.exit(2); }
+const EXPIRY_AT = ARGS.indexOf("--expiry");
+const EXPIRY = EXPIRY_AT >= 0;
+if (EXPIRY) ARGS.splice(EXPIRY_AT, 1);
 const N = Number(ARGS[0] || 3000);
 let SEED = Number(ARGS[1] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
 const rng = () => { SEED = (SEED * 1664525 + 1013904223) >>> 0; return SEED / 0x100000000; };
@@ -338,6 +346,115 @@ function recaptureFlow() {
   return ev;
 }
 
+// --expiry. A seller's offers (CSD- or token-priced, open or taker-bound, some answering a bid), bids, cancels, bulk
+// cancels, transfers, fill attempts and fclaims, with expiries a few epochs out and gaps that cross epoch boundaries, so
+// that items end at heights holding no event and later events read what they released; reservations left to lapse
+// and re-revealed by a rival; a name offer that ends before a transfer. A fifth of the sequences start below V21 with
+// offers and bids past the v2.1 cap that cross it; a sixth are recapture reservations that lapse before a rival's.
+function expirySeq() {
+  if (chance(1 / 6)) return recaptureExpirySeq();
+  const L = R.EPOCH_LEN, ev = [], at = new Map();
+  const posAt = (hh) => { const p = at.get(hh) ?? 0; at.set(hh, p + 1); return p; };
+  const S = "0x" + "e1".repeat(20), B = "0x" + "e3".repeat(20), C = "0x" + "e4".repeat(20), X = "0x" + "e5".repeat(20);
+  const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
+  const A = (pid, who, hh, score, pt) => ev.push({ kind: "attest", txid: nid(), proposalId: pid, attester: who, score, confidence: 0, height: hh, pos: posAt(hh), paidTo: pt || {} });
+  const FAR = 9_000_000_000_000_000;
+  const crossV21 = chance(0.2);
+  let h = crossV21 ? ri(R.V17_HEIGHT + 10, R.V21_HEIGHT - 400) : ri(R.V29_HEIGHT, R.V29_HEIGHT + 30_000);
+  const T1 = "E" + ri(100, 999), T2 = "W" + ri(100, 999);
+  P(validOr(() => R.deploy({ ticker: T1, decimals: 0, supply: "1000", mint: "issuer" })), S, h, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T1, amount: "1000" })), S, h + 1, FAR);
+  P(validOr(() => R.deploy({ ticker: T2, decimals: 0, supply: "1000", mint: "issuer" })), B, h, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T2, amount: "1000" })), B, h + 1, FAR);
+  h += 2;
+  const expiry = (hh) => (crossV21 && hh < R.V21_HEIGHT && chance(0.6) ? R.epochOf(hh) + ri(R.MAX_OFFER_EPOCHS + 1, R.MAX_OFFER_EPOCHS + 400) : R.epochOf(hh) + ri(0, 3));
+  const offers = [], bids = [];
+  const pay = (o, hh) => Object.fromEntries(R.requiredFillOutputs({ id: o.id, seller: S, give: o.give, want: { value: "1000", payto: S }, status: "open", expiresEpoch: o.expiresEpoch,
+    height: o.height, feeBps: R.FEE_BPS_V16, ...(o.taker ? { taker: o.taker } : {}), ...(o.bid ? { bid: o.bid } : {}) }, "1000").map((x) => [x.to, String(x.value)]));
+  const len = ri(6, 18);
+  for (let i = 0; i < len; i++) {
+    h += chance(0.3) ? ri(0, 2) : ri(1, 45);
+    const r = rng();
+    if (r < 0.26) {
+      const give = { ticker: T1, amount: String(ri(1, 60)) }, csd = chance(0.7), taker = chance(0.5) ? B : undefined;
+      const bid = bids.length && chance(0.35) ? pick(bids) : undefined;
+      const rec = validOr(() => R.offer({ give, want: csd ? { value: "1000" } : { ticker: T2, amount: "1" }, ...(bid ? { bid: bid.id, taker: B } : taker ? { taker } : {}) }));
+      const ee = bid && chance(0.5) ? bid.expiresEpoch + ri(1, 3) : expiry(h);
+      const e = P(rec, S, h, ee);
+      if (e && csd) offers.push({ id: e.id, give, expiresEpoch: ee, height: h, taker: bid ? B : taker, bid: bid?.id });
+    } else if (r < 0.40) {
+      const e = P(validOr(() => R.bid({ want: { ticker: T1, amount: "1" }, give: { value: "1000" } })), B, h, expiry(h));
+      if (e) bids.push(e);
+    } else if (r < 0.52) {
+      P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, h, FAR);
+    } else if (r < 0.60 && offers.length) {
+      A(pick(offers).id, S, h, R.SCORE_CANCEL);
+    } else if (r < 0.65) {
+      P(validOr(() => R.offerCancelAll(chance(0.5) ? { ticker: T1 } : {})), S, h, FAR);
+    } else if (r < 0.75 && offers.length) {
+      const o = pick(offers);
+      A(o.id, o.taker ?? C, h, R.SCORE_FILL, pay(o, h));
+    } else if (r < 0.82 && offers.length && h >= R.V28_HEIGHT) {
+      const o = pick(offers);
+      P(validOr(() => R.fclaim({ offer: o.id })), C, h, R.epochOf(h) + ri(0, R.FCLAIM_MAX_EPOCH_AHEAD));
+    } else if (r < 0.94 && h >= R.V25_HEIGHT) {
+      // a reservation left to lapse, finalized one time in four; a rival reveals the name after the deadline or before it
+      const nm = "ex" + ri(1000, 99999), salt = "e4e4e4e4e4e4e4e4e4", rs = "e5e5e5e5e5e5e5e5e5";
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, C) })), C, h, FAR);
+      const rv = h + ri(1, R.REG_COMMIT_MAX_BLOCKS);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), C, rv, FAR);
+      const end = h + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+      if (chance(0.25)) { const hf = h + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS); P(validOr(() => R.nameFinalize({ name: nm, salt })), C, hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() }); }
+      const ch = chance(0.75) ? end + ri(-6, 40) : rv + ri(0, 10);
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, rs, X) })), X, ch, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt: rs })), X, ch + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    } else if (h >= R.V27_HEIGHT) {
+      // a name registered by S and offered with a short expiry; a transfer just before and just after the offer ends
+      const nm = "eo" + ri(1000, 99999), salt = "e1e1e1e1e1e1e1e1e1";
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, S) })), S, h, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), S, h + 1, FAR);
+      const hf = h + R.REG_COMMIT_MAX_BLOCKS + 1;
+      P(validOr(() => R.nameFinalize({ name: nm, salt })), S, hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() });
+      const ho = hf + ri(0, 3), ee = R.epochOf(ho) + ri(0, 2), end = (ee + 1) * L;
+      P(validOr(() => R.offer({ give: { name: nm }, want: { value: "1000" }, taker: B })), S, ho, ee);
+      P(validOr(() => R.nameXfer({ name: nm, to: X })), S, end + ri(-1, 0), FAR);
+      if (chance(0.5)) P(validOr(() => R.nameXfer({ name: nm, to: C })), S, end + ri(1, 30), FAR);
+    }
+  }
+  if (crossV21) {
+    // later events at V21 and past the latest capped expiry, so the cap is read by an event and not only by the tip
+    const capped = dueHeights(R, ev).filter((x) => x >= R.V21_HEIGHT);
+    for (const hh of [R.V21_HEIGHT + ri(0, 40), Math.max(R.V21_HEIGHT, ...capped) + ri(0, 40)]) if (hh > h) { h = hh; P(validOr(() => R.transfer({ ticker: T1, to: X, amount: "1" })), S, h, FAR); }
+  }
+  const last = Math.max(...ev.map((e) => e.height));
+  return { events: ev, tipHeight: last + ri(0, 3 * L) };
+}
+
+// --expiry: a name registered below V25 lapses; E reserves it for recapture and lets the reservation end; F reveals it
+// after E's deadline (or before it, refused); sometimes E's finalize comes too late, and E's fresh registration of
+// another name ends at the same height.
+function recaptureExpirySeq() {
+  const NM = "rx" + ri(100, 9999), FN = "fx" + ri(100, 9999), sE = "e7e7e7e7e7e7e7e7e7", sF = "f7f7f7f7f7f7f7f7f7";
+  const ev = [], at = new Map();
+  const push = (who, rec, h, paid) => { if (rec) { const p = at.get(h) ?? 0; at.set(h, p + 1); ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: p, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} }); } };
+  const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+  push(RC_D, validOr(() => R.nameClaim({ name: NM })), regH, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+  const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN + ri(0, 600);
+  push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), cEh);
+  push(RC_E, validOr(() => R.nameClaim({ name: NM, salt: sE })), cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  if (chance(0.5)) {
+    push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(FN, sE, RC_E) })), cEh);
+    push(RC_E, validOr(() => R.nameClaim({ name: FN, salt: sE })), cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  }
+  const end = cEh + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+  const cFh = chance(0.75) ? end + ri(-6, 40) : cEh + ri(1, 20);
+  push(RC_F, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), cFh);
+  push(RC_F, validOr(() => R.nameClaim({ name: NM, salt: sF })), cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  if (chance(0.3)) { const hf = end + ri(0, 3); push(RC_E, validOr(() => R.nameFinalize({ name: NM, salt: sE })), hf, { [TREAS]: recapturePremium(NM, regH, hf).toString() }); }
+  const last = Math.max(...ev.map((e) => e.height));
+  return { events: ev, tipHeight: last + ri(0, 90) };
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -414,17 +531,35 @@ function randPaidTo() {
 }
 
 // generate, run JS, batch to Python, diff
-const seqs = Array.from({ length: N }, genSeq);
+const seqs = Array.from({ length: N }, EXPIRY ? expirySeq : genSeq);
 if (EMIT) {
   writeFileSync(EMIT, JSON.stringify(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
   console.log(`emitted ${N} sequences to ${EMIT}`);
   process.exit(0);
 }
 const js = seqs.map((s) => { try { return canonicalState(resolve(s.events, s.tipHeight)); } catch (e) { return "JS_THROW:" + (e?.message || e); } });
+// each sequence's twin: an event that writes nothing at each height of a dense walk (at most 300, the expiry heights kept)
+const inertAt = (s) => {
+  const due = dueHeights(R, s.events).filter((x) => x <= s.tipHeight);
+  const tips = denseTips(s.events.filter((e) => Number.isSafeInteger(e.height)), s.tipHeight, R.EPOCH_LEN, [...due, ...Object.values(R.GATE_HEIGHTS)], 300);
+  const keep = new Set(due.flatMap((x) => [x - 1, x]));
+  return tips.length <= 300 ? tips : tips.filter((x, i) => keep.has(x) || i % Math.ceil(tips.length / 300) === 0);
+};
+const twins = seqs.map((s) => ({ events: [...inertEvents(inertAt(s)), ...s.events], tipHeight: s.tipHeight }));
+let inertJs = 0, inertPy = 0, inertN = 0;
+seqs.forEach((s, i) => {
+  inertN += twins[i].events.length - s.events.length;
+  let a, b;
+  try { a = JSON.stringify(resolve(s.events, s.tipHeight)); } catch (e) { a = "JS_THROW:" + (e?.message || e); }
+  try { b = JSON.stringify(resolve(twins[i].events, s.tipHeight)); } catch (e) { b = "JS_THROW:" + (e?.message || e); }
+  if (a !== b && ++inertJs <= 5) console.error(`✗ seq #${i} JS: events that write nothing changed the result`);
+});
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname],
-  { input: JSON.stringify({ resolve: seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+  { input: JSON.stringify({ resolve: [...seqs, ...twins].map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 2048 * 1024 * 1024 });
 if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0, 4000)); process.exit(1); }
-const pj = JSON.parse(py.stdout).resolve;
+const pall = JSON.parse(py.stdout).resolve;
+const pj = pall.slice(0, N);
+for (let i = 0; i < N; i++) if (pall[N + i] !== pj[i] && ++inertPy <= 5) console.error(`✗ seq #${i} reference: events that write nothing changed the canonical state`);
 
 let diverged = 0, jsThrows = 0;
 const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
@@ -470,6 +605,18 @@ console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows} b
 console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`);
 console.log(`gen (intent only, not evidence): ${JSON.stringify({ fclaimGrants: gFclaimGrants, fclaimDenies: gFclaimDenies, v28LegacyEmitted: gV28LegacyEmitted })}`);
 console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeight, ...s.events.map((e) => e.height)), 0)} (V28 = ${R.V28_HEIGHT})`);
+console.log(`events that write nothing: ${inertN} added over ${N} twins; results changed: JS ${inertJs}, reference ${inertPy}`);
+if (inertJs || inertPy) process.exit(1);
+if (EXPIRY) {
+  // the floors: sequences in which each kind of expiry happens with a later event at or above its height
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, v21: 0 };
+  seqs.forEach((s, i) => { if (js[i].startsWith("JS_THROW:")) return; const k = expiryKinds(R, s.events, resolve(s.events, s.tipHeight)); for (const x of Object.keys(reach)) if (k[x]) reach[x]++; });
+  const floor = Math.max(1, Math.floor(N / 50));
+  console.log(`expiry reach (sequences, floor ${floor} each): ${JSON.stringify(reach)}`);
+  const thin = Object.entries(reach).filter(([, n]) => n < floor);
+  if (thin.length) { console.error(`✗ expiry reach below the floor: ${thin.map(([k, n]) => `${k} ${n}`).join(", ")}`); process.exit(1); }
+  process.exit(diverged || jsThrows ? 1 : 0);
+}
 // HONEST-COUNTER guard: prove v23ClearFlow actually REACHES the clear branch (a paid+owned name cleared at
 // >=V23 -> addr undefined), so the gV23Clears counter cannot silently lie again (audit caught a flat under-fee
 // that left the name unowned, no-op'ing every clear). Deterministic, independent of the random seed.

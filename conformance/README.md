@@ -62,6 +62,17 @@ this directory, only the JS implementation existed, so the contract was asserted
   recaptures; bulk cancels and displacements over 20,000 offers; the V21 crossing; edge cases), each with the
   expectations it was built to meet, read from the reason codes. `scripts/seal-differential.mjs` step 4(f) runs them
   at full size against the baseline; `packages/cairnx/test/growth.test.ts` at 500 and 1,000 against pinned states.
+- **`fuzz-resolve.mjs`:** generated sequences through the JS resolver and `cairnx_ref.py`, canonical states compared;
+  `--emit` writes them for the seal. With `--expiry` the sequences are built so that offers, bids, reservations and
+  recapture reservations end between events and later events read what they released, with a floor per kind of
+  expiry (an offer, a bid, a reservation, a recapture reservation, an expiry under the V21 cap). Every run also
+  resolves each sequence with an event that writes nothing at many heights and requires the same result, from JS
+  (whole result) and from the reference (canonical state): CONVENTION section 5's property, checked by the reference
+  on its own output.
+- **`sweep-streams.mjs`** (JavaScript only, not a cross-language job): seven streams that put expiries at a height
+  with no event or at one height together and read them with a later event, each with the codes it was built to
+  show; also the dense walk's tips and the events that write nothing, shared by the seal and
+  `packages/cairnx/test/sweep.test.ts`.
 - **`moves-check.mjs`** (JavaScript only, not a cross-language job): the token moves of a `resolve()` result
   (CONVENTION section 41) against its input events and the state it returned: the identity (for every ticker and
   address, received less sent equals available plus locked), the mint totals, each transfer's move equal to its own
