@@ -8,8 +8,8 @@
 // walks the server's headers to the cursor and on until it has more work than the held window (at the server's tip
 // without more work, LESS_WORK, kept until that tip moves), comparing the hash of each held block it passes, and is
 // adopted at the highest held block on its chain, where the store rolls back. A store whose cursor this source's
-// window holds no header for (a store filled before the source started) is walked the same way to the cursor with no
-// work to beat, since the store keeps none (README, "What a store must keep"). Each fork block adopted, clamped to
+// window holds no header for (a store filled before the source started, whose stored window was not taken) is walked
+// the same way to the cursor with no work to beat. Each fork block adopted, clamped to
 // the loop's floor (the pin, else the activation height less one), is remembered until the store's cursor is back on the window: until then the
 // rollback to it is owed (`owed`, returned before the server is read), the tip reported is that block, and nothing
 // is repaired by a walk without a work bar. A walk whose headers fail verification is dropped and starts afresh;

@@ -2,6 +2,14 @@
 
 ## 0.1.0 (unreleased)
 
+- Under an anchor root the store keeps the source's header window: each commit of blocks carries the window's headers
+  up to the cursor and sets `StoreMeta.work` and `workRoot`, and a source started over a filled store takes the
+  stored window instead of walking the headers from the anchor, once csd-light has verified it again and it holds
+  the cursor's block under this anchor; any other window is dropped and the walk runs as before. A taken window's
+  work is the bar another chain must beat, so a restart over a store on a branch the server no longer serves rolls
+  back only to a heavier one (until now it followed any chain that reached the cursor). `headerWindow()` of the disk
+  and browser stores gives nothing when the bytes it reads are not the record's. Internal: `Source.windowAt`,
+  `Source.restoreWindow`, `HeldWindow`.
 - `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
   contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
   `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not
