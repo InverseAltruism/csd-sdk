@@ -49,9 +49,10 @@ export function movesPage(q: MovesQuery): MovesPage {
   const s = q.since;
   if (s !== null && s.height > q.cursorHeight) return { kind: "page", page: { items: [], next: `${s.height}:${s.pos}:${s.hash}`, more: false }, aboveTip: true };
   if (s !== null && q.eventsHashAt(s.height) !== s.hash) return { kind: "off-branch" };
+  // The deep view's log holds the entries at or below the deep height only: it is resolve() over those events.
   const found: Entry[] = [];
   for (const e of q.deep.events) {
-    if (e.moves === undefined || e.height > q.deepHeight || (s !== null && (e.height < s.height || (e.height === s.height && e.pos <= s.pos)))) continue;
+    if (e.moves === undefined || (s !== null && (e.height < s.height || (e.height === s.height && e.pos <= s.pos)))) continue;
     const moves = e.moves.filter((m) => (q.to === null || m.to === q.to) && (q.ticker === null || m.ticker === q.ticker));
     if (moves.length > 0) found.push({ e, moves });
   }
