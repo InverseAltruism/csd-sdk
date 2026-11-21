@@ -63,11 +63,22 @@ export type Step =
   | { readonly kind: "reorg"; readonly to: Cursor; readonly tip: TipView }
   | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null };
 
-/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. It has
+/** A release's pin (design section 2): the log of `rule`'s events at or below `height`, an epoch boundary, as the UTF-8
+ *  canonical JSON of the event list in the order of CONVENTION section 33.3, whose sha256 is `logSha256`, with the
+ *  block hash, events hash and state hash at `height`, the gate table cut at `height` and the cairnx-core version
+ *  that cut it (information only). `log` gives the log's bytes. */
+export interface Pin {
+  readonly format: 1; readonly rule: EventRule; readonly height: number; readonly blockHash: string; readonly logSha256: string;
+  readonly eventsHash: string; readonly stateHash: string; readonly gates: Readonly<Record<string, number>>; readonly core: string;
+  log(): Promise<Uint8Array>;
+}
+
+/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. `rule`,
+ *  when present, is the rule of the records a source carries (a pin's); open() refuses another. It has
  *  no way yet to hand a commit a self-verified root's window, `work` and `workRoot`, or to take them back at open
  *  (README, "What a store must keep"). */
 export interface Source {
-  readonly basis: Basis; readonly floor: Cursor | null;
+  readonly basis: Basis; readonly floor: Cursor | null; readonly rule?: EventRule;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
 }
 

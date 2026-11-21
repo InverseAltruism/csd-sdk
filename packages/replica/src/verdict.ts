@@ -19,6 +19,8 @@ export interface VerdictInput {
   peerAhead(tip: TipView): boolean;
   /** Null when the root needs no witness (one's own node, a feed); else the time of the confirmation held, or null. */
   readonly witness: { readonly at: number | null } | null;
+  /** The source's refusal of its pin (pinned.ts), which it repeats at every later step; else null. */
+  readonly refused: "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "RULES_DIFFER" | null;
 }
 
 /** The level condition, the first of the rule: null at level 3, else a feed's LEVEL_FEED or a display's LEVEL_DISPLAY.
@@ -28,7 +30,8 @@ export const levelCode = (level: 1 | 2 | 3, feed: boolean): NotVerifiedCode | nu
 export function verdict(v: VerdictInput): NotVerifiedCode[] {
   const why: NotVerifiedCode[] = [], lv = levelCode(v.level, v.feed);
   if (lv !== null) why.push(lv);
-  if (v.rulesDiffer(v.synced?.tip.height ?? Number.POSITIVE_INFINITY)) why.push("RULES_DIFFER");
+  if (v.rulesDiffer(v.synced?.tip.height ?? Number.POSITIVE_INFINITY) || v.refused === "RULES_DIFFER") why.push("RULES_DIFFER");
+  if (v.refused === "PIN_MISMATCH" || v.refused === "PIN_OFF_CHAIN") why.push(v.refused);
   const s = v.synced;
   if (s === null) why.push("NOT_SYNCED");
   else {

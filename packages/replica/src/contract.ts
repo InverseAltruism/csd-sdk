@@ -11,6 +11,9 @@ import type { BlockEvents, BlockRow, Cursor, Step, StepContext } from "./types.j
 
 type Refused = { ok: false; reason: string };
 
+/** Whether two rules are one: the same domain from the same activation height. */
+export const sameRule = (a: EventRule, b: EventRule): boolean => a.domain === b.domain && a.activationHeight === b.activationHeight;
+
 /** The lowest height a step may roll back to (StepContext.floor): the pin, else the activation height less one. */
 export const floorOf = (ctx: Pick<StepContext, "floor" | "rule">): number => ctx.floor ?? ctx.rule.activationHeight - 1;
 type From = { after: number; eventsHash: string; rowsHash: string; sofar: EventsSoFar; rule: EventRule };

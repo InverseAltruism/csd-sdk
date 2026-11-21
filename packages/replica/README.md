@@ -16,7 +16,7 @@ throw `ReplicaConfigError` for one at run time. `basisKey` names a store without
 root and bodies names the same store.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
-  and the reader, `open` and `openLog` ("Reading" below).
+  the reader, `open` and `openLog` ("Reading" below), and `checkPin` and `pinned` ("Pins" below).
 - `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
   `resolve()` or the block machinery.
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
@@ -249,14 +249,46 @@ rows is reset and filled again; the newer-pin exception of the design is the dis
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
 whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
-domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, fetch? })`, in
-`./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
-address rule and `memoryStore()`.
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, pin?, fetch? })`,
+in `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
+address rule, above `pin` when one is given ("Pins" below), and `memoryStore()`.
 
 What the reader does not answer yet: `transfers` waits for cairnx-core to export the token movements of an address (a
 whole fill's delivered amount and a mint's amount are not fields of the state today, and deriving them here would
 restate the core's settlement). What it does not persist: the witness's confirmation and the source's header window
 live in memory.
+
+## Pins
+
+A pin is a release's log of one rule's events at or below an epoch boundary, so a new replica reads only the blocks
+above it. Below the pin the trust is the release. A `Pin` carries `format` 1, the `rule`, the `height` (a multiple of
+`EPOCH_LEN`), the `blockHash` there, the log's `logSha256`, the `eventsHash` and `stateHash` at the height, the gate
+table cut at the height (`gates`), the cairnx-core version that cut it (`core`, information only) and `log()`, the
+log's bytes: the UTF-8 canonical JSON of the event list in the order of CONVENTION section 33.3. `checkPin` checks the
+form; `derivePin(fixture)` in `./server` derives a pin and its log from a recorded block fixture (cairnx-core's
+`test/fixtures/events-blocks.json` format) through `fixtureSource` and the loop, reading nothing else.
+
+`pinned({ pin, then })`, in `.`, is a source of the log and then of `then`, a block source, above the pin; its basis is
+`pinned` over `then`'s, level 3, proof `pinned`. `open` and `openLog` throw `ReplicaConfigError` with code
+`PIN_MISMATCH` for a pin of another rule than the store's. The first step checks, before anything is committed and in
+this order: the log's sha256 (`PIN_MISMATCH`); that it is the canonical JSON of an event list keeping the loop's
+contract at or below the pin (`PIN_MISMATCH`); its events hash (`PIN_MISMATCH`); the gate table against the loaded
+core's at or below the pin (`RULES_DIFFER`); its state hash, replayed with `resolve` (`PIN_MISMATCH`). It then takes
+`then`'s step from the pin, whose root checks the pin's block hash: one's own node must link the block above to it,
+an anchor root's seed must end at it, a caller's headers must hold it. A reorg, or a chain that does not hold the
+pin's block, is `PIN_OFF_CHAIN`. The log's rows and that step are committed together, so the log loads in one step:
+at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
+a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
+43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Later steps go to `then`; a reorg
+below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A refusal of the pin is the answer to every
+later step of that source, so a later step cannot clear it, and the answers carry its code in `why`. A store reopened
+under the same pin meets the same checks again, and one reopened under another basis is reset.
+
+`hosted({ pin, origin, witness?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is what
+`open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the pin
+as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
+anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
+the witness's to confirm.
 
 ## Display
 

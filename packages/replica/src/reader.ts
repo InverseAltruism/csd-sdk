@@ -9,6 +9,7 @@ import {
 import type { Answer, AnswerMeta, At, BalanceValue, NameValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
+import { sameRule } from "./contract.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop } from "./loop.js";
@@ -81,6 +82,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   // Every answer's `vouch` is this object, so it is frozen; every other value a read returns is built for that read.
   const basis = deepFreeze(checkBasis(o.source.basis)), clock = o.clock ?? Date.now, witnesses = o.witnesses ?? [];
   if (basis.kind === "display") throw new ReplicaConfigError("open: a display source is read through ./display");
+  const carried = o.source.rule;
+  if (carried !== undefined && !sameRule(carried, rule)) throw new ReplicaConfigError(`open: the source's pin is of ${carried.domain}, not the store's rule`, "PIN_MISMATCH");
   const r = rootOf(basis), low = r === null ? null : floorBreak(r.root, r.pin?.height ?? rule.activationHeight - 1, rule);
   if (low !== null) throw new ReplicaConfigError(`open: ${low}`, "BELOW_FLOOR");
   const headers = r === null || r.root.kind === "own-node" ? null : r.root.kind === "caller" ? r.root.origin : (basis.kind === "pinned" ? basis.above : basis as { bodies: string }).bodies;
@@ -98,8 +101,9 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     // During a step's commit the loop holds a half state: it is not synced until the commit ends.
     const busy = loop.committing();
     const synced = !busy && s.store === "open" && s.cursor !== null && s.tip !== null ? { cursor: s.cursor, tip: s.tip } : null;
+    const e = s.lastError?.code, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t),
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused,
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
@@ -208,7 +212,8 @@ export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Pr
 }
 
 /** A CairnX replica: the event log and the reads over cairnx-core's resolve(). Throws ReplicaConfigError for a basis
- *  that cannot give every event from activation (`code` BELOW_FLOOR) or a witness on the header source's origin. */
+ *  that cannot give every event from activation (`code` BELOW_FLOOR), a pin of another rule (`code` PIN_MISMATCH) or a
+ *  witness on the header source's origin. */
 export async function open(o: OpenOptions): Promise<Reader> {
   const { log, read, loop } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
   return {

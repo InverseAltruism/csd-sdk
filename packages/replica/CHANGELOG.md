@@ -2,6 +2,15 @@
 
 ## 0.1.0 (unreleased)
 
+- `Pin`, `checkPin` and `pinned({ pin, then })`: a release's log below a pin, then a block source above it. The first
+  step checks the log's sha256, its canonical form and contract, its events hash, the gate table and its state hash,
+  then the pin's block hash against `then`'s root, and commits the log with `then`'s first step; `PIN_MISMATCH`,
+  `RULES_DIFFER` and `PIN_OFF_CHAIN` (a reorg or a chain below the pin included) are kept for the source's life and
+  reach `why`. `open` and `openLog` throw `ReplicaConfigError` `PIN_MISMATCH` for a pin of another rule.
+  `derivePin(fixture)` in `./server`; `local({ node, pin })` and `hosted({ pin, origin, witness })` in `./browser` and
+  `./server`. Internal: `StepContext.floor` (the pin, else the activation height less one), where the roots and the
+  fork search stop; `floorBreak` takes the floor.
+
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),
   `checkBasis`, `levelOf`, `proofOf` and `basisKey`; the source, step and store types; `NOT_VERIFIED_CODES` and
   `NOTE_CODES`; `memoryStore()`.

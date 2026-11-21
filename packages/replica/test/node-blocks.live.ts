@@ -4,9 +4,10 @@
 // hashes are compared at every height of hashes.json up to it, as the cold sync of 2026-11-18 compared them.
 // CAIRNX_LIVE_PACE_MS spaces the requests (default 0); a production node is read with a pace and a short range.
 import { stateHash } from "@inversealtruism/cairnx-core";
-import { memoryStore, nodeBlocks, replicaLoop } from "../src/server.js";
+import { canonicalJson, payloadHash } from "@inversealtruism/cairnx-core";
+import { derivePin, memoryStore, nodeBlocks, replicaLoop } from "../src/server.js";
 import { done, ok } from "./check.js";
-import { pinned } from "./core-files.js";
+import { fx, pinned } from "./core-files.js";
 
 const BASE = process.env.CSD_RPC;
 if (!BASE) { console.log("SKIP: cairnx-replica live test: CSD_RPC unset (live-node tests are opt-in)"); process.exit(0); }
@@ -26,4 +27,9 @@ ok(`the drive ends at ${to} on the node's hash with nothing refused`, s.cursor?.
 const heights = Object.keys(pinned).map(Number).filter((h) => h <= to);
 const wrong = heights.filter((h) => loop.eventsHashAt(h) !== pinned[String(h)]!.eventsHash || stateHash(loop.stateAt(to, to - h)!) !== pinned[String(h)]!.stateHash);
 ok(`both hashes equal hashes.json at the ${heights.length} heights up to ${to} (wrong at: ${wrong.join() || "none"})`, heights.length > 0 && wrong.length === 0);
+if (to === fx.to) {
+  const events = loop.rows(0).flatMap((r) => r.events), p = (await derivePin(fx)).pin;
+  ok(`the log the node gives at ${to} is the pin derived from cairnx-core's fixture (sha256 ${p.logSha256.slice(0, 10)})`,
+    payloadHash(events) === p.logSha256 && s.eventsHash === p.eventsHash && s.cursor?.hash === p.blockHash, canonicalJson(events).length.toString());
+}
 done("cairnx-replica live");

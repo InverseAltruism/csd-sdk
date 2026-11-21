@@ -3,8 +3,7 @@
 // (comma-separated, parsed strictly by parseHosts), read once from the process environment and from nowhere else.
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
-import { memoryStore } from "./memory-store.js";
-import type { OpenOptions } from "./reader.js";
+import { localOf } from "./presets.js";
 import type { BlocksSource } from "./types.js";
 
 export * from "./index.js";
@@ -12,6 +11,8 @@ export type { HttpOptions } from "./http.js";
 export type { NodeBlocksOptions };
 export { hostedBlocks, type HostedBlocksOptions } from "./hosted-blocks.js";
 export { hostedWitness, nodeWitness } from "./http-witness.js";
+export { hosted, type HostedOptions } from "./presets.js";
+export { derivePin } from "./derive-pin.js";
 
 // The outcome of the one read, a list or the configuration error it threw, is kept for every later call.
 let listed: { hosts: ReadonlySet<string> } | { error: unknown } | undefined;
@@ -27,5 +28,6 @@ function hosts(): ReadonlySet<string> {
  *  address throws ReplicaConfigError. */
 export const nodeBlocks = (o: NodeBlocksOptions): BlocksSource => nodeBlocksAt(serverNode(o.node, hosts()), o);
 
-/** What open() takes for a replica of one's own node held in memory: nodeBlocks at `node` and memoryStore(). */
-export const local = (o: NodeBlocksOptions): OpenOptions => ({ source: nodeBlocks(o), store: memoryStore() });
+/** What open() takes for a replica of one's own node held in memory: nodeBlocks at `node`, above `pin` when one is
+ *  given, and memoryStore(). */
+export const local = localOf(nodeBlocks);

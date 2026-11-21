@@ -1,8 +1,8 @@
 // A basis, its level and proof, and the name of the store kept under it. Every function here checks its basis first,
 // so a value that bypassed the types (a pin over a feed) is refused at run time instead of answering level 3.
-import { HASH_RE, canonicalJson, type EventRule } from "@inversealtruism/cairnx-core";
+import { EPOCH_LEN, HASH_RE, canonicalJson, type EventRule } from "@inversealtruism/cairnx-core";
 import { ReplicaConfigError } from "./errors.js";
-import type { Basis, BlocksBasis, Cursor, HeaderRoot, RecordProof } from "./types.js";
+import type { Basis, BlocksBasis, Cursor, HeaderRoot, Pin, RecordProof } from "./types.js";
 
 const refuse = (what: string): never => { throw new ReplicaConfigError(`basis: ${what}`); };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -75,3 +75,22 @@ export function floorBreak(root: HeaderRoot, floor: number, rule: EventRule): st
 
 /** Whether two bases are the same value, the pin included. */
 export const sameBasis = (a: Basis, b: Basis): boolean => canonicalJson(checkBasis(a)) === canonicalJson(checkBasis(b));
+
+/** `v` as a pin holding only its own fields, or a ReplicaConfigError naming the rule it breaks: format 1, a rule, a
+ *  height at an epoch boundary at or above the rule's activation, four hashes in form, a gate table, a core version
+ *  and a log function. It checks the form only; pinned() checks the log against it. */
+export function checkPin(v: unknown): Pin {
+  if (!isObject(v) || v.format !== 1) return refuse("the pin's format is not 1");
+  const r = isObject(v.rule) ? v.rule : refuse("pin.rule is not an object");
+  const rule = { domain: text(r.domain, "pin.rule.domain"), activationHeight: height(r.activationHeight, "pin.rule.activationHeight") };
+  const h = height(v.height, "pin.height");
+  if (h % EPOCH_LEN !== 0 || h < rule.activationHeight) refuse(`pin.height ${h} is not an epoch boundary at or above the activation height`);
+  const g = isObject(v.gates) ? v.gates : refuse("pin.gates is not an object"), gates: Record<string, number> = {};
+  for (const [k, x] of Object.entries(g)) gates[k] = height(x, `pin.gates.${k}`);
+  const log = typeof v.log === "function" ? (v.log as Pin["log"]) : refuse("pin.log is not a function");
+  return Object.freeze({
+    format: 1, rule: Object.freeze(rule), height: h, blockHash: hash(v.blockHash, "pin.blockHash"), logSha256: hash(v.logSha256, "pin.logSha256"),
+    eventsHash: hash(v.eventsHash, "pin.eventsHash"), stateHash: hash(v.stateHash, "pin.stateHash"), gates: Object.freeze(gates),
+    core: text(v.core, "pin.core"), log,
+  });
+}
