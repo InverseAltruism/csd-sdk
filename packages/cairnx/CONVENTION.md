@@ -1736,7 +1736,8 @@ A form of the tuple recorded on chain is reserved under the reserved prefixes of
 version.
 
 `test/vectors/codes.json` (§40.7) is not a level: the reason codes move no state. A replica that publishes codes
-reproduces it.
+reproduces it. `test/vectors/moves.json` (§41) is not a level: the token moves move no state. A replica that publishes
+moves reproduces it.
 
 ## 39. Rule changes
 
@@ -1960,8 +1961,9 @@ restate the rules that decide the amounts (the mint caps, a whole fill's deliver
 - An offer, a cancel, an `ocancel` and an expiry move tokens between one address's `available` and `locked` and write
   no move; nor does a fill that moves no token (a name sold for CSD), nor any other record. A refused entry carries no
   moves. An entry with no move has no `moves` key, and `moves` is its last key.
-- A ticker names one token: the first anchored deploy of a ticker wins and a later one is refused (§4.1), and no record
-  removes a token. So a move carries no deploy id; `tokens[ticker].deployId` gives it.
+- In one result a ticker names one token: the first anchored deploy of a ticker wins and a later one is refused (§4.1),
+  and no record removes a token. A replay of another chain, after a reorganisation below the deploy, can bind the
+  ticker to another deploy. So a move carries no deploy id; `tokens[ticker].deployId` of the same result gives it.
 - The identity the moves meet: for every ticker and address, the amounts the address received less the amounts it
   sent, over every move of the log, equal its `available` plus `locked` in `balances`, an address left out of
   `balances` holding 0; and the mint moves of a ticker sum to its `minted`.
@@ -1969,8 +1971,9 @@ restate the rules that decide the amounts (the mint caps, a whole fill's deliver
   at every level of §38. A replica that publishes moves reproduces `test/vectors/moves.json`.
 
 `TokenMove` (`src/types.ts`) is the type; `src/resolve/tokens.ts` and `src/resolve/attest.ts` write the moves.
-`test/vectors/moves.json` holds 12 cases (the events, the tip, and the entries that carry moves with their moves, in
+`test/vectors/moves.json` holds 13 cases (the events, the tip, and the entries that carry moves with their moves, in
 log order), every expectation written by hand in `conformance/gen-moves-vectors.mjs`. `conformance/moves-check.mjs`
-checks a result's moves against its state by the rules above; the cairnx-core tests run it over the replay corpus at
+checks a result's moves against its input events and its state by the rules above, each transfer's and mint's move
+against its own record; the cairnx-core tests run it over the replay corpus at
 every pinned height and over every case file, and the seal over every input of its differential. The Python reference
 of `conformance/` writes no moves.

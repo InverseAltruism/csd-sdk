@@ -338,8 +338,9 @@ Match the code, never the `note` text, which may change; a code your release doe
 Who received which tokens in which record: an applied entry that moved tokens carries `moves` (`CONVENTION.md` §41,
 `TokenMove`), each `{ leg, ticker, from, to, amount }` with the leg `mint`, `xfer`, `sale`, `fee` or `fill`, written
 where the resolver moves the balance. A deposit credit is a move whose `to` is the receiving address; read the amount
-from the move, not from the record, since a mint is capped and a partial fill delivers by its floor. Moves are outside
-canonical state, so they change no hash.
+from the move, not from the record, since a mint is capped and a partial fill delivers by its floor. A server that
+credits a listed token by ticker also pins `tokens[ticker].deployId`, since a replay of another chain can bind the
+ticker to another deploy. Moves are outside canonical state, so they change no hash.
 
 ### Write a conformant resolver in another language
 

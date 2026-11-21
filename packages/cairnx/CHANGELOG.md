@@ -9,11 +9,12 @@
   fill's delivered units, a sale and its fee from the log instead of restating the rules that decide them. A zero
   amount writes no move, a refused entry none, and `moves` is an entry's last key. No rule changed: canonical state,
   `stateHash`, `eventsHash`, every pinned vector and `replay-hashes.json` are unchanged, and the log with `moves` left
-  out is 0.2.7's (`scripts/seal-differential.mjs` against npm's 0.2.7 and 0.2.4). `test/vectors/moves.json` (12 cases,
-  `conformance/gen-moves-vectors.mjs`, expectations written by hand) pins them; `conformance/moves-check.mjs` checks the
-  identity (for every ticker and address, received less sent equals available plus locked) and each fill's moves
-  against its fill record, run by `test/moves.test.ts` over the replay corpus at every pinned height and every case
-  file, and by the seal over every input of its differential.
+  out is 0.2.7's (`scripts/seal-differential.mjs` against npm's 0.2.7 and 0.2.4). `test/vectors/moves.json` (13 cases,
+  `conformance/gen-moves-vectors.mjs`, expectations written by hand) pins them; `conformance/moves-check.mjs` checks,
+  from the input events and the result, the identity (for every ticker and address, received less sent equals
+  available plus locked), each transfer's and mint's move against its own record and each fill's moves against its
+  fill record, run by `test/moves.test.ts` over the replay corpus at every pinned height and every case file, and by
+  the seal over every input of its differential.
 - `CAIRNX_CORE_VERSION` (`src/version.ts`), this package's version, kept equal to package.json's by
   `test/version.test.ts`: a host hands it to cairnx-api's `prepareView` without reading the manifest at run time.
 - `GATE_HEIGHTS` (`src/gates.ts`), the gate table as frozen data: `ACTIVATION_HEIGHT` and every `V<n>_HEIGHT` by its

@@ -63,10 +63,14 @@ this directory, only the JS implementation existed, so the contract was asserted
   expectations it was built to meet, read from the reason codes. `scripts/seal-differential.mjs` step 4(f) runs them
   at full size against the baseline; `packages/cairnx/test/growth.test.ts` at 500 and 1,000 against pinned states.
 - **`moves-check.mjs`** (JavaScript only, not a cross-language job): the token moves of a `resolve()` result
-  (CONVENTION section 41) against the state it returned: the identity (for every ticker and address, received less
-  sent equals available plus locked), the mint totals, each fill's moves from its fill record, no moves on a refused
-  entry. `packages/cairnx/test/moves.test.ts` runs it over the replay corpus and the case files, and
-  `scripts/seal-differential.mjs` step 4(h) over every input of its differential. `gen-moves-vectors.mjs` writes
+  (CONVENTION section 41) against its input events and the state it returned: the identity (for every ticker and
+  address, received less sent equals available plus locked), the mint totals, each transfer's move equal to its own
+  record (ticker, proposer, `to`, amount), each mint's move with its record's ticker and the proposer as `to`, each
+  fill's moves from its fill record, no moves on a refused entry. A mint's amount is bound only by the mint total and
+  the identity, since the cap has one home, the resolver; a mint credits its own author, so amounts moved between two
+  mints of one author and ticker change no balance and no third party's credit. `packages/cairnx/test/moves.test.ts`
+  runs it over the replay corpus and the case files, and `scripts/seal-differential.mjs` step 4(h) over every input
+  of its differential. `gen-moves-vectors.mjs` writes
   `packages/cairnx/test/vectors/moves.json` from expectations written by hand, after checking each against the built
   dist and `moves-check.mjs`. `cairnx_ref.py` writes no moves.
 

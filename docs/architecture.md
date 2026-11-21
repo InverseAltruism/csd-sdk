@@ -64,8 +64,8 @@ The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` i
 `fuzz-resolve.mjs`, the per-gate `v2x-*-crosslang.mjs` files, and the report-only audit tooling: `invariants.mjs` (7
 ledger-soundness invariants), `money-safety.mjs` (anchored-then-rejected burn detector), `race-harness.mjs`
 (adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1) and `AUDIT.md` (the method).
-`moves-check.mjs` checks a result's token moves against its state (CONVENTION section 41), for the cairnx-core tests and
-the seal.
+`moves-check.mjs` checks a result's token moves against its input events and its state (CONVENTION section 41), for the
+cairnx-core tests and the seal.
 `conformance/README.md` describes the differential.
 
 ## Consensus gates
