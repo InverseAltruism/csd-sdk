@@ -455,7 +455,12 @@ later layout is `format`, deleted and made again by the reset.
 One context writes a store at a time, by the Web Lock `cairnx-replica:<name>` taken at `open` and held until `close()`
 or the end of the context that holds it (a stopped worker, a closed page). While another context holds it, `open` is
 `unavailable` (`NOT_SYNCED`, the note `STORE_UNAVAILABLE`) and the next advance tries again. A store deleted under an
-open one (another context deleting the database) gives the next commit `CURSOR_MOVED`, and the reader refills it.
+open one (another context deleting the database) gives the next commit `CURSOR_MOVED`, and the reader refills it. A
+caller must not steal the store's lock (`navigator.locks.request` with `steal`): the store that loses it opens
+`unavailable` and commits nothing from then on, and its last slot write is made only over the pair it wrote, so the
+successor keeps its confirmation, but that reader answers nothing verified until its context starts again. A record of
+another tag in the database is `corrupt` and reset, where the disk store refuses another program's `meta.json`: the
+database's name carries this package's prefix, so nothing else is expected in it.
 
 ## Display
 

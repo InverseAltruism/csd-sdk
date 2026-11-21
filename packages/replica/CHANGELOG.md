@@ -10,6 +10,9 @@
   that holds a boundary or a header window (its chain and window name were sha256 over raw bytes) opens `corrupt` and
   is refilled. Internal:
   `Store.open`'s reason `unconfirmed`, `TrustedSlot`.
+- `idbStore`, after review: a store whose Web Lock was stolen is lost (it opens `unavailable` and writes nothing to the
+  database or the slot), and a commit's last slot write is made only while the slot still holds the pair that commit
+  wrote, so a writer that lost its lock cannot overwrite its successor's confirmation.
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash

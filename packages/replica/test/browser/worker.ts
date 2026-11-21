@@ -127,6 +127,76 @@ const cmds: Record<string, (a: Args) => Promise<unknown>> = {
     const loop = replicaLoop({ source: source(TOP), store: idbStore({ name: a.name!, slot: sessionSlot(slotKey(a.name!)) }), resetRefused: true });
     return { open: await loop.open() };
   },
+  // A stolen lock (the package never steals one; a caller could). Each case holds a commit of store A at a point, steals
+  // A's lock, lets store B take the store, then lets A go on.
+  async steal() {
+    const out: Record<string, unknown> = {};
+    const make = (name: string) => idbStore({ name, slot: sessionSlot(slotKey(name)) });
+    const steal = (name: string) => navigator.locks.request(`cairnx-replica:${name}`, { steal: true }, async () => undefined);
+    const r1 = row(30_001, null), r2 = row(30_050, r1), r3 = row(30_100, r2);
+    // Store A whose `nth` commit waits at `point` until released.
+    function held(name: string, point: string, nth: number) {
+      let count = 0, go = () => undefined as void, hit = () => undefined as void;
+      const gate = new Promise<void>((r) => { go = r; }), reached = new Promise<void>((r) => { hit = r; });
+      const store = idbStoreWith({ name, slot: sessionSlot(slotKey(name)) }, {
+        point(p) { if (p === "slot pair") count++; if (count !== nth || p !== point) return undefined; hit(); return gate; } });
+      return { store, reached, go };
+    }
+    const snapshot = async (name: string) => { const db = await raw(name), v = { record: await one(db, "meta", "meta"), rows: await all<BlockRow>(db, "rows") }; db.close(); return v; };
+    const putBack = async (name: string, v: { record: unknown; rows: BlockRow[] }) => {
+      const db = await raw(name);
+      await put(db, [["meta", v.record, "meta"], ...v.rows.map((r): [string, unknown, IDBValidKey] => ["rows", r, r.height])], ["rows", "meta"]);
+      db.close();
+    };
+
+    // The review's sequence: A's 2nd commit lands and waits before its last slot write; the lock is stolen and released;
+    // B opens, commits and confirms; A goes on.
+    let n = fresh("steal-last"), a = held(n, "slot new", 2);
+    await a.store.open(key(FEED));
+    await a.store.commit(commit(null, [r1], at(30_010)));
+    let pending = a.store.commit(commit(at(30_010), [r2], at(30_060)));
+    await a.reached;
+    await steal(n);
+    let b = make(n);
+    const bOpen = await reasonOf(b), older = await snapshot(n), bCommit = await b.commit(commit(at(30_060), [r3], at(30_110)));
+    a.go();
+    const aCommit = await pending;
+    b.close();
+    const reopened = await reasonOf(b = make(n));
+    b.close();
+    await putBack(n, older);
+    out.last = { bOpen, bCommit: bCommit.ok, aCommit: aCommit.ok ? "ok" : aCommit.code, reopened, older: await reasonOf(b = make(n)),
+      aOpen: await reasonOf(a.store), aAgain: (await a.store.commit(commit(at(30_110), [], at(30_120)))).ok };
+    b.close();
+
+    // Stolen before the slot's first write: A must not write its pair over B's confirmation.
+    n = fresh("steal-first"); a = held(n, "slot pair", 2);
+    await a.store.open(key(FEED));
+    await a.store.commit(commit(null, [r1], at(30_010)));
+    pending = a.store.commit(commit(at(30_010), [r2], at(30_060)));
+    await a.reached;
+    await steal(n);
+    b = make(n);
+    const bOpen2 = await reasonOf(b), bCommit2 = await b.commit(commit(at(30_010), [row(30_040, r1, "b")], at(30_045)));
+    a.go();
+    const aCommit2 = await pending;
+    b.close();
+    out.first = { bOpen: bOpen2, bCommit: bCommit2.ok, aCommit: aCommit2.ok ? "ok" : aCommit2.code, reopened: await reasonOf(b = make(n)) };
+    b.close();
+
+    // No steal: the slot changed under A before its last write. A leaves the other value as it is.
+    n = fresh("slot-changed"); a = held(n, "slot new", 1);
+    await a.store.open(key(FEED));
+    pending = a.store.commit(commit(null, [r1], at(30_010)));
+    await a.reached;
+    const other = JSON.stringify([`0x${"ee".repeat(32)}`]);
+    await chrome.storage.session.set({ [slotKey(n)]: other });
+    a.go();
+    const aCommit3 = await pending;
+    out.changed = { aCommit: aCommit3.ok ? "ok" : aCommit3.code, slotKept: (await chrome.storage.session.get(slotKey(n)))[slotKey(n)] === other };
+    a.store.close();
+    return out;
+  },
   // The store-level cases, each on a store of its own.
   async cases() {
     const out: Record<string, unknown> = {};

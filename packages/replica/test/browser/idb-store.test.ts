@@ -115,6 +115,14 @@ try {
   ok("a second store of the same name: unavailable while the first is open, opens once it is closed", show(c.twoStores) === show({ first: "ok", second: "unavailable", afterClose: "ok" }), show(c.twoStores));
   ok("a database of a later layout: reset format, deleted and made again by the reset", show(c.newer) === show({ open: "format", afterReset: "ok" }), show(c.newer));
   ok("a slot out of form: unconfirmed", c.slotOutOfForm === "unconfirmed", show(c.slotOutOfForm));
+  console.log("a stolen lock (the package never steals one):");
+  const sl = await page.call("steal");
+  ok("stolen before A's last slot write, B commits: B's store reopens confirmed, A's commit is refused, the older snapshot opens unconfirmed",
+    sl.last?.bOpen === "ok" && sl.last.bCommit === true && sl.last.aCommit === "STORE_FAILED" && sl.last.reopened === "ok" && sl.last.older === "unconfirmed", show(sl.last));
+  ok("the store whose lock was stolen opens unavailable and commits nothing", sl.last?.aOpen === "unavailable" && sl.last.aAgain === false, show(sl.last));
+  ok("stolen before A's first slot write: A writes no pair over B's confirmation, B's store reopens confirmed",
+    sl.first?.bOpen === "ok" && sl.first.bCommit === true && sl.first.aCommit !== "ok" && sl.first.reopened === "ok", show(sl.first));
+  ok("the slot changed under A before its last write: A's commit is refused and the other value stays", sl.changed?.aCommit === "STORE_FAILED" && sl.changed.slotKept === true, show(sl.changed));
   const rf = await page.call("refusals");
   ok("ReplicaConfigError for a name outside [a-z0-9-]{1,64}, a missing slot and an empty slot key", show(rf) === show({ badName: "ReplicaConfigError", noSlot: "ReplicaConfigError", emptyKey: "ReplicaConfigError" }), show(rf));
 } finally {

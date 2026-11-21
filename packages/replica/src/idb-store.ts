@@ -36,22 +36,23 @@ export function sessionSlot(key: string): TrustedSlot {
   };
 }
 
-type Lock = { held(): boolean; release(): void; readonly gone: Promise<void> };
+type Lock = { held(): boolean; lost(): boolean; release(): void; readonly gone: Promise<void> };
 // Locks this context is releasing, by name: the lock manager frees a lock after its holder's callback settles, so a store
 // opened in the same context right after another's close() waits for that instead of finding it held.
 const releasing = new Map<string, Promise<void>>();
-// The Web Lock `name` until release(), or null while another context holds it. A steal ends it: held() turns false.
+// The Web Lock `name` until release(), or null while another context holds it. A steal ends it: held() turns false and
+// lost() true.
 function takeLock(name: string): Promise<Lock | null> {
   const locks = (globalThis as { navigator?: { locks?: LockManager } }).navigator?.locks;
   if (locks === undefined) throw new ReplicaConfigError("idbStore: the Web Locks API is not available here");
   return new Promise((resolve, reject) => {
-    let held = false;
+    let held = false, lost = false;
     const gone = locks.request(name, { ifAvailable: true }, (lock) => {
       if (lock === null) { resolve(null); return undefined; }
       held = true;
-      return new Promise<void>((end) => resolve({ held: () => held, release: () => { held = false; end(); }, gone: settled }));
+      return new Promise<void>((end) => resolve({ held: () => held, lost: () => lost, release: () => { held = false; end(); }, gone: settled }));
     });
-    const settled: Promise<void> = gone.then(() => { held = false; }, (e: unknown) => { held = false; reject(e); });
+    const settled: Promise<void> = gone.then(() => { held = false; }, (e: unknown) => { held = false; lost = true; reject(e); });
   });
 }
 
@@ -76,6 +77,10 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
   const slot = o.slot, dbName = `cairnx-replica:${o.name}`;
   if (typeof slot?.get !== "function" || typeof slot.set !== "function") throw new ReplicaConfigError("idbStore: a slot (sessionSlot) is required");
   let db: IDBDatabase | null = null, lock: Lock | null = null, opened: StoreKey | null = null, durable = EMPTY(), newer = false;
+  // A store whose lock was stolen is lost for good: it opens `unavailable` and commits nothing, to the database or the
+  // slot, so it cannot write over the successor that took the lock (test/browser/idb-store.test.ts, the steal cases).
+  let lost = false;
+  const fenced = (): boolean => (lost ||= lock?.lost() === true) || lock === null || !lock.held();
 
   function connect(): Promise<IDBDatabase> {
     return new Promise((res, rej) => {
@@ -136,6 +141,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
     const got = tx.objectStore("meta").get("meta");
     got.onsuccess = () => {
       const stored = got.result as { meta?: { cursor?: unknown } } | undefined;
+      if (fenced()) { moved = true; tx.abort(); return; }
       if (!sameCursor(c.expect, (stored?.meta?.cursor ?? null) as typeof c.expect)) { moved = true; tx.abort(); return; }
       const rows = tx.objectStore("rows"), bounds = tx.objectStore("bounds");
       if ("rollbackTo" in c) {
@@ -160,6 +166,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
     async open(expect) {
       opened = null;
       checkBasis(expect.basis);
+      if (lost || lock?.lost() === true) { lost = true; return unavailable; }
       if (lock === null || !lock.held()) {
         await releasing.get(dbName);
         lock = await takeLock(dbName);
@@ -200,8 +207,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
       if (!sameCursor(c.expect, durable.meta?.cursor ?? null)) return { ok: false, code: "CURSOR_MOVED" };
       const keep = keptHeight(c), rowEnds = durable.rowEnds.filter((r) => r.height <= keep), boundEnds = durable.boundEnds.filter((b) => b.height <= keep);
       if (!commitShapeOk(c, boundEnds.at(-1)?.height ?? -1, rowEnds.at(-1))) return { ok: false, code: "STORE_FAILED" };
-      // A lock lost to a steal is lost for good: nothing is written and the store closes.
-      if (lock === null || !lock.held()) { close(); return { ok: false, code: "STORE_FAILED" }; }
+      if (fenced()) { close(); return { ok: false, code: "STORE_FAILED" }; }
       let chain = boundEnds.at(-1)?.chain ?? BOUNDS_HASH_START, window = durable.window;
       if (!("rollbackTo" in c)) {
         for (const r of c.rows) rowEnds.push({ height: r.height, eventsHash: r.eventsHash, rowsHash: r.rowsHash });
@@ -209,12 +215,18 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
         if (c.headerWindow !== undefined) window = windowDigest(c.headerWindow);
       }
       const record: Stored = { store: TAG, format: FORMAT, meta: storedMeta(c.meta), boundsHash: chain, window }, h = payloadHash(record);
+      const failed = { ok: false, code: "STORE_FAILED" } as const, pair = JSON.stringify(durable.hash === null ? [h] : [durable.hash, h]);
       await hooks.point?.("slot pair");
-      await slot.set(JSON.stringify(durable.hash === null ? [h] : [durable.hash, h]));
+      if (fenced()) return failed;
+      await slot.set(pair);
       await hooks.point?.("transaction");
-      if ((await write(c, keep, record)) === "moved") return { ok: false, code: "CURSOR_MOVED" };
+      if (fenced()) return failed;
+      if ((await write(c, keep, record)) === "moved") return fenced() ? failed : { ok: false, code: "CURSOR_MOVED" };
       durable = { meta: { ...c.meta, witnessed: null }, window, hash: h, rowEnds, boundEnds, rows: null, bounds: null };
       await hooks.point?.("slot new");
+      // Only over the pair this commit wrote: another writer's value stays, and the pair still names this record, so the
+      // loop reads the store back and finds it confirmed.
+      if (fenced() || (await slot.get()) !== pair) return failed;
       await slot.set(JSON.stringify([h]));
       await hooks.point?.("done");
       return { ok: true };
