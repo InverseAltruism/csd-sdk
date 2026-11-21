@@ -5,8 +5,8 @@
 // together falls back to the walk from the pin and ends verified at the same cursor and deep state as a fresh replica:
 // bytes that are not the record's (after the open, or at rest on disk), a store whose window read rejects, a window
 // ending below the cursor, one that does not hold the cursor's block, one whose headers do not link, one that links
-// without the proof of work, an older pin's, a record whose work is out of form. The work rule over a kept window is
-// hosted-work.test.ts.
+// without the proof of work, an older pin's, a record whose work is out of form. A step cut inside a page records the
+// work at its cursor, not at the window's top. The work rule over a kept window is hosted-work.test.ts.
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import type { BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { fx } from "./core-files.js";
 import { all, front, ORIGIN, type Hosted } from "./hosted-harness.js";
+import { edit } from "./node-harness.js";
 import { hashAt, timeAt, witnessOn } from "./reader-harness.js";
 
 const P = 30_000, MID = 30_250, TIP = 30_300;
@@ -161,6 +162,24 @@ const withHeader = (b: Uint8Array, i: number, h: ReturnType<typeof deserializeHe
   const odd: Store = { ...store, rows: (h) => store.rows(h), async open(e) { const o = await store.open(e); return o.ok && o.meta !== null ? { ok: true, meta: { ...o.meta, work: "0x10" } } : o; } };
   const x = await life(odd, TIP);
   ok("a record whose work is not a decimal integer: the walk, verified as a fresh replica", walked(x) && same(x), `${codes(x.s)} ${x.heads.join(" ")}`);
+}
+
+console.log("the work a commit records:");
+{
+  // A step cut inside a page: the page's headers verified to 30,300, the body of 30,277 refused, the blocks to 30,276
+  // committed. The work recorded is the window's at 30,276, as a fill whose tip is 30,276 records it.
+  const workAt = async (answers: typeof all, tip: number) => {
+    const inner = memoryStore(), works = new Map<number, string | null>();
+    const spied: Store = { ...inner, rows: (h) => inner.rows(h), async commit(c) { const r = await inner.commit(c); if (r.ok && c.meta.cursor !== null) works.set(c.meta.cursor.height, c.meta.work); return r; } };
+    const r = await open({ ...hosted({ pin, origin: ORIGIN, witness: witnessOn(all, tip).witness, store: spied, fetch: front({ answers, tip } as Hosted).f }), clock: () => timeAt(tip) * 1000 + 60_000 });
+    for (let i = 0; i < 6; i++) await r.advance();
+    const s = r.status();
+    await r.close();
+    return { cursor: s.cursor?.height ?? null, work: works.get(30_276) ?? null };
+  };
+  const cut = await workAt({ ...all, ...edit(all, 30_277, (b) => { b.txs.splice(1, 1); }) }, TIP), whole = await workAt(all, 30_276);
+  ok(`a step cut at a body refused inside a page: the cursor 30,276, its recorded work the window's there (${cut.work}), as a fill to 30,276 records it`,
+    cut.cursor === 30_276 && whole.cursor === 30_276 && cut.work !== null && cut.work === whole.work, `${JSON.stringify(cut)} ${JSON.stringify(whole)}`);
 }
 
 done("cairnx-replica hosted window");
