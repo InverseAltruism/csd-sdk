@@ -22,7 +22,7 @@ type Row = { height: number; hash: string; header: Block["header"] };
 const rowAt = (h: number): Row => ({ height: h, hash: hashAt(h), header: block(h)!.header });
 
 const HEADERS = "https://headers.example", RPC = "https://rpc.example";
-type Served = { rows?: (from: number, rows: Row[]) => Row[]; rpcHash?: (h: number) => string; tip?: number | null; status?: (path: string) => number | undefined };
+type Served = { rows?: (from: number, rows: Row[]) => Row[]; rpcHash?: (h: number) => string; rpcHeight?: (h: number) => number; tip?: number | null; status?: (path: string) => number | undefined };
 function stub(o: Served = {}) {
   const log: { url: string; redirect: RequestRedirect | undefined }[] = [];
   const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
@@ -38,7 +38,7 @@ function stub(o: Served = {}) {
       return rows.includes(null) ? json({ ok: false }, 404) : json({ ok: true, headers: (o.rows ?? ((_, r) => r))(from, rows as Row[]) });
     }
     const at = /^\/block\/height\/(\d+)$/.exec(u.pathname);
-    if (u.origin === RPC && at && block(Number(at[1])) !== null) return json({ ok: true, height: Number(at[1]), hash: (o.rpcHash ?? hashAt)(Number(at[1])) });
+    if (u.origin === RPC && at && block(Number(at[1])) !== null) return json({ ok: true, height: (o.rpcHeight ?? ((h) => h))(Number(at[1])), hash: (o.rpcHash ?? hashAt)(Number(at[1])) });
     if (u.origin === RPC && u.pathname === "/tip") return json(o.tip === null ? {} : { height: o.tip ?? 31_500 });
     return json({ ok: false }, 404);
   };
@@ -144,6 +144,8 @@ ok("a second RPC that disagrees about an entry (30,079)", refusedWith(await chec
 ok("a second RPC that disagrees about the floor", refusedWith(await checkRun({ served: { rpcHash: (h) => (h === 29_960 ? hashAt(29_961) : hashAt(h)) } }), /answers "no" for the floor at height 29960/));
 ok("a second RPC that disagrees about the activation root: the root is checked though the walk starts above it", refusedWith(await checkRun({ served: { rpcHash: (h) => (h === 29_859 ? hashAt(29_860) : hashAt(h)) } }), /answers "no" for the activation root at height 29859/));
 ok("a second RPC that does not answer for an entry", refusedWith(await checkRun({ served: { status: (p) => (p === "/block/height/30143" ? 404 : undefined) } }), /answers "unreachable" for entry 2 at height 30143/));
+ok("a second RPC that answers for another height than the one asked", refusedWith(await checkRun({ served: { rpcHeight: (h) => (h === 30_143 ? 30_144 : h) } }), /answers "no" for entry 2 at height 30143/));
+ok("a second RPC whose answer is a 200 that is not ok", refusedWith(await checkRun({ served: { status: (p) => (p === "/block/height/30143" ? 200 : undefined) } }), /answers "unreachable" for entry 2 at height 30143/));
 ok("a newest entry 999 below the second RPC's tip", refusedWith(await checkRun({ served: { tip: 31_270 } }), /less than 1000 below the tip 31270/));
 ok("a second RPC that gives no tip", refusedWith(await checkRun({ served: { tip: null } }), /gave no tip height/));
 const badLink = await checkRun({ served: tamper(30_040, asPrev) });
@@ -169,20 +171,20 @@ ok("the headers base from ANCHORS_HEADERS_BASE: exit 0, and without --write the 
   g2.code === 0 && readFileSync(t2b, "utf8") === tableMod.renderJson(tableOf(2)) && /^would write \(run with --write\)/.test(out[0] ?? ""), `${out} ${errs}`);
 const g3 = await cmd(["--check", "--headers", HEADERS, "--rpc", RPC], {}, putTable(tableOf(5)));
 ok("--check --headers <base> --rpc <base>: exit 0 and the counts", g3.code === 0 && /anchors check passed: 5 entries, newest 30271, tip 31500/.test(out[0] ?? ""), `${out} ${errs}`);
-const usage: [string, string[], Record<string, string | undefined>][] = [
-  ["an unknown option", [c1File, "--headers", HEADERS, "--chek"], {}],
-  ["no headers source and no ANCHORS_HEADERS_BASE", [c1File], {}],
-  ["a headers source that is not an http(s) URL", [c1File, "--headers", "/var/headers"], {}],
-  ["an empty ANCHORS_HEADERS_BASE", [c1File], { ANCHORS_HEADERS_BASE: "" }],
-  ["--check without --rpc", ["--check", "--headers", HEADERS], {}],
-  ["--check with the headers base only in the environment", ["--check", "--rpc", RPC], { ANCHORS_HEADERS_BASE: HEADERS }],
-  ["--check with an anchor file", ["--check", c1File, "--headers", HEADERS, "--rpc", RPC], {}],
-  ["generate with --rpc", [c1File, "--headers", HEADERS, "--rpc", RPC], {}],
-  ["generate without an anchor file", ["--headers", HEADERS], {}],
+const usage: [string, string[], Record<string, string | undefined>, RegExp][] = [
+  ["an unknown option", [c1File, "--headers", HEADERS, "--chek"], {}, /unknown or incomplete option --chek/],
+  ["no headers source and no ANCHORS_HEADERS_BASE", [c1File], {}, /no headers source named/],
+  ["a headers source that is not an http(s) URL", [c1File, "--headers", "/var/headers"], {}, /no headers source named/],
+  ["an empty ANCHORS_HEADERS_BASE", [c1File], { ANCHORS_HEADERS_BASE: "" }, /no headers source named/],
+  ["--check without --rpc", ["--check", "--headers", HEADERS], {}, /no rpc source named/],
+  ["--check with the headers base only in the environment", ["--check", "--rpc", RPC], { ANCHORS_HEADERS_BASE: HEADERS }, /no headers source named/],
+  ["--check with an anchor file", ["--check", c1File, "--headers", HEADERS, "--rpc", RPC], {}, /--check takes only/],
+  ["generate with --rpc", [c1File, "--headers", HEADERS, "--rpc", RPC], {}, /generate takes one/],
+  ["generate without an anchor file", ["--headers", HEADERS], {}, /generate takes one/],
 ];
-for (const [name, argv, env] of usage) {
+for (const [name, argv, env, re] of usage) {
   const r = await cmd(argv, env, putTable(tableOf(2)));
-  ok(`${name}: exit 2, nothing requested`, r.code === 2 && r.requests === 0 && /nothing read or written/.test(errs[0] ?? ""), errs.join());
+  ok(`${name}: exit 2, nothing requested`, r.code === 2 && r.requests === 0 && re.test(errs[0] ?? "") && /nothing read or written/.test(errs[0] ?? ""), errs.join());
 }
 const refused = await cmd([put("c1-bad.json", c1({ v: 2 })), "--headers", HEADERS, "--write"], {}, putTable(tableOf(2)));
 ok("a refused input: exit 1 naming the rule, nothing requested", refused.code === 1 && refused.requests === 0 && /FAIL: anchor JSON refused: v must be 1/.test(errs[0] ?? ""), errs.join());

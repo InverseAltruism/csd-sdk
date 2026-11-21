@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LightClient } from "@inversealtruism/csd-light";
-import { CHUNK, HASH_RE, TABLE, extensionFault, firstChunk, parseTable, renderJson, topOf, validateTable } from "./table.mjs";
+import { CHUNK, HASH_RE, TABLE, extensionFault, firstChunk, parseTable, renderJson, topOf } from "./table.mjs";
 
 export const PAGE = 512;
 export const MIN_MARGIN = 1000;
@@ -102,7 +102,6 @@ export async function generate({ c1Text, tablePath = TABLE, base, write = false,
   const table = { ...old, anchors: tops.map((height, i) => ({ height, hash: hashes[i] })) };
   const fault = extensionFault(old, table);
   if (fault) throw new Error(`${fault}; nothing written`);
-  validateTable(table, chunk);
   const text = renderJson(table);
   if (write) writeFileSync(tablePath, text);
   return { table, text, entries: tops.length, newest: target.height };

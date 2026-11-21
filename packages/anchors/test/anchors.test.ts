@@ -91,6 +91,8 @@ ok("the rule refuses a changed entry, naming it", /entry 3\)/.test(tableMod.exte
 ok("the rule refuses a lost last entry, naming it", /entry 27\)/.test(tableMod.extensionFault(table, { ...table, anchors: table.anchors.slice(0, 27) }) ?? ""));
 const moved = structuredClone(more); moved.floor.hash = `0x${"ef".repeat(32)}`;
 ok("the rule refuses a floor that is not the committed one", /floor/.test(tableMod.extensionFault(table, moved) ?? ""));
+const rerooted = structuredClone(more); rerooted.activationRoot.hash = `0x${"12".repeat(32)}`;
+ok("the rule refuses an activation root that is not the committed one", /activation root/.test(tableMod.extensionFault(table, rerooted) ?? ""));
 
 console.log("the build and the module:");
 const tmp = mkdtempSync(join(tmpdir(), "anchors-build-"));
