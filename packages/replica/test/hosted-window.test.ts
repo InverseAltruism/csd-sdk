@@ -4,8 +4,8 @@
 // test/browser/idb-store.test.ts), and above the cursor only the new blocks' pages. A window that does not hold
 // together falls back to the walk from the pin and ends verified at the same cursor and deep state as a fresh replica:
 // bytes that are not the record's, a window ending below the cursor, one that does not hold the cursor's block, one
-// whose headers do not link, one that links without the proof of work. The work rule over a kept window is
-// hosted-work.test.ts.
+// whose headers do not link, one that links without the proof of work, an older pin's, a record whose work is out of
+// form. The work rule over a kept window is hosted-work.test.ts.
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -121,6 +121,27 @@ const withHeader = (b: Uint8Array, i: number, h: ReturnType<typeof deserializeHe
   const other = (await short.headerWindow())!;
   const x = await life(edited(store, () => other), TIP);
   ok("a window that does not hold the cursor's block (another store's, to 30,250): the walk, verified as a fresh replica", walked(x) && same(x), `${codes(x.s)} ${x.heads.join(" ")}`);
+}
+
+{
+  // A store filled under the pin at 30,000, read under one at 30,270: its window counts work from the older pin.
+  const store = memoryStore(), d2 = await derivePin({ ...fx, to: 30_270, toHash: hashAt(30_270), blocks: fx.blocks.filter((b) => b.height <= 30_270) });
+  await life(store, TIP);
+  const fr = front({ answers: all, tip: TIP } as Hosted), r = await open({ ...hosted({ pin: { ...d2.pin, log: async () => d2.log }, origin: ORIGIN, witness: witnessOn(all, TIP).witness, store, fetch: fr.f }),
+    clock: () => timeAt(TIP) * 1000 + 60_000 });
+  const s2 = await r.advance();
+  await r.close();
+  const heads = fr.log.map((l) => l.path).filter((p) => p.startsWith("/api/headers/"));
+  ok(`a store kept under a newer pin (30,270): the older pin's window is not taken, the walk from the newer one (${heads.join(" ")}), verified`,
+    s2.verified && s2.cursor?.height === TIP && heads.join() === "/api/headers/30226/45,/api/headers/30271/30", codes(s2));
+}
+{
+  const store = memoryStore();
+  await life(store, TIP);
+  // The record's work out of form (not a decimal integer).
+  const odd: Store = { ...store, rows: (h) => store.rows(h), async open(e) { const o = await store.open(e); return o.ok && o.meta !== null ? { ok: true, meta: { ...o.meta, work: "0x10" } } : o; } };
+  const x = await life(odd, TIP);
+  ok("a record whose work is not a decimal integer: the walk, verified as a fresh replica", walked(x) && same(x), `${codes(x.s)} ${x.heads.join(" ")}`);
 }
 
 done("cairnx-replica hosted window");

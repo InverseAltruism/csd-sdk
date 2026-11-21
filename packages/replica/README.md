@@ -147,8 +147,8 @@ replayed on demand.
   csd-light verifies the headers again as far as it can without the ones below them (the first 45 for links and
   proof of work, each later one for its link, time rules, LWMA bits and proof of work); and the window holds the
   cursor's block at or above its lowest forkable height. It is then rewound to the cursor, and above it the source
-  reads only the new blocks' pages. Taken from the record without a check: the first 45 headers' bits, `work` and
-  `workRoot`. Verifying 486 recorded headers again took 14.83 ms (median of 9, Node 26 on the maintainers' host,
+  reads only the new blocks' pages. Taken from the record without a check: the first 45 headers' bits, `work`, and
+  that the window descends from `workRoot`. Verifying 486 recorded headers again took 14.83 ms (median of 9, Node 26 on the maintainers' host,
   2026-11-21). A window that fails any check is dropped, never refused: the source walks from workRoot as with no
   window, to the store's cursor and with no work to beat, adopting any chain from the anchor, valid in proof of work,
   that reaches the cursor's height, and rolling back to the highest held block on it (`test/hosted-window.test.ts`).

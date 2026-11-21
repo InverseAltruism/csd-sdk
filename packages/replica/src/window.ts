@@ -40,8 +40,8 @@ export class HeaderWindow {
   /** A window from `bytes` (encode's form) whose top carries `work` above `root`, at `at`, the store's cursor. Re-verified
    *  by csd-light without the headers below it: seedTrusted over the first LWMA_WINDOW (links and proof of work), ingest
    *  over the rest (link, time rules, LWMA bits, proof of work). It must hold `at`'s hash at `at`'s height, at or above
-   *  `low`, and is rewound to `at`; where it reaches `root`'s height, `root`'s hash. Trusted: the first LWMA_WINDOW
-   *  headers' bits, `work` and `root`, which the store's record carries. Anything else is HEADER_INVALID. */
+   *  `low`, and is rewound to `at`. Trusted: the first LWMA_WINDOW headers' bits, `work`, and that the window descends
+   *  from `root`, which the store's record carries. Anything else is HEADER_INVALID. */
   static restore(bytes: Uint8Array, at: Cursor, depth: number, root: Cursor, work: bigint): HeaderWindow {
     const n = (bytes.length - 4) / HEADER_BYTES;
     if (!Number.isInteger(n) || n < LWMA_WINDOW) refuse(`${bytes.length} bytes are not 4 and at least ${LWMA_WINDOW} headers`);
@@ -55,7 +55,6 @@ export class HeaderWindow {
     }
     const w = new HeaderWindow(lc, depth, root, lc.chainwork - work);
     if (w.hashAt(at.height) !== at.hash.toLowerCase() || at.height < w.low) refuse(`it does not hold the cursor ${at.height} ${at.hash} at or above ${w.low}`);
-    if (w.at(root.height) !== undefined && w.hashAt(root.height) !== root.hash.toLowerCase()) refuse(`it does not pass through workRoot ${root.height}`);
     w.rewind(at.height);
     w.trim(at.height);
     return w;
