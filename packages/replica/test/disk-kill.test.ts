@@ -28,6 +28,8 @@ const child = (dir: string, at?: string) => new Promise<{ status: number | null;
 const ref = JSON.parse((await child(join(root, "ref"))).out) as { trace: string[]; cursors: string[]; cursor: unknown; eventsHash: string };
 // The points in order, numbered by commit; the cursor each commit leaves (after[0]: none yet).
 const points: { commit: number; name: string; half: boolean }[] = [], after = [JSON.stringify(null), ...ref.cursors];
+// The windows the uninterrupted run committed: one an extend, "<height>:<hash>" of its cursor.
+const windows = ref.cursors.map((c) => JSON.parse(c) as { height: number; hash: string }).map((c) => `${c.height}:${c.hash}`);
 let commit = 1;
 for (const name of ref.trace) {
   points.push({ commit, name, half: false });
@@ -41,7 +43,7 @@ ok("the sequence holds every commit kind: a rollback (a commit with no rows writ
 ok("the kill points number at least 200", points.length >= 200, String(points.length));
 
 const late = () => Date.now() + STALE_MS + 1;   // the killed child's lease is stale to the parent at once
-let killed = 0, opened = 0, between = 0, ended = 0;
+let killed = 0, opened = 0, between = 0, ended = 0, paired = 0;
 const bad: string[] = [];
 let next = 0;
 async function worker() {
@@ -53,6 +55,7 @@ async function worker() {
     if (r.opened.ok) opened++;
     const where = JSON.stringify(r.openedAt);
     if (r.opened.ok && (where === after[p.commit - 1] || where === after[p.commit])) between++;
+    if (r.openedAt === null ? r.window === null : r.window !== null && r.window !== "unpaired" && windows.includes(r.window)) paired++;
     if (JSON.stringify(r.cursor) === JSON.stringify(ref.cursor) && r.eventsHash === ref.eventsHash && r.lastError === null) ended++;
     else bad.push(`${p.commit}:${p.name}:${p.half}`);
     rmSync(dir, { recursive: true, force: true });
@@ -62,5 +65,6 @@ await Promise.all([worker(), worker(), worker(), worker()]);
 ok(`every one of the ${points.length} children was killed at its point`, killed === points.length, String(killed));
 ok("every killed store opens, not corrupt", opened === points.length, String(opened));
 ok("each opens at the cursor before or after the commit that was cut", between === points.length, String(between));
+ok("each opens with the header window of the meta it opened with (none before the first commit)", paired === points.length, String(paired));
 ok("each, run on, ends at the uninterrupted run's cursor and events hash", ended === points.length, bad.slice(0, 5).join(" "));
 done("cairnx-replica disk kill");

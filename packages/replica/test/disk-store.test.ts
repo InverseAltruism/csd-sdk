@@ -157,6 +157,14 @@ const first = `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).w
 const r2 = row(30_020, r1);
 await w2.commit(commit(at(30_010), [r2], at(30_020), { headerWindow: new Uint8Array([9]) }));
 ok("a new window replaces the old file", !exists(join(W, first)) && [...((await w2.headerWindow()) ?? [])].join() === "9");
+const named = join(W, `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).window.slice(2)}.bin`);
+writeFileSync(named, new Uint8Array([8]));
+const swappedRead = await w2.headerWindow();
+unlinkSync(named);
+const goneRead = await w2.headerWindow();
+writeFileSync(named, new Uint8Array([9]));
+ok("under an open store, a window file overwritten with other bytes, or removed: headerWindow() gives none; put back, the window",
+  swappedRead === null && goneRead === null && [...((await w2.headerWindow()) ?? [])].join() === "9");
 w2.close();
 unlinkSync(join(W, `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).window.slice(2)}.bin`));
 const w3 = diskStore({ dir: W });

@@ -221,7 +221,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
     async headerWindow() {
       if (durable.window === null) return null;
       const w = await request((await connection()).transaction("window").objectStore("window").get("window"));
-      return w instanceof ArrayBuffer ? new Uint8Array(w) : null;
+      return w instanceof ArrayBuffer && windowDigest(new Uint8Array(w)) === durable.window ? new Uint8Array(w) : null;
     },
     async commit(c) {
       if (opened === null || keyDifference(c.meta, opened) !== null) return { ok: false, code: "STORE_FAILED" };

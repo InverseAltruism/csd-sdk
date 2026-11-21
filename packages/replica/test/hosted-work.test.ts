@@ -3,7 +3,8 @@
 // window verified from workRoot, refused with less work (the refusal kept until the server's tip moves) and adopted
 // with more; a reorg found on a later read of one step drops the blocks it orphaned; a rollback whose commit failed is
 // returned again, never repaired by a walk without a work bar; a walk that fails starts afresh; and a store filled
-// before the source started, which keeps no work today, is pinned as it behaves. Every emitted step keeps the contract.
+// before the source started keeps the window's work as the bar, unless its window is withheld or is another branch's
+// than its cursor. Every emitted step keeps the contract.
 import { createHash } from "node:crypto";
 import { LightClient } from "@inversealtruism/csd-light";
 import { anchorRoot } from "../src/anchor-root.js";
@@ -109,11 +110,28 @@ const second = replicaLoop({ source: tw.inner, store: otherStore, rule: RULE, cl
 ok("its window on A to 1089, the store on B to 1089: the walk from workRoot must beat the window's work, so LESS_WORK and the store kept",
   sc.lastError?.code === "LESS_WORK" && sc.cursor?.hash === B(1089) && sc.lastReorg === null);
 
-console.log("a store filled before the source started (no work persisted; slice 7 must change this deliberately):");
+console.log("a store filled before the source started, which keeps the source's window (a restart, or a reorg while closed):");
 const kept = memoryStore();
 await drive({ answers: onA, tip: 1089 }, 8, { store: kept }).run();
+const aWindow = await kept.headerWindow();
 const rs = drive({ answers: onB, tip: 1089 }, 8, { store: kept }), r1 = await settle(rs);
-ok("restart today: a new source over a store on A to 1089, its server on the lighter B to 1089, rolls back to 1085 and follows B",
-  r1.lastReorg?.to.height === 1085 && r1.cursor?.hash === B(1089) && r1.lastError === null, `${kinds(rs.steps).join()} ${r1.cursor?.hash}`);
+ok("a new source over a store on A to 1089, its server on the lighter B to 1089: the kept window's work is the bar, so LESS_WORK and the store kept",
+  r1.lastError?.code === "LESS_WORK" && r1.cursor?.hash === A(1089) && r1.lastReorg === null, `${kinds(rs.steps).join()} ${r1.cursor?.hash}`);
+const heavier = drive({ answers: onB, tip: 1091 }, 8, { store: kept }), r2 = await settle(heavier), fresh = await settle(drive({ answers: onB, tip: 1091 }, 8));
+ok("the server on B to 1091, more work: rolled back to 1085 and B read to 1091, the fresh replica's cursor and events hash",
+  r2.lastReorg?.to.height === 1085 && r2.cursor?.hash === B(1091) && r2.lastError === null && r2.eventsHash === fresh.eventsHash && fresh.cursor?.hash === B(1091) && heavier.bad.length === 0);
+const onlyB = memoryStore();
+await drive({ answers: onB, tip: 1089 }, 8, { store: onlyB }).run();
+// The store on B to 1089 handed A's window, whose work and workRoot it does not carry: it does not hold the cursor's block.
+const crossed: Store = { ...onlyB, rows: (x) => onlyB.rows(x), headerWindow: async () => aWindow };
+const xs = drive({ answers: onB, tip: 1089 }, 8, { store: crossed }), x1 = await settle(xs);
+ok("a store on B to 1089 given a window of A (another branch than its cursor): dropped, the walk from workRoot, the store on B as a fresh replica's",
+  x1.lastError === null && x1.cursor?.hash === B(1089) && x1.lastReorg === null && headerReads(xs) >= 2, `${kinds(xs.steps).join()} ${x1.lastError?.code}`);
+const on2 = memoryStore();
+await drive({ answers: onA, tip: 1089 }, 8, { store: on2 }).run();
+const blindStore: Store = { ...on2, rows: (x) => on2.rows(x), headerWindow: async () => null };
+const bl = drive({ answers: onB, tip: 1089 }, 8, { store: blindStore }), b9 = await settle(bl);
+ok("the same restart with the window withheld: no work to beat, so it rolls back to 1085 and follows the lighter B",
+  b9.lastReorg?.to.height === 1085 && b9.cursor?.hash === B(1089) && b9.lastError === null, `${kinds(bl.steps).join()} ${b9.cursor?.hash}`);
 
 done("cairnx-replica hosted work");

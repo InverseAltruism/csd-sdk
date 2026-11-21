@@ -13,7 +13,10 @@
 // the loop's floor (the pin, else the activation height less one), is remembered until the store's cursor is back on the window: until then the
 // rollback to it is owed (`owed`, returned before the server is read), the tip reported is that block, and nothing
 // is repaired by a walk without a work bar. A walk whose headers fail verification is dropped and starts afresh;
-// after a transport error it resumes.
+// after a transport error it resumes. A window the store kept with its cursor (README, "What a store must keep") is
+// taken at the first step instead of the seed, under this anchor as workRoot, once HeaderWindow.restore has verified
+// it and found the cursor's block in it; any other is dropped and the seed is read as without one. The seed is read
+// only when a window is seeded from it.
 import { LWMA_WINDOW } from "@inversealtruism/csd-codec";
 import { floorBreak } from "./basis.js";
 import { floorOf } from "./contract.js";
@@ -22,7 +25,7 @@ import { SourceError } from "./errors.js";
 import type { Head } from "./fork.js";
 import { servedWrong, twice, type Session } from "./http.js";
 import type { Root } from "./roots.js";
-import type { Cursor, StepContext, Step, TipView } from "./types.js";
+import type { Cursor, HeldWindow, StepContext, Step, TipView } from "./types.js";
 import { HeaderWindow, type HeaderRow } from "./window.js";
 
 const BATCH = 512;
@@ -42,6 +45,7 @@ const resumable = (e: unknown) => !(e instanceof SourceError) || ["SOURCE_RATE_L
 /** `batch`: the most headers one /api/headers read asks for, the route's cap (a parameter for tests only). */
 export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   let w: HeaderWindow | null = null, seed: HeaderRow[] | null = null, walk: Walk | null = null, pending: Cursor | null = null;
+  let stored: HeldWindow | null = null;
   // While a rollback may be outstanding the tip is capped at its fork block, the highest block known to lie on both
   // the store's chain and the window's.
   const tipView = (): TipView | null => {
@@ -51,11 +55,18 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   const reorg = (to: Cursor): Step => ({ kind: "reorg", to, tip: tipView()! });
   // The window never drops the store's cursor, or a fork block still to be rolled back to, below `low`.
   const keepOf = (ctx: StepContext) => Math.min(ctx.cursor?.height ?? floorOf(ctx), pending?.height ?? Number.POSITIVE_INFINITY);
-  const seedOf = (s: Session) => twice(s, `/api/headers/${anchor.height - LWMA_WINDOW + 1}/${LWMA_WINDOW}`, (v) => {
+  const seedOf = async (s: Session) => (seed ??= await twice(s, `/api/headers/${anchor.height - LWMA_WINDOW + 1}/${LWMA_WINDOW}`, (v) => {
     const rows = rowsOf(anchor.height - LWMA_WINDOW + 1, LWMA_WINDOW)(v);
     HeaderWindow.seed(rows, anchor, depth);
     return rows;
-  });
+  }));
+  // The stored window, taken once, at the cursor: one that fails a check is dropped, and the seed takes its place.
+  function restored(at: Cursor | null): HeaderWindow | null {
+    const k = stored;
+    stored = null;
+    if (k === null || at === null || k.workRoot.height !== anchor.height || k.workRoot.hash !== anchor.hash || !/^[0-9]+$/.test(k.work)) return null;
+    try { return HeaderWindow.restore(k.bytes, at, depth, anchor, BigInt(k.work)); } catch (e) { if (e instanceof SourceError) return null; throw e; }
+  }
 
   async function walkOn(s: Session, ctx: StepContext, server: Head, r: Walk): Promise<Step | null> {
     const floor = floorOf(ctx), f = r.fresh;
@@ -88,9 +99,9 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   async function walking(s: Session, ctx: StepContext, server: Head, r: Walk): Promise<Step | null> {
     try { return await walkOn(s, ctx, server, r); } catch (e) { if (!resumable(e)) walk = null; throw e; }
   }
-  const walkFrom = (s: Session, ctx: StepContext, server: Head, bar: bigint | null, need: number) => {
+  const walkFrom = async (s: Session, ctx: StepContext, server: Head, bar: bigint | null, need: number) => {
     const matched = anchor.height === floorOf(ctx) ? { at: anchor, work: 0n } : null;
-    return walking(s, ctx, server, (walk = { fresh: HeaderWindow.seed(seed!, anchor, depth), bar, need, matched, diverged: false, refusedAt: null }));
+    return walking(s, ctx, server, (walk = { fresh: HeaderWindow.seed(await seedOf(s), anchor, depth), bar, need, matched, diverged: false, refusedAt: null }));
   };
 
   // The server's headers around the window, after a page that does not link: a branch from `low` up, or a walk. An
@@ -127,12 +138,14 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
       return w !== null && at !== null && pending !== null && pending.height < at.height && w.hashAt(at.height) !== at.hash ? reorg(pending) : null;
     },
     hashAt: async (height) => w?.hashAt(height) ?? null,
+    windowAt: (at) => (w === null || at.height < w.low || w.hashAt(at.height) !== at.hash ? null
+      : { bytes: w.encode(at.height), work: w.workAt(at.height).toString(), workRoot: anchor }),
+    restoreWindow(k) { if (w === null) stored = k; },
     async begin(s, ctx, server) {
       const floor = floorOf(ctx), at = ctx.cursor, h = at?.height ?? floor;
       const low = floorBreak({ kind: "anchor", anchor }, floor, ctx.rule);
       if (low !== null) throw new SourceError("BELOW_FLOOR", low);
-      seed ??= await seedOf(s);
-      const win = (w ??= HeaderWindow.seed(seed, anchor, depth));
+      const win = (w ??= restored(at) ?? HeaderWindow.seed(await seedOf(s), anchor, depth));
       if (walk !== null && walk.refusedAt === server.hash) throw new SourceError("LESS_WORK", `the server's chain still has no more work than the held one at its tip ${server.height}`);
       if (walk !== null && walk.refusedAt === null) return (await walking(s, ctx, server, walk)) ?? { to: server.height };
       walk = null;

@@ -224,7 +224,10 @@ export function diskStoreWith(o: { readonly dir: string }, hooks: DiskHooks): St
     },
     async headerWindow() {
       const w = durable.window;
-      return w === null ? null : new Uint8Array(await readFile(at(`window-${w.slice(2)}.bin`)));
+      if (w === null) return null;
+      let bytes: Uint8Array;
+      try { bytes = new Uint8Array(await readFile(at(`window-${w.slice(2)}.bin`))); } catch (e) { if (codeOf(e) === "ENOENT") return null; throw e; }
+      return windowDigest(bytes) === w ? bytes : null;
     },
     async commit(c: Commit) {
       if (opened === null || keyDifference(c.meta, opened) !== null) return { ok: false, code: "STORE_FAILED" };
