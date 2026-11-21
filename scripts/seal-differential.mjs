@@ -450,7 +450,7 @@ const malformedSeqs = [];
   if (r.status !== 0) die(`fuzz-resolve --malformed --emit failed: ${r.stderr || r.stdout}`);
   malformedSeqs.push(...SW.parseNumbers(readFileSync(file, "utf8")));
   if (malformedSeqs.length !== MALFORMED_N) die(`fuzz-resolve --malformed emitted ${malformedSeqs.length} sequences, not ${MALFORMED_N}`);
-  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, tipOnly: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
   const types = Object.fromEntries(SW.MALFORMED_TYPES.map((t) => [t, 0]));
   let events = 0, threw = 0;
   malformedSeqs.forEach((s, i) => {
@@ -469,7 +469,7 @@ const malformedSeqs = [];
     diffCase(`malformed#${i}`, s.events, s.tipHeight);
   });
   const floor = Math.floor(MALFORMED_N / 50);
-  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw (the same message in both builds, or a divergence above)` : ""}; reach (sequences in which the baseline met a malformed field of that kind; tip: a tip that is not a safe integer; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it; textDeadline: a reservation from a commit at a string height): ${JSON.stringify(reach)}; types (sequences carrying each on a height, an expiry or the tip): ${JSON.stringify(types)}; floor ${floor} each`);
+  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw (the same message in both builds, or a divergence above)` : ""}; reach (sequences in which the baseline met a malformed field of that kind; tip: a tip that is not a safe integer; tipOnly: such a tip with every height a safe integer; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it; textDeadline: a reservation from a commit at a string height): ${JSON.stringify(reach)}; types (sequences carrying each on a height, an expiry or the tip): ${JSON.stringify(types)}; floor ${floor} each`);
   for (const [k, n] of [...Object.entries(reach), ...Object.entries(types)]) if (n < floor) problems.push(`malformed reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
 }
 

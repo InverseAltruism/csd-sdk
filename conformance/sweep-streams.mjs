@@ -322,10 +322,12 @@ const typeOf = (v) => (typeof v === "number" ? (Number.isNaN(v) ? "nan" : !Numbe
  *  malformed; such an entry in a sequence that crosses V21 (an event below it, the tip at or above it) or lies wholly
  *  at or above it; an offer with a NaN height open at a tip at or above V21 though its raw expiry fell due below V21;
  *  a reservation reserved from a commit at a string height (its deadline a string). `tip`: the tip is not a safe
- *  integer. Reservations and recapture reservations are told apart by the generator's name prefixes (`em`, `rm`). */
+ *  integer; `tipOnly`: and every event height is. Reservations and recapture reservations are told apart by the generator's name prefixes (`em`, `rm`). */
 export function malformedKinds(R, events, tip, state) {
   const types = new Set([tip, ...events.flatMap((e) => [e.height, ...(e.kind === "propose" ? [e.expiresEpoch] : [])])].map(typeOf).filter(Boolean));
-  const out = { offer: false, bid: false, reservation: false, recapture: false, tip: !Number.isSafeInteger(tip), crossV21: false, aboveV21: false, nanOffer: false, textDeadline: false, types };
+  const tipOut = !Number.isSafeInteger(tip);
+  const out = { offer: false, bid: false, reservation: false, recapture: false, tip: tipOut, tipOnly: tipOut && events.every((e) => Number.isSafeInteger(e.height)),
+    crossV21: false, aboveV21: false, nanOffer: false, textDeadline: false, types };
   if (!state) return out;
   const byId = new Map(events.map((e) => [e.kind === "propose" ? e.id : e.txid, e]));
   const commits = new Map(events.filter((e) => e.kind === "propose").map((e) => [R.parseRecord(e.uri, e.payloadHash)?.commit, e]).filter(([c]) => c !== undefined));

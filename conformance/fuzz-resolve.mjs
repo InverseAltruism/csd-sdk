@@ -480,13 +480,14 @@ function malformedSeq() {
   const posAt = (hh) => { const k = String(hh); const p = at.get(k) ?? 0; at.set(k, p + 1); return p; };
   const S = "0x" + "c1".repeat(20), B = "0x" + "c3".repeat(20), C = "0x" + "c4".repeat(20), X = "0x" + "c5".repeat(20);
   const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
-  // two sequences in five carry only integers, so that the reference (given only those) replays them too
-  const ints = chance(0.4), okInt = (v) => !ints || (Number.isInteger(v) && Math.abs(v) < 1e21);
-  const badH = (h) => { if (!ints && chance(0.35)) return pick(BAD_T)(h); const v = chance(0.25) && !ints ? Number.NaN : pick(BAD_H.filter(okInt)); return v === 0.5 ? h + 0.5 : v; };
-  const badE = (e) => { if (!ints && chance(0.2)) return pick(BAD_T)(e); const v = pick(BAD_E.filter(okInt)); return v === 0.5 ? e + 0.5 : v; };
+  // two sequences in five carry only integers, so that the reference (given only those) replays them too; one in ten
+  // keeps every height and expiry valid and puts only the tip outside the domain
+  const ints = chance(0.4), tipOnly = !ints && chance(0.1), okInt = (v) => !ints || (Number.isInteger(v) && Math.abs(v) < 1e21);
+  const badH = (h) => { if (tipOnly) return h; if (!ints && chance(0.35)) return pick(BAD_T)(h); const v = chance(0.25) && !ints ? Number.NaN : pick(BAD_H.filter(okInt)); return v === 0.5 ? h + 0.5 : v; };
+  const badE = (e) => { if (tipOnly) return e; if (!ints && chance(0.2)) return pick(BAD_T)(e); const v = pick(BAD_E.filter(okInt)); return v === 0.5 ? e + 0.5 : v; };
   // the tip, now and then outside the domain: another type, or a number that is not a safe integer
-  const tipOf = (t) => (ints || !chance(0.3) ? t : chance(0.6) ? pick(BAD_T)(t) : pick([t + 0.5, Number.NaN, Infinity, 2 ** 53 + 2]));
-  if (chance(0.12)) {
+  const tipOf = (t) => (ints || (!tipOnly && !chance(0.3)) ? t : chance(0.6) ? pick(BAD_T)(t) : pick([t + 0.5, Number.NaN, Infinity, 2 ** 53 + 2]));
+  if (!tipOnly && chance(0.12)) {
     // sealed reservations whose commit heights are numeric strings: a deadline is then a string ("90000" + 8 + 20 is
     // "90000820"), which a sweep compares as text at a string height and as a number at a number one; up to three for
     // one owner and, half the time, a fourth name committed and revealed far above at string or number heights, which
@@ -499,7 +500,7 @@ function malformedSeq() {
     const t = chance(0.5) ? far + ri(0, 2000) : h + ri(40, 160);
     return { events: ev, tipHeight: chance(0.5) ? String(t) : t };
   }
-  if (chance(0.15)) {
+  if (!tipOnly && chance(0.15)) {
     // offers with a NaN height whose raw expiry falls due below V21, and (half the time) no event from that height up
     // to V21: 0.2.8 leaves such an offer open from V21 on (its cap is NaN), where a sweep that ran a batch at its raw
     // due height would have expired it; with an event between, it expires below V21 either way
@@ -733,10 +734,11 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, ...[s.tip
 console.log(`events that write nothing: ${inertN} added over ${twins.filter(Boolean).length} twins (${twinIdx.length} to the reference); results changed: JS ${inertJs}, reference ${inertPy}`);
 if (inertJs || inertPy) process.exit(1);
 if (MALFORMED) {
-  // the floors: sequences in which the replay met a malformed field on each kind, a tip outside the domain, each side
+  // the floors: sequences in which the replay met a malformed field on each kind, a tip outside the domain (and one
+  // with every height inside it), each side
   // of V21, an offer with a NaN height open past V21 though its raw expiry fell due below it, a reservation with a
   // string deadline; and sequences carrying each type on a height, an expiry or the tip
-  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, tipOnly: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
   const types = Object.fromEntries(MALFORMED_TYPES.map((t) => [t, 0]));
   seqs.forEach((s, i) => {
     const k = malformedKinds(R, s.events, s.tipHeight, runs[i].st ?? null);
