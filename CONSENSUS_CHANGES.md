@@ -59,6 +59,44 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core, unreleased (rides 0.2.9; 2026-11-21, Plan 91 G6 slice 1; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
+
+No rule changes. `resolve.ts` runs the replay as a fold: one step per event in apply order, and an end at the tip
+(the last flush of deferred cancels, the closing sweep at `tipHeight + 1`, the materialized state) that is the only
+step reading the tip. No export and no type changed; `dist/index.d.ts` differs from 0.2.8's by two colons in
+`canonicalState`'s comment, where em dashes were.
+
+`resolve/store.ts` sweeps by due height. Before the batch at its own height a sweep runs one batch at each lower
+height at which the head of an expiry queue falls due, in ascending order: an offer or bid keyed k from
+`(k + 1) * EPOCH_LEN`, a reservation or recapture reservation from `finalizeBy + 1`, and V21 while no sweep has
+reached it, where offers and bids anchored below V22 take their capped keys. Each item thus expires at the first
+height it is due, and the sequence of expiry effects does not depend on the heights at which sweeps run. 0.2.8 and
+`cairnx_ref.py` apply every due expiry in one batch before each event; the two give the same state because expiry
+effects commute: what is due only grows with height, whether an item is due reads that item alone, each effect is an
+addition to one seller's balance, an idempotent unlock, a status write on the item itself or the deletion of one key,
+and a sweep writes no log entry. CONVENTION.md section 5 now states the property. Check mode asserts each batch
+against the walk at its height and that no item of a batch was due one height lower.
+
+A later change breaks the property, and needs the sweep's order proved again, if it writes a log entry per expiry,
+records on an item when it expired, lets one expiry close or change another item (a bid's end voiding its answers, a
+reservation's end touching offers, a lapse applied by the sweep), makes a release other than an addition, or makes
+being due depend on another item. Each also makes a replay depend on events that write nothing, which
+`conformance/fuzz-resolve.mjs` now checks in JS and in the reference on every run.
+
+The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.8`, each baseline bound to npm:
+`canonicalState` byte-identical to 0.2.4 and the whole result identical to 0.2.8 including codes and moves over the
+97 cases of the case files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of
+`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 60 stream inputs (the growth streams at full size
+and the seven of `conformance/sweep-streams.mjs`), and the 3,000 sequences of the new `fuzz-resolve.mjs --expiry`
+mode (an expired offer with a later event in 2,170 of them, a bid in 1,744, a swept reservation in 1,398, a swept
+recapture reservation in 301, an expiry under the V21 cap in 403; floor 60 each, read from 0.2.8), each also resolved
+with 842,620 events that write nothing added in all, none changing a result; a dense walk over those sequences and the
+sweep streams, 871,730 tips, each equal to 0.2.8's whole result; check mode clean on 24,097 inputs; the token moves of
+25,724 inputs; `parseRecord` equal over 248,754 records; 1,418 client-surface checks; crosslang green, with the
+inert-event check in both fuzz modes. The seal ran in a clone of this tree with cairnx-core set to 0.2.9 and
+cairnx-api to 0.1.2, because `scripts/check-lockstep.mjs` refuses a source change at a published version and the
+version bump belongs to the release.
+
 ## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
 `bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose

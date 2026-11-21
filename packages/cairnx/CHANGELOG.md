@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The replay runs as a fold (one step per event, an end at the tip that alone reads the tip) and its expiry sweep
+  applies each expiry at the first height it is due, one batch per such height in ascending order, where 0.2.8
+  applied every due expiry in one batch before each event. No rule changed: `scripts/seal-differential.mjs` finds the
+  whole result, codes and moves included, identical to npm's 0.2.8 on every input, among them 3,000 sequences built
+  so that offers, bids, reservations and recapture reservations end between events and a dense walk of 871,730 tips;
+  no export changed. CONVENTION.md section 5 states that the state at a tip does not depend on the heights at which
+  sweeps ran; `conformance/fuzz-resolve.mjs` checks it in JS and in the Python reference by adding events that write
+  nothing, and gains `--expiry` with a floor per kind of expiry; `test/sweep.test.ts` pins seven constructed streams;
+  check mode asserts that each expiry lands at the first height it is due.
+
 ## 0.2.8
 
 - Token moves in the applied log (CONVENTION section 41, no gate): an applied mint, transfer or fill that moved tokens
