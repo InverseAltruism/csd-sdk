@@ -54,12 +54,12 @@ async function caller(tip: number, witnesses: Witness[] = [], extra = {}) {
   await x.r.advance();
   return x;
 }
-// name() answers through the same verdict as balance(): each condition below is asserted on both reads. NAMED is held
-// with one record over the whole capture, so its two views agree and no SHALLOW enters.
+// name() and transfers() answer through the same verdict as balance(): each condition below is asserted on all three.
+// NAMED is held with one record over the whole capture, so its two views agree and no SHALLOW enters.
 const NAMED = "xname-8ma941";
 const balanceWhy = async (x: { r: Awaited<ReturnType<typeof open>> }, o = {}) => {
-  const b = codes(await x.r.balance("CAIRN", HOLDER, o)), n = codes(await x.r.name(NAMED, o));
-  return b === n ? b : `balance ${b}, name ${n}`;
+  const b = codes(await x.r.balance("CAIRN", HOLDER, o)), n = codes(await x.r.name(NAMED, o)), t = codes(await x.r.transfers(HOLDER, null, o));
+  return b === n && b === t ? b : `balance ${b}, name ${n}, transfers ${t}`;
 };
 
 console.log("each condition alone:");

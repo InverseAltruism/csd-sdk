@@ -17,6 +17,15 @@
   fixture that starts above the activation height. Internal: `StepContext.stateHashAt`.
 - The reopen bind compares no state hash where the loop holds none, so `openLog` over a pin of its own rule is
   verified again (it was refused `PIN_MISMATCH` from its second step).
+- `transfers(address | null, since, { ticker?, limit?, minDepth? })`: the token moves of cairnx-core's applied log
+  (CONVENTION section 41) in the deep view, one row per move (`Transfer`: txid, height, position, leg, ticker, the
+  state's deploy id, from, to, amount, the entry's own record's memo, `applied`, code), answered through the reader's
+  verified rule. Rows by height then position; a page holds whole entries. The cursor, `BoundCursor`, is
+  `height:pos:eventsHash`; a cursor whose events hash is no longer the replica's at its height is `CURSOR_OFF_BRANCH`
+  (a new not-verified code), nothing shown. `Page` takes the cursor type as a second parameter. The README's server
+  example runs over a 20-block reorg in `test/transfers-reorg.test.ts`; it raises `CURSOR_OFF_BRANCH` to its operator,
+  and the test runs the README's recovery (from the newest earlier cursor still accepted).
+- `dryRun`'s `at` is the tip at depth 0 (it carried the deep view's), and it takes no `minDepth`.
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),
   `checkBasis`, `levelOf`, `proofOf` and `basisKey`; the source, step and store types; `NOT_VERIFIED_CODES` and

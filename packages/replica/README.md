@@ -160,7 +160,7 @@ replayed on demand.
 
 `open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
 `memoryStore()`): `name(name)`, `balance(ticker, address)`, `primary(address)`, `state()` (a copy of the deep view), `events(after)`,
-`dryRun(tx, author)`,
+`transfers(address, since)` ("Transfers" below), `dryRun(tx, author)`,
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
@@ -208,12 +208,13 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
 | `SHALLOW` | `name` and `primary`: the deep view and the tip view agree |
+| `CURSOR_OFF_BRANCH` | `transfers`: the events hash in the cursor is the replica's at the cursor's height; nothing is shown |
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
-answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
-the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -253,14 +254,89 @@ rows is reset and filled again; the newer-pin exception of the design is the dis
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
 whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
-domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, pin?, fetch? })`,
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. It reads the tip view, so its
+`at` is the tip at depth 0, and it takes no `minDepth`. `local({ node, pin?, fetch? })`,
 in `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
 address rule, above `pin` when one is given ("Pins" below), and `memoryStore()`.
 
-What the reader does not answer yet: `transfers` waits for cairnx-core to export the token movements of an address (a
-whole fill's delivered amount and a mint's amount are not fields of the state today, and deriving them here would
-restate the core's settlement). What it does not persist: the witness's confirmation and the source's header window
-live in memory.
+What the reader does not persist: the witness's confirmation and the source's header window live in memory.
+
+## Transfers
+
+`transfers(address, since, { ticker?, limit?, minDepth?, waitMs?, signal? })` answers the token moves to `address` in
+the deep view, narrowed to `ticker` when given; with `address` null and a ticker, every move of that ticker. Each row is
+one move of cairnx-core's applied log (CONVENTION section 41) and nothing else, so no rule that decides an amount (a
+mint's cap, a whole or partial fill's delivery, the fee) is restated here: `txid`, `height`, `pos`, `leg` (`mint`,
+`xfer`, `sale`, `fee` or `fill`), `ticker`, `deployId` (the deep view's `tokens[ticker].deployId`), `from` (null for a
+mint), `to`, `amount` (base units, a decimal string), `memo` (the memo of the entry's own record, null when it has none;
+a fill is an Attest and carries no record) and the entry's `code`. A refused record moves nothing and gives no row, so
+`applied` is always `true`; a caller that shows refused attempts reads the applied log in `state()`. A memo is the
+sender's text as its record holds it: at most 64 UTF-16 units, possibly empty (`""`), and it can hold U+0000, control
+characters and direction overrides; a server stores it as bytes or escaped, and never lets it fail a credit.
+
+Rows come by height, then transaction position (not the apply order of CONVENTION section 33.3, where a block's
+Proposes precede its Attests), from the exclusive cursor `since` (null for the first page). A page holds whole entries:
+at most `limit` rows (default 100, at most 1,000), more only when its first entry alone has more (a fill writes at most
+three moves). Each page walks the deep view's log once in memory and returns at most that page.
+
+The cursor is `height:pos:eventsHash`: the position of the page's last entry, or, on the last page, the deep height and
+the largest position, so `next` does not pass the deep height, also on an empty page, unless `since` already did (it is
+then kept). The events hash is the replica's
+running hash at that height (CONVENTION section 34.2), over every event at or below it. The moves at or below a height
+follow from the events at or below it, so while that hash is the replica's, every row before the cursor is still the
+chain's and no row the caller has not read lies at or below it: a reorg above the cursor changes nothing a caller has
+read, and one that keeps every event below it keeps the cursor. When the events below the cursor changed (a reorg
+deeper than the caller's `minDepth`), the read answers `CURSOR_OFF_BRANCH` with nothing shown, rather than read on from
+a position on a branch it no longer holds. A cursor above the replica's cursor cannot be compared yet: an empty page
+that keeps it, noted `CURSOR_ABOVE_TIP`.
+
+Any replica of the same chain computes the same events hash, so a stored cursor stays valid across a restart of the
+replica (which answers `NOT_SYNCED` or `BEHIND` until it has read to the tip again) and across a change of replica. The
+cursor binds the events, not the rules that turn them into moves: a cairnx-core release that changed what an older
+entry's moves report would not refuse a stored cursor, and such a release says so in cairnx-core's CHANGELOG.
+
+A server crediting deposits from its own node, the example `test/transfers-reorg.test.ts` runs over a 20-block reorg:
+
+```ts
+import { local, open } from "@inversealtruism/cairnx-replica/server";
+const replica = await open(local({ node: "http://127.0.0.1:8789" }));
+async function creditDeposits(address: string) {
+  for (;;) {
+    const a = await replica.transfers(address, await db.cursor(address), { minDepth: MIN_DEPTH });
+    if (!a.verified) {
+      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery below, and its operator is told.
+      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) await db.alert(address, "CURSOR_OFF_BRANCH");
+      return a;                                      // nothing credited, the cursor stays
+    }
+    await db.transaction(async (t) => {
+      for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) await t.credit(x);   // (txid, leg) a unique key
+      await t.setCursor(address, a.value.next);
+    });
+    if (!a.value.more) return a;
+  }
+}
+```
+
+What `transfers` gives that server: each move to its address once across pages, only from a verified answer, only at
+`minDepth` or deeper, and a refusal instead of a silent skip when the chain below its cursor changed. What it must still
+do itself:
+
+- Pin the deploy id of each token it credits (`PINNED` above): a ticker names one token in one replay, but a replay of
+  another chain can bind it to another deploy (CONVENTION section 41).
+- Choose `minDepth` for value. The default, `FINAL_DEPTH` (12), is the depth replicas compare at; a row is credited only
+  once it is that deep, and a reorg deeper than it can still take back a credited row.
+- Store `next` with its credits in one transaction, only from a verified answer (`shown` carries a page too), and keep
+  `(txid, leg)` unique: one entry can move two legs to one address.
+- Drive the replica: nothing runs on a timer, and a read with the default `waitMs` of 0 answers from what is held.
+- On `CURSOR_OFF_BRANCH`: rows it credited may be gone and rows it has not seen may lie below its cursor. Retrying
+  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the server recovers it: it keeps
+  its earlier cursors, takes the newest one the read still accepts (verified, not `CURSOR_OFF_BRANCH`; null when none
+  is) as the cursor, and reads on from there crediting by the unique key. A credit above that cursor that the reread
+  does not give again is no longer on the chain; one it gives again with another amount changed under its key. Both go
+  to the operator. A capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
+  before it) can change under one `(txid, leg)`, which `test/transfers.test.ts` shows. A transfer's, a sale's and a
+  fee's do not, by the core's code (read, not tested here): a transfer moves its record's amount, a sale the price of
+  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). `test/transfers-reorg.test.ts` runs that recovery.
 
 ## Pins
 
