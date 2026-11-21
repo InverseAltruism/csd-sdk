@@ -140,9 +140,11 @@ replayed on demand.
   store (a server restarted, an extension's worker woken) does not walk the headers from the anchor again. Each commit
   of blocks carries the window's headers up to the step's cursor (the lowest height in 4 bytes, then 84 bytes a
   header: with the default window 765 headers, 64,264 bytes) and sets `StoreMeta.work`, the work above workRoot at
-  the cursor, and `workRoot`; a rollback carries none, and the stored window stays. The disk and browser stores bind
-  the window by their record's digest, and `headerWindow()` gives nothing when the bytes it reads are not the
-  record's. The source's first step takes the stored window instead of reading the seed, once it holds together:
+  the stored window's top, and `workRoot`; a rollback carries none, and the stored window stays, so its top can lie
+  above the cursor. The disk and browser stores name the window by its digest in their record; the open does not
+  read the window, and `headerWindow()` gives nothing when the bytes it reads are missing or not the record's, so a
+  window damaged at rest costs the walk, not a refill. A window file a cut commit left behind, which the record does
+  not name, is removed at the disk store's next open. A `headerWindow()` that rejects is taken as no window. The source's first step takes the stored window instead of reading the seed, once it holds together:
   `workRoot` is this source's anchor (a store kept from an older pin keeps that pin's window, which is not taken);
   csd-light verifies the headers again as far as it can without the ones below them (the first 45 for links and
   proof of work, each later one for its link, time rules, LWMA bits and proof of work); and the window holds the
@@ -443,7 +445,8 @@ open `corrupt`; the store is then refilled, as for any file that fails its check
 
 At open, in order: the format, the rule, the basis and the gate table the rows were written under (another table at or
 below the cursor resets the store, reason `rule`); then the files (a file shorter than its committed length, a line
-out of form, a boundary chain or window digest other than the meta's: `corrupt`, and the reader resets and refills);
+out of form, a boundary chain other than the meta's: `corrupt`, and the reader resets and refills; the header window
+is checked where it is read, "What a store must keep" above);
 then the loop's checks of every row against the contract and both running hashes, and under a pin the bind above. A
 store refused for any reason but `unavailable` is reset and refilled whenever the reader loads it, also when it first
 found the store held by another process. The checks prove that the files agree with each other, not where they came
@@ -509,8 +512,8 @@ the new record's hashes, after it the new one alone, so a worker stopped at any 
 random times).
 
 At open, in order, as the code runs: the record's tag, format and form, the chain over the boundaries (each in form:
-three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null) and the
-window's digest (`corrupt`, `format`); then the slot: a record whose hash it does not name is `unconfirmed`, and the
+three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null)
+(`corrupt`, `format`; the header window is checked where it is read); then the slot: a record whose hash it does not name is `unconfirmed`, and the
 reader resets the store and refills it; then the format, rule and basis key (`format`, `rule`, `basis`); then the loop's
 checks of every row (`corrupt`), the gate table (`rule`) and the newer-pin rule (`basis`), and under a pin the bind. The
 slot is what tells this package's commits from a profile written by another program: an edit of the database, however

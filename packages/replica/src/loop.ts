@@ -151,7 +151,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   // `work` and `workRoot` are the window's the commit carries, else the stored window's, carried over: a store kept
   // from an older pin keeps that pin's workRoot, so its window is not taken under the new one (anchor-root.ts).
   const metaAt = (c: Cursor, win: HeldWindow | null = null): StoreMeta => ({
-    ...(meta ?? { format: 1, rule, witnessed: null, windowSha256: null, work: null, workRoot: null }),
+    ...(meta ?? { format: 1, rule, witnessed: null, work: null, workRoot: null }),
     basis: source.basis, gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
     ...(win === null ? {} : { work: win.work, workRoot: win.workRoot }),
   });
@@ -187,7 +187,8 @@ export function replicaLoop(o: LoopOptions): Loop {
             logSha256At: (x: number) => logSha256In(held0, c, x) };
           if (!keepsStore(m0.basis, source.basis, source.pin?.eventsHash ?? null, at)) r = { ok: false, reset: "basis" };
         }
-        if (r.ok && held0 !== null && m0 !== null && m0.work !== null && source.restoreWindow !== undefined) win = await store.headerWindow();
+        // A window that cannot be read is no window: the source walks from its root, and the rows stay open.
+        if (r.ok && held0 !== null && m0 !== null && m0.work !== null && source.restoreWindow !== undefined) win = await store.headerWindow().catch(() => null);
       }
       // Set only once the load ends, so a read while it runs sees the last load's.
       storeError = null; storeReason = r.ok ? (h === null ? "corrupt" : null) : r.reset === "unavailable" ? "held" : r.reset;

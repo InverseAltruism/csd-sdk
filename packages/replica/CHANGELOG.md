@@ -8,8 +8,11 @@
   the cursor's block under this anchor; any other window is dropped and the walk runs as before. A taken window's
   work is the bar another chain must beat, so a restart over a store on a branch the server no longer serves rolls
   back only to a heavier one (until now it followed any chain that reached the cursor). `headerWindow()` of the disk
-  and browser stores gives nothing when the bytes it reads are not the record's. Internal: `Source.windowAt`,
-  `Source.restoreWindow`, `HeldWindow`.
+  and browser stores gives nothing when the bytes it reads are missing or not the record's, and their open no longer
+  reads the window: a window damaged at rest costs the walk from the anchor, not a reset and refill of the store. A
+  `headerWindow()` that rejects is taken as no window. The disk store removes at open a window file its record does
+  not name (a commit cut before its meta landed). `StoreMeta.windowSha256`, never set or read, is removed: a record
+  written before keeps the field, which is ignored. Internal: `Source.windowAt`, `Source.restoreWindow`, `HeldWindow`.
 - `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
   contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
   `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not

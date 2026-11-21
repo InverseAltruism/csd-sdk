@@ -133,9 +133,6 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
     const meta = metaOf(record);
     if (!hash(record.boundsHash) || !(record.window === null || hash(record.window))) throw new Corrupt("the record's chain or digest is out of form");
     const chain = checkedChain(bounds, record.boundsHash);
-    if (record.window === null ? win !== undefined : !(win instanceof ArrayBuffer) || windowDigest(new Uint8Array(win)) !== record.window) {
-      throw new Corrupt("the header window is not the record's");
-    }
     let h: string;
     try { h = payloadHash(record); } catch { throw new Corrupt("the record is not JSON data"); }
     return { meta, window: record.window as string | null, hash: h, rows, bounds, boundEnds: bounds.map((b, i) => ({ height: b.height, chain: chain[i]! })),

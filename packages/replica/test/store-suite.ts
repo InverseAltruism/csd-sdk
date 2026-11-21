@@ -24,7 +24,7 @@ export const bound = (height: number, stateHash: string | null = EVENTS_HASH_STA
 // A meta whose running hashes are those of `last`, the last row held after the commit.
 export const meta = (cursor: Cursor | null, rows: BlockRow[], basis: Basis = FEED, rule: EventRule = CAIRNX_EVENT_RULE, last = rows.at(-1)): StoreMeta => ({
   format: 1, rule, basis, cursor, eventsHash: last?.eventsHash ?? EVENTS_HASH_START, rowsHash: last?.rowsHash ?? ROWS_HASH_START,
-  eventCount: rows.reduce((n, r) => n + r.events.length, 0), witnessed: null, windowSha256: null, work: null, workRoot: null, gates: { V12_HEIGHT: 30_300 },
+  eventCount: rows.reduce((n, r) => n + r.events.length, 0), witnessed: null, work: null, workRoot: null, gates: { V12_HEIGHT: 30_300 },
 });
 export type Extend = Exclude<Commit, { rollbackTo: unknown }>;
 export const commit = (expect: Cursor | null, rows: BlockRow[], cursor: Cursor | null, more: Partial<Extend> = {}): Extend =>

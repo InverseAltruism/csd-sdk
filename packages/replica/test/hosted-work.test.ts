@@ -115,11 +115,22 @@ const kept = memoryStore();
 await drive({ answers: onA, tip: 1089 }, 8, { store: kept }).run();
 const aWindow = await kept.headerWindow();
 const rs = drive({ answers: onB, tip: 1089 }, 8, { store: kept }), r1 = await settle(rs);
-ok("a new source over a store on A to 1089, its server on the lighter B to 1089: the kept window's work is the bar, so LESS_WORK and the store kept",
+ok("a new source over a store on A to 1089, its server on the lighter B to 1089: the kept window holds A's headers, so LESS_WORK and the store kept",
   r1.lastError?.code === "LESS_WORK" && r1.cursor?.hash === A(1089) && r1.lastReorg === null, `${kinds(rs.steps).join()} ${r1.cursor?.hash}`);
 const heavier = drive({ answers: onB, tip: 1091 }, 8, { store: kept }), r2 = await settle(heavier), fresh = await settle(drive({ answers: onB, tip: 1091 }, 8));
 ok("the server on B to 1091, more work: rolled back to 1085 and B read to 1091, the fresh replica's cursor and events hash",
   r2.lastReorg?.to.height === 1085 && r2.cursor?.hash === B(1091) && r2.lastError === null && r2.eventsHash === fresh.eventsHash && fresh.cursor?.hash === B(1091) && heavier.bad.length === 0);
+// Window 1: the fork at 1085 lies below the restored window, so the walk from workRoot must beat the record's work.
+let lastWork: string | null = null;
+const thin1 = memoryStore(), spied: Store = { ...thin1, rows: (x) => thin1.rows(x), async commit(c) { const r = await thin1.commit(c); if (r.ok) lastWork = c.meta.work; return r; } };
+await drive({ answers: onA, tip: 1089 }, 1, { store: spied }).run();
+const n1 = drive({ answers: onB, tip: 1089 }, 1, { store: spied }), w1r = await settle(n1);
+ok("window 1, a new source over the store on A to 1089, its server on the lighter B to 1089: the walk from the seed, LESS_WORK against the record's work, the store kept",
+  w1r.lastError?.code === "LESS_WORK" && w1r.cursor?.hash === A(1089) && w1r.lastReorg === null && n1.fr.log.some((l) => l.path === "/api/headers/1041/45"),
+  `${kinds(n1.steps).join()} ${w1r.lastError?.code}`);
+const n2 = drive({ answers: onB, tip: 1091 }, 1, { store: spied }), w2r = await settle(n2);
+ok(`window 1, the server on B to 1091: adopted, rolled back to 1085, and the work committed at B1091 csd-light's from the seed (${lastWork})`,
+  w2r.lastReorg?.to.height === 1085 && w2r.cursor?.hash === B(1091) && w2r.lastError === null && lastWork === String(work(chain.B)) && n2.bad.length === 0);
 const onlyB = memoryStore();
 await drive({ answers: onB, tip: 1089 }, 8, { store: onlyB }).run();
 // The store on B to 1089 handed A's window, whose work and workRoot it does not carry: it does not hold the cursor's block.

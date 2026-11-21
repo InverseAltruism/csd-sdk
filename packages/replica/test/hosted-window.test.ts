@@ -3,10 +3,11 @@
 // again over a store that keeps its window reads no header (memory and disk; the browser store is
 // test/browser/idb-store.test.ts), and above the cursor only the new blocks' pages. A window that does not hold
 // together falls back to the walk from the pin and ends verified at the same cursor and deep state as a fresh replica:
-// bytes that are not the record's, a window ending below the cursor, one that does not hold the cursor's block, one
-// whose headers do not link, one that links without the proof of work, an older pin's, a record whose work is out of
-// form. The work rule over a kept window is hosted-work.test.ts.
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+// bytes that are not the record's (after the open, or at rest on disk), a store whose window read rejects, a window
+// ending below the cursor, one that does not hold the cursor's block, one whose headers do not link, one that links
+// without the proof of work, an older pin's, a record whose work is out of form. The work rule over a kept window is
+// hosted-work.test.ts.
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stateHash } from "@inversealtruism/cairnx-core";
@@ -76,6 +77,24 @@ const withHeader = (b: Uint8Array, i: number, h: ReturnType<typeof deserializeHe
   } };
   const x = await life(swapped, TIP);
   ok("bytes that are not the record's (the disk file overwritten after the open): headerWindow() gives none, the walk, verified as a fresh replica", walked(x) && same(x), `${codes(x.s)} ${x.heads.join(" ")}`);
+}
+{
+  const dir = dirOf(), store = diskStore({ dir });
+  await life(store, TIP);
+  // One byte of the window file changed between two lives: the store opens with its rows, and the window is dropped.
+  const f = readdirSync(dir).find((x) => x.startsWith("window-"))!, bytes = readFileSync(join(dir, f));
+  bytes[100] = bytes[100]! ^ 1;
+  writeFileSync(join(dir, f), bytes);
+  const x = await life(store, TIP);
+  ok("a disk window file changed at rest: no reset, the walk and no page read again, verified as a fresh replica", walked(x) && x.pages.length === 0 && same(x),
+    `${codes(x.s)} ${x.requests.join(" ")}`);
+}
+{
+  const store = memoryStore();
+  await life(store, TIP);
+  const throwing: Store = { ...store, rows: (h) => store.rows(h), headerWindow: async () => { throw new Error("the window cannot be read"); } };
+  const x = await life(throwing, TIP);
+  ok("a store whose headerWindow() rejects: not unavailable, the walk, verified as a fresh replica", walked(x) && same(x), `${codes(x.s)} ${x.heads.join(" ")}`);
 }
 {
   const store = memoryStore();

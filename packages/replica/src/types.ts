@@ -130,12 +130,11 @@ export interface BlocksSource extends Source {
 /** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts);
  *  `gates` is the gate table of the cairnx-core that wrote the rows and boundary state hashes (loop.ts checks it at open).
  *  `work` and `workRoot` are the stored header window's (HeldWindow), set by each commit that carries one and carried
- *  over by every other, null while none was committed; `windowSha256` is not set, since each store binds the window by
- *  its own record's digest. */
+ *  over by every other, null while none was committed. Each store binds the window by its own record's digest. */
 export interface StoreMeta {
   readonly format: 1; readonly rule: EventRule; readonly basis: Basis; readonly cursor: Cursor | null; readonly eventsHash: string;
   readonly rowsHash: string; readonly eventCount: number; readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number } | null;
-  readonly windowSha256: string | null; readonly work: string | null; readonly workRoot: Cursor | null; readonly gates: Readonly<Record<string, number>>;
+  readonly work: string | null; readonly workRoot: Cursor | null; readonly gates: Readonly<Record<string, number>>;
 }
 
 /** Internal. One block's events with the events hash and the rows hash after it. */

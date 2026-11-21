@@ -5,7 +5,8 @@
 //                  `window`, the header window's digest (store-format.ts); replaced whole by rename (the sync order test,
 //                  test/disk-store.test.ts) from meta.json.tmp, never written in place.
 //   rows.jsonl     one BlockRow a line, ascending height; bounds.jsonl one Boundary a line, ascending height.
-//   window-<digest hex>.bin   the header window named by `window`.  lock   the writer's lease (lease.ts).
+//   window-<digest hex>.bin   the header window named by `window`; one it does not name is removed at open.
+//   lock           the writer's lease (lease.ts).
 // A commit appends at the committed lengths (cutting any tail past them first), syncs each file, then writes the new
 // meta to meta.json.tmp, syncs it, renames it over meta.json and syncs the directory. A rollback is that meta swap
 // alone. While one holder's directory syncs return, nothing is written below the lengths of a meta that can be on
@@ -123,11 +124,6 @@ export function diskStoreWith(o: { readonly dir: string }, hooks: DiskHooks): St
     const r = await linesOf(at("rows.jsonl"), rowsBytes), b = await linesOf(at("bounds.jsonl"), boundsBytes);
     const rows = r.values as unknown as BlockRow[], bounds = b.values as unknown as Boundary[];
     const chain = checkedChain(bounds, v.boundsHash), boundEnds = bounds.map((x, i) => ({ height: x.height, end: b.ends[i]!, chain: chain[i]! }));
-    if (window !== null) {
-      let w: Uint8Array;
-      try { w = await readFile(at(`window-${window.slice(2)}.bin`)); } catch (e) { if (codeOf(e) === "ENOENT") throw new Corrupt("the header window is missing"); throw e; }
-      if (windowDigest(w) !== window) throw new Corrupt("the header window is not its digest");
-    }
     const rowEnds = rows.map((x, i) => ({ height: x.height, end: r.ends[i]!, eventsHash: x.eventsHash, rowsHash: x.rowsHash }));
     return { meta, rowsBytes, boundsBytes, rowEnds, boundEnds, window, rows, bounds };
   }
@@ -203,6 +199,9 @@ export function diskStoreWith(o: { readonly dir: string }, hooks: DiskHooks): St
       }
       if (read === "format") return { ok: false, reset: "format" };
       durable = read;
+      // A window file the record does not name is a commit's that a kill cut before its meta landed.
+      const named = read.window === null ? null : `window-${read.window.slice(2)}.bin`;
+      for (const f of (await readdir(dir)).filter((x) => WINDOW.test(x) && x !== named)) await unlink(at(f)).catch(gone);
       const reset = durable.meta === null ? null : keyDifference(durable.meta, expect);
       if (reset !== null) return { ok: false, reset };
       opened = structuredClone(expect);

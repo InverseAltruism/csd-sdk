@@ -5,6 +5,7 @@
 // that names the cursor it was committed at, its `work` that cursor's height, so a store opened at any point can show
 // that its window and its meta are of one commit.
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { derivePin } from "../src/derive-pin.js";
 import { diskStoreWith, type DiskHooks } from "../src/disk-store.js";
 import { pinned, replicaLoop, type BlocksSource, type HeldWindow, type Pin, type StepContext } from "../src/index.js";
@@ -52,9 +53,11 @@ export async function runSequence(dir: string, hooks: DiskHooks) {
   const opened = await loop.open();
   let s = loop.status();
   const openedAt = s.cursor, w = given.w;
+  // The window files left once the store is open: none but the one its record names.
+  const windowFiles = readdirSync(dir).filter((f) => /^window-[0-9a-f]{64}\.bin$/.test(f)).length;
   // The window the open handed the source, as "<height>:<hash>", when its meta's work is that height; else "unpaired".
   const window = w === null ? null : new TextDecoder().decode(w.bytes).split(":")[0] === w.work ? new TextDecoder().decode(w.bytes) : "unpaired";
   for (let i = 0; i < 100 && s.cursor?.hash !== hashOf("B", T2); i++) s = await loop.advance();
   await loop.close();
-  return { opened, openedAt, window, cursor: s.cursor, eventsHash: s.eventsHash, lastError: s.lastError };
+  return { opened, openedAt, window, windowFiles, cursor: s.cursor, eventsHash: s.eventsHash, lastError: s.lastError };
 }
