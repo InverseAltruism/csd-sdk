@@ -100,6 +100,15 @@ the window script copies it into a userconfig in a private temporary directory, 
 from npm's output and removes the userconfig on exit. The maintainer deletes the file and revokes the token after the
 window.
 
+## The anchors package
+
+`packages/anchors` (csd-anchors) is data, so a refresh is a release of that package alone and each consumer takes it
+in its own release. A table is due when its newest entry is 14 days old or when a consumer's release needs one;
+`packages/anchors/README.md` ("Cutting the next table") has the steps. The window's checks read no chain data and do not
+show that an entry is on the chain, so before the window the `anchors-check` workflow (`workflow_dispatch` only) is run by
+hand with a headers source and a second RPC that the deploy host does not control, and it must be green on the release
+commit.
+
 ## Release tags
 
 After a window, the maintainer tags each published version at the release commit with an annotated tag named

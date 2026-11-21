@@ -21,6 +21,7 @@
 // Imports the compiled dist; modifies nothing.
 
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
   resolve, canonicalState, TREASURY_ADDR, DEPLOY_FEE, V16_HEIGHT, V25_HEIGHT, V26_HEIGHT, V28_HEIGHT, COMMIT_MAX_BLOCKS,
@@ -279,4 +280,4 @@ function run() {
 }
 
 // only run the harness when invoked directly, so the exported detectors can be imported without side effects
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) run();
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) run();

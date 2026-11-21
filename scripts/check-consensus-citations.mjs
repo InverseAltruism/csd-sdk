@@ -11,7 +11,7 @@
 //
 // Exit 0 = every citation re-derives. Exit 1 = at least one is stale.
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -190,7 +190,7 @@ export function checkCitations(root) {
   return { docs, checked, failures };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
   const { docs, checked, failures } = checkCitations(ROOT);
   if (checked.length + failures.length === 0) {
