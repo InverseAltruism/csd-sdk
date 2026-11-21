@@ -270,7 +270,9 @@ mint's cap, a whole or partial fill's delivery, the fee) is restated here: `txid
 `xfer`, `sale`, `fee` or `fill`), `ticker`, `deployId` (the deep view's `tokens[ticker].deployId`), `from` (null for a
 mint), `to`, `amount` (base units, a decimal string), `memo` (the memo of the entry's own record, null when it has none;
 a fill is an Attest and carries no record) and the entry's `code`. A refused record moves nothing and gives no row, so
-`applied` is always `true`; a caller that shows refused attempts reads the applied log in `state()`.
+`applied` is always `true`; a caller that shows refused attempts reads the applied log in `state()`. A memo is the
+sender's text as its record holds it: at most 64 UTF-16 units, possibly empty (`""`), and it can hold U+0000, control
+characters and direction overrides; a server stores it as bytes or escaped, and never lets it fail a credit.
 
 Rows come by height, then transaction position (not the apply order of CONVENTION section 33.3, where a block's
 Proposes precede its Attests), from the exclusive cursor `since` (null for the first page). A page holds whole entries:
@@ -288,6 +290,11 @@ deeper than the caller's `minDepth`), the read answers `CURSOR_OFF_BRANCH` with 
 a position on a branch it no longer holds. A cursor above the replica's cursor cannot be compared yet: an empty page
 that keeps it, noted `CURSOR_ABOVE_TIP`.
 
+Any replica of the same chain computes the same events hash, so a stored cursor stays valid across a restart of the
+replica (which answers `NOT_SYNCED` or `BEHIND` until it has read to the tip again) and across a change of replica. The
+cursor binds the events, not the rules that turn them into moves: a cairnx-core release that changed what an older
+entry's moves report would not refuse a stored cursor, and such a release says so in cairnx-core's CHANGELOG.
+
 A server crediting deposits from its own node, the example `test/transfers-reorg.test.ts` runs over a 20-block reorg:
 
 ```ts
@@ -296,7 +303,11 @@ const replica = await open(local({ node: "http://127.0.0.1:8789" }));
 async function creditDeposits(address: string) {
   for (;;) {
     const a = await replica.transfers(address, await db.cursor(address), { minDepth: MIN_DEPTH });
-    if (!a.verified) return a;                       // nothing credited, the cursor stays; retried later
+    if (!a.verified) {
+      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery below, and its operator is told.
+      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) await db.alert(address, "CURSOR_OFF_BRANCH");
+      return a;                                      // nothing credited, the cursor stays
+    }
     await db.transaction(async (t) => {
       for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) await t.credit(x);   // (txid, leg) a unique key
       await t.setCursor(address, a.value.next);
@@ -317,9 +328,15 @@ do itself:
 - Store `next` with its credits in one transaction, only from a verified answer (`shown` carries a page too), and keep
   `(txid, leg)` unique: one entry can move two legs to one address.
 - Drive the replica: nothing runs on a timer, and a read with the default `waitMs` of 0 answers from what is held.
-- On `CURSOR_OFF_BRANCH`: rows it credited may be gone and rows it has not seen may lie below its cursor. It reads again
-  from an older cursor it kept that the read accepts, or from null, crediting by the unique key, and reviews the credits
-  whose `(txid, leg)` no longer appear.
+- On `CURSOR_OFF_BRANCH`: rows it credited may be gone and rows it has not seen may lie below its cursor. Retrying
+  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the server recovers it: it keeps
+  its earlier cursors, takes the newest one the read still accepts (verified, not `CURSOR_OFF_BRANCH`; null when none
+  is) as the cursor, and reads on from there crediting by the unique key. A credit above that cursor that the reread
+  does not give again is no longer on the chain; one it gives again with another amount changed under its key. Both go
+  to the operator. A capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
+  before it) can change under one `(txid, leg)`, which `test/transfers.test.ts` shows. A transfer's, a sale's and a
+  fee's do not, by the core's code (read, not tested here): a transfer moves its record's amount, a sale the price of
+  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). `test/transfers-reorg.test.ts` runs that recovery.
 
 ## Pins
 

@@ -115,6 +115,19 @@ for (const [name, what] of [["mint-remaining", "a mint capped at the remaining s
     JSON.stringify(got?.rows.map((x) => [x.leg, x.to, x.amount])));
 }
 
+// One (txid, leg) on two branches: the branch without an earlier mint, or without an earlier partial fill of the same
+// offer, gives a later mint or partial fill another amount under the same key.
+const keyed = async (name: string, drop: number, txid: string) => {
+  const v = vectors.cases.find((k) => k.name === name)!, one = await rowsOf(v.events, v.tipHeight), two = await rowsOf(v.events.filter((_, i) => i !== drop), v.tipHeight);
+  const at = (r: typeof one) => r.rows.find((x) => x.txid.endsWith(txid));
+  return { ok: one.ok && two.ok, a: at(one), b: at(two) };
+};
+const mintKey = await keyed("mint-remaining", 1, "0006"), fillKey = await keyed("csd-partial-fill", 4, "0020");
+ok(`a capped mint: the same (txid, mint) credits ${mintKey.a?.amount}, and ${mintKey.b?.amount} on the branch without the mint before it`,
+  mintKey.ok && mintKey.a?.leg === "mint" && mintKey.a.amount === "50" && mintKey.b?.leg === "mint" && mintKey.b.amount === "100");
+ok(`a partial fill: the same (txid, fill) credits ${fillKey.a?.amount}, and ${fillKey.b?.amount} on the branch without the fill before it`,
+  fillKey.ok && fillKey.a?.leg === "fill" && fillKey.a.amount === "5" && fillKey.b?.leg === "fill" && fillKey.b.amount === "4");
+
 // A block whose Propose applies before its Attest at a lower position (CONVENTION section 33.3): the fill at
 // position 0 and a transfer at position 1, both to the buyer. Pages of 1 must give both, by position.
 const tft = vectors.cases.find((k) => k.name === "token-fill-token")!, fillAt = tft.events.at(-1)!, BUYER = `0x${"b2".repeat(20)}`;
@@ -147,6 +160,10 @@ ok("pages of 1: the first row, more, then the second from the cursor, which name
 const deep2 = await m.transfers(B, null, { minDepth: 2 });
 ok(`minDepth 2 at tip ${H + 2}: only rows at ${H} or below; next at ${H} with the largest position`, deep2.verified && deep2.value.items.length === 1 &&
   deep2.value.next.startsWith(`${H}:${Number.MAX_SAFE_INTEGER}:0x`));
+const full = await m.transfers(B, null, { minDepth: 0 }), stored = full.verified ? full.value.next : null;
+const raised = await m.transfers(B, stored, { minDepth: 2 }), back = await m.transfers(B, raised.verified ? raised.value.next : null, { minDepth: 0 });
+ok("a stored cursor above the deep height (minDepth raised from 0 to 2): an empty page that keeps it; at depth 0 again no row comes twice",
+  stored !== null && raised.verified && raised.value.items.length === 0 && raised.value.next === stored && back.verified && back.value.items.length === 0 && back.value.next === stored);
 const next1 = p1.verified ? p1.value.next : null, [h1, q1] = (next1 ?? "").split(":");
 const forged = `${h1}:${q1}:0x${"e".repeat(64)}` as BoundCursor, off = await m.transfers(B, forged, { minDepth: 0 });
 ok("a cursor whose events hash is not the replica's at its height: CURSOR_OFF_BRANCH alone, nothing shown", codes(off) === "CURSOR_OFF_BRANCH" && !off.verified && off.shown === null);

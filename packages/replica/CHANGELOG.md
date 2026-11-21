@@ -23,7 +23,8 @@
   verified rule. Rows by height then position; a page holds whole entries. The cursor, `BoundCursor`, is
   `height:pos:eventsHash`; a cursor whose events hash is no longer the replica's at its height is `CURSOR_OFF_BRANCH`
   (a new not-verified code), nothing shown. `Page` takes the cursor type as a second parameter. The README's server
-  example runs over a 20-block reorg in `test/transfers-reorg.test.ts`.
+  example runs over a 20-block reorg in `test/transfers-reorg.test.ts`; it raises `CURSOR_OFF_BRANCH` to its operator,
+  and the test runs the README's recovery (from the newest earlier cursor still accepted).
 - `dryRun`'s `at` is the tip at depth 0 (it carried the deep view's), and it takes no `minDepth`.
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),

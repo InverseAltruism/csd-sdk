@@ -3,8 +3,9 @@
 // hold a CAIRN transfer to a deposit address. Branch B forks at 30,281 (20 blocks replaced), is the same chain without
 // the transfer at 30,286, and runs on to 30,320. A server at minDepth 24 credits the deposit on both branches once,
 // only once it is 24 deep on B, and never the one on A alone. A server at minDepth 12 credits both on A; after the
-// reorg its cursor is refused (CURSOR_OFF_BRANCH) instead of passing the change silently, and a read from null with
-// (txid, leg) as the unique key credits nothing twice. A reorg that keeps every event keeps every cursor.
+// reorg its cursor is refused (CURSOR_OFF_BRANCH) instead of passing the change silently, the example raises it, and
+// the recovery of the README rereads from the newest earlier cursor still on B, credits nothing twice and names the
+// credit B no longer holds. A reorg that keeps every event keeps every cursor.
 import { resolve } from "@inversealtruism/cairnx-core";
 import { rpcHeaderToHeader } from "@inversealtruism/csd-client";
 import { headerHash, merkleRoot } from "@inversealtruism/csd-codec";
@@ -36,17 +37,27 @@ function branchB(): Answers {
 }
 const B = branchB();
 
-// A server's database: the credits and each address's cursor, written together. `offered` counts every row the
-// server tried to credit, so a row offered twice shows even though the unique key would refuse it.
+// A server's database: the credits and each address's cursors (the current one last), written together, and what it
+// raised to its operator. `offered` counts every row the server tried to credit, so a row offered twice shows even
+// though the unique key refuses it; a row offered again with another amount is raised.
+type Credit = { credit(x: Transfer): void; setCursor(address: string, c: BoundCursor | null): void };
 function database() {
-  const credits = new Map<string, Transfer>(), cursors = new Map<string, BoundCursor>(), offered: string[] = [];
-  return {
-    credits, offered,
-    cursor: (address: string): BoundCursor | null => cursors.get(address) ?? null,
-    forget: (address: string) => { cursors.delete(address); },
-    transaction(f: (t: { credit(x: Transfer): void; setCursor(address: string, c: BoundCursor): void }) => void) {
-      f({ credit: (x) => { const k = `${x.txid}:${x.leg}`; offered.push(k); if (!credits.has(k)) credits.set(k, x); }, setCursor: (a, c) => cursors.set(a, c) });
+  const credits = new Map<string, Transfer>(), cursors = new Map<string, (BoundCursor | null)[]>(), offered: string[] = [], alerts: string[] = [];
+  const t: Credit = {
+    credit(x) {
+      const k = `${x.txid}:${x.leg}`, had = credits.get(k);
+      offered.push(k);
+      if (had === undefined) credits.set(k, x);
+      else if (had.amount !== x.amount) alerts.push(`${x.to} ${k}: credited ${had.amount}, now ${x.amount}`);
     },
+    setCursor: (a, c) => { cursors.set(a, [...(cursors.get(a) ?? []), c]); },
+  };
+  return {
+    credits, offered, alerts,
+    cursor: (address: string): BoundCursor | null => cursors.get(address)?.at(-1) ?? null,
+    earlier: (address: string): BoundCursor[] => (cursors.get(address) ?? []).filter((c): c is BoundCursor => c !== null).reverse(),
+    alert: (address: string, what: string) => { alerts.push(`${address} ${what}`); },
+    transaction(f: (t: Credit) => void) { f(t); },
   };
 }
 type Db = ReturnType<typeof database>;
@@ -55,13 +66,35 @@ type Db = ReturnType<typeof database>;
 async function creditDeposits(replica: Reader, db: Db, address: string, minDepth: number) {
   for (;;) {
     const a = await replica.transfers(address, db.cursor(address), { minDepth });
-    if (!a.verified) return a;                       // nothing credited, the cursor stays; retried later
+    if (!a.verified) {
+      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery, and its operator is told.
+      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) db.alert(address, "CURSOR_OFF_BRANCH");
+      return a;                                      // nothing credited, the cursor stays
+    }
     db.transaction((t) => {
       for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) t.credit(x);   // (txid, leg) a unique key
       t.setCursor(address, a.value.next);
     });
     if (!a.value.more) return a;
   }
+}
+
+// The recovery the README describes: the newest earlier cursor the read still accepts (null when none does) becomes
+// the cursor, the pages from it credit by the key, and a credit above it that they do not give again is raised.
+async function recover(replica: Reader, db: Db, address: string, minDepth: number): Promise<{ from: BoundCursor | null } | null> {
+  let from: BoundCursor | null = null;
+  for (const c of db.earlier(address)) {
+    const a = await replica.transfers(address, c, { minDepth, limit: 1 });
+    if (a.verified) { from = c; break; }
+    if (!a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) return null;   // not ready: retried later
+  }
+  const mark = db.offered.length, above = from === null ? -1 : Number(from.split(":")[0]);
+  db.transaction((t) => t.setCursor(address, from));
+  const end = await creditDeposits(replica, db, address, minDepth);
+  if (!end.verified) return null;
+  const again = new Set(db.offered.slice(mark));
+  for (const [k, x] of db.credits) if (x.to === address && x.height > above && !again.has(k)) db.alert(address, `${k}: credited, no longer on the chain`);
+  return { from };
 }
 
 let now = 0;
@@ -97,17 +130,25 @@ await r.close();
 
 console.log("a server at minDepth 12, shallower than the reorg:");
 const r12 = await replica(), db12 = database();
+await serveAt(r12, cap.answers, 30_290);
+await creditDeposits(r12, db12, BOTH, 12); await creditDeposits(r12, db12, A_ONLY, 12);
 await serveAt(r12, cap.answers, cap.to);
 await creditDeposits(r12, db12, BOTH, 12); await creditDeposits(r12, db12, A_ONLY, 12);
-ok("on A at 30,300 (deep 30,288): both deposits credited, one each", db12.offered.length === 2 && db12.credits.size === 2);
+ok("on A at 30,290 then 30,300 (deep 30,288): both deposits credited, one each", db12.offered.length === 2 && db12.credits.size === 2);
 await serveAt(r12, B, END);
 const o1 = await r12.transfers(A_ONLY, db12.cursor(A_ONLY), { minDepth: 12 }), o2 = await r12.transfers(BOTH, db12.cursor(BOTH), { minDepth: 12 });
 ok("on B: each stored cursor is refused, CURSOR_OFF_BRANCH alone, nothing shown (the events below it changed)",
   codes(o1) === "CURSOR_OFF_BRANCH" && !o1.verified && o1.shown === null && codes(o2) === "CURSOR_OFF_BRANCH" && !o2.verified && o2.shown === null);
-for (const a of [BOTH, A_ONLY]) { db12.forget(a); await creditDeposits(r12, db12, a, 12); }
-const again = await r12.transfers(A_ONLY, null, { minDepth: 12 });
-ok("read again from null: the deposit on both branches offered again and refused by its key, nothing new credited; A's alone is not on B",
-  db12.offered.length === 3 && db12.credits.size === 2 && again.verified && again.value.items.length === 0);
+const stuck = [await creditDeposits(r12, db12, BOTH, 12), await creditDeposits(r12, db12, A_ONLY, 12), await creditDeposits(r12, db12, BOTH, 12)];
+ok("the example raises CURSOR_OFF_BRANCH to its operator at each try and credits nothing: retrying does not clear it",
+  stuck.every((a) => codes(a) === "CURSOR_OFF_BRANCH") && db12.alerts.length === 3 && db12.alerts.every((x) => x.endsWith(" CURSOR_OFF_BRANCH")) && db12.offered.length === 2);
+const rec = [await recover(r12, db12, BOTH, 12), await recover(r12, db12, A_ONLY, 12)];
+ok("the recovery rereads from the cursor of 30,290 (deep 30,278, below the fork), offers the deposit on both branches again and the key refuses it",
+  rec.every((x) => x?.from?.startsWith("30278:") === true) && db12.offered.length === 3 && db12.credits.size === 2);
+ok("it raises the credit of A alone as no longer on the chain, and nothing else", db12.alerts.length === 4 &&
+  db12.alerts[3] === `${A_ONLY} ${[...db12.credits.keys()].find((k) => db12.credits.get(k)!.to === A_ONLY)}: credited, no longer on the chain`);
+const after = [await creditDeposits(r12, db12, BOTH, 12), await creditDeposits(r12, db12, A_ONLY, 12)];
+ok("after the recovery both addresses read verified again, nothing more offered", after.every((a) => a.verified) && db12.offered.length === 3 && db12.alerts.length === 4);
 await r12.close();
 
 console.log("a reorg that keeps every event:");
