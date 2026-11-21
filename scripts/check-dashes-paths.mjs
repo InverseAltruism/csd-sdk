@@ -6,7 +6,7 @@
 // scripts/dashes-exceptions.json as {"dashes": {file: reason}, "paths": {file: reason}}.
 // Run: node scripts/check-dashes-paths.mjs [repo root]
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,7 +45,7 @@ export function offences(root) {
   return out;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const found = offences(resolve(process.argv[2] ?? "."));
   for (const line of found) console.error(line);
   console.log(found.length === 0 ? "check-dashes-paths: clean" : `check-dashes-paths: ${found.length} offence(s)`);

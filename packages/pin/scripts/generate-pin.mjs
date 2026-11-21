@@ -12,8 +12,8 @@
 // Then it writes fixtures/delta-<from>-<to>.json (the blocks of the range that hold an event, each with every payload
 // transaction of its block, in the recorder's form) and pin.json. --check regenerates the newest delta and the pin
 // and compares them with the committed files; it writes nothing. Read-only GETs to the node, at most 8 in flight.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EPOCH_LEN, FINAL_DEPTH, canonicalJson, payloadHash } from "@inversealtruism/cairnx-core";
 import { BUILT_GATES, derivePin, gatesDiffer, memoryStore, nodeBlocks, replicaLoop } from "@inversealtruism/cairnx-replica/server";
@@ -76,7 +76,7 @@ export async function generate({ rpc, anchor, check = false, fetch = boundedFetc
   return { pin: d.pin, delta, text, file: `delta-${from}-${height}.json` };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2), opts = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

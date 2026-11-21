@@ -4,6 +4,9 @@
 // it; then each refusal is caused alone. A live node cannot be made to serve another block below a committed pin, a
 // recording that drops a record, or another gate table, so those refusals are shown here only.
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { derivePin, BUILT_GATES } from "@inversealtruism/cairnx-replica/server";
 import type { BlockFixture } from "@inversealtruism/cairnx-replica/testing";
 import { done, ok } from "../../replica/test/check.js";
@@ -51,6 +54,12 @@ console.log("the review's cases:");
 ok("an anchor that is an epoch boundary (30,240): refused by name, before any read", refusedWith(await run({ anchor: { height: 30_240, hash: hashAt(30_240) }, fetch: () => { throw new Error("read"); } }), /30240 is an epoch boundary/));
 const cli = spawnSync(process.execPath, [new URL("../scripts/generate-pin.mjs", import.meta.url).pathname, "--rpc", NODE, "--anchor", `30259:${hashAt(30_259)}`, "--chek"], { encoding: "utf8" });
 ok("a mistyped --check: exit 2 naming the option, nothing read or written", cli.status === 2 && /unknown or incomplete option --chek; nothing read or written/.test(cli.stderr), cli.stderr);
+const linkDir = mkdtempSync(join(tmpdir(), "pin-link-"));
+symlinkSync(new URL("..", import.meta.url).pathname.replace(/\/$/, ""), join(linkDir, "pin"));
+const viaLink = spawnSync(process.execPath, [join(linkDir, "pin/scripts/generate-pin.mjs"), "--rpc", NODE, "--anchor", `30259:${hashAt(30_259)}`, "--chek"], { encoding: "utf8" });
+rmSync(linkDir, { recursive: true, force: true });
+ok("run through a symlinked package directory, a mistyped --check still exits 2 naming the option, not a silent exit 0",
+  viaLink.status === 2 && /unknown or incomplete option --chek; nothing read or written/.test(viaLink.stderr), `exit ${viaLink.status}: ${viaLink.stderr}`);
 // The second derivation stops at 30,235, above the range's last event (30,228): its log would be the same bytes.
 const stops: typeof fetch = (input, init) => init?.cache === "no-store" && new URL(String(input)).pathname === "/block/height/30235"
   ? Promise.resolve(new Response("{}", { status: 503 })) : fetch(input, init);

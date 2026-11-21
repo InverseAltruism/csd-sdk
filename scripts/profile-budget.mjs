@@ -3,6 +3,8 @@
 // 32-character name, measured in UTF-8 bytes against MAX_RECORD_BYTES. test/profile-budget.test.ts keeps the table in
 // CONVENTION.md equal to these rows. Needs the built package (pnpm -r build).
 // Run: node scripts/profile-budget.mjs
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import {
   MAX_RECORD_BYTES, PROFILE_MAX_KEYS, canonicalJson, nameProfile,
 } from "../packages/cairnx/dist/index.js";
@@ -65,7 +67,7 @@ export function budgetRows() {
 /** The keys of the 13 editor keys and the three registered keys together, against PROFILE_MAX_KEYS. */
 export const keyCount = () => new Set([...EDITOR_KEYS, ...Object.keys(VALUES)]).size;
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   console.log(`name ${NAME} (${NAME.length} characters), record cap ${MAX_RECORD_BYTES} bytes`);
   for (const [k, v] of Object.entries(VALUES)) console.log(`  ${k} = ${v} (${utf8(v)} bytes)`);
   console.log(`  csd.rpc gateway = ${GATEWAY} (${utf8(GATEWAY)} bytes)`);
