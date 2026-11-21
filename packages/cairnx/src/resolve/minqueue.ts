@@ -8,6 +8,9 @@ export class MinQueue {
 
   get size(): number { return this.ids.length; }
 
+  /** The smallest stored key, or undefined when the queue is empty. */
+  peekKey(): number | undefined { return this.keys[0]; }
+
   /** Adds an entry. A NaN key is not stored: no comparison with NaN is true, so such an item is never due. */
   push(key: number, id: string): void {
     if (key !== key) return;

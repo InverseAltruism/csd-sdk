@@ -3,7 +3,7 @@
 // match, and a read evaluates the walk's own predicate over the index's candidates, so a read equals the walk as long
 // as every write to an indexed field goes through here; the types below make those fields readonly everywhere else.
 // Internal to cairnx-core: nothing here reaches the resolved state or the package exports.
-import { V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, epochOf, isNameGive, type BidState, type OfferState } from "../types.js";
+import { EPOCH_LEN, V21_HEIGHT, V22_HEIGHT, V28_HEIGHT, V29_HEIGHT, epochOf, isNameGive, type BidState, type OfferState } from "../types.js";
 import { claimHeld, effExpiry } from "./context.js";
 import { MinQueue } from "./minqueue.js";
 
@@ -197,10 +197,33 @@ export function createStore(opts: StoreOptions = {}) {
     stats.visits += popped.length;
     return [...new Set(popped)].filter(isDue).sort((a, b) => at.get(a)! - at.get(b)!);
   };
-  /** Expires what the plain sweep at `height` would: offers and bids past their effective expiry, reservations and
-   *  recaptures past finalizeBy, in that order and each batch in the walk's order. */
+  // The lowest height at which the head of a queue falls due: popDue's limits inverted (an offer or bid keyed k pops once
+  // epochOf(height) > k, that is from (k + 1) * EPOCH_LEN; a reservation or recapture keyed finalizeBy once height >
+  // finalizeBy), and V21 while no sweep has reached it, the height from which offers and bids anchored below V22 take
+  // their capped keys. A stale head (a closed item, a key the V21 re-key replaced) costs a batch that expires nothing.
+  const nextDue = (): number => {
+    let d = maxSweep >= V21_HEIGHT ? Infinity : V21_HEIGHT;
+    const ko = offerQ.peekKey(), kb = bidQ.peekKey(), kn = nameQ.peekKey(), kr = recaptureQ.peekKey();
+    if (ko !== undefined) d = Math.min(d, (ko + 1) * EPOCH_LEN);
+    if (kb !== undefined) d = Math.min(d, (kb + 1) * EPOCH_LEN);
+    if (kn !== undefined) d = Math.min(d, kn + 1);
+    if (kr !== undefined) d = Math.min(d, kr + 1);
+    return d;
+  };
+  /** Expires what the plain sweep at `height` would (offers and bids past their effective expiry, reservations and
+   *  recaptures past finalizeBy), each item at the first height it is due: one batch at each height below `height` at
+   *  which a queue's head falls due, ascending, then the batch at `height`. Within a batch offers, bids, reservations,
+   *  recaptures, each in the walk's order. The effect sequence is thus the same whatever heights the sweeps are asked
+   *  at; it equals the walk's single batch because expiry effects commute (CONVENTION section 5, "Expiry in the state"). */
   const sweep = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(height >= maxSweep)) { walkSweep(height, expireOffer); return; }
+    for (let d = nextDue(); d < height; d = nextDue()) {
+      if (!(d > maxSweep)) break;   // a head due at or below the last batch's height: left to the batch at `height`
+      sweepAt(d, expireOffer);
+    }
+    sweepAt(height, expireOffer);
+  };
+  const sweepAt = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(maxSweep >= V21_HEIGHT) && height >= V21_HEIGHT) {
       // the first sweep at V21 or above: offers and bids anchored below V22 now expire at their capped epoch
       stats.visits += openOffers.size + openBids.size;
@@ -219,6 +242,10 @@ export function createStore(opts: StoreOptions = {}) {
       same(`expired bids at ${height}`, dueBids, want.bids);
       same(`expired reservations at ${height}`, dueNames, want.names);
       same(`expired recaptures at ${height}`, dueRecaptures, want.recaptures);
+      // each item expires at the first height it is due: none of the batch was due one height lower
+      const early = [...dueOffers.filter((id) => offerDue(offers.get(id), height - 1)), ...dueBids.filter((id) => bidDue(bids.get(id), height - 1)),
+        ...dueNames.filter((nm) => nameDue(names.get(nm), height - 1)), ...dueRecaptures.filter((nm) => height - 1 > recaptures.get(nm)!.finalizeBy)];
+      if (early.length) throw new Error(`replay index check: expired at ${height}, due before it: ${early.join(", ")}`);
     }
     for (const id of dueOffers) { const o = offers.get(id)!; expireOffer(o); setOfferStatus(o, "expired"); }
     for (const id of dueBids) setBidStatus(bids.get(id)!, "expired");
