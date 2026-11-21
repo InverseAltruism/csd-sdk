@@ -60,7 +60,7 @@ ok("meta.json names the committed lengths of rows.jsonl and bounds.jsonl, which 
 // The files of a store as data: edit them, recompute every running value, write them back consistently.
 type Lines = { meta: Record<string, any>; rows: BlockRow[]; bounds: Boundary[] };
 const linesOf = (file: string, length: number) => readFileSync(file).subarray(0, length).toString("utf8").split("\n").filter((l) => l !== "").map((l) => JSON.parse(l));
-function rewrite(dir: string, edit: (x: Lines) => void): void {
+function rewrite(dir: string, edit: (x: Lines) => void, after: (bounds: Record<string, unknown>[]) => void = () => undefined): void {
   const m = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
   const x: Lines = { meta: m, rows: linesOf(join(dir, "rows.jsonl"), m.rowsBytes), bounds: linesOf(join(dir, "bounds.jsonl"), m.boundsBytes) };
   edit(x);
@@ -68,7 +68,9 @@ function rewrite(dir: string, edit: (x: Lines) => void): void {
   const rows = x.rows.map((r) => ({ ...r, rowsHash: (rh = rowsHashStep(rh, r)) }));
   const rowsAt = (h: number) => rows.filter((r) => r.height <= h).at(-1)?.rowsHash ?? ROWS_HASH_START;
   let chain = BOUNDS_HASH_START;
-  const bounds = x.bounds.map((b) => JSON.stringify({ ...b, rowsHash: rowsAt(b.height) }));
+  const recomputed: Record<string, unknown>[] = x.bounds.map((b) => ({ ...b, rowsHash: rowsAt(b.height) }));
+  after(recomputed);
+  const bounds = recomputed.map((b) => JSON.stringify(b));
   for (const l of bounds) chain = boundsHashStep(chain, l);
   const rowText = rows.map((r) => JSON.stringify(r) + "\n").join(""), boundText = bounds.map((l) => l + "\n").join("");
   writeFileSync(join(dir, "rows.jsonl"), rowText); writeFileSync(join(dir, "bounds.jsonl"), boundText);
@@ -83,7 +85,8 @@ const loopOpen = async (dir: string, pin = pinOf()) => {
 console.log("what a store read back can be:");
 const B = fresh();
 await verifiedAt(B, { tip: 30_200 });
-appendFileSync(join(B, "rows.jsonl"), "{\"torn\":"); appendFileSync(join(B, "bounds.jsonl"), "garbage");
+// Longer than what the next commit writes, so only a cut leaves the files at their committed lengths.
+appendFileSync(join(B, "rows.jsonl"), `{"torn":"${"x".repeat(100_000)}`); appendFileSync(join(B, "bounds.jsonl"), "garbage".repeat(10_000));
 const b1 = await verifiedAt(B);
 const mB = JSON.parse(readFileSync(join(B, "meta.json"), "utf8"));
 ok("a tail past the committed lengths (a cut append): opens, goes on to 30,300 verified, and the next commit cuts the tail",
@@ -108,6 +111,9 @@ ok("the honest pin is bound by a replay, not the stored value: verified", f1.ok,
 const f2 = await reader(F, { pin: pinOf({ stateHash: wrong }) }), f2s = await f2.advance();
 ok("a descriptor carrying that stored value is refused PIN_MISMATCH", !f2s.verified && codes(f2s).split(",").includes("PIN_MISMATCH"), codes(f2s));
 await f2.close();
+const F3 = await filled();
+rewrite(F3, () => undefined, (bounds) => { bounds[0]!.rowsHash = wrong; });
+ok("a boundary whose rows hash is not the rows' there, its chain recomputed: corrupt", (await loopOpen(F3)) === "corrupt");
 const G = await filled();
 rewrite(G, (x) => { const r = x.rows.find((y) => y.height <= P && y.events.length > 0)!; (r.events[0] as unknown as Record<string, unknown>).note = "edited"; });
 ok("an event at or below the pin given a field, every running value recomputed (the events hash does not cover it): the store opens",

@@ -67,15 +67,15 @@ function metaOf(v: Record<string, unknown>): StoreMeta {
   };
 }
 
-// The committed lines of a file: the first `length` bytes, each line ending in a newline, parsed as JSON objects.
+// The committed lines of a file: the first `length` bytes, each line ending in a newline, parsed as JSON objects. A file
+// shorter than `length` ends a line early, so it is Corrupt there.
 async function linesOf(path: string, length: number): Promise<{ values: Record<string, unknown>[]; lines: string[]; ends: number[] }> {
   let bytes: Uint8Array;
   try { bytes = await readFile(path); } catch (e) { if (codeOf(e) === "ENOENT" && length === 0) return { values: [], lines: [], ends: [] }; throw e; }
-  if (bytes.length < length) throw new Corrupt(`${path}: shorter than its committed ${length} bytes`);
   const values: Record<string, unknown>[] = [], lines: string[] = [], ends: number[] = [];
   for (let at = 0; at < length;) {
     const nl = bytes.indexOf(0x0a, at);
-    if (nl < 0 || nl >= length) throw new Corrupt(`${path}: a committed line has no end`);
+    if (nl < 0 || nl >= length) throw new Corrupt(`${path}: a committed line has no end (the file is cut short or changed)`);
     let v: unknown;
     const line = dec.decode(bytes.subarray(at, nl));
     try { v = JSON.parse(line); } catch { throw new Corrupt(`${path}: a committed line is not JSON`); }
