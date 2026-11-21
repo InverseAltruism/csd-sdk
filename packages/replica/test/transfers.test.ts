@@ -157,7 +157,7 @@ const feed = await open({ source: fixtureSource(cut(tops[0]!), { tipTime: TIME }
 const fb = await feed.transfers(receivers[0]!, null);
 await feed.advance();
 const fa = await feed.transfers(receivers[0]!, null, { minDepth: DEPTH });
-ok("a feed before any step: LEVEL_FEED and NOT_SYNCED, nothing shown; after it LEVEL_FEED alone, its rows in shown", codes(fb) === "LEVEL_FEED,NOT_SYNCED" && fb.shown === null &&
+ok("a feed before any step: LEVEL_FEED and NOT_SYNCED, nothing shown; after it LEVEL_FEED alone, its rows in shown", codes(fb) === "LEVEL_FEED,NOT_SYNCED" && !fb.verified && fb.shown === null &&
   codes(fa) === "LEVEL_FEED" && !fa.verified && fa.shown !== null);
 await feed.close();
 grow.top = tops[0]!;
