@@ -1,0 +1,43 @@
+{
+  "name": "@inversealtruism/cairnx-pin",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "description": "A CairnX pin: the log of the chain's cairnx:v1 records at an epoch boundary, with its block hash, events hash and state hash, for @inversealtruism/cairnx-replica's pinned().",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./pin.json": "./pin.json"
+  },
+  "files": [
+    "dist",
+    "pin.json",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "tsx test/pin.test.ts && tsx test/generate.test.ts",
+    "prepack": "pnpm build",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "peerDependencies": { "@inversealtruism/cairnx-replica": "workspace:*" },
+  "peerDependenciesMeta": { "@inversealtruism/cairnx-replica": { "optional": true } },
+  "devDependencies": {
+    "@inversealtruism/cairnx-core": "workspace:*",
+    "@inversealtruism/cairnx-replica": "workspace:*",
+    "@inversealtruism/csd-client": "workspace:*"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/pin"
+  },
+  "homepage": "https://cairn-substrate.com"
+}

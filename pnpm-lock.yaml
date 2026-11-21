@@ -110,6 +110,18 @@ importers:
         specifier: workspace:*
         version: link:../vectors
 
+  packages/pin:
+    devDependencies:
+      '@inversealtruism/cairnx-core':
+        specifier: workspace:*
+        version: link:../cairnx
+      '@inversealtruism/cairnx-replica':
+        specifier: workspace:*
+        version: link:../replica
+      '@inversealtruism/csd-client':
+        specifier: workspace:*
+        version: link:../client
+
   packages/replica:
     dependencies:
       '@inversealtruism/csd-client':

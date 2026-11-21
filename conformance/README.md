@@ -85,7 +85,8 @@ csd-crypto `authorOf`, at most 8 requests in flight. Compare the end hash each p
   form with its author, one block per line in canonicalJson form, blocks without one left out. The bytes depend on
   the chain alone, so two captures of one range are identical. Prints blocks read and kept, transactions kept, bytes
   and sha256. Recapture with `--to 117000` (the corpus height) and re-pin the sha256 in `packages/cairnx/test/events.test.ts`
-  in the same commit; a corpus extension moves both.
+  in the same commit; a corpus extension moves both, and the pin package too: `packages/pin/test/pin.test.ts` pins
+  the same sha256 and the fixture's end, and the first delta in `packages/pin/fixtures/` starts at the height above it.
 - **`events-live-differential.mjs`:** `CSD_RPC=<node> CSD_INDEXER=<indexer> ... [--to <height>]` (default the tip
   less 48): the cairnx:v1 events from 29,860 derived from blocks through the rule and from csd-indexer's chain-order
   feeds (`/proposals` and `/attestations`, `domain=cairnx:v1`, walked at the snapshot block `--to`, which must be the

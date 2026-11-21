@@ -25,8 +25,10 @@ differential is described in `conformance/README.md` and the audit method in `co
   not answer): `conformance/capture-events-fixture.mjs` (writes the recorded-blocks fixture from a node),
   `conformance/events-live-differential.mjs` (needs `CSD_RPC` and `CSD_INDEXER`: the events from blocks through the
   rule against csd-indexer's chain-order feeds, to a tip at least 48 deep by default) and
-  `conformance/scan-repeated-txids.mjs` (transaction ids mined at more than one height or position).
-  `conformance/README.md` describes each.
+  `conformance/scan-repeated-txids.mjs` (transaction ids mined at more than one height or position), and
+  `packages/pin/scripts/generate-pin.mjs` (the next pin and delta from a node and a released anchor; its package
+  test runs its refusals against the replica's recorded node, offline).
+  `conformance/README.md` describes the first three, `packages/pin/README.md` the generator.
 - Cross-language differential (`pnpm test:crosslang`, the CI fork gate, needs python3): crosscheck.mjs,
   crosscheck-regex.mjs (raw regex differential, the C1 class), crosscheck-resolve.mjs, replay-corpus-crosslang.mjs
   (the committed on-chain corpus at every pinned height), crosscheck-siwc.mjs, nprofile-crosslang.mjs,

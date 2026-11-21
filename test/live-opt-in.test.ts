@@ -44,13 +44,14 @@ for (const [file] of LIVE_CAPABLE.filter(([f]) => liveOnly(f))) {
   pass++;
   console.log(`  ok ${file}: CSD_RPC set, no node -> fails by name`);
 }
-// The block scripts (conformance/chain-read.mjs, the replica's capture script) are opt-in the same way: with no node
+// The block scripts (conformance/chain-read.mjs, the replica's capture script, the pin generator) are opt-in the same way: with no node
 // named they refuse by name (exit 2) without a request, and with one that does not answer they fail by name (exit 1).
 const BLOCK_SCRIPTS: [string, string[]][] = [
   ["conformance/capture-events-fixture.mjs", ["--to", "117000"]],
   ["conformance/events-live-differential.mjs", []],
   ["conformance/scan-repeated-txids.mjs", []],
   ["packages/replica/scripts/capture-node-blocks.mjs", ["--from", "29860", "--to", "29860", "--out", "/dev/null"]],
+  ["packages/pin/scripts/generate-pin.mjs", ["--anchor", `143359:0x${"0".repeat(64)}`, "--check"]],
 ];
 const noNode = { ...env };
 delete noNode.CSD_INDEXER;

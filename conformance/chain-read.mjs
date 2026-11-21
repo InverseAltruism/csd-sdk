@@ -1,5 +1,5 @@
 // Reading the chain from a node for the block scripts (capture-events-fixture.mjs, events-live-differential.mjs,
-// scan-repeated-txids.mjs): complete blocks, each header checked by csd-light (proof of work, LWMA bits, time rules,
+// scan-repeated-txids.mjs, and the pin generator, packages/pin/scripts/generate-pin.mjs): complete blocks, each header checked by csd-light (proof of work, LWMA bits, time rules,
 // the link to the header before) and each body bound to its header's merkle root (bindBlockTxs), and the author of a
 // transaction bound by csd-crypto authorOf. Read-only GETs; every request of a process shares one bound on requests
 // in flight.
@@ -7,7 +7,7 @@
 // Trust: the header run starts from a seed, the LWMA window below `from` read from the same node and taken as
 // given (LightClient.syncFromCheckpoint). Every block from `from` on is checked against it, so a reader compares the
 // end hash a script prints with a node it trusts.
-import { FINAL_DEPTH } from "../packages/cairnx/dist/index.js";
+import { FINAL_DEPTH, canonicalJson } from "../packages/cairnx/dist/index.js";
 import { txid as codecTxid } from "../packages/codec/dist/index.js";
 import { CsdClient, rpcTxToTx } from "../packages/client/dist/index.js";
 import { authorOf } from "../packages/crypto/dist/index.js";
@@ -140,3 +140,26 @@ export function fixtureTx(t, author) {
     author,
   };
 }
+
+/** The block fixture of `from` to `to` (CONVENTION §33): each block holding a transaction with an app payload, any
+ *  domain, with every such transaction in the fixture form and its bound author; `toHash` is the verified hash at
+ *  `to` and `read` the number of blocks read. */
+export async function captureBlocks(client, from, to) {
+  const blocks = [];
+  let read = 0, toHash = "";
+  for await (const b of verifiedBlocks(client, from, to)) {
+    read++;
+    toHash = b.hash.toLowerCase();
+    const payload = b.txs.filter((t) => t.tx.app.type !== "None");
+    if (payload.length === 0) continue;
+    const txs = [];
+    for (const t of payload) txs.push(fixtureTx(t, await boundAuthor(client, t)));
+    blocks.push({ height: b.height, hash: b.hash.toLowerCase(), txs });
+  }
+  return { blocks, toHash, read };
+}
+
+/** A fixture's bytes: one block per line in canonicalJson form, and nothing that is not a function of the chain (no
+ *  date, no tip), so two captures of one range are the same bytes. */
+export const renderFixture = ({ from, to, toHash, blocks }) =>
+  `{"format":1,"from":${from},"to":${to},"toHash":${JSON.stringify(toHash)},"blocks":[\n` + blocks.map((b) => canonicalJson(b)).join(",\n") + "\n]}\n";

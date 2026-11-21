@@ -61,6 +61,10 @@ const runAnywhere = LIVE_SCRIPTS.filter((s) => runners.some((text) => text.inclu
 ok(`no CI step and no package script runs a live block script (${manifests.length} manifests)`,
   manifests.length >= 9 && runAnywhere.length === 0 && LIVE_SCRIPTS.every((s) => existsSync(new URL(`../conformance/${s}`, import.meta.url))),
   runAnywhere.join(", "));
+// The pin generator reads a node over the whole range above the last pin: run by hand, like the block scripts. Its
+// package test loads its functions against a recorded node, never the script.
+ok("no CI step and no package script runs the pin generator", existsSync(new URL("../packages/pin/scripts/generate-pin.mjs", import.meta.url)) &&
+  runners.every((text) => !text.includes("generate-pin.mjs")));
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
