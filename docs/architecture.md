@@ -29,7 +29,8 @@ whose build derives its log from recorded blocks and writes one esm module with 
 ## cairnx-core modules (`packages/cairnx/src/`)
 
 - `resolve.ts`: the replay loop and its apply order (`applyOrder`, `eventId`: CONVENTION section 33.3); its
-  per-record handlers and shared state context live in `resolve/`, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
+  per-record handlers and shared state context live in `resolve/`, whose handlers write each token move (CONVENTION
+  section 41) on the applied entry at the line that moves the balance, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
   queues in `resolve/minqueue.ts`; candidates per owner for the reservation caps, per holder for the live-hold cap, per
   seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on.
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
@@ -65,6 +66,8 @@ whose build derives its log from recorded blocks and writes one esm module with 
 `fuzz-resolve.mjs`, the per-gate `v2x-*-crosslang.mjs` files, and the report-only audit tooling: `invariants.mjs` (7
 ledger-soundness invariants), `money-safety.mjs` (anchored-then-rejected burn detector), `race-harness.mjs`
 (adversarial multi-actor races; P4 JS==Python byte-identity alone exits 1) and `AUDIT.md` (the method).
+`moves-check.mjs` checks a result's token moves against its input events and its state (CONVENTION section 41), for the
+cairnx-core tests and the seal.
 `conformance/README.md` describes the differential.
 
 ## Consensus gates

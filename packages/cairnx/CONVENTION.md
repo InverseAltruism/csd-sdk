@@ -1,6 +1,6 @@
 # CairnX Convention v1
 
-**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §40 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
+**Status:** v2.9 (normative; v2.9 activated at `V29_HEIGHT` = 88 000, crossed 2026-08-31, see §32; v2.8 activated at 60 000, crossed 2026-07-23; supersedes the 2026-06-10 v1.0 draft; §33 to §41 carry no gate and move no state) · **Domain:** `cairnx:v1` · **Base activation:** 29 860
 
 **Version ladder** (each gate non-retroactive: below it, behavior + canonical hashes are byte-identical to history):
 v1.1 @ 29 960 · v1.2 @ 30 300 · v1.3 @ 31 100 · v1.4 @ 31 400 · v1.5 @ 32 000 · v1.6 @ 33 600 (§19) ·
@@ -10,8 +10,8 @@ v2.3 @ 52 000 (§26) · v2.8 @ 60 000 (§31) · v2.9 @ 88 000 (§32; its replay 
 Sections §19–§32 are the normative semantics for v1.6–v2.9; §5.1 is the byte-level canonical-JSON contract that binds all of them.
 §33 is the rule that turns the chain's blocks into the events every version replays; §34 defines the two hashes
 replicas compare. §35 and §36 are for other applications (their domains, the profile-key registry), §37 states what
-a result proves, §38 how a replica conforms, §39 how the rules change and §40 the reason codes of the applied log
-and of record validation; none of §33 to §40 has a gate.
+a result proves, §38 how a replica conforms, §39 how the rules change, §40 the reason codes of the applied log
+and of record validation and §41 the token moves of the applied log; none of §33 to §41 has a gate.
 Activation order is by HEIGHT, not by version number (v1.8 activated after v2.0; v2.3 activates after v2.4–v2.7): a
 replayer gates each rule on its own height constant, never on "version X implies version Y is active".
 
@@ -206,8 +206,9 @@ offers:   offerId → { id, seller, give, want: { value, payto } | { ticker, amo
 bids:     bidId → { id, bidder, want, give: { value }, status: open|cancelled|expired|done,
                     expiresEpoch, height, offers }
 feesPaid: the protocol fees owed by applied records (§10), a decimal string
-events:   ordered log of applied/no-op decisions (for explorers & audit; INFORMATIONAL,
-          excluded from the canonical surface; each entry's `code` is stable (§40), its `note` text a diagnostic)
+events:   ordered log of applied/no-op decisions { height, pos, id, kind, ok, code, note?, moves? } (for explorers &
+          audit; INFORMATIONAL, excluded from the canonical surface; each entry's `code` is stable (§40), its `note`
+          text a diagnostic, and an applied record that moved tokens carries its `moves` (§41))
 ```
 
 An address whose `available` and `locked` are both 0 is left out of `balances`, and so is a ticker with no address
@@ -1735,13 +1736,14 @@ A form of the tuple recorded on chain is reserved under the reserved prefixes of
 version.
 
 `test/vectors/codes.json` (§40.7) is not a level: the reason codes move no state. A replica that publishes codes
-reproduces it.
+reproduces it. `test/vectors/moves.json` (§41) is not a level: the token moves move no state. A replica that publishes
+moves reproduces it.
 
 ## 39. Rule changes
 
 - This specification is normative for the future. Pinned history stands: every height below a gate replays as it
   did, and the pinned replay hashes do not move. Behaviour changes only at a gate, an activation height in
-  `src/types.ts`; a section without a gate, such as §33 to §40, moves no state.
+  `src/types.ts`; a section without a gate, such as §33 to §41, moves no state.
 - `CONSENSUS_CHANGES.md` in the csd-sdk repository is the ledger of every change. Each gate after v2.9 also has its
   own file, `docs/gates/<gate>.md`, written from `docs/gates/TEMPLATE.md` and linked from its ledger entry. It
   states the motivation, the rule text, the class of the change (reject-more: an input the earlier rule applied
@@ -1933,3 +1935,45 @@ resolve cases (the events, the tip and the expected entries as `[id, kind, ok, c
 cases (the uri, the payload hash and the expected code, or null for a record that parses), with every expectation
 written by hand in `conformance/gen-codes-vectors.mjs`. A replica that publishes codes reproduces it. The Python
 reference of `conformance/` writes no codes.
+
+---
+
+# Token moves (no gate)
+
+## 41. Token moves
+
+An applied entry of the log (§5) whose record moved tokens carries `moves`: the movements in the order the record
+applied them, each `{ leg, ticker, from, to, amount }`, that is `amount` base units of `ticker` from the address `from`
+to the address `to`. `amount` is a positive decimal string in the form of the state's balances (§5). The resolver
+writes each move where it applies the balance change, so a reader takes who received what from the log and does not
+restate the rules that decide the amounts (the mint caps, a whole fill's delivery, the partial fill's floor, the fee).
+
+| leg | written by | from | to | amount |
+|---|---|---|---|---|
+| `mint` | an applied mint (§4.2) | null | the proposer | the credit: `min(amount, mintLimit, remaining)` for an open mint, `amount` defaulting to `mintLimit`; `min(amount, remaining)` for an issuer mint |
+| `xfer` | an applied transfer (§4.3) | the proposer | `to` | `amount` |
+| `sale` | an applied fill of a token-priced offer (§11) | the buyer | `want.payto` | `want.amount`, the fill's `paid` (§5) |
+| `fee` | the same fill | the buyer | the treasury (§10) | the fill's `fee` |
+| `fill` | an applied fill of an offer whose give is a token (§4.5, §11, §12) | the seller | the buyer | `give.amount` on a whole fill, the `got` of its `fills` entry on a partial one (§12) |
+
+- A token-priced fill writes its sale, then its fee, then its give. A zero amount writes no move: the sale of a token
+  priced at `"0"` (§11) and its fee of 0.
+- An offer, a cancel, an `ocancel` and an expiry move tokens between one address's `available` and `locked` and write
+  no move; nor does a fill that moves no token (a name sold for CSD), nor any other record. A refused entry carries no
+  moves. An entry with no move has no `moves` key, and `moves` is its last key.
+- In one result a ticker names one token: the first anchored deploy of a ticker wins and a later one is refused (§4.1),
+  and no record removes a token. A replay of another chain, after a reorganisation below the deploy, can bind the
+  ticker to another deploy. So a move carries no deploy id; `tokens[ticker].deployId` of the same result gives it.
+- The identity the moves meet: for every ticker and address, the amounts the address received less the amounts it
+  sent, over every move of the log, equal its `available` plus `locked` in `balances`, an address left out of
+  `balances` holding 0; and the mint moves of a ticker sum to its `minted`.
+- The log is outside canonical state (§5), so moves change no state hash, and a replica that writes no moves conforms
+  at every level of §38. A replica that publishes moves reproduces `test/vectors/moves.json`.
+
+`TokenMove` (`src/types.ts`) is the type; `src/resolve/tokens.ts` and `src/resolve/attest.ts` write the moves.
+`test/vectors/moves.json` holds 13 cases (the events, the tip, and the entries that carry moves with their moves, in
+log order), every expectation written by hand in `conformance/gen-moves-vectors.mjs`. `conformance/moves-check.mjs`
+checks a result's moves against its input events and its state by the rules above, each transfer's and mint's move
+against its own record; the cairnx-core tests run it over the replay corpus at
+every pinned height and over every case file, and the seal over every input of its differential. The Python reference
+of `conformance/` writes no moves.

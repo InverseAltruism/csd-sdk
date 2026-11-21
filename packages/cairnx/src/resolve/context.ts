@@ -4,7 +4,7 @@
 import type { AppliedCode, ReasonCode, RefusalCode } from "../codes.js";
 import {
   AMOUNT_RE, MAX_OFFER_EPOCHS, V21_HEIGHT, V22_HEIGHT, claimGraceOf, epochOf, isNameGive,
-  type AppliedEvent, type ChainEvent, type OfferState, type TokenState,
+  type AppliedEvent, type ChainEvent, type OfferState, type TokenMove, type TokenState,
 } from "../types.js";
 import type { OfferRec, Store } from "./store.js";
 
@@ -15,6 +15,10 @@ import type { OfferRec, Store } from "./store.js";
 // the scanner ever emits, and CONVERGES instead of value-vs-throw on any non-canonical input. Mirror in
 // conformance/cairnx_ref.py:_pt.)
 export function ptAmt(v: unknown): bigint { return typeof v === "string" && AMOUNT_RE.test(v) ? BigInt(v) : 0n; }
+
+/** The move of `amount` (the bigint the balance line applied) in the log's form (CONVENTION §41). */
+export const tokenMove = (leg: TokenMove["leg"], ticker: string, from: string | null, to: string, amount: bigint): TokenMove =>
+  ({ leg, ticker, from, to, amount: amount.toString() });
 
 export interface Bal { available: bigint; locked: bigint }
 export interface Tok { meta: TokenState; minted: bigint; supply: bigint; mintLimit: bigint | null }
@@ -102,17 +106,22 @@ export function createContext(store: Store) {
     for (const o of store.voidTargets(name, height)) { releaseGive(o); setOfferStatus(o, "cancelled"); }
   };
   // release a token offer's locked give-amount in FULL to the buyer, consuming the lock so it can never
-  // release twice. (The partial-fill path releases a sub-amount and keeps the lock — it does NOT use this.)
-  const releaseGiveLock = (o: OfferRec, who: string, amt: bigint) => {
+  // release twice, and return its fill move. (The partial-fill path releases a sub-amount and keeps the lock: it does NOT use this.)
+  const releaseGiveLock = (o: OfferRec, who: string, amt: bigint): TokenMove => {
     const t = (o.give as { ticker: string }).ticker;
     bal(t, o.seller).locked -= amt;
     bal(t, who).available += amt;
     offerLock.delete(o.id);
+    return tokenMove("fill", t, o.seller, who, amt);
   };
   // An applied-log entry. `ok` follows from which of the two writes it, and the code types keep each code on its side.
-  const entry = (e: ChainEvent, id: string, kind: string, ok: boolean, code: ReasonCode, why?: string) =>
-    log.push({ height: e.height, pos: e.pos, id, kind, ok, code, ...(why ? { note: why } : {}) });
-  const applied = (e: ChainEvent, id: string, kind: string, code: AppliedCode, why?: string) => entry(e, id, kind, true, code, why);
+  // Only `applied` passes moves. A zero amount moves nothing and is not written; `moves` is left out when none is, and
+  // comes last, so an entry without it is byte for byte the entry of a core that writes no moves.
+  const entry = (e: ChainEvent, id: string, kind: string, ok: boolean, code: ReasonCode, why?: string, moves?: TokenMove[]) => {
+    const written = moves?.filter((m) => m.amount !== "0") ?? [];
+    log.push({ height: e.height, pos: e.pos, id, kind, ok, code, ...(why ? { note: why } : {}), ...(written.length ? { moves: written } : {}) });
+  };
+  const applied = (e: ChainEvent, id: string, kind: string, code: AppliedCode, why?: string, moves?: TokenMove[]) => entry(e, id, kind, true, code, why, moves);
   const refused = (e: ChainEvent, id: string, kind: string, code: RefusalCode, why?: string) => entry(e, id, kind, false, code, why);
 
   return {
