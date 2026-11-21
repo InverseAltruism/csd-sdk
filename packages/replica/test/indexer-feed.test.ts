@@ -121,6 +121,9 @@ console.log("a record below the activation height:");
   ok("is left out of the steps, and the loop reaches the tip with every event from activation",
     s.cursor?.height === H0 + 40 && s.lastError === null && all.some((e) => e.height < ACTIVATION_HEIGHT) &&
     canon(held(loop)) === canon(all.filter((e) => e.height >= ACTIVATION_HEIGHT)), JSON.stringify(s.lastError));
+  const again = await loop.advance();
+  ok("and the next scan, which lists it again, agrees with the store: no rollback", again.lastReorg === null && again.cursor?.height === H0 + 40 &&
+    again.eventCount === s.eventCount, JSON.stringify(again.lastReorg));
   await loop.close();
 }
 
