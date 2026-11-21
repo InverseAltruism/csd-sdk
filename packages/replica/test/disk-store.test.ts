@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { FINAL_DEPTH, resolve, stateHash } from "@inversealtruism/cairnx-core";
 import { local, nodeBlocks } from "../src/browser.js";
 import { derivePin } from "../src/derive-pin.js";
-import { BOUNDS_HASH_START, boundsHashStep, diskStoreWith } from "../src/disk-store.js";
+import { diskStoreWith } from "../src/disk-store.js";
+import { BOUNDS_HASH_START, boundsHashStep } from "../src/store-format.js";
 import { LOADED_GATES } from "../src/gates.js";
 import { STALE_MS, takeLease, type Lease } from "../src/lease.js";
 import { memoryStore, open, pinned, ReplicaConfigError, replicaLoop, type BlockRow, type Boundary, type Pin, type Store } from "../src/index.js";
@@ -76,7 +77,7 @@ function rewrite(dir: string, edit: (x: Lines) => void, after: (bounds: Record<s
   const recomputed: Record<string, unknown>[] = x.bounds.map((b) => ({ ...b, rowsHash: rowsAt(b.height) }));
   after(recomputed);
   const bounds = recomputed.map((b) => JSON.stringify(b));
-  for (const l of bounds) chain = boundsHashStep(chain, l);
+  for (const b of recomputed) chain = boundsHashStep(chain, b as unknown as Boundary);
   const rowText = rows.map((r) => JSON.stringify(r) + "\n").join(""), boundText = bounds.map((l) => l + "\n").join("");
   writeFileSync(join(dir, "rows.jsonl"), rowText); writeFileSync(join(dir, "bounds.jsonl"), boundText);
   m.meta.rowsHash = rh; m.rowsBytes = Buffer.byteLength(rowText); m.boundsBytes = Buffer.byteLength(boundText); m.boundsHash = chain;
@@ -119,6 +120,9 @@ await f2.close();
 const F3 = await filled();
 rewrite(F3, () => undefined, (bounds) => { bounds[0]!.rowsHash = wrong; });
 ok("a boundary whose rows hash is not the rows' there, its chain recomputed: corrupt", (await loopOpen(F3)) === "corrupt");
+const F4 = await filled();
+rewrite(F4, () => undefined, (bounds) => { bounds[0]!.stateHash = 7; });
+ok("a boundary whose state hash is a number, its chain recomputed: corrupt (the form at open, not the chain)", (await loopOpen(F4)) === "corrupt");
 const G = await filled();
 rewrite(G, (x) => { const r = x.rows.find((y) => y.height <= P && y.events.length > 0)!; (r.events[0] as unknown as Record<string, unknown>).note = "edited"; });
 ok("an event at or below the pin given a field, every running value recomputed (the events hash does not cover it): the store opens",
@@ -242,12 +246,13 @@ await lateStart("a gate table that differs at or below the cursor", (dir) => {
     let n = 0;
     return { ...m, open: () => o.open(++n), reset: o.reset ?? m.reset };
   };
-  const failingReset = (reset: "format" | "rule" | "basis" | "corrupt") => () => scripted({ open: async () => ({ ok: false, reset }), reset: async () => { throw new Error(`EACCES: ${says}`); } });
+  const failingReset = (reset: "format" | "rule" | "basis" | "corrupt" | "unconfirmed") => () => scripted({ open: async () => ({ ok: false, reset }), reset: async () => { throw new Error(`EACCES: ${says}`); } });
   const cases: [StoreReason, () => Store][] = [
     ["held", () => scripted({ open: async () => ({ ok: false, reset: "unavailable" }) })],
     ["io", () => scripted({ open: async () => { throw new Error(`EIO: ${says}`); } })],
     ["foreign", () => scripted({ open: async (k) => { if (k === 1) return { ok: false, reset: "unavailable" }; throw new ReplicaConfigError(`diskStore: ${says}`); } })],
     ["format", failingReset("format")], ["rule", failingReset("rule")], ["basis", failingReset("basis")], ["corrupt", failingReset("corrupt")],
+    ["unconfirmed", failingReset("unconfirmed")],
   ];
   const tip = { height: 30_010, hash: at(30_010).hash, time: 0 }, bad: string[] = [];
   for (const [reason, make] of cases) {

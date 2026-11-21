@@ -63,7 +63,9 @@ money-safety corpus and the race harness.
   check-lockstep, the per-package tests, edge and security (their node-dependent parts skip), the live opt-in guard
   (`test/live-opt-in.test.ts`: an opted-in live suite fails when its node does not answer) and the root tests of the
   release scripts, the citation check, the profile budget, the workflow, the lint config and the dependency pins
-  (`test/*.test.ts`).
+  (`test/*.test.ts`). The per-package step sets `CHROME_PATH` to the runner's Chrome for the replica's browser store
+  test (`packages/replica/test/browser/idb-store.test.ts`: an MV3 extension loaded over the DevTools pipe, its worker
+  stopped and woken), which fails under CI without it and skips with that reason elsewhere.
 - The `conformance` job runs Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit
   findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it).
 - The `secrets` job runs gitleaks over the full history (release binary, sha256 checked).

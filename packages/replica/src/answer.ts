@@ -62,9 +62,10 @@ export interface Witness {
 
 /** The replica's state with the verdict an answer read now would carry before its read's own conditions.
  *  `storeReason` and `storeError` are why the store's last load did not open it and what it threw, paths included,
- *  null when the store is fine: for the server's own logs, not for a page. */
+ *  null when the store is fine: for the server's own logs, not for a page. `keepError` is what the store threw when the
+ *  last advance kept or cleared its view for the next start (the view is then treated as absent), else null. */
 export interface ReplicaStatus extends AnswerMeta {
-  readonly storeReason: StoreReason | null; readonly storeError: string | null;
+  readonly storeReason: StoreReason | null; readonly storeError: string | null; readonly keepError: string | null;
   readonly verified: boolean; readonly source: string; readonly cursor: Cursor | null;
   readonly witnessed: { readonly height: number; readonly at: number } | null;
   readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;

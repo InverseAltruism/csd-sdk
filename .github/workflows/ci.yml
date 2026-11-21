@@ -37,6 +37,9 @@ jobs:
       # Per-package conformance, offline. The live-node suites (the oracle, the client and light live tests) are
       # `pnpm test:live` and never run here: with no node they assert nothing.
       - run: pnpm -r --filter "./packages/*" test
+        env:
+          # The replica's browser store test (packages/replica/test/browser) runs in this Chrome and fails under CI without it.
+          CHROME_PATH: /usr/bin/google-chrome
       - run: pnpm exec tsx test/edge.test.ts
       - run: pnpm exec tsx test/security.test.ts
       - run: pnpm exec tsx test/live-opt-in.test.ts   # offline: live suites skip by name, and fail against a refused loopback port

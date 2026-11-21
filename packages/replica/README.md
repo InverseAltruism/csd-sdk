@@ -37,7 +37,8 @@ is computed only for a boundary at most 720 blocks (24 epochs) below the tip whe
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
 - `./server` also has `diskStore({ dir })` ("The disk store" below) and `ownNode({ node, dir, pin?, witness? })`
-  ("One's own node on disk" below).
+  ("One's own node on disk" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
+  store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
   accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
@@ -210,6 +211,7 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `STORE_UNCONFIRMED` | the store was not reset as unconfirmed since the loop last reached a step's tip ("The browser store" below): it is set from that reset until the refill's step reaches the tip |
 | `SHALLOW` | `name` and `primary`: the deep view and the tip view agree |
 | `CURSOR_OFF_BRANCH` | `events` and `transfers`: the events hash in the cursor is the replica's at the cursor's height; nothing is shown |
 
@@ -217,11 +219,12 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; the note's `detail` names why from a
-fixed list: another process holds it, it refuses its directory, a read or write failed, or a reset it needed failed;
-the store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
+holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
+directory, a read or write failed, or a reset it needed failed, the browser store's unconfirmed reset included; the
+store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
 `storeError`, that message in full: it is for the server's own logs and is not forwarded to clients, since it can hold
-paths. Exported and not emitted yet: `STORE_UNCONFIRMED`,
+paths. Exported and not emitted yet:
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -397,9 +400,9 @@ What the checks prove: they tie the log to its descriptor and the descriptor's b
 log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
 by design: below the pin the trust is the release, and a second derivation on another host is the check on it.
 
-`hosted({ pin, origin, witness?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is what
-`open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the pin
-as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
+`hosted({ pin, origin, witness?, store?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is
+what `open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the
+pin as its anchor, `store` (default `memoryStore()`; an extension passes `idbStore`), and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
 anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
 the witness's to confirm.
 
@@ -408,8 +411,8 @@ the witness's to confirm.
 `diskStore({ dir })`, in `./server`, keeps a store in `dir`, an absolute path on a local filesystem (created with mode
 700 at open; a relative path, or one that is a file or cannot be created, throws `ReplicaConfigError`). Pass it as
 `store` to `open` or `openLog`. Files: `meta.json` (the store's tag and format, the meta without `witnessed`, the
-committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
-`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
+committed lengths of the two row files, the chain over the boundaries and the window's digest), `rows.jsonl` and
+`bounds.jsonl` (one row or boundary a line, appended), `window-<digest>.bin` and `lock`. These are the only names it
 writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
 `open` throw `ReplicaConfigError` naming it, with nothing removed. Give the store a directory of its own all the same:
 a file named `lock` is taken for a lease (and moved aside once it has gone 20 s untouched), and a `meta.json` that is not JSON for
@@ -472,6 +475,75 @@ A day of blocks (720) above a pin, read through `open` on a disk store from a no
 Limits: the pin's log loads in one step ("Pins" above). Revisit that when a first step takes over 5 s on a server or
 a browser store's transaction is found too large; the answer then is a resumable replay context and a log fetched by
 its hash, not steps.
+
+## The browser store
+
+`idbStore({ name, slot })`, in `./browser`, keeps a store in the IndexedDB database `cairnx-replica:<name>` (`name`: 1
+to 64 of a-z, 0-9 and -) of an extension's own contexts, its service worker above all; pass it as `store` to `open` or
+`openLog`. `slot` is `sessionSlot(key)`, the key `key` of `chrome.storage.session`, which only the extension's own
+contexts reach by default, which lives in memory and which a browser start, an extension update or reload clears;
+`sessionSlot` throws `ReplicaConfigError` where that area does not exist (a page: pages use `memoryStore()`), and so
+does `idbStore` for another name or without a slot. The database holds four object stores, the only names the store
+writes or removes: `meta` (the record: the store's tag and format, the meta without `witnessed`, the chain over the
+boundaries and the header window's digest, the same record checks as the disk store's), `rows` and `bounds` (by height)
+and `window`. A commit is one transaction, `relaxed` (a power loss can drop the last commits, and it also clears the
+slot, so the store is refilled anyway), that first compares the stored cursor with the one the commit expects and
+aborts on another. The slot holds the hash of the record: before the transaction the pair of the stored record's and
+the new record's hashes, after it the new one alone, so a worker stopped at any point leaves a record the slot names
+(`test/browser/idb-store.test.ts` stops it before, between and after the writes, with the transaction issued, and at
+random times).
+
+At open, in order, as the code runs: the record's tag, format and form, the chain over the boundaries (each in form:
+three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null) and the
+window's digest (`corrupt`, `format`); then the slot: a record whose hash it does not name is `unconfirmed`, and the
+reader resets the store and refills it; then the format, rule and basis key (`format`, `rule`, `basis`); then the loop's
+checks of every row (`corrupt`), the gate table (`rule`) and the newer-pin rule (`basis`), and under a pin the bind. The
+slot is what tells this package's commits from a profile written by another program: an edit of the database, however
+consistent, or an older copy put back, is not named by the slot, and after every browser start the slot is empty, so the
+store is refilled: rows at or below a pin from the release's log, every block above it from the source again. A database
+of a later layout is `format`, deleted and made again by the reset. Each store needs a slot key of its own: two stores
+on one key replace each other's hash at every commit and refill each other without end.
+
+One context writes a store at a time, by the Web Lock `cairnx-replica:<name>` taken at `open` and held until `close()`
+or the end of the context that holds it (a stopped worker, a closed page). While another context holds it, `open` is
+`unavailable` (`NOT_SYNCED`, the note `STORE_UNAVAILABLE`) and the next advance tries again. A store deleted under an
+open one (another context deleting the database) gives the next commit `CURSOR_MOVED`, and the reader refills it. A
+caller must not steal the store's lock (`navigator.locks.request` with `steal`): the store that loses it opens
+`unavailable` and commits nothing from then on, and its last slot write is made only over the pair it wrote, so the
+successor keeps its confirmation, but that reader answers nothing verified until its context starts again. A record of
+another tag in the database is `corrupt` and reset, where the disk store refuses another program's `meta.json`: the
+database's name carries this package's prefix, so nothing else is expected in it.
+
+The slot also keeps what the reader had settled when it last advanced verified: the clock's reading, the tip of its last
+step and the witness confirmation it held then, bound to the record hash it was kept under. An advance that ends with
+any code in the verdict (a witness's higher tip or gate table, a refused pin, a stale tip, a silent witness, behind or
+not synced) clears it, so a restart does not forget a denial. When the context starts again (an MV3 worker is stopped
+after about half a minute idle), the reader takes that view back, whole or not at all, only where a running reader would
+answer from it: the record is the one kept with it and was committed under this source's basis (a store kept from an
+older pin waits for a commit under the new one, after its bind), the clock reads no earlier than it did at the keep (a
+running reader voids its confirmation on a clock set back), the tip is the block at the store's cursor and at most 30
+minutes old, and, where the root needs a witness, the confirmation is of a block the store holds, at most 30 minutes old
+and not later than the clock, by one of this reader's witnesses, held with that tip. Then the first read answers as the
+stopped worker would have, with no request; otherwise the reader starts as a fresh one, with a fresh one's `why`. A
+commit drops the view until the next advance keeps one for the new record. A store that throws while it keeps or clears
+the view does not stop the advance: the error is `keepError` on `status()`, the view is cleared where the store lets it,
+and the next start restores nothing.
+
+Who reaches the slot: the extension's own contexts (its worker and its pages, the popup included: the test reads it from
+a page); not content scripts, by the session area's default access level (`TRUSTED_CONTEXTS`, which the platform
+documents and the store does not change), and not a page of another origin, which has no `chrome.storage` of this
+extension. An extension that opens the session area to content scripts (`setAccessLevel`) hands the slot, and with it
+what counts as confirmed and the kept view, to every page its content scripts run in. The rig tests the extension page
+only, since it loads no site. The slot's value after a kept view measured 496 bytes in the test (the area's quota is
+10,485,760 bytes).
+
+Measured on 2026-11-21, Chromium 153 headless on the maintainers' host, in the test's worker: a store of 2,000 blocks
+with 1,512 synthetic Proposes, unpinned, under a caller root with a witness; the worker stopped and woken, the network
+refused: wake to the first verified read 86 ms (median of 7, 75 to 106), of which the open 34.2 ms and the read with
+its two replays 34.7 ms. Without a kept view (a browser start), the first verified answer waits for the refill. At the
+shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, the design pass measured 235 and 258 ms
+(medians of 7), three replays of about 36 ms each among them; the plan's 150 ms row for a worker restart is missed
+until cairnx-core's resumable replay lets one pass serve the bind and both views.
 
 ## Display
 
