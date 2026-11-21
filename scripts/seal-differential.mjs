@@ -299,7 +299,7 @@ step("resolve differential (a): the case files, old vs new and vs their frozen e
       n++;
     }
   }
-  console.log(`  ${n} cases diffed (canonicalState, full state without code, frozen expectedState)`);
+  console.log(`  ${n} cases diffed (canonicalState, full state without code${OLD_MOVES ? "" : " and moves"}, frozen expectedState)`);
 }
 
 step("resolve differential (b): seeded generated corpus with baseline-read coverage floors");

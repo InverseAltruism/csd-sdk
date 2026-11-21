@@ -1,6 +1,6 @@
 // The checks the token moves of a resolve() result (CONVENTION §41) must pass against the state the same call returned.
 // It reads the result only and is written from the convention, not from src/resolve/; packages/cairnx/test/moves.test.ts
-// and scripts/seal-differential.mjs both run it, so the two cannot drift apart.
+// and scripts/seal-differential.mjs both import it, so the test and the seal apply one copy of the checks.
 //   - the identity: for every ticker and address, the amounts received less the amounts sent equal available plus
 //     locked in `balances` (an address or ticker left out of `balances` holds 0);
 //   - the mint moves of a ticker sum to its `minted`;
