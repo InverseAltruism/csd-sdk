@@ -4,7 +4,7 @@ import {
   DEPLOY_FEE, V11_HEIGHT, V15_HEIGHT,
   type DeployRecord, type MintRecord, type ProposeEvent, type TokenMetaRecord, type TransferRecord,
 } from "../types.js";
-import type { ResolveCtx } from "./context.js";
+import { tokenMove, type ResolveCtx } from "./context.js";
 
 export function applyDeploy(c: ResolveCtx, ev: ProposeEvent, rec: DeployRecord, who: string, feeToTreasury: bigint): void {
   const { tokens, applied, refused } = c;
@@ -40,7 +40,7 @@ export function applyMint(c: ResolveCtx, ev: ProposeEvent, rec: MintRecord, who:
   }
   tok.minted += credit;
   bal(rec.ticker, who).available += credit;
-  applied(ev, ev.id, "mint", "TOKEN_MINTED", credit.toString());
+  applied(ev, ev.id, "mint", "TOKEN_MINTED", credit.toString(), [tokenMove("mint", rec.ticker, null, who, credit)]);
 }
 
 export function applyTransfer(c: ResolveCtx, ev: ProposeEvent, rec: TransferRecord, who: string): void {
@@ -49,9 +49,10 @@ export function applyTransfer(c: ResolveCtx, ev: ProposeEvent, rec: TransferReco
   const amt = parseAmount(rec.amount)!;
   const from = bal(rec.ticker, who);
   if (from.available < amt) { refused(ev, ev.id, "transfer", "TOKEN_BALANCE_LOW", "insufficient available balance"); return; }
+  const to = rec.to.toLowerCase();
   from.available -= amt;
-  bal(rec.ticker, rec.to.toLowerCase()).available += amt;
-  applied(ev, ev.id, "transfer", "TOKEN_TRANSFERRED");
+  bal(rec.ticker, to).available += amt;
+  applied(ev, ev.id, "transfer", "TOKEN_TRANSFERRED", undefined, [tokenMove("xfer", rec.ticker, who, to, amt)]);
 }
 
 export function applyTmeta(c: ResolveCtx, ev: ProposeEvent, rec: TokenMetaRecord, who: string): void {

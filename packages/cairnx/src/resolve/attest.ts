@@ -4,10 +4,10 @@ import {
   CLAIM_COOLDOWN_BLOCKS, CONF_TOKEN_FILL, MAX_ACTIVE_CLAIMS, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL, TREASURY_ADDR,
   V13_HEIGHT, V14_HEIGHT, V16_HEIGHT, V17_HEIGHT, V28_HEIGHT, claimWindowAt, isNameGive, isTokenWant,
   makerRebate, tradeFee,
-  type AttestEvent,
+  type AttestEvent, type TokenMove,
 } from "../types.js";
 import type { RefusalCode } from "../codes.js";
-import { claimGrace, claimHeld, ptAmt, type NameRec, type OfferRec, type ResolveCtx } from "./context.js";
+import { claimGrace, claimHeld, ptAmt, tokenMove, type NameRec, type OfferRec, type ResolveCtx } from "./context.js";
 
 type TokenWantOffer = OfferRec & { want: { ticker: string; amount: string; payto: string } };
 type PartialFillOffer = OfferRec & { give: { ticker: string; amount: string }; min: string };
@@ -114,13 +114,14 @@ function applyTokenFill(c: ResolveCtx, ev: AttestEvent, o: TokenWantOffer, who: 
   // atomic swap: debit buyer, credit payto + treasury, deliver give to buyer
   buyer.available -= amt + fee;
   bal(o.want.ticker, o.want.payto).available += amt;
-  if (fee > 0n) bal(o.want.ticker, TREASURY_ADDR).available += fee;
+  const moves = [tokenMove("sale", o.want.ticker, who, o.want.payto, amt)];
+  if (fee > 0n) { bal(o.want.ticker, TREASURY_ADDR).available += fee; moves.push(tokenMove("fee", o.want.ticker, who, TREASURY_ADDR, fee)); }
   if (isNameGive(o.give)) deliverNameToBuyer(c, o.give.name, giveName!, who, ev);
-  else releaseGiveLock(o, who, giveLock!);
+  else moves.push(releaseGiveLock(o, who, giveLock!));
   setOfferStatus(o, "filled");
   o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: amt.toString(), fee: fee.toString() };
   markBidDone(o, who);
-  applied(ev, ev.txid, "fill", "FILL_APPLIED");
+  applied(ev, ev.txid, "fill", "FILL_APPLIED", undefined, moves);
 }
 
 function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, who: string): void {
@@ -154,6 +155,7 @@ function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, w
   if (lock === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
   bal(o.give.ticker, o.seller).locked -= out;
   bal(o.give.ticker, who).available += out;
+  const moves = [tokenMove("fill", o.give.ticker, o.seller, who, out)];
   offerLock.set(o.id, lock - out);
   o.paid = newPaid.toString(); o.delivered = newDelivered.toString();
   const entry = { buyer: who, txid: ev.txid, height: ev.height, paid: x.toString(), fee: fee.toString(), got: out.toString() };
@@ -163,7 +165,7 @@ function applyPartialFill(c: ResolveCtx, ev: AttestEvent, o: PartialFillOffer, w
     setOfferStatus(o, "filled"); o.fill = entry; offerLock.delete(o.id);
     markBidDone(o, who);
   }
-  applied(ev, ev.txid, "fill", "FILL_PARTIAL", `partial ${x}/${want}`);
+  applied(ev, ev.txid, "fill", "FILL_PARTIAL", `partial ${x}/${want}`, moves);
 }
 
 function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {
@@ -210,6 +212,7 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): vo
   if (unpaid) { refused(ev, ev.txid, "fill", unpaid.code, unpaid.note); return; }
   const paid = ptAmt(pt[o.want.payto]);
   // deliver the asset to the buyer
+  const moves: TokenMove[] = [];
   if (isNameGive(o.give)) {
     const n = names.get(o.give.name);
     if (!n) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "name vanished (consensus violation)"); return; }
@@ -217,13 +220,13 @@ function applyFill(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): vo
   } else {
     const amt = offerLock.get(o.id);
     if (amt === undefined) { refused(ev, ev.txid, "fill", "INVARIANT_BROKEN", "offer lock missing"); return; }
-    releaseGiveLock(o, who, amt);
+    moves.push(releaseGiveLock(o, who, amt));
   }
   c.feesPaid += fee;
   setOfferStatus(o, "filled");
   o.fill = { buyer: who, txid: ev.txid, height: ev.height, paid: paid.toString(), fee: fee.toString() };
   markBidDone(o, who);
-  applied(ev, ev.txid, "fill", "FILL_APPLIED");
+  applied(ev, ev.txid, "fill", "FILL_APPLIED", undefined, moves);
 }
 
 function applyLegacyClaim(c: ResolveCtx, ev: AttestEvent, o: OfferRec, who: string): void {

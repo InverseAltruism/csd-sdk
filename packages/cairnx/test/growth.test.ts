@@ -1,13 +1,14 @@
 // The growth streams of conformance/growth-streams.mjs at 500 and 1,000: each stream's expectations (a refusal and an
 // admission of every cap, the V21 flip, the bulk-cancel filters, the edges), its state at the tip, check mode on every
 // tip, and the replay indexes' visits per event as the stream doubles. A pin is the
-// first 16 hex digits of stateHash and of sha256 over the whole result with each log entry's note left out (codes,
-// recaptures and fclaims stay in), as the tree computed them before the replay indexes (fc6e081); canonicalState
-// there equals cairnx-core 0.2.4's on every stream. A sanctioned rule change that moves a stream re-pins it in the
-// same commit.
+// first 16 hex digits of stateHash and of sha256 over the whole result with each log entry's note and token moves left
+// out (codes, recaptures and fclaims stay in), as the tree computed them before the replay indexes (fc6e081), which
+// wrote no moves; canonicalState there equals cairnx-core 0.2.4's on every stream. Each stream's moves pass
+// conformance/moves-check.mjs instead. A sanctioned rule change that moves a stream re-pins it in the same commit.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { growthStreams, resolverAt, type GrowthStream } from "../../../conformance/growth-streams.mjs";
+import { checkMoves } from "../../../conformance/moves-check.mjs";
 import * as R from "../src/index.js";
 import type { CairnXState } from "../src/index.js";
 import { replay } from "../src/resolve.js";
@@ -45,7 +46,7 @@ const PINS: Record<string, [string, string]> = {
 };
 
 const sha16 = (x: string): string => createHash("sha256").update(x).digest("hex").slice(0, 16);
-const withoutNotes = (s: CairnXState) => ({ ...s, events: s.events.map(({ note: _note, ...e }) => e) });
+const withoutNotes = (s: CairnXState) => ({ ...s, events: s.events.map(({ note: _note, moves: _moves, ...e }) => e) });
 
 let streams = 0;
 const seen = new Set<string>();
@@ -60,6 +61,7 @@ for (const n of [500, 1_000]) {
     assert.ok(pin, `a pin for ${s.label}`);
     assert.equal(R.stateHash(st).slice(2, 18), pin[0], `${s.label}: canonical state moved`);
     assert.equal(sha16(JSON.stringify(withoutNotes(st))), pin[1], `${s.label}: the result moved (codes, recaptures or fclaims)`);
+    assert.deepEqual(checkMoves(st, R.TREASURY_ADDR).problems, [], `${s.label}: token moves`);
     streams++;
   }
 }
