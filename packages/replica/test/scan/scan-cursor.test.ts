@@ -1,4 +1,4 @@
-// Scanner cursor protocol — paging, saturation fail-loud, and the C5 attestation cache.
+// Scanner cursor protocol: paging, saturation fail-loud, and the closed-window attestation cache.
 // (the scan-cliff fix: a truncated proposal feed must THROW, never resolve to wrong state)
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -33,8 +33,8 @@ const mock = http.createServer((req, res) => {
     const from = Number(u.searchParams.get("from") ?? 0);
     return send(props.filter((x) => x.height >= from).sort((a, b) => a.height - b.height).slice(0, limit));
   }
-  // /block-height/:h is REQUIRED by the scanner's reorg guards (invalidateCacheOnReorg, src/scan.ts):
-  // both the shallow CX-SCAN-REORG-POS-1 check and the META-4 freeze-horizon check sample the block
+  // /block-height/:h is REQUIRED by the scanner's reorg guards (invalidateCacheOnReorg, src/scanner.ts):
+  // both the shallow tip check and the deep freeze-horizon check sample the block
   // hash here, and the shallow one CLEARS attCache when the prior tip hash is UNCONFIRMABLE (its
   // documented fail-closed posture). Without this route the mock 404s, so pass 2 always cleared the
   // cache and test 2 below failed 2 !== 1 -- which had been mislabelled an environmental flake.
@@ -58,7 +58,7 @@ const base = `http://127.0.0.1:${(mock.address() as { port: number }).port}`;
   console.log("  ok cursor paging: 7 proposals complete across 3-row pages (boundary de-duped)");
 }
 
-// 2. C5 attestation cache: closed windows fetched once EVER; live windows every pass
+// 2. closed-window attestation cache: closed windows fetched once EVER; live windows every pass
 {
   attHits = {};
   const s = new Scanner({ indexerUrl: base, pageSize: 10 });
@@ -67,7 +67,7 @@ const base = `http://127.0.0.1:${(mock.address() as { port: number }).port}`;
   const closed = props.slice(0, 5), live = props.slice(5);
   for (const p of closed) assert.equal(attHits[p.txid], 1, `closed ${p.txid} fetched once`);
   for (const p of live) assert.equal(attHits[p.txid], 2, `live ${p.txid} fetched per pass`);
-  console.log("  ok C5 cache: closed-window attestations fetched once; live windows every pass");
+  console.log("  ok closed-window cache: closed-window attestations fetched once; live windows every pass");
 }
 
 // 3. saturation fail-loud: a legacy indexer (ignores ?from=) serving exactly a full page must THROW

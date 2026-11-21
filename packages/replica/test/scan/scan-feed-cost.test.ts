@@ -1,4 +1,4 @@
-// M3-B1-03: a steady scan reads only what is new. Before the chain-order feed, every scan pulled the whole attestation
+// A steady scan reads only what is new. Before the chain-order feed, every scan pulled the whole attestation
 // list of each proposal whose window was still open, so its request count grew with that count (a far expiry keeps a
 // window open for good, 0.25 CSD per proposal). Here the count of a scan with nothing new, and of one with one new
 // block, is the same for 10, 100 and 1,000 far-expiry proposals; every scan still emits what a fresh scanner does.

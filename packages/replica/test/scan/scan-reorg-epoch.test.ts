@@ -1,4 +1,4 @@
-// Scanner.reorgEpoch, the signal the resolver's block-time memo follows (src/serviceview.ts makeBlockTime): it moves
+// Scanner.reorgEpoch, the signal a caller's per-block memo follows: it moves
 // when a scan drops its caches because the chain changed under them or could not be confirmed, and only then.
 import assert from "node:assert/strict";
 import http from "node:http";

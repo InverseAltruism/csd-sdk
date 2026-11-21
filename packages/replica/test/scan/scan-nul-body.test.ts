@@ -1,9 +1,8 @@
 // A cairnx:v1 Propose whose uri holds U+0000 (the node admits any UTF-8 uri). No JSON holds U+0000 unescaped, so it
 // is no record. An indexer store that holds no U+0000 serves another uri for it: csd-indexer 0.3.8 stores each
-// U+0000 as U+0001, and node:sqlite before it read the text only up to the U+0000. With verifyInclusion on (the
-// armed maker) the scan takes the record from the node's body; a scan that failed on the row's other uri would fail
-// on every pass, and the maker's loop pause on each. Every record here is a real signed consensus tx
-// (test/scan-chain.ts with keys).
+// U+0000 as U+0001, and node:sqlite before it read the text only up to the U+0000. With verifyInclusion on the scan
+// takes the record from the node's body; a scan that failed on the row's other uri would fail on every pass. Every
+// record here is a real signed consensus tx (test/scan/scan-chain.ts with keys).
 import assert from "node:assert/strict";
 import { Scanner } from "../../src/scanner.js";
 import { canonicalState, resolve } from "@inversealtruism/cairnx-core";

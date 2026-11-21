@@ -1,6 +1,6 @@
-// META-4 regression: the closed-window attestation cache must NOT survive a reorg that crosses its
+// Regression: the closed-window attestation cache must NOT survive a reorg that crosses its
 // freeze horizon. Before the fix, a long-running scanner served a stale `filled`/attestation set a
-// fresh scanner would not (resolve.ts:2-3 byte-identity violated). The fix re-samples the block hash
+// fresh scanner would not. The fix re-samples the block hash
 // at tip−FINALITY each scan and drops the closed cache when it changes (a deep reorg). This test
 // also asserts NON-degradation: with a stable hash the cache is still reused (no false re-fetch).
 // The block at the tip keeps its hash, so the shallow check (scan-reorg-pos) does not clear: only the
@@ -44,7 +44,7 @@ let r = await s.scan();
 assert.equal(atts(r), 1, "scan1 sees the attestation");
 assert.equal(attHits, 1, "fetched once");
 
-// scan 2, NO reorg (anchor hash unchanged): the closed cache is reused — NOT re-fetched (non-degradation).
+// scan 2, NO reorg (anchor hash unchanged): the closed cache is reused, NOT re-fetched (non-degradation).
 attSet = []; // the indexer would now serve a different set, but a stable chain must keep the cached view
 r = await s.scan();
 assert.equal(attHits, 1, "no reorg → closed cache reused, no re-fetch (efficiency preserved)");
@@ -59,4 +59,4 @@ assert.equal(atts(r), 0, "post-reorg the stale 'filled' attestation is gone (mat
 console.log("  ok deep reorg: the freeze-horizon hash change drops the stale closed cache");
 
 mock.close();
-console.log("\nscan-reorg: META-4 deep-reorg attCache invalidation — 2/2 passed");
+console.log("\nscan-reorg: deep-reorg attCache invalidation, 2/2 passed");

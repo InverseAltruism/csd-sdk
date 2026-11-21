@@ -46,7 +46,7 @@ const specs: Spec[] = [
 ];
 const TIP = H0 + 40;
 const chain = buildChain(specs, { keys: KEYS });
-const [T0, , T2, T3] = chain.txs.map((x) => x.txid);
+const [T0, , T2, T3] = chain.txs.map((x) => x.txid) as [string, string, string, string];
 const txOf = (id: string) => chain.txs.find((x) => x.txid === id)!.tx;
 
 /** The node serves `tx` for `id` with input 0's scriptSig replaced (the txid is unchanged: it strips scriptSigs), and
@@ -92,14 +92,14 @@ for (const c of cases) {
   });
 }
 
-// Row 111: the node re-signs a body. Any key can sign the sighash (it strips scriptSigs), so the signature verifies and
+// The node re-signs a body. Any key can sign the sighash (it strips scriptSigs), so the signature verifies and
 // recoverSigner names KC; the coin input 0 spends is KA's, so KA is the author and a body signed by KC has none.
 const resigned = (() => { const { sig64, pub33 } = signDigest(sighash(txOf(T0)), KEYS[KC]!); return buildScriptSig(sig64, pub33).slice(2); })();
-await at("row 111 red-first: a body the node re-signed with another key's valid signature (KC) has no author: the scan fails", async () => {
+await at("red-first: a body the node re-signed with another key's valid signature (KC) has no author: the scan fails", async () => {
   assert.equal(recoverSigner(resigned, sighash(txOf(T0))), KC, "the signature itself verifies");
   await rejects(scan({ [T0]: { proposer: KC } }, nodeServes(T0, resigned)), /^F4: tx 0x[0-9a-f]+ has no author: /);
 });
-await at("row 111: the same body with the coin's source tx served paying KC does not recompute: the scan fails", async () => {
+await at("the same body with the coin's source tx served paying KC does not recompute: the scan fails", async () => {
   await rejects(scan({ [T0]: { proposer: KC } }, nodeServes(T0, resigned, KC)), /^F4: source tx 0x[0-9a-f]+ of 0x[0-9a-f]+ recomputes to a different txid/);
 });
 

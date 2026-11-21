@@ -1,6 +1,6 @@
-// CairnX scanner numeric-feed pins (Plan 2026-07-06 WS3 3.1) — real Scanner against MOCK indexers.
+// CairnX scanner numeric-feed pins: real Scanner against MOCK indexers.
 // Pins the CRITIC-REVISED epoch policy: expires_epoch goes through the sentinel-tolerant reqEpoch
-// (the indexer deliberately clamps attacker-chosen u64 epochs to a 2^53 sentinel — GRX-WIRE-CLAMP-1 —
+// (the indexer deliberately clamps attacker-chosen u64 epochs to a 2^53 sentinel
 // that the resolver rejects PER-RECORD; a safe-integer throw in the scanner would be an on-chain
 // 0.25-CSD whole-resolver-freeze DoS), while genuine garbage (non-numeric/negative/absent) still
 // aborts the scan loud, and score / mined-tx height ride the strict reqOrd (honest feeds always
@@ -17,7 +17,7 @@ const B = "0x" + "bb".repeat(20);
 const H = ACTIVATION_HEIGHT + 40; // pre-v11/v13 → no protocol fee / no taker-bind, isolates the epoch check
 const id = (n: number) => "0x" + n.toString(16).padStart(64, "0");
 const ee = Math.floor(H / EPOCH_LEN) + 24;
-const SENTINEL = 2 ** 53; // the indexer's u64 clamp sentinel (GRX-WIRE-CLAMP-1); NOT a safe integer
+const SENTINEL = 2 ** 53; // the indexer's u64 clamp sentinel; NOT a safe integer
 
 const off = offer({ give: { ticker: "DUST", amount: "100" }, want: { value: "50000000" } });
 const dep = deploy({ ticker: "DUST", decimals: 0, supply: "1000", mint: "open", mintLimit: "1000" });
@@ -57,7 +57,7 @@ const offerTx = (height: unknown = H) => ({ [id(1)]: { txid: id(1), height, pos:
 // ── 1) the 2^53 SENTINEL flows THROUGH: scan does NOT throw, the record is present, and the
 //       resolver rejects it PER-RECORD (a lone hostile anchor can never freeze the whole resolver).
 //       Test BOTH wire forms: a JS number AND the decimal string the indexer actually emits for a
-//       value > MAX_SAFE_INTEGER (queries.ts jsonSafe → v.toString()) — the DoS-critical path is the
+//       value > MAX_SAFE_INTEGER (queries.ts jsonSafe → v.toString()), the DoS-critical path is the
 //       string one, so pin it explicitly.
 for (const [form, wire] of [["number", SENTINEL], ["decimal string (the real indexer wire form)", String(SENTINEL)]] as const) {
   const { events, tipHeight } = await runScan({ proposals: [offerRow(wire)], txs: offerTx() });
@@ -67,7 +67,7 @@ for (const [form, wire] of [["number", SENTINEL], ["decimal string (the real ind
   assert.equal(Object.keys(st.offers).length, 0, "resolver refused the sentinel-epoch offer");
   const ev = st.events.find((e) => e.id === id(1));
   assert.ok(ev && !ev.ok && /safe-integer/.test(ev.note ?? ""), "per-record refusal with the safe-integer note");
-  console.log(`  ok 2^53 sentinel expires_epoch (${form}) flows through — resolver rejects per-record, scan survives`);
+  console.log(`  ok 2^53 sentinel expires_epoch (${form}) flows through, resolver rejects per-record, scan survives`);
 }
 
 // ── 2) genuine GARBAGE expires_epoch aborts the scan loud (wrong state is worse than no state)

@@ -1,6 +1,6 @@
 // Scanner with verifyInclusion on: a record's own fields (proposer, uri, payload hash, expiry, domain; attester, score,
 // confidence, target proposal) come from the node's transaction body, and an indexer row that disagrees with the
-// body fails the scan. Every record here is a real signed consensus tx (test/scan-chain.ts with keys): its output
+// body fails the scan. Every record here is a real signed consensus tx (test/scan/scan-chain.ts with keys): its output
 // pays PAYEE, so the signer can only come from the scriptSig. Each forged case changes one row field of a real txid.
 import assert from "node:assert/strict";
 import { Scanner } from "../../src/scanner.js";
@@ -33,7 +33,7 @@ const specs: Spec[] = [
 ];
 const TIP = H0 + 40;
 const chain = buildChain(specs, { keys });
-const [T0, T1, T2, T3, T4] = chain.txs.map((x) => x.txid);
+const [T0, T1, T2, T3, T4] = chain.txs.map((x) => x.txid) as [string, string, string, string, string];
 
 type Fetch = typeof fetch;
 const off = (f: Fetch) => new Scanner({ indexerUrl: "http://idx", fetch: f }).scan();

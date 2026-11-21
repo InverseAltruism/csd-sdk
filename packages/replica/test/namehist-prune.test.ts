@@ -1,9 +1,9 @@
-// /cairnx/name-history keeps a selected record only when the resolver applied it in the full replay or in the
-// name-scoped replay (M3-X-02, M1-A1-12). Records any chain user can anchor for a fee and that change nothing for the
+// The name history keeps a selected record only when the resolver applied it in the full replay or in the
+// name-scoped replay. Records any chain user can anchor for a fee and that change nothing for the
 // name (a non-owner's nset, a stranger's refused offer of the name and the fill attest on it, refused fill attests on
 // the owner's own offer, the bare ocancels of a refused offer's proposer) neither grow the hints a wallet must fetch
-// (cairn-wallet src/core/namespv.ts refuses more than 256) nor flag the name unprovable. Every call has the service's
-// shape (src/service.ts nameHistMemo). The attack records sit on the chain before the request, so a name attacked
+// (cairn-wallet src/core/namespv.ts refuses more than 256) nor flag the name unprovable. Every call has a
+// resolver service's shape (check with the full replay's applied ids). The attack records sit on the chain before the request, so a name attacked
 // before this change is served as if they were not there.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -85,7 +85,7 @@ t("refused fill attests on the owner's own open-lane offer neither flag the name
   assert.equal(after.hist.scopedReplaySufficient, true, "no applied fill decided the name");
 });
 
-t("M3-X-02 on every name of the capture: a stranger's open-lane offer of the name and one fill attest change no verdict and no hint", () => {
+t("on every name of the capture: a stranger's open-lane offer of the name and one fill attest change no verdict and no hint", () => {
   const changed: string[] = [];
   for (const name of owned) {
     const was = served(corpus.events, TIP, name);

@@ -1,4 +1,4 @@
-// Plan 80 C1 (CX-13): the scanner reports the tip hash it saw before AND after its pull.
+// The scanner reports the tip hash it saw before AND after its pull.
 import assert from "node:assert/strict";
 import http from "node:http";
 import { Scanner, branchRefusal } from "../../src/scanner.js";

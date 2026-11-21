@@ -1,8 +1,8 @@
-// scan-attest-dedup.test.ts: AUDIT M4 (REBIND B7f, the cairnx SERVICE half).
-// The attestation pull (scan.ts allAttestations) pushes the indexer's pages VERBATIM. A duplicated
+// The scanner half of attestation de-dup.
+// The attestation pull (scanner.ts allAttestations) pushes the indexer's pages VERBATIM. A duplicated
 // attestation (a buggy/hostile indexer, or overlapping pages) would ride into resolve() twice and
-// double-apply, double-crediting o.paid / o.delivered on the partial-fill path (resolve.ts:727). The
-// resolve() half of M4 is V29-gated in cairnx-core (dedup only for events at height >= V29); this test
+// double-apply, double-crediting o.paid / o.delivered on the partial-fill path. The
+// resolve() half is V29-gated in cairnx-core (dedup only for events at height >= V29); this test
 // pins the un-gated service-half fix: the scanner de-dups by txid so each attest reaches resolve() once.
 //
 // The scenario is a PARTIAL CSD-priced fill at a height far below V29, so resolve() does NOT dedup and a
@@ -34,7 +34,7 @@ const proposals = [
   { txid: id(2), domain: DOMAIN, payload_hash: mnt.payloadHash, uri: mnt.uri, expires_epoch: ee, proposer: A, height: H + 1 },
   { txid: id(3), domain: DOMAIN, payload_hash: off.payloadHash, uri: off.uri, expires_epoch: Math.floor(H / EPOCH_LEN) + 24, proposer: A, height: H + 2 },
 ];
-// ★ THE DUPLICATED ATTESTATION: the SAME fill attest txid id(4) is served TWICE in the feed for offer id(3).
+// THE DUPLICATED ATTESTATION: the SAME fill attest txid id(4) is served TWICE in the feed for offer id(3).
 const attestations: Record<string, unknown[]> = {
   [id(3)]: [
     { txid: id(4), proposal_id: id(3), attester: B, score: SCORE_FILL, height: H + 3 },
@@ -70,16 +70,16 @@ mock.close();
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { cond ? pass++ : fail++; console.log(`  ${cond ? "✓" : "✗"} ${name}`); };
 
-// ★ direct service-half assertion: the duplicated attest txid is emitted ONCE, not verbatim-twice.
+// direct scanner-half assertion: the duplicated attest txid is emitted ONCE, not verbatim-twice.
 const fillEvents = events.filter((e) => e.kind === "attest" && (e as { txid: string }).txid === id(4));
-ok("M4 ★ a duplicated attestation is de-duped in the scanner (emitted once, not twice)", fillEvents.length === 1);
+ok("a duplicated attestation is de-duped in the scanner (emitted once, not twice)", fillEvents.length === 1);
 
-// ★ applied-once: resolve() (below V29, so it does NOT dedup) credits the partial fill exactly once.
+// applied-once: resolve() (below V29, so it does NOT dedup) credits the partial fill exactly once.
 const s = resolve(events, tipHeight);
 const o = s.offers[id(3)];
-ok("M4: the partial fill is APPLIED ONCE, delivered = 10 DUST (a double-apply would be 20)", o?.delivered === "10");
-ok("M4: the partial fill is APPLIED ONCE, paid = 0.1 CSD (a double-apply would be 0.2)", o?.paid === "10000000");
-ok("M4: exactly one accepted fill event in resolved state", s.events.filter((e) => e.kind === "fill" && e.ok).length === 1);
+ok("the partial fill is APPLIED ONCE, delivered = 10 DUST (a double-apply would be 20)", o?.delivered === "10");
+ok("the partial fill is APPLIED ONCE, paid = 0.1 CSD (a double-apply would be 0.2)", o?.paid === "10000000");
+ok("exactly one accepted fill event in resolved state", s.events.filter((e) => e.kind === "fill" && e.ok).length === 1);
 
 console.log(`\nscan-attest-dedup: ${pass} passed, ${fail} failed`);
 if (fail) { assert.fail(`${fail} scan-attest-dedup assertions failed`); }

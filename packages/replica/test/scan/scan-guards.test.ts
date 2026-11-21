@@ -1,6 +1,6 @@
 // The scanner's pagination guards, through a mock indexer: a feed that never ends, a cursor that does not advance, a
 // feed without cursor support and a page that is not a list each fail the scan with their own message, pinned whole
-// (it is served as the `/cairnx/health` `error`), and complete multi-page feeds are read whole.
+// (a resolver serves it as its health `error`), and complete multi-page feeds are read whole.
 // Wrong state is worse than no state: each refusal stops the scan before resolve() sees a partial history.
 import assert from "node:assert/strict";
 import { Scanner } from "../../src/scanner.js";

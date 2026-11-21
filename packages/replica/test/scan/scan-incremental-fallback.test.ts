@@ -1,4 +1,4 @@
-// M3-B1-03: when the chain-order feed cannot be trusted to continue the kept events, the scan pulls in full instead,
+// When the chain-order feed cannot be trusted to continue the kept events, the scan pulls in full instead,
 // so the worst a broken or missing feed costs is today's full pull, never a dropped or doubled event. Each case: a
 // scan that falls back emits what a fresh scanner does, and the next clean scan reads on from the feeds again. Also
 // pinned: a refused scan keeps nothing of its own, and past the bound every scan is the full pull.
@@ -120,7 +120,7 @@ for (const [name, tamper] of pageEndCases) {
 }
 
 // A well-formed feed row whose field the node's body contradicts (verifyInclusion on) is a verification failure, not a
-// malformed row: the scan fails, as the full pull does on such a row (test/scan-bind-fields.test.ts).
+// malformed row: the scan fails, as the full pull does on such a row (test/scan/scan-bind-fields.test.ts).
 {
   const { w, scan } = rig(pageEndOn, pageEnd);
   assert.equal(await scan(), true);

@@ -1,5 +1,5 @@
-// CairnX scanner hardening — real Scanner against a MOCK indexer that returns MALFORMED outputs.
-// Proves the 2026-06-11 red-team fix: a bad output (non-numeric/hex value, missing/garbage addr,
+// CairnX scanner hardening: real Scanner against a MOCK indexer that returns MALFORMED outputs.
+// A bad output (non-numeric/hex value, missing/garbage addr,
 // huge array) is SKIPPED (not thrown, not counted) → a fill whose payment came via a malformed
 // output is REJECTED (conservative), and one weird tx never crashes the scan.
 import assert from "node:assert/strict";
@@ -48,9 +48,9 @@ const mock = http.createServer((req, res) => {
   if (p === "/blocks/tip/height") return send(H + 10);
   if (p === `/domain/${DOMAIN}/proposals`) return send(proposals);
   let m = /^\/proposal\/(0x[0-9a-f]{64})\/attestations$/.exec(p);
-  if (m) return send(attestations[m[1]] ?? []);
+  if (m) return send(attestations[m[1]!] ?? []);
   m = /^\/tx\/(0x[0-9a-f]{64})$/.exec(p);
-  if (m && txs[m[1]]) return send(txs[m[1]]);
+  if (m && txs[m[1]!]) return send(txs[m[1]!]);
   res.writeHead(404); res.end("{}");
 });
 
@@ -63,13 +63,13 @@ const state = resolve(events, tipHeight);
 assert.equal(events.length, 5, "scan did not crash on the malformed tx (skipped, not thrown)");
 console.log("  ok malformed outputs do NOT crash the scan (one weird tx can't DoS it)");
 
-const o = state.offers[id(3)];
+const o = state.offers[id(3)]!;
 assert.equal(o.status, "filled");
 assert.equal(o.fill!.buyer, B);
 assert.equal(o.fill!.txid, id(5), "the WELL-FORMED fill won; the malformed-payment fill was rejected");
 console.log("  ok malformed-payment fill REJECTED (hex value + null addr skipped → payment not counted)");
 
-assert.equal(state.balances.DUST[B].available, "100");
+assert.equal(state.balances.DUST![B]!.available, "100");
 assert.equal(state.events.filter((e) => e.kind === "fill" && !e.ok).length, 1); // the malformed attempt
 console.log("  ok conservative skip: malformed outputs shrink the payment, never inflate it");
 

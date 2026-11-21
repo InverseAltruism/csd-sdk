@@ -1,4 +1,4 @@
-// AUDIT F4: with verifyInclusion ON, the scanner binds every payment/fee-feeding tx to consensus
+// With verifyInclusion ON, the scanner binds every payment/fee-feeding tx to consensus
 // (txid-recompute + merkle inclusion in a PoW-verified block + conf-depth) and fails CLOSED on any
 // gap. Non-self-fulfilling: the proposal txid is the REAL codec txid of a constructed tx, the merkle
 // proof is built with the codec's own merkle primitives, and each attack mutates exactly one input.
@@ -80,7 +80,7 @@ await (async () => {
   ok("a tx shallower than confDepth (vs the PoW-verified tip) is NOT RESOLVED (reorg-exposed, deferred)", !events.some((e) => e.kind === "propose" && e.id === PID));
 })();
 
-// (d2) F4-DEPTH-1 (the core fix): the indexer inflates its OWN tip to fake depth, but the gate uses the
+// (d2) the indexer inflates its OWN tip to fake depth, but the gate uses the
 // PoW-verified tip, so an honestly-mined-but-SHALLOW tx is still rejected regardless of the indexer's tip.
 await (async () => {
   const liar = (async (url: string) => {
@@ -93,7 +93,7 @@ await (async () => {
   ok("an inflated INDEXER tip cannot fake depth: the PoW-verified tip governs → shallow tx NOT RESOLVED", !events.some((e) => e.kind === "propose" && e.id === PID));
 })();
 
-// (f) F4-DEPTH-1 (claim-deep / prove-shallow): the indexer claims a DEEP height for the tx but the merkle
+// (f) claim-deep / prove-shallow: the indexer claims a DEEP height for the tx but the merkle
 // proof proves it sits in a DIFFERENT (near-tip, shallow) block. The claimed height must equal the proven
 // one, so the mismatch is rejected (the old gate ran on the claimed height and accepted this).
 await (async () => {

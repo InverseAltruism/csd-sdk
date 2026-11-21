@@ -1,10 +1,9 @@
-// A residual of M3-B1-03, documented in CHANGELOG.md (0.4.34) and AGENTS.md (Core flows): a switch to another
+// A residual of the kept events: a switch to another
 // branch and back inside one scan is not detected. When the indexer serves branch K for the read of the kept events'
 // anchor block and branch A for the tip block's hash before it and the feed reads after it, the scan is accepted and
 // its kept events keep K's row, which this scan and every later one serve until the kept events are replaced (the
 // refresh after 40 accepted scans, any other scan that pulls in full, a restart) or rolled back below the row (a reorg
-// of the anchor block while the row lies within 12 blocks of it). test/scan-kept-refresh.test.ts pins the same through
-// a full pull.
+// of the anchor block while the row lies within 12 blocks of it).
 import assert from "node:assert/strict";
 import { Scanner, branchRefusal } from "../../src/scanner.js";
 import { deploy, mint } from "@inversealtruism/cairnx-core";
