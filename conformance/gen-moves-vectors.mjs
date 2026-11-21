@@ -10,12 +10,15 @@
 //   transfer             a transfer, one to the sender itself, and a transfer above the available balance (refused).
 //   offer-cancel-expiry  two open offers lock, a cancel and an expiry release, all on one address: no moves.
 //   csd-whole-fill       a whole fill of a CSD-priced token offer: the give, seller to buyer.
-//   csd-partial-fill     three partial fills: each move is the give units delivered, not the CSD paid.
+//   csd-partial-fill     three partial fills paying a payto that is not the seller: each move is the give units
+//                        delivered, not the CSD paid, and comes from the seller.
 //   token-fill-token     a token-for-token fill: the sale to payto, the fee to the treasury, then the give.
 //   token-fill-name      a name sold for tokens: the sale and the fee, no give move.
 //   token-fill-zero      a token-priced offer wanting "0": its fill writes only the give.
 //   csd-name-fill        a name sold for CSD moves no token: no moves.
 //   refused-fills        a token fill above the buyer's balance, one without the marker, a CSD fill short of the price.
+//   token-fill-name-payto  a name sold for tokens with a payto that is neither the seller nor the buyer: the sale goes
+//                        to payto.
 import { writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -63,7 +66,7 @@ const add = (name, events, tipHeight, moves, shows) => {
   for (const [what, ok] of shows(st)) if (!ok) fail(name, what);
   const got = st.events.filter((e) => Object.hasOwn(e, "moves")).map((e) => ({ id: e.id, kind: e.kind, moves: e.moves }));
   if (!isDeepStrictEqual(got, moves)) fail(name, `moves ${JSON.stringify(got)}, written ${JSON.stringify(moves)}`);
-  const check = checkMoves(st, T);
+  const check = checkMoves(st, T, events);
   if (check.problems.length) fail(name, `moves-check: ${check.problems.join("; ")}`);
   built.push({ name, tipHeight, events, moves });
 };
@@ -117,7 +120,7 @@ const refusedAs = (st, e, code) => st.events.some((x) => x.id === (e.kind === "p
 }
 {
   const d = open("DUST", A, H), m = mintOf("DUST", A, H + 1, "100");
-  const o = PE(offer({ give: { ticker: "DUST", amount: "10" }, want: { value: "1000000000" }, min: "200000000", taker: B }), H + 2, A, epochOf(H) + 50);
+  const o = PE(offer({ give: { ticker: "DUST", amount: "10" }, want: { value: "1000000000", payto: C }, min: "200000000", taker: B }), H + 2, A, epochOf(H) + 50);
   const ev = [d, m, o];
   const f1 = csdFill(ev, o.id, B, H + 3, "200000000"); ev.push(f1);
   const f2 = csdFill(ev, o.id, B, H + 4, "350000000"); ev.push(f2);
@@ -126,7 +129,7 @@ const refusedAs = (st, e, code) => st.events.some((x) => x.id === (e.kind === "p
     [at(m, "mint", mv("mint", "DUST", null, A, "100")), at(f1, "fill", mv("fill", "DUST", A, B, "2")), at(f2, "fill", mv("fill", "DUST", A, B, "3")),
       at(f3, "fill", mv("fill", "DUST", A, B, "5"))],
     (st) => [["filled by the third", st.offers[o.id]?.status === "filled"], ["got 2, 3, 5", st.offers[o.id]?.fills?.map((x) => x.got).join() === "2,3,5"],
-      ["the third pays 450000000 of its 500000000", st.offers[o.id]?.fills?.[2]?.paid === "450000000"]]);
+      ["the third pays 450000000 of its 500000000", st.offers[o.id]?.fills?.[2]?.paid === "450000000"], ["payto is C, not the seller", st.offers[o.id]?.want.payto === C]]);
 }
 const gems = (h) => [open("GEMS", B, h), mintOf("GEMS", B, h + 1, "100000")];
 {
@@ -173,6 +176,16 @@ const gems = (h) => [open("GEMS", B, h), mintOf("GEMS", B, h + 1, "100000")];
     [at(ev[1], "mint", mv("mint", "DUST", null, A, "100")), at(ev[3], "mint", mv("mint", "GEMS", null, B, "100"))],
     (st) => [["99 plus its fee is above 100", refusedAs(st, f1, "TOKEN_BALANCE_LOW")], ["no marker", refusedAs(st, f2, "FILL_NO_TOKEN_MARKER")],
       ["short of the price", refusedAs(st, f3, "FILL_UNDERPAID")], ["all three open", [o1, o2, o3].every((o) => st.offers[o.id]?.status === "open")]]);
+}
+
+// last: a case inserted before another renumbers the ids of every case after it
+{
+  const ev = [...register("gempay", A, H), ...gems(H + 2)];
+  const o = PE(offer({ give: { name: "gempay" }, want: { ticker: "GEMS", amount: "500", payto: C } }), H + 20, A, epochOf(H + 20) + 2);
+  const f = tokenFill(o.id, B, H + 21);
+  add("token-fill-name-payto", [...ev, o, f], H + 22,
+    [at(ev[4], "mint", mv("mint", "GEMS", null, B, "100000")), at(f, "fill", mv("sale", "GEMS", B, C, "500"), mv("fee", "GEMS", B, T, "8"))],
+    (st) => [["B owns the name", st.names.gempay?.owner === B], ["C holds the 500", bal(st, "GEMS", C)?.available === "500"], ["A holds no GEMS", bal(st, "GEMS", A) === undefined]]);
 }
 
 const path = new URL("../packages/cairnx/test/vectors/moves.json", import.meta.url);

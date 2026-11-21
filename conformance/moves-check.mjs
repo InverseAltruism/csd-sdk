@@ -1,10 +1,19 @@
-// The checks the token moves of a resolve() result (CONVENTION §41) must pass against the state the same call returned.
-// It reads the result only and is written from the convention, not from src/resolve/; packages/cairnx/test/moves.test.ts
-// and scripts/seal-differential.mjs both import it, so the test and the seal apply one copy of the checks.
+// The checks the token moves of a resolve() result (CONVENTION §41) must pass against the input events and the state the
+// same call returned. It reads the events, the log and the state only and is written from the convention, not from
+// src/resolve/; packages/cairnx/test/moves.test.ts and scripts/seal-differential.mjs both import it, so the test and the
+// seal apply one copy of the checks.
 //   - the identity: for every ticker and address, the amounts received less the amounts sent equal available plus
 //     locked in `balances` (an address or ticker left out of `balances` holds 0);
 //   - the mint moves of a ticker sum to its `minted`;
-//   - an applied mint carries one mint move, an applied transfer one xfer move, and an applied fill the moves its offer's
+//   - an applied transfer carries one move, its own record's: from the input Propose with the entry's id, height and
+//     position, leg xfer, the record's ticker, from the proposer, to the record's `to` (addresses compare in lower case,
+//     §3), the record's amount;
+//   - an applied mint carries one move: leg mint, the record's ticker, from null, to the proposer. Its amount is not bound
+//     per entry: the capped credit has one home, the resolver, and this check does not restate the cap; the mint total
+//     and the identity hold it. A mint credits its own author, so amounts moved between two mints of one author and
+//     ticker change no balance and no third party's credit. Where two input events share id, height and position (a
+//     list §33 does not produce), an entry binds to any one of them not yet bound;
+//   - an applied fill carries the moves its offer's
 //     fill record (§5) gives, in this order: on a token-priced offer a sale of `paid` from the buyer to `want.payto` and a
 //     fee of `fee` from the buyer to the treasury; on a token give a fill from the seller to the buyer of `give.amount`
 //     (a whole fill) or of the `fills[]` entry's `got` (a partial one); a zero amount gives no move;
@@ -15,12 +24,42 @@ const LEGS = ["xfer", "mint", "fill", "sale", "fee"];
 const POSITIVE = /^[1-9][0-9]*$/;
 const KEYS = "leg,ticker,from,to,amount";
 
+/** The record a Propose's uri holds, or null when the uri is not JSON (such a record is refused, so it binds no move). */
+const recordOf = (uri) => {
+  if (typeof uri !== "string") return null;
+  try { return JSON.parse(uri); } catch { return null; }
+};
+
 /**
  * @param {import("../packages/cairnx/src/index.js").CairnXState} state
  * @param {string} treasury
+ * @param {import("../packages/cairnx/src/index.js").ChainEvent[]} events the input of the resolve() call
  */
-export function checkMoves(state, treasury) {
+export function checkMoves(state, treasury, events) {
+  if (!Array.isArray(events)) throw new TypeError("checkMoves needs the resolve() input events");
   const problems = [];
+  // The mint and transfer Proposes of the input by id, height and position, each with the move its entry must carry.
+  const proposes = new Map();
+  for (const ev of events) {
+    if (ev?.kind !== "propose" || typeof ev.proposer !== "string") continue;
+    const r = recordOf(ev.uri);
+    if (!r || typeof r !== "object" || (r.t !== "mint" && r.t !== "transfer")) continue;
+    const author = ev.proposer.toLowerCase();
+    const want = r.t === "transfer"
+      ? { leg: "xfer", ticker: r.ticker, from: author, to: typeof r.to === "string" ? r.to.toLowerCase() : r.to, amount: r.amount }
+      : { leg: "mint", ticker: r.ticker, from: null, to: author };
+    const k = `${ev.id}\u0000${ev.height}\u0000${ev.pos}`;
+    const q = proposes.get(k) ?? [];
+    q.push({ t: r.t, want, bound: false });
+    proposes.set(k, q);
+  }
+  const bindsRecord = (e, m) => {
+    const c = (proposes.get(`${e.id}\u0000${e.height}\u0000${e.pos}`) ?? []).find((x) => !x.bound && x.t === e.kind &&
+      x.want.leg === m.leg && x.want.ticker === m.ticker && x.want.from === m.from && x.want.to === m.to &&
+      (e.kind === "mint" || x.want.amount === m.amount));
+    if (c) c.bound = true;
+    return c !== undefined;
+  };
   const legs = Object.fromEntries(LEGS.map((l) => [l, 0]));
   const net = new Map();                       // ticker NUL address -> received less sent
   const minted = new Map();                    // ticker -> sum of its mint moves
@@ -75,6 +114,7 @@ export function checkMoves(state, treasury) {
     } else {
       const leg = e.kind === "mint" ? "mint" : "xfer";
       if (moves.length !== 1 || moves[0].leg !== leg) problems.push(`${where}: moves ${JSON.stringify(moves)}, not one ${leg} move`);
+      else if (!bindsRecord(e, moves[0])) problems.push(`${where}: move ${JSON.stringify(moves[0])} is not its own record's (${e.kind === "mint" ? "ticker, and the proposer as to" : "ticker, the proposer as from, to, amount"})`);
     }
     if (has) entries++;
     for (const m of moves) {

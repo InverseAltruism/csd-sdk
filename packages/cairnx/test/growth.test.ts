@@ -61,7 +61,7 @@ for (const n of [500, 1_000]) {
     assert.ok(pin, `a pin for ${s.label}`);
     assert.equal(R.stateHash(st).slice(2, 18), pin[0], `${s.label}: canonical state moved`);
     assert.equal(sha16(JSON.stringify(withoutNotes(st))), pin[1], `${s.label}: the result moved (codes, recaptures or fclaims)`);
-    assert.deepEqual(checkMoves(st, R.TREASURY_ADDR).problems, [], `${s.label}: token moves`);
+    assert.deepEqual(checkMoves(st, R.TREASURY_ADDR, s.events).problems, [], `${s.label}: token moves`);
     streams++;
   }
 }

@@ -1,6 +1,6 @@
 // Types of moves-check.mjs for the TypeScript tests (a declaration beside a .mjs is what the compiler reads, so the
 // module itself stays plain JavaScript like the rest of conformance/).
-import type { CairnXState, TokenMove } from "../packages/cairnx/src/index.js";
+import type { CairnXState, ChainEvent, TokenMove } from "../packages/cairnx/src/index.js";
 
 export interface MovesCheck {
   /** every failed check, one line each; empty when the moves pass */
@@ -13,4 +13,5 @@ export interface MovesCheck {
   entries: number;
 }
 
-export declare function checkMoves(state: CairnXState, treasury: string): MovesCheck;
+/** `events` is the input of the resolve() call that returned `state`. */
+export declare function checkMoves(state: CairnXState, treasury: string, events: ChainEvent[]): MovesCheck;

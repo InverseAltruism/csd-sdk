@@ -1,11 +1,14 @@
 // Token moves (CONVENTION §41), the moves an applied entry records where balances move. Three layers: the shipped vectors
 // (test/vectors/moves.json, written by hand in conformance/gen-moves-vectors.mjs); conformance/moves-check.mjs (the
-// identity, the mint totals, each fill's moves from its fill record, none on a refused entry) over the replay corpus at
-// every pinned height and over every case file; and one honest transfer and one honest fill written out on the call
-// shape a reader sends, resolve(events, tip) and then events[i].moves.
+// identity, the mint totals, each transfer's and mint's move bound to its own record, each fill's moves from its fill
+// record, none on a refused entry) over the replay corpus at every pinned height and over every case file; one honest
+// transfer and one honest fill written out on the call shape a reader sends, resolve(events, tip) and then
+// events[i].moves; and doctored logs the check must refuse, among them swaps no total can see.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { growthStreams } from "../../../conformance/growth-streams.mjs";
 import { checkMoves } from "../../../conformance/moves-check.mjs";
+import * as R from "../src/index.js";
 import {
   CONF_TOKEN_FILL, DEPLOY_FEE, SCORE_FILL, TREASURY_ADDR, V29_HEIGHT, deploy, epochOf, mint, offer, resolve, transfer,
   type CairnXState, type ChainEvent, type ProposeEvent, type TokenMove,
@@ -21,15 +24,15 @@ const t = (name: string, fn: () => void) => {
   } catch (e) { fail++; console.log(`  FAIL ${name}: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
 };
 const read = (f: string) => JSON.parse(readFileSync(new URL(`./vectors/${f}`, import.meta.url), "utf8"));
-const problemsOf = (st: CairnXState) => checkMoves(st, TREASURY_ADDR).problems;
+const problemsOf = (st: CairnXState, events: ChainEvent[]) => checkMoves(st, TREASURY_ADDR, events).problems;
 
 type Entry = { id: string; kind: string; moves: TokenMove[] };
 type Case = { name: string; tipHeight: number; events: ChainEvent[]; moves: Entry[] };
 const vectors = read("moves.json") as { format: number; cases: Case[] };
 
-t("moves.json is format 1, its 12 cases hold every leg", () => {
+t("moves.json is format 1, its 13 cases hold every leg", () => {
   assert.equal(vectors.format, 1);
-  assert.equal(vectors.cases.length, 12);
+  assert.equal(vectors.cases.length, 13);
   const legs = new Set(vectors.cases.flatMap((c) => c.moves.flatMap((e) => e.moves.map((m) => m.leg))));
   assert.deepEqual([...legs].sort(), ["fee", "fill", "mint", "sale", "xfer"]);
 });
@@ -37,12 +40,12 @@ for (const c of vectors.cases) {
   const st = resolve(c.events, c.tipHeight);
   t(`vector ${c.name}: the entries that carry moves, and their moves`, () =>
     assert.deepEqual(st.events.filter((e) => Object.hasOwn(e, "moves")).map((e) => ({ id: e.id, kind: e.kind, moves: e.moves })), c.moves));
-  t(`vector ${c.name}: moves-check`, () => assert.deepEqual(problemsOf(st), []));
+  t(`vector ${c.name}: moves-check`, () => assert.deepEqual(problemsOf(st, c.events), []));
 }
 
 const legTotal = { xfer: 0, mint: 0, fill: 0, sale: 0, fee: 0 };
-const tally = (st: CairnXState) => {
-  const r = checkMoves(st, TREASURY_ADDR);
+const tally = (events: ChainEvent[], tip: number) => {
+  const r = checkMoves(resolve(events, tip), TREASURY_ADDR, events);
   for (const l of Object.keys(legTotal) as TokenMove["leg"][]) legTotal[l] += r.legs[l];
   return r;
 };
@@ -51,7 +54,7 @@ const heights = [...Object.keys((read("replay-hashes.json") as { hashes: Record<
 let corpusPairs = 0;
 t(`moves-check over the replay corpus at ${heights.length} heights`, () => {
   for (const h of heights) {
-    const r = tally(resolve(corpus.events.filter((e) => e.height <= h), h));
+    const r = tally(corpus.events.filter((e) => e.height <= h), h);
     assert.deepEqual(r.problems, [], `at ${h}`);
     corpusPairs += r.pairs;
   }
@@ -65,7 +68,7 @@ t(`moves-check over every case of ${caseFiles.join(", ")} and the resolve cases 
     ...caseFiles.flatMap((f) => (read(f) as { cases: { name: string; events: ChainEvent[]; tipHeight: number }[] }).cases.map((c) => ({ ...c, name: `${f}:${c.name}` }))),
     ...(read("codes.json") as { resolve: { name: string; events: ChainEvent[]; tipHeight: number }[] }).resolve.map((c) => ({ ...c, name: `codes.json:${c.name}` })),
   ];
-  for (const c of all) { assert.deepEqual(tally(resolve(c.events, c.tipHeight)).problems, [], c.name); caseInputs++; }
+  for (const c of all) { assert.deepEqual(tally(c.events, c.tipHeight).problems, [], c.name); caseInputs++; }
 });
 
 t("every entry of the corpus at its tip keeps the 0.2.7 keys in their order, `moves` only last", () => {
@@ -117,25 +120,50 @@ t("an honest token-for-token fill: sale to payto, fee to the treasury, then the 
     { leg: "fee", ticker: "GEMS", from: B, to: TREASURY_ADDR, amount: "30" },
     { leg: "fill", ticker: "DUST", from: A, to: B, amount: "10" },
   ]);
-  assert.deepEqual(problemsOf(st), []);
+  assert.deepEqual(problemsOf(st, events), []);
 });
 
-// moves-check is the seal's oracle: each doctored log below must fail it.
-const doctor = (name: string, edit: (st: CairnXState) => void, expect: RegExp) => t(`moves-check refuses ${name}`, () => {
-  const c = vectors.cases.find((x) => x.name === "token-fill-token")!;
-  const st = structuredClone(resolve(c.events, c.tipHeight));
+// moves-check is the seal's oracle: each doctored log below must fail it. `only` names the one kind of problem a doctored
+// log may raise, for a swap that every total and the identity leave unseen.
+type Input = { events: ChainEvent[]; tipHeight: number };
+const vector = (name: string): Input => vectors.cases.find((x) => x.name === name)!;
+const doctor = (name: string, input: Input, edit: (st: CairnXState) => void, expect: RegExp, only = false) => t(`moves-check refuses ${name}`, () => {
+  const st = structuredClone(resolve(input.events, input.tipHeight));
   edit(st);
-  const p = problemsOf(st);
+  const p = problemsOf(st, input.events);
   assert.ok(p.some((x) => expect.test(x)), p.join(" | ") || "no problem found");
+  if (only) assert.deepEqual(p.filter((x) => !expect.test(x)), [], "no total or identity sees it");
 });
 const fillEntry = (st: CairnXState) => st.events.find((e) => e.kind === "fill" && e.ok)!;
-doctor("a fill without its fee move", (st) => { fillEntry(st).moves!.splice(1, 1); }, /the fill record gives|identity/);
-doctor("a mint move above the credit", (st) => { st.events.find((e) => e.kind === "mint")!.moves![0]!.amount = "101"; }, /mint moves of DUST sum to 101|identity/);
-doctor("moves on a refused entry", (st) => {
+const applied = (st: CairnXState, kind: string) => st.events.filter((e) => e.kind === kind && e.ok);
+const tff = vector("token-fill-token");
+const NOT_OWN = /is not its own record's/;
+doctor("a fill without its fee move", tff, (st) => { fillEntry(st).moves!.splice(1, 1); }, /the fill record gives|identity/);
+doctor("a mint move above the credit", tff, (st) => { st.events.find((e) => e.kind === "mint")!.moves![0]!.amount = "101"; }, /mint moves of DUST sum to 101|identity/);
+doctor("moves on a refused entry", tff, (st) => {
   st.events.push({ height: 1, pos: 0, id: "0x01", kind: "transfer", ok: false, code: "TOKEN_BALANCE_LOW", moves: [{ leg: "xfer", ticker: "DUST", from: A, to: B, amount: "1" }] });
 }, /carries moves/);
-doctor("an applied transfer without moves", (st) => { st.events.push({ height: 1, pos: 0, id: "0x02", kind: "transfer", ok: true, code: "TOKEN_TRANSFERRED" }); }, /not one xfer move/);
-doctor("a zero move", (st) => { fillEntry(st).moves!.push({ leg: "fill", ticker: "DUST", from: A, to: B, amount: "0" }); }, /bad amount 0|the fill record gives/);
+doctor("an applied transfer without moves", tff, (st) => { st.events.push({ height: 1, pos: 0, id: "0x02", kind: "transfer", ok: true, code: "TOKEN_TRANSFERRED" }); }, /not one xfer move/);
+doctor("a zero move", tff, (st) => { fillEntry(st).moves!.push({ leg: "fill", ticker: "DUST", from: A, to: B, amount: "0" }); }, /bad amount 0|the fill record gives/);
+// Swaps no total sees: each needs the move bound to its own record.
+const dup = growthStreams(R, 500).find((s) => s.label === "a duplicated offer id around a same-block ocancel")!;
+doctor("two transfers' moves swapped (the duplicated-offer growth stream at 70,000)", { events: dup.events, tipHeight: 70_000 }, (st) => {
+  const [x, y] = applied(st, "transfer");
+  assert.ok(x && y && x.moves![0]!.amount !== y.moves![0]!.amount, "two applied transfers of different amounts");
+  [x.moves, y.moves] = [y.moves, x.moves];
+}, NOT_OWN, true);
+doctor("a self-transfer's parties replaced by another address", vector("transfer"), (st) => {
+  const self = applied(st, "transfer").find((e) => e.moves![0]!.from === e.moves![0]!.to)!;
+  Object.assign(self.moves![0]!, { from: "0x" + "ee".repeat(20), to: "0x" + "ee".repeat(20) });
+}, NOT_OWN, true);
+doctor("a self-transfer's amount altered", vector("transfer"), (st) => {
+  applied(st, "transfer").find((e) => e.moves![0]!.from === e.moves![0]!.to)!.moves![0]!.amount = "999";
+}, NOT_OWN, true);
+doctor("two mints' recipients swapped", vector("mint-open"), (st) => {
+  const [a, , c] = applied(st, "mint");
+  assert.equal(a!.moves![0]!.amount, c!.moves![0]!.amount, "two mints of one amount");
+  [a!.moves![0]!.to, c!.moves![0]!.to] = [c!.moves![0]!.to, a!.moves![0]!.to];
+}, NOT_OWN, true);
 
 console.log(`token moves: ${pass} passed, ${fail} failed (${vectors.cases.length} vectors; corpus at ${heights.length} heights, ${corpusPairs} pair checks; ${caseInputs} case inputs; moves per leg ${JSON.stringify(legTotal)})`);
 if (fail) process.exit(1);

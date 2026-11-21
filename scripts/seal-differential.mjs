@@ -114,7 +114,7 @@ const ADDED_SINCE_BASELINE = {
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
   [`${VEC}/cases-convention.json`]: "9cb61caf0ea391cc3cd370207d7623b99ac91485d34c051e763f671bb3ca76be",
   [`${VEC}/forward.json`]: "bc56213e507fa6f6ba7c6f2da1f4180215cb8e3ea07c95c33177c1b688aa2b2c",
-  [`${VEC}/moves.json`]: "a47be03cf5ad1a1df473a1b9b0bf433f1a84ccfcc0d4b7d69555af12ebaa9ab6",
+  [`${VEC}/moves.json`]: "5ad6b3ed11b0ceb4addf4ea1586246e67f76aa0ff0eb05ab9c59558efcc9fbe8",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");
@@ -262,7 +262,7 @@ const diffCase = (name, events, tip) => {
     const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(CODE_MOVES ? ns : stripMoves(ns));
     if (fc !== fn) report(name, `full state with code${CODE_MOVES ? "" : ", without moves,"} vs ${CODE_BASELINE_REF}`, events, fc, fn);
   }
-  const mv = checkMoves(ns, NEW.TREASURY_ADDR);
+  const mv = checkMoves(ns, NEW.TREASURY_ADDR, events);
   movesSeen.inputs++; movesSeen.pairs += mv.pairs; movesSeen.entries += mv.entries;
   for (const l of Object.keys(moveLegs)) moveLegs[l] += mv.legs[l];
   if (mv.problems.length) {
