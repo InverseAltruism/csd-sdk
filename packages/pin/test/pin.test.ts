@@ -16,7 +16,7 @@ import { chainRead, shipped, type Descriptor } from "./shipped.js";
 
 const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
 const pinJson = JSON.parse(readFileSync(shipped.PIN_FILE, "utf8")) as Descriptor;
-const base = shipped.baseFixture(), deltas = shipped.readDeltas(), d = await shipped.derive(), shippedLog = await PIN.log();
+const base = shipped.baseFixture(), deltas = shipped.readDeltas(), d = await shipped.derivedPin(pinJson), shippedLog = await PIN.log();
 const events = JSON.parse(new TextDecoder().decode(d.log)) as ChainEvent[];
 
 console.log("the log, regenerated:");
@@ -27,6 +27,9 @@ ok(`the fixture and the ${deltas.length} delta(s) give the shipped log byte for 
 ok("the derived pin repeats pin.json in every field but core, and its logSha256, eventsHash and stateHash are the log's own",
   shipped.differing(d.pin, pinJson).length === 0 && `0x${sha(shippedLog)}` === pinJson.logSha256 && d.pin.eventsHash === pinJson.eventsHash &&
   stateHash(resolve(events, pinJson.height)) === pinJson.stateHash);
+const lost = deltas.map((x, i) => (i === deltas.length - 1 ? { ...x, blocks: x.blocks.slice(0, -1) } : x));
+const dropped = await shipped.derivedPin(pinJson, base, lost).then(() => "", (e: unknown) => (e instanceof Error ? e.message : String(e)));
+ok("the build's check refuses a delta that lost its last block, naming the logSha256", /does not give pin\.json: logSha256/.test(dropped), dropped);
 const fields = ["blockHash", "logSha256", "eventsHash", "stateHash"] as const;
 ok("the build's compare names each of the block hash, the three hashes and a gate it is handed wrong, and ignores core",
   fields.every((k) => shipped.differing({ ...pinJson, [k]: `0x${"1".repeat(64)}` }, pinJson).join() === k) &&

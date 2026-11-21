@@ -10,6 +10,7 @@ const load = async <T>(path: string): Promise<T> => (await import(String(new URL
 export const shipped = await load<{
   PIN_FILE: string; DELTAS: string; baseFile(): string; baseFixture(): BlockFixture; readDeltas(dir?: string): Fixture[];
   derive(base?: BlockFixture, deltas?: Fixture[]): Promise<{ pin: Descriptor; log: Uint8Array }>; differing(got: Descriptor, want: Descriptor): string[];
+  derivedPin(pin: Descriptor, base?: BlockFixture, deltas?: Fixture[]): Promise<{ pin: Descriptor; log: Uint8Array }>;
 }>("../scripts/shipped.mjs");
 export const gen = await load<{
   generate(o: { rpc: string; anchor: { height: number; hash: string }; check?: boolean; fetch?: typeof fetch; base?: BlockFixture; deltas?: Fixture[];

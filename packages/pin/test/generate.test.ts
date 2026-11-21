@@ -3,6 +3,7 @@
 // honest run must give the pin derivePin gives over cairnx-core's own recording to 30,240, and --check must pass on
 // it; then each refusal is caused alone. A live node cannot be made to serve another block below a committed pin, a
 // recording that drops a record, or another gate table, so those refusals are shown here only.
+import { spawnSync } from "node:child_process";
 import { derivePin, BUILT_GATES } from "@inversealtruism/cairnx-replica/server";
 import type { BlockFixture } from "@inversealtruism/cairnx-replica/testing";
 import { done, ok } from "../../replica/test/check.js";
@@ -45,4 +46,25 @@ ok("a gate table that differs from the committed pin's at or below its height",
   refusedWith(await run({ pin: { ...prior, gates: { ...prior.gates, V11_HEIGHT: 29_961 } } }), /committed pin's at or below 30000/));
 ok("a new log that does not extend the committed pin's", refusedWith(await run({ pin: { ...prior, logSha256: want.logSha256 } }), /does not extend the committed pin at 30000/));
 ok("the honest run over the committed pin at 30,000 passes", (await run({ pin: prior })).r !== null);
+
+console.log("the review's cases:");
+ok("an anchor that is an epoch boundary (30,240): refused by name, before any read", refusedWith(await run({ anchor: { height: 30_240, hash: hashAt(30_240) }, fetch: () => { throw new Error("read"); } }), /30240 is an epoch boundary/));
+const cli = spawnSync(process.execPath, [new URL("../scripts/generate-pin.mjs", import.meta.url).pathname, "--rpc", NODE, "--anchor", `30259:${hashAt(30_259)}`, "--chek"], { encoding: "utf8" });
+ok("a mistyped --check: exit 2 naming the option, nothing read or written", cli.status === 2 && /unknown or incomplete option --chek; nothing read or written/.test(cli.stderr), cli.stderr);
+// The second derivation stops at 30,235, above the range's last event (30,228): its log would be the same bytes.
+const stops: typeof fetch = (input, init) => init?.cache === "no-store" && new URL(String(input)).pathname === "/block/height/30235"
+  ? Promise.resolve(new Response("{}", { status: 503 })) : fetch(input, init);
+ok("the nodeBlocks loop stopping above the range's last event: refused, not taken as equal bytes", refusedWith(await run({ fetch: stops }), /nodeBlocks loop stopped at 30234/));
+const innerHash = honest.r ? { ...honest.r.delta, blocks: honest.r.delta.blocks.map((b, i) => (i === 0 ? { ...b, hash: hashAt(b.height + 1) } : b)) } : null;
+ok("--check over a delta whose block hash was changed (no field of pin.json moves): refused, the delta named",
+  refusedWith(await run({ check: true, deltas: innerHash ? [innerHash] : [], pin: honest.r?.pin ?? null }), /another the delta than/));
+// The anchor's block read once as the claimed hash, then as the chain's: the headers verified from the pin reach the chain's.
+const fake = `0x${"ab".repeat(32)}`;
+let anchorReads = 0;
+const flips: typeof fetch = async (input, init) => {
+  const r = await fetch(input, init);
+  if (new URL(String(input)).pathname !== "/block/height/30259" || ++anchorReads > 1) return r;
+  return new Response(JSON.stringify({ ...(await r.json()), hash: fake }), { headers: { "content-type": "application/json" } });
+};
+ok("an anchor the node named once and then not: the header walk does not reach it, refused", refusedWith(await run({ anchor: { ...anchor, hash: fake }, fetch: flips }), /headers verified from the pin reach .* not the anchor/));
 done("cairnx-pin generator");

@@ -28,7 +28,7 @@ differential is described in `conformance/README.md` and the audit method in `co
   `conformance/scan-repeated-txids.mjs` (transaction ids mined at more than one height or position), and
   `packages/pin/scripts/generate-pin.mjs` (the next pin and delta from a node and a released anchor; its package
   test runs its refusals against the replica's recorded node, offline).
-  `conformance/README.md` describes each.
+  `conformance/README.md` describes the first three, `packages/pin/README.md` the generator.
 - Cross-language differential (`pnpm test:crosslang`, the CI fork gate, needs python3): crosscheck.mjs,
   crosscheck-regex.mjs (raw regex differential, the C1 class), crosscheck-resolve.mjs, replay-corpus-crosslang.mjs
   (the committed on-chain corpus at every pinned height), crosscheck-siwc.mjs, nprofile-crosslang.mjs,

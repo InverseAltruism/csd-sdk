@@ -7,7 +7,8 @@
 // node's block at the height below the new range; a walk of verified headers from the pin that does not reach the
 // anchor; the two derivations of the log differing (the recorded blocks through derivePin, and the replica's
 // nodeBlocks loop from the activation height), or a new log that does not extend the committed pin's; a gate table
-// that differs from the replica's built one at or below the pin, or from the committed pin's at or below its height.
+// that differs from the replica's built one at or below the pin, or from the committed pin's at or below its height;
+// an anchor that is an epoch boundary (the anchors of a release table are not) and an unknown option.
 // Then it writes fixtures/delta-<from>-<to>.json (the blocks of the range that hold an event, each with every payload
 // transaction of its block, in the recorder's form) and pin.json. --check regenerates the newest delta and the pin
 // and compares them with the committed files; it writes nothing. Read-only GETs to the node, at most 8 in flight.
@@ -39,6 +40,7 @@ async function nodeLog(rpc, fetch, to, hash) {
 /** The new pin and delta from the node at `rpc`, or a thrown refusal. `base`, `deltas` and `pin` are the committed
  *  state (pin null before the first); `built` the replica's gate table; `fetch` reaches the node. */
 export async function generate({ rpc, anchor, check = false, fetch = boundedFetch, base = baseFixture(), deltas = readDeltas(), pin = null, built = BUILT_GATES }) {
+  if (anchor.height % EPOCH_LEN === 0) throw refused(`the anchor ${anchor.height} is an epoch boundary; a release anchor table's entries are not, so this is not one`);
   const client = new CsdClient({ baseUrl: rpc, fetch, timeoutMs: 20_000, retries: 3 });
   const tip = await client.tip();
   if (!(anchor.height <= tip.height - FINAL_DEPTH)) throw refused(`the anchor ${anchor.height} is less than ${FINAL_DEPTH} below the node's tip ${tip.height}`);
@@ -75,8 +77,14 @@ export async function generate({ rpc, anchor, check = false, fetch = boundedFetc
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const argv = process.argv.slice(2), flag = (n) => { const i = argv.indexOf(n); return i < 0 ? undefined : argv[i + 1]; };
-  const [h, hash] = String(flag("--anchor") ?? "").split(":"), rpc = flag("--rpc") ?? process.env.CSD_RPC, check = argv.includes("--check");
+  const argv = process.argv.slice(2), opts = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--check") opts.check = true;
+    else if ((a === "--rpc" || a === "--anchor") && argv[i + 1] !== undefined) opts[a.slice(2)] = argv[++i];
+    else { console.error(`generate-pin: unknown or incomplete option ${a}; nothing read or written`); process.exit(2); }
+  }
+  const [h, hash] = String(opts.anchor ?? "").split(":"), rpc = opts.rpc ?? process.env.CSD_RPC, check = opts.check === true;
   if (!rpc || !/^[0-9]+$/.test(h ?? "") || !HASH.test(hash ?? "")) {
     console.error("generate-pin: no node, or no anchor <height>:<0x hash>, named\nusage: generate-pin.mjs [--rpc <node url>, else CSD_RPC] --anchor <height>:<0x hash> [--check]");
     process.exit(2);

@@ -39,6 +39,14 @@ export function fixtureOf(base, deltas) {
 /** The pin and log derived from `base` and `deltas` (default: the committed ones). */
 export const derive = (base = baseFixture(), deltas = readDeltas()) => derivePin(fixtureOf(base, deltas));
 
+/** The pin and log `base` and `deltas` give, or a throw naming each field of `pin` (pin.json) they do not repeat. The
+ *  build, its test and prepack all go through it. */
+export async function derivedPin(pin, base = baseFixture(), deltas = readDeltas()) {
+  const d = await derive(base, deltas), bad = differing(d.pin, pin);
+  if (bad.length > 0) throw new Error(`the log derived from the fixture and the deltas does not give pin.json: ${bad.join(", ")} differ`);
+  return d;
+}
+
 /** The fields of `want` that `got` does not repeat: every field but `core`, which is information only. */
 export function differing(got, want) {
   return ["format", "rule", "height", "blockHash", "logSha256", "eventsHash", "stateHash", "gates"]

@@ -42,4 +42,29 @@ from the replica's built one at or below the pin or from the committed pin's at 
 regenerates the newest delta and pin and compares them with the committed files, writing nothing.
 
 The recorder's output is a function of the chain alone and the log is canonical JSON, so a second host with its own
-node reaches the same bytes with `--check`. Until such a host checks a pin, its one derivation host is ours.
+node reaches the same bytes with `--check`. Until such a host checks a pin, its one derivation host is ours. To check
+the shipped pin against your own node, pass the anchor its CHANGELOG entry names:
+
+```bash
+node packages/pin/scripts/generate-pin.mjs --rpc http://127.0.0.1:8789 --anchor 143359:0x0000000000003e6d8aa16bdc20ab58023bd58c92185bca427783f33985bf6007 --check
+```
+
+The build and the package test prove that the repo's data gives `pin.json`, not that the data is the chain's: a
+delta changed together with a `pin.json` rewritten to match passes the build and CI, which reads no node. Only
+`--check` against a node catches it, so a pin release is checked against a node by the releaser, and can be by
+anyone.
+
+## Cutting the next pin
+
+1. Run the generator with the newest anchor of the next released anchor table; it writes the new delta and
+   `pin.json`. Run it again with `--check`, and from a second host when one is available.
+2. Capture the honest-path fixture for the new pin with `packages/replica/scripts/capture-node-blocks.mjs`: the 45
+   blocks ending at the pin with their bodies emptied, and the blocks above it up to a tip at least 12 above the pin
+   with no payload transaction, as `test/fixtures/node-blocks-143296-143356.json` is for 143,340; replace that file.
+3. Point `test/pin.test.ts` at the new capture (the line that reads `node-blocks-143296-143356.json`).
+4. Add the CHANGELOG entry with the full anchor, then `pnpm build` and `pnpm test` in this package.
+
+## Notes
+
+- Follow-up, not built: CI's fork gate could run cairnx-core's fixture and the deltas through the Python reference
+  (`conformance/cairnx_ref.py`) against `pin.json`, a derivation that shares no code with the generator.

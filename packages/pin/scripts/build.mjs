@@ -4,13 +4,11 @@
 // the log text held as one string literal, so Node, bundlers and an extension worker load it alike) and its types.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PIN_FILE, ROOT, derive, differing } from "./shipped.mjs";
+import { PIN_FILE, ROOT, derivedPin } from "./shipped.mjs";
 
-const pin = JSON.parse(readFileSync(PIN_FILE, "utf8")), d = await derive(), bad = differing(d.pin, pin);
-if (bad.length > 0) {
-  console.error(`cairnx-pin build: the log derived from the fixture and the deltas does not give pin.json: ${bad.join(", ")} differ`);
-  process.exit(1);
-}
+const pin = JSON.parse(readFileSync(PIN_FILE, "utf8"));
+let d;
+try { d = await derivedPin(pin); } catch (e) { console.error(`cairnx-pin build: ${e instanceof Error ? e.message : String(e)}`); process.exit(1); }
 const dist = join(ROOT, "dist");
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist);
