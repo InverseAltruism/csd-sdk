@@ -103,6 +103,25 @@ const s1 = await run(S, pinOf(d2, "state", { stateHash: d1.pin.stateHash }));
 ok("another state hash at 30,270 (every other value the rows give): kept, and the bind's replay refuses it PIN_MISMATCH, not verified",
   logReads("state") === 0 && !s1.s.verified && codes(s1.s).split(",").includes("PIN_MISMATCH"), codes(s1.s));
 
+const G = fresh(), gatesPin = (tag: string) => pinOf(d2, tag, { gates: { ...d2.pin.gates, V99_HEIGHT: 30_010 }, stateHash: d1.pin.stateHash });
+await run(G, pin1);
+const g1 = await run(G, gatesPin("gates-kept")), g2 = await run(fresh(), gatesPin("gates-fresh"));
+ok("a newer pin of another gate table (so another state hash) over a kept store: RULES_DIFFER, as over a fresh one, not PIN_MISMATCH",
+  logReads("gates-kept") === 0 && [g1, g2].every((g) => !g.s.verified && codes(g.s).split(",").includes("RULES_DIFFER") && !codes(g.s).split(",").includes("PIN_MISMATCH")),
+  `${codes(g1.s)} / ${codes(g2.s)}`);
+
+console.log("a store kept under an anchor root:");
+{
+  const dir = fresh(), wa = witnessOn(all, TIP), at = (pin: Pin) => open({ ...hosted({ pin, origin: ORIGIN, witness: wa.witness, fetch: front({ answers: all }).f }), store: diskStore({ dir }), clock });
+  const h0 = await at(pinOf(d1, "hosted1")), h0s = await h0.advance();
+  await h0.close();
+  const h1 = await at(pinOf(d2, "hosted2")), h1s = await h1.advance(), h1t = await h1.state();
+  await h1.close();
+  ok("hosted under the pin at 30,000, then under 30,270 over the same directory: kept (that log not read), verified at 30,300, the deep state resolve()'s",
+    h0s.verified && logReads("hosted2") === 0 && h1s.verified && h1s.cursor?.height === TIP && pinHeight(h1s) === P2 && h1t.verified && stateHash(h1t.value) === truthAt(TIP - FINAL_DEPTH),
+    `${codes(h0s)} / ${codes(h1s)} reads=${logReads("hosted2")}`);
+}
+
 console.log("what a reopen does not carry:");
 const W = fresh(), wit = witnessOn(all, 30_200);
 const hostedAt = (tip: number) => open({ ...hosted({ pin: pin1, origin: ORIGIN, witness: wit.witness, fetch: front({ answers: all, tip }).f }), store: diskStore({ dir: W }), clock });

@@ -217,9 +217,9 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; what the store threw, such as a
-refusal of its directory met after a start that found it held, which rejects only `advance()`, is in the note's
-`detail`). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; the note's `detail` names why from a
+fixed list: another process holds it, it refuses its directory, a read or write failed, or a reset it needed failed;
+the store's own message, which holds paths, is not put in an answer). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -305,8 +305,9 @@ A server crediting deposits from its own node is `examples/deposits.ts` in this 
 `ownNode`, the store on disk, so a restart reads on from the stored cursor), `creditDeposits` (each verified page
 credited once by the key `(txid, leg)`, its cursor stored with its credits in one transaction, `CURSOR_OFF_BRANCH`
 raised to the operator) and `recover` (below). `test/deposits.test.ts` runs it over the recorded node across a
-restart, a 20-block reorg while running and one while closed, and a newer pin; `test/transfers-reorg.test.ts` runs
-the two calls over a memory store at two depths.
+restart, a 20-block reorg while running and one while closed, and a newer pin; `test/deposits-recover.test.ts` stops
+`recover` at each of its steps and runs the server again; `test/transfers-reorg.test.ts` runs the two calls over a
+memory store at two depths.
 
 ```ts
 import { PIN } from "@inversealtruism/cairnx-pin";
@@ -324,14 +325,21 @@ do itself:
 - Choose `minDepth` for value. The default, `FINAL_DEPTH` (12), is the depth replicas compare at; a row is credited only
   once it is that deep, and a reorg deeper than it can still take back a credited row.
 - Store `next` with its credits in one transaction, only from a verified answer (`shown` carries a page too), and keep
-  `(txid, leg)` unique: one entry can move two legs to one address.
+  `(txid, leg)` unique: one entry can move two legs to one address. Store a memo as bytes or escaped, so that a
+  database refusing U+0000 in text does not stop the address.
 - Drive the replica: nothing runs on a timer, and a read with the default `waitMs` of 0 answers from what is held.
 - On `CURSOR_OFF_BRANCH`: rows it credited may be gone and rows it has not seen may lie below its cursor. Retrying
-  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the server recovers it: it keeps
-  its earlier cursors, takes the newest one the read still accepts (verified, not `CURSOR_OFF_BRANCH`; null when none
-  is) as the cursor, and reads on from there crediting by the unique key. A credit above that cursor that the reread
-  does not give again is no longer on the chain; one it gives again with another amount changed under its key. Both go
-  to the operator. A capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
+  answers the same code while the replica holds that branch, so an address stuck on it credits nothing until the
+  server recovers it. It keeps its earlier cursors and takes the newest one the read still accepts (verified, not
+  `CURSOR_OFF_BRANCH`; null when none is) as the start. It reads the pages after the start without writing, then, in
+  one transaction, raises each credit written after the transaction that stored the start (not compared by height:
+  a page's cursor lies below the deep height its answer was read at) that the pages do not give, and stores the start
+  as the cursor; then it reads on crediting by the unique key. Until that transaction nothing it stores has moved, so
+  a recovery stopped anywhere runs again over the same range. A credit raised so is not at `minDepth` or deeper on the
+  branch the replica holds: it may be gone, or mined again in a block not yet that deep, in which case a later page
+  offers it again and the key refuses a second credit; the raise is for the operator to look at, not to reverse a
+  credit on. A credit offered again with another amount has changed under its key; that goes to the operator too. A
+  capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
   before it) can change under one `(txid, leg)`, which `test/transfers.test.ts` shows. A transfer's, a sale's and a
   fee's do not, by the core's code (read, not tested here): a transfer moves its record's amount, a sale the price of
   the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). The

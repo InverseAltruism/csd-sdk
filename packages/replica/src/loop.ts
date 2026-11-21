@@ -20,6 +20,10 @@ import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
 type Reset = "format" | "rule" | "basis" | "corrupt" | "unavailable";
+/** Internal. Why the last load left the store unavailable, from a fixed list: another process holds it (`held`); it
+ *  refuses its directory (`foreign`, another program's file there); a read or write threw (`io`); or it needed a reset
+ *  for one of the refusals and the reset threw (`format`, `rule`, `basis`, `corrupt`). */
+export type StoreReason = "format" | "rule" | "basis" | "corrupt" | "foreign" | "held" | "io";
 /** Internal. How a loop's store opened: refused with the store's reason, `corrupt` when its rows do not match its
  *  meta and boundaries (held.ts), or `rule` when the gate table it was written under differs from the loaded core's at
  *  or below its cursor. */
@@ -31,11 +35,11 @@ export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
   readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number; readonly resetRefused?: boolean;
 }
-/** Internal. `store` is null before the first open; `storeError` is the message of what the last load of the store
- *  threw (a refusal of its directory included), null when it threw nothing; `retryAt` is when a backed-off loop next
- *  calls its source. */
+/** Internal. `store` is null before the first open; `storeReason` is why its last load did not open it, and
+ *  `storeError` the message of what that load threw (paths included, for the operator's own process; null when it threw
+ *  nothing); `retryAt` is when a backed-off loop next calls its source. */
 export interface LoopStatus {
-  readonly store: "open" | Reset | null; readonly storeError: string | null; readonly cursor: Cursor | null; readonly eventsHash: string; readonly eventCount: number;
+  readonly store: "open" | Reset | null; readonly storeReason: StoreReason | null; readonly storeError: string | null; readonly cursor: Cursor | null; readonly eventsHash: string; readonly eventCount: number;
   readonly tip: TipView | null; readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;
   readonly lastError: { readonly code: SourceCode | "STORE_FAILED"; readonly reason: string; readonly at: number } | null;
   readonly retryAt: number | null; readonly replayMs: number | null;
@@ -99,7 +103,8 @@ export function replicaLoop(o: LoopOptions): Loop {
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
-  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), storeError: string | null = null;
+  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve();
+  let storeReason: StoreReason | null = null, storeError: string | null = null;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -138,6 +143,8 @@ export function replicaLoop(o: LoopOptions): Loop {
   };
   const logSha256At = (h: number): string | null => logSha256In(held, cursor(), h);
   // The source's basis, also over a store kept from an older pin, so its next commit records the pin it is now under.
+  // A kept store carries the old meta's `windowSha256`, `work` and `workRoot`; no source sets them yet (types.ts,
+  // Source), and keepsStore is revisited when one does, since under an anchor root they are the old pin's.
   const metaAt = (c: Cursor): StoreMeta => ({
     ...(meta ?? { format: 1, rule, witnessed: null, windowSha256: null, work: null, workRoot: null }),
     basis: source.basis, gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
@@ -148,7 +155,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     const first = await read();
     if (first.ok || first.reset === "unavailable" || o.resetRefused !== true) return first;
     try { await store.reset(); } catch (e) {
-      storeError = messageOf(e);
+      storeError = messageOf(e); storeReason = e instanceof ReplicaConfigError ? "foreign" : first.reset;
       if (e instanceof ReplicaConfigError) throw e;
       change("replace", 0, 0, () => { opened = "unavailable"; });
       return { ok: false, reset: "unavailable" };
@@ -175,9 +182,10 @@ export function replicaLoop(o: LoopOptions): Loop {
           if (!keepsStore(m0.basis, source.basis, source.pin?.eventsHash ?? null, at)) r = { ok: false, reset: "basis" };
         }
       }
-      storeError = null;   // set only once the load ends, so a read while it runs sees the last load's
+      // Set only once the load ends, so a read while it runs sees the last load's.
+      storeError = null; storeReason = r.ok ? (h === null ? "corrupt" : null) : r.reset === "unavailable" ? "held" : r.reset;
     } catch (e) {
-      storeError = messageOf(e);
+      storeError = messageOf(e); storeReason = e instanceof ReplicaConfigError ? "foreign" : "io";
       if (e instanceof ReplicaConfigError) throw e;
       r = { ok: false, reset: "unavailable" };
     }
@@ -297,7 +305,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   const status = (): LoopStatus => ({
-    store: opened, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
+    store: opened, storeReason, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
     tip, lastReorg, lastError, retryAt, replayMs: m.replayMs,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };

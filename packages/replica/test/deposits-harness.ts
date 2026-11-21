@@ -36,26 +36,37 @@ export const branchB = (): Answers => remine(cap.answers, FORK, END, cap.to, (b)
   if (b.height === DROPPED) { b.txs = b.txs.slice(0, 1); b.header.merkle = merkleRoot(b.txs.map((t) => t.txid)); }
 });
 
-/** The server's database, held in memory: credits by (txid, leg) and each address's cursors (the current one last),
- *  written together, and what it raised to its operator. `offered` counts every row the server tried to credit, so a
- *  row offered twice shows though the key refuses it; a row offered again with another amount is raised. */
-export function database() {
-  const credits = new Map<string, Transfer>(), cursors = new Map<string, (BoundCursor | null)[]>(), offered: string[] = [], alerts: string[] = [];
-  const t: Credit = {
-    credit(x) {
-      const k = `${x.txid}:${x.leg}`, had = credits.get(k);
-      offered.push(k);
-      if (had === undefined) credits.set(k, x);
-      else if (had.amount !== x.amount) alerts.push(`${x.to} ${k}: credited ${had.amount}, now ${x.amount}`);
-    },
-    setCursor: (a, c) => { cursors.set(a, [...(cursors.get(a) ?? []), c]); },
-  };
+/** The server's database, held in memory: credits by (txid, leg), each address's cursors (the current one last) and
+ *  what it raised to its operator, each written in a transaction that applies whole or not at all. `offered` counts
+ *  every row the server tried to credit, so a row offered twice shows though the key refuses it; a row offered again
+ *  with another amount is raised. `copy()` is a second database holding the same state. */
+export function database(from?: { credits: [string, Transfer & { seq: number }][]; cursors: [string, { c: BoundCursor | null; seq: number }[]][]; offered: string[]; alerts: string[]; seq: number }) {
+  const credits = new Map(from?.credits ?? []), cursors = new Map(from?.cursors.map(([a, l]) => [a, [...l]]) ?? []);
+  const offered = [...(from?.offered ?? [])], alerts = [...(from?.alerts ?? [])];
+  let seq = from?.seq ?? 0;
   const db = {
-    cursor: (address: string): BoundCursor | null => cursors.get(address)?.at(-1) ?? null,
-    earlier: (address: string): BoundCursor[] => (cursors.get(address) ?? []).filter((c): c is BoundCursor => c !== null).reverse(),
-    creditedAbove: (address: string, height: number): Transfer[] => [...credits.values()].filter((x) => x.to === address && x.height > height),
-    alert: (address: string, what: string) => { alerts.push(`${address} ${what}`); },
-    transaction: (f: (t: Credit) => void | Promise<void>) => f(t),
+    cursor: (address: string): BoundCursor | null => cursors.get(address)?.at(-1)?.c ?? null,
+    earlier: (address: string): BoundCursor[] => (cursors.get(address) ?? []).map((x) => x.c).filter((c): c is BoundCursor => c !== null).reverse(),
+    creditedAfter(address: string, cursor: BoundCursor | null): Transfer[] {
+      const stored = (cursors.get(address) ?? []).filter((x) => x.c === cursor).at(-1)?.seq ?? 0;
+      return [...credits.values()].filter((x) => x.to === address && x.seq > stored).map(({ seq: _, ...x }) => x);
+    },
+    async transaction(f: (t: Credit) => void | Promise<void>) {
+      const ops: (() => void)[] = [], n = seq + 1;
+      await f({
+        credit: (x) => { ops.push(() => {
+          const k = `${x.txid}:${x.leg}`, had = credits.get(k);
+          offered.push(k);
+          if (had === undefined) credits.set(k, { ...x, seq: n });
+          else if (had.amount !== x.amount) alerts.push(`${x.to} ${k}: credited ${had.amount}, now ${x.amount}`);
+        }); },
+        setCursor: (a, c) => { ops.push(() => { cursors.set(a, [...(cursors.get(a) ?? []), { c, seq: n }]); }); },
+        alert: (a, what) => { ops.push(() => { alerts.push(`${a} ${what}`); }); },
+      });
+      seq = n;
+      for (const op of ops) op();
+    },
   } satisfies Deposits;
-  return { ...db, credits, offered, alerts };
+  const copy = () => database({ credits: [...credits], cursors: [...cursors], offered, alerts, seq });
+  return { ...db, credits, offered, alerts, copy };
 }

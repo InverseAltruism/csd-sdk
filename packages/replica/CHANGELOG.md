@@ -10,14 +10,23 @@
 - `ownNode({ node, dir, pin?, witness?, fetch?, paceMs?, timeoutMs? })` in `./server`: `local`'s source, `diskStore`,
   the witness only when one is named, and a step budget of 512 blocks and 600 requests (internal: `OpenOptions.step`).
   A day above a pin on disk went from 81 commits to 2.
-- `STORE_UNAVAILABLE` carries in its `detail` the message of what the store threw at its last load, so a refusal of
-  the store's directory met after a start that found it held (which rejects only `advance()`) reaches a caller that
-  only reads (internal: `LoopStatus.storeError`). README: give the store a directory of its own; two processes of
+- `STORE_UNAVAILABLE` carries in its `detail` why the store is unavailable, one of a fixed list (another process holds
+  it, it refuses its directory, a read or write failed, a reset it needed failed), so a refusal of the store's
+  directory met after a start that found it held (which rejects only `advance()`) reaches a caller that only reads;
+  the store's message, which holds paths, stays on the loop's status (internal: `LoopStatus.storeReason`,
+  `storeError`). README: give the store a directory of its own; two processes of
   different configuration on one directory reset each other's store.
 - The server example is a file, `examples/deposits.ts` (`openReplica` over `ownNode`, `creditDeposits`, `recover`),
   which the README points at; `test/deposits.test.ts` runs it over the recorded node across a restart, a 20-block
   reorg while running and one while closed, and a newer pin that keeps the store, and `test/transfers-reorg.test.ts`
   runs its two calls over a memory store.
+- The example's `recover` reads the pages after its start without writing, then raises the credits they do not give
+  and stores the start in one transaction, so a recovery stopped at any step runs again over the same range and
+  raises each such credit once; the credits to raise are those written after the transaction that stored the start
+  (`Deposits.creditedAfter`), not compared by a height, and the raise says the credit is not at `minDepth` on this
+  branch (it may be mined again higher). Alerts are written in a transaction (`Credit.alert`).
+- A store kept under a newer pin whose gate table differs answers `RULES_DIFFER`, as a fresh store does (the bind
+  compares the gate table before the state hash).
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash

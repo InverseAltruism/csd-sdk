@@ -16,7 +16,7 @@ and no package uses `Buffer`, so the packages run in a browser and an MV3 extens
 ```bash
 pnpm install --frozen-lockfile   # the pnpm version is pinned in packageManager
 pnpm -r build                    # first: the tests and the typecheck read the sibling packages' dist/
-pnpm typecheck                   # tsc, strict and noUncheckedIndexedAccess, over src, the tests and the release scripts
+pnpm typecheck                   # tsc, strict and noUncheckedIndexedAccess, over src, the tests, the examples and the release scripts
 pnpm lint                        # Biome, four rules: unused imports, empty blocks, focused tests, @ts-ignore
 pnpm check:dashes-paths          # em dashes in tracked docs, sibling paths in code (scripts/dashes-exceptions.json)
 pnpm -r test                     # per-package suites, offline

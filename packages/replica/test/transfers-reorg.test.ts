@@ -5,7 +5,7 @@
 // reorg its cursor is refused (CURSOR_OFF_BRANCH) instead of passing the change silently, the example raises it, and
 // the recovery of the README rereads from the newest earlier cursor still on B, credits nothing twice and names the
 // credit B no longer holds. A reorg that keeps every event keeps every cursor.
-import { creditDeposits as credit, recover as recoverFrom } from "../examples/deposits.js";
+import { creditDeposits as credit, NOT_DEEP, recover as recoverFrom } from "../examples/deposits.js";
 import type { Reader } from "../src/index.js";
 import { local, open } from "../src/server.js";
 import { done, ok } from "./check.js";
@@ -67,8 +67,8 @@ ok("the example raises CURSOR_OFF_BRANCH to its operator at each try and credits
 const rec = [await recover(r12, db12, BOTH, 12), await recover(r12, db12, A_ONLY, 12)];
 ok("the recovery rereads from the cursor of 30,290 (deep 30,278, below the fork), offers the deposit on both branches again and the key refuses it",
   rec.every((x) => x?.from?.startsWith("30278:") === true) && db12.offered.length === 3 && db12.credits.size === 2);
-ok("it raises the credit of A alone as no longer on the chain, and nothing else", db12.alerts.length === 4 &&
-  db12.alerts[3] === `${A_ONLY} ${[...db12.credits.keys()].find((k) => db12.credits.get(k)!.to === A_ONLY)}: credited, no longer on the chain`);
+ok("it raises the credit of A alone as not at minDepth on this branch, and nothing else", db12.alerts.length === 4 &&
+  db12.alerts[3] === `${A_ONLY} ${[...db12.credits.keys()].find((k) => db12.credits.get(k)!.to === A_ONLY)}: ${NOT_DEEP}`);
 const after = [await creditDeposits(r12, db12, BOTH, 12), await creditDeposits(r12, db12, A_ONLY, 12)];
 ok("after the recovery both addresses read verified again, nothing more offered", after.every((a) => a.verified) && db12.offered.length === 3 && db12.alerts.length === 4);
 await r12.close();

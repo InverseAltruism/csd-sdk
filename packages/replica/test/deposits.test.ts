@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { creditDeposits, openReplica, recover, type CreditOptions } from "../examples/deposits.js";
+import { creditDeposits, NOT_DEEP, openReplica, recover, type CreditOptions } from "../examples/deposits.js";
 import { derivePin } from "../src/derive-pin.js";
 import type { Pin, Reader } from "../src/index.js";
 import type { BlockFixture } from "../src/testing.js";
@@ -67,8 +67,8 @@ ok(`the node moves to B: the replica rolls back below the fork (to ${s3.lastReor
 const rec = [await recover(r, db, BOTH, O), await recover(r, db, A_ONLY, O)];
 ok("the recovery rereads from the first start's cursor (deep 30,278, below the fork): the deposit on both branches offered again and refused by the key",
   rec.every((x) => x?.from?.startsWith("30278:") === true) && db.offered.length === 3 && db.credits.size === 2);
-ok("it raises the credit of A alone as no longer on the chain, and nothing else",
-  db.alerts.length === 3 && db.alerts[2] === `${A_ONLY} ${[...db.credits.keys()].find((k) => db.credits.get(k)!.to === A_ONLY)}: credited, no longer on the chain`, db.alerts.join("; "));
+ok("it raises the credit of A alone as not at minDepth on this branch, and nothing else",
+  db.alerts.length === 3 && db.alerts[2] === `${A_ONLY} ${[...db.credits.keys()].find((k) => db.credits.get(k)!.to === A_ONLY)}: ${NOT_DEEP}`, db.alerts.join("; "));
 await r.close();
 
 console.log("a 20-block reorg while closed, keeping every event:");

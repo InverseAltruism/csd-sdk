@@ -13,7 +13,7 @@ import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
-import { replicaLoop } from "./loop.js";
+import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
@@ -57,6 +57,16 @@ export interface Reader extends EventLog {
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
+/** Internal. The detail of STORE_UNAVAILABLE for each reason a load gives (loop.ts StoreReason). */
+export const STORE_DETAILS: Readonly<Record<StoreReason, string>> = Object.freeze({
+  held: "another process holds the store",
+  foreign: "the store refuses its directory: another program's file is there",
+  io: "a read or write of the store failed",
+  format: "the store is of another format and its reset failed",
+  rule: "the store was written under another rule or gate table and its reset failed",
+  basis: "the store was filled under another basis and its reset failed",
+  corrupt: "the store's files fail their checks and its reset failed",
+});
 // The id a tried transaction takes. Its entry in the applied log is found by this id at the height above the cursor,
 // where no held event lies.
 const TRY_TXID = `0x${"f".repeat(64)}`;
@@ -112,9 +122,9 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
-    // A store refused inside a later load (a reader that started while another process held it) throws only into
-    // advance(), so its reason travels in the note's detail to a caller that only reads.
-    const unavailable = s.storeError === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: s.storeError };
+    // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
+    // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
+    const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
     const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
       ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
