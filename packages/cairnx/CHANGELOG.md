@@ -2,6 +2,18 @@
 
 ## 0.2.8
 
+- Token moves in the applied log (CONVENTION section 41, no gate): an applied mint, transfer or fill that moved tokens
+  carries `moves`, each `{ leg, ticker, from, to, amount }` (`TokenMove`, legs `mint`, `xfer`, `sale`, `fee` and
+  `fill`), written by the line that applies the balance change in `src/resolve/tokens.ts` and `src/resolve/attest.ts`.
+  A server that credits token deposits, or a replica that lists transfers, reads a capped mint's credit, a partial
+  fill's delivered units, a sale and its fee from the log instead of restating the rules that decide them. A zero
+  amount writes no move, a refused entry none, and `moves` is an entry's last key. No rule changed: canonical state,
+  `stateHash`, `eventsHash`, every pinned vector and `replay-hashes.json` are unchanged, and the log with `moves` left
+  out is 0.2.7's (`scripts/seal-differential.mjs` against npm's 0.2.7 and 0.2.4). `test/vectors/moves.json` (12 cases,
+  `conformance/gen-moves-vectors.mjs`, expectations written by hand) pins them; `conformance/moves-check.mjs` checks the
+  identity (for every ticker and address, received less sent equals available plus locked) and each fill's moves
+  against its fill record, run by `test/moves.test.ts` over the replay corpus at every pinned height and every case
+  file, and by the seal over every input of its differential.
 - `CAIRNX_CORE_VERSION` (`src/version.ts`), this package's version, kept equal to package.json's by
   `test/version.test.ts`: a host hands it to cairnx-api's `prepareView` without reading the manifest at run time.
 - `GATE_HEIGHTS` (`src/gates.ts`), the gate table as frozen data: `ACTIVATION_HEIGHT` and every `V<n>_HEIGHT` by its
@@ -12,7 +24,7 @@
   the name's `expired`, and null for an absent name or a pending reservation; `nameView(names, name)` gives the class a
   reader shows (`held`, `pending`, `lapsed`, `free`, `reserved`), the owner, and a held name's address and profile
   (CONVENTION section 35.3), or null for a string that is not a name. Both live in `src/forward.ts` and read `names`
-  only; `resolve.ts`, `resolve/`, `records.ts` and `types.ts` are byte-identical to 0.2.7. CONVENTION.md section 35.4
+  only; that change left `resolve.ts`, `resolve/`, `records.ts` and `types.ts` as they were in 0.2.7. CONVENTION.md section 35.4
   states the rule, and section 36.3 now says a name pays to its `addr`, else its owner, which is what the reference
   service answers. `test/vectors/forward.json` (14 cases, `conformance/gen-forward-vectors.mjs`, expectations written
   by hand) pins both functions; `test/forward.test.ts` replays it and compares the service's call shape with an oracle

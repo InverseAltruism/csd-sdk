@@ -62,6 +62,13 @@ this directory, only the JS implementation existed, so the contract was asserted
   recaptures; bulk cancels and displacements over 20,000 offers; the V21 crossing; edge cases), each with the
   expectations it was built to meet, read from the reason codes. `scripts/seal-differential.mjs` step 4(f) runs them
   at full size against the baseline; `packages/cairnx/test/growth.test.ts` at 500 and 1,000 against pinned states.
+- **`moves-check.mjs`** (JavaScript only, not a cross-language job): the token moves of a `resolve()` result
+  (CONVENTION section 41) against the state it returned: the identity (for every ticker and address, received less
+  sent equals available plus locked), the mint totals, each fill's moves from its fill record, no moves on a refused
+  entry. `packages/cairnx/test/moves.test.ts` runs it over the replay corpus and the case files, and
+  `scripts/seal-differential.mjs` step 4(h) over every input of its differential. `gen-moves-vectors.mjs` writes
+  `packages/cairnx/test/vectors/moves.json` from expectations written by hand, after checking each against the built
+  dist and `moves-check.mjs`. `cairnx_ref.py` writes no moves.
 
 Block scripts (read a node, never in CI; `test/ci-workflow.test.ts` pins that no CI step or package script runs
 them, `test/live-opt-in.test.ts` that each refuses by name with no node named and fails by name when the node does
