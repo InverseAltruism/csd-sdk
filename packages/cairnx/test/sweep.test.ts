@@ -24,9 +24,16 @@ const PINS: Record<string, [string, string]> = {
   X: ["b12648cf6033d939", "b81478b691447776"],
   X2: ["fa19b8d403075e99", "8f7fcfcb39227b29"],
 };
+// X and X2 also at V21 - 1 and V21 (events not above the tip): the counterexample's offer and transfer around V21
+const TIP_PINS: Record<string, [string, string]> = {
+  [`X@${R.V21_HEIGHT - 1}`]: ["6baff7b0544d9a3d", "773e19f306c59c21"],
+  [`X@${R.V21_HEIGHT}`]: ["e0c13af9237c231a", "ee76f69b54b3e578"],
+  [`X2@${R.V21_HEIGHT - 1}`]: ["4e04686cfe0982d2", "a7755c05e3bff829"],
+  [`X2@${R.V21_HEIGHT}`]: ["a58fa7fdbffc41cb", "19aa71006a353e2b"],
+};
 const sha16 = (x: string): string => createHash("sha256").update(x).digest("hex").slice(0, 16);
 
-let streams = 0, tips = 0, inert = 0;
+let streams = 0, tips = 0, inert = 0, tipPins = 0;
 for (const s of sweepStreams(R)) {
   assert.deepEqual(s.expect(resolverAt(R.resolve, s)), [], `${s.key}: expectations`);
   const whole = R.resolve(s.events, s.tipHeight);
@@ -34,6 +41,12 @@ for (const s of sweepStreams(R)) {
   assert.ok(pin, `a pin for ${s.key}`);
   assert.equal(R.stateHash(whole).slice(2, 18), pin[0], `${s.key}: canonical state moved`);
   assert.equal(sha16(JSON.stringify(whole)), pin[1], `${s.key}: the whole result moved`);
+  for (const [k, p] of Object.entries(TIP_PINS).filter(([k]) => k.startsWith(`${s.key}@`))) {
+    const t = Number(k.slice(s.key.length + 1)), st = R.resolve(upTo(s.events, t), t);
+    assert.equal(R.stateHash(st).slice(2, 18), p[0], `${k}: canonical state moved`);
+    assert.equal(sha16(JSON.stringify(st)), p[1], `${k}: the whole result moved`);
+    tipPins++;
+  }
   const walk = denseTips(s.events, s.tipHeight, R.EPOCH_LEN);
   for (const t of walk) {
     const upto = upTo(s.events, t);
@@ -49,4 +62,5 @@ for (const s of sweepStreams(R)) {
   streams++;
 }
 assert.equal(streams, Object.keys(PINS).length, "every pin is used");
-console.log(`sweep streams: ${streams} streams, expectations met, each equal to its pin; check mode clean at ${tips} tips; ${inert} events that write nothing changed nothing`);
+assert.equal(tipPins, Object.keys(TIP_PINS).length, "every tip pin is used");
+console.log(`sweep streams: ${streams} streams, expectations met, each equal to its pin (and ${tipPins} at further tips); check mode clean at ${tips} tips; ${inert} events that write nothing changed nothing`);
