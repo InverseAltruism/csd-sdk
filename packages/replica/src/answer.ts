@@ -3,6 +3,7 @@
 import type { NameView, TokenMove } from "@inversealtruism/cairnx-core";
 import type { BlockHeader } from "@inversealtruism/csd-codec";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
+import type { StoreReason } from "./loop.js";
 import type { Basis, Cursor, RecordProof, TipView } from "./types.js";
 
 /** Where an answer was read: `height` is the height of its value (`deepHeight` for a deep view), `hash` the block hash
@@ -59,8 +60,11 @@ export interface Witness {
   rules?(signal: AbortSignal): Promise<{ readonly gates: Readonly<Record<string, number>> } | null>;
 }
 
-/** The replica's state with the verdict an answer read now would carry before its read's own conditions. */
+/** The replica's state with the verdict an answer read now would carry before its read's own conditions.
+ *  `storeReason` and `storeError` are why the store's last load did not open it and what it threw, paths included,
+ *  null when the store is fine: for the server's own logs, not for a page. */
 export interface ReplicaStatus extends AnswerMeta {
+  readonly storeReason: StoreReason | null; readonly storeError: string | null;
   readonly verified: boolean; readonly source: string; readonly cursor: Cursor | null;
   readonly witnessed: { readonly height: number; readonly at: number } | null;
   readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;

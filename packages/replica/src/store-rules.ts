@@ -1,7 +1,7 @@
 // What every Store checks before it writes a commit, whatever holds its bytes: the key it was opened under, the
 // stored cursor, and the commit's shape. memory-store.ts and disk-store.ts both import it.
 import { EVENTS_HASH_START } from "@inversealtruism/cairnx-core";
-import { sameBasis } from "./basis.js";
+import { basisKey } from "./basis.js";
 import { sameRule } from "./contract.js";
 import { ROWS_HASH_START } from "./rowshash.js";
 import type { BlockRow, Commit, Cursor, Store } from "./types.js";
@@ -12,9 +12,10 @@ export const sameCursor = (a: Cursor | null, b: Cursor | null): boolean =>
   a === b || (a !== null && b !== null && a.height === b.height && a.hash === b.hash);
 export const heightOf = (c: Cursor | null): number => c?.height ?? -1;
 
-/** The first of format, rule and basis on which `a` differs from `b`, or null. */
+/** The first of format, rule and basis on which `a` differs from `b`, or null. The basis is compared by its key, without
+ *  the pin (basisKey): whether a store filled under another pin is kept is the loop's (keepsStore). */
 export const keyDifference = (a: StoreKey, b: StoreKey): "format" | "rule" | "basis" | null =>
-  a.format !== b.format ? "format" : !sameRule(a.rule, b.rule) ? "rule" : !sameBasis(a.basis, b.basis) ? "basis" : null;
+  a.format !== b.format ? "format" : !sameRule(a.rule, b.rule) ? "rule" : basisKey(a.basis) !== basisKey(b.basis) ? "basis" : null;
 
 /** The height a commit keeps everything at or below: its rollback's, or every held height for an extend. */
 export const keptHeight = (c: Commit): number => ("rollbackTo" in c ? heightOf(c.rollbackTo) : Number.POSITIVE_INFINITY);
