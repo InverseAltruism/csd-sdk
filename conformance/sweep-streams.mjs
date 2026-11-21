@@ -35,7 +35,7 @@ const expectCodes = (pairs) => (resolveAt) => {
   return bad;
 };
 
-/** The constructed streams. Heights are at V29 or above, except where a name must lapse. */
+/** The constructed streams. Heights are at V29 or above, except where a name must lapse or V21 must be crossed. */
 export function sweepStreams(R) {
   const out = [];
   const ep = (h) => R.epochOf(h), L = R.EPOCH_LEN;
@@ -174,6 +174,27 @@ export function sweepStreams(R) {
       expect: expectCodes([["the bulk cancel", bulk.id, "OFFER_BULK_CANCELLED"], ["a cancel the bulk cancel superseded", c0.txid, "OFFER_CLOSED_BEFORE_CANCEL"],
         ["a cancel frozen by the hold", c1.txid, "OFFER_CANCEL_HOLD_LIVE"], ["a spend before the deferred effects", spend3.id, "TOKEN_BALANCE_LOW"],
         ["a spend after the cancels and the expiry", spend4.id, "TOKEN_TRANSFERRED"]]) });
+  }
+  // V. An offer and a bid anchored below V21 with expiries past the v2.1 cap end at V21 itself, a height that holds no
+  // event: the seller's give is refused one height before V21 and spent a few heights after it.
+  {
+    const k = kit(R, "b8"), ev = [], h0 = R.V17_HEIGHT + 100, S = ad(60), T = ad(61), X = ad(62);
+    ev.push(...k.token("VTK", 10, S, h0));
+    const far = ep(h0 + 2) + R.MAX_OFFER_EPOCHS + 232;
+    const O = k.P(R.offer({ give: { ticker: "VTK", amount: "10" }, want: { value: "1000" }, taker: T }), h0 + 2, 0, S, far);
+    const B = k.P(R.bid({ want: { ticker: "VTK", amount: "1" }, give: { value: "1000" } }), h0 + 2, 1, T, far);
+    const low = k.P(R.transfer({ ticker: "VTK", to: X, amount: "10" }), R.V21_HEIGHT - 1, 0, S, FAR);
+    const spend = k.P(R.transfer({ ticker: "VTK", to: X, amount: "10" }), R.V21_HEIGHT + 5, 0, S, FAR);
+    ev.push(O, B, low, spend);
+    out.push({ key: "V", label: "an offer and a bid past the v2.1 cap end at V21, a height with no event", events: ev, tipHeight: R.V21_HEIGHT + 100,
+      expect(resolveAt) {
+        const st = resolveAt(), bad = [];
+        if (R.offerExpiryHeightOf(far, h0 + 2) !== R.V21_HEIGHT) bad.push("the capped expiry falls at V21");
+        if (st.offers[O.id]?.status !== "expired" || st.bids[B.id]?.status !== "expired") bad.push("the offer and the bid expired");
+        if (codeOf(st, low.id) !== "TOKEN_BALANCE_LOW") bad.push("the give is still locked one height before V21");
+        if (codeOf(st, spend.id) !== "TOKEN_TRANSFERRED") bad.push("released at V21 and spent after it");
+        return bad;
+      } });
   }
   return out.map((s) => ({ ...s, tips: [] }));
 }

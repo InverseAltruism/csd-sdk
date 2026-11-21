@@ -69,7 +69,7 @@ this directory, only the JS implementation existed, so the contract was asserted
   resolves each sequence with an event that writes nothing at many heights and requires the same result, from JS
   (whole result) and from the reference (canonical state): CONVENTION section 5's property, checked by the reference
   on its own output.
-- **`sweep-streams.mjs`** (JavaScript only, not a cross-language job): seven streams that put expiries at a height
+- **`sweep-streams.mjs`** (JavaScript only, not a cross-language job): eight streams that put expiries at a height
   with no event or at one height together and read them with a later event, each with the codes it was built to
   show; also the dense walk's tips and the events that write nothing, shared by the seal and
   `packages/cairnx/test/sweep.test.ts`.

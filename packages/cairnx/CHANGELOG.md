@@ -9,7 +9,7 @@
   so that offers, bids, reservations and recapture reservations end between events and a dense walk of 871,730 tips;
   no export changed. CONVENTION.md section 5 states that the state at a tip does not depend on the heights at which
   sweeps ran; `conformance/fuzz-resolve.mjs` checks it in JS and in the Python reference by adding events that write
-  nothing, and gains `--expiry` with a floor per kind of expiry; `test/sweep.test.ts` pins seven constructed streams;
+  nothing, and gains `--expiry` with a floor per kind of expiry; `test/sweep.test.ts` pins eight constructed streams;
   check mode asserts that each expiry lands at the first height it is due.
 
 ## 0.2.8

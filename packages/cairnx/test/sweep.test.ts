@@ -19,6 +19,7 @@ const PINS: Record<string, [string, string]> = {
   N: ["8f5fc51f6ba2f1a9", "f54e9bbd1acac3a7"],
   D: ["b8819bfaa4315aa9", "e205e10a9765308a"],
   G: ["ebbf8f859c522cd2", "149c249eb6ba22cb"],
+  V: ["8b7798080aca3570", "1272c94642a09231"],
 };
 const sha16 = (x: string): string => createHash("sha256").update(x).digest("hex").slice(0, 16);
 
