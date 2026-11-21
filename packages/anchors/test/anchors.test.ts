@@ -89,6 +89,8 @@ ok("the rule accepts a table with one entry added", tableMod.extensionFault(tabl
 const edited = structuredClone(more); edited.anchors[3]!.hash = `0x${"cd".repeat(32)}`;
 ok("the rule refuses a changed entry, naming it", /entry 3\)/.test(tableMod.extensionFault(table, edited) ?? ""));
 ok("the rule refuses a lost last entry, naming it", /entry 27\)/.test(tableMod.extensionFault(table, { ...table, anchors: table.anchors.slice(0, 27) }) ?? ""));
+const shifted = structuredClone(more); shifted.anchors[3]!.height += 4096;
+ok("the rule refuses an entry kept at another height, naming it", /entry 3\)/.test(tableMod.extensionFault(table, shifted) ?? ""));
 const moved = structuredClone(more); moved.floor.hash = `0x${"ef".repeat(32)}`;
 ok("the rule refuses a floor that is not the committed one", /floor/.test(tableMod.extensionFault(table, moved) ?? ""));
 const rerooted = structuredClone(more); rerooted.activationRoot.hash = `0x${"12".repeat(32)}`;
