@@ -18,7 +18,7 @@ import { fullReplay } from "./replay.js";
 import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
-type Reset = "format" | "rule" | "basis" | "corrupt" | "unavailable";
+type Reset = Extract<Awaited<ReturnType<Store["open"]>>, { ok: false }>["reset"];
 /** Internal. How a loop's store opened: refused with the store's reason, `corrupt` when its rows do not match its
  *  meta and boundaries (held.ts), or `rule` when the gate table it was written under differs from the loaded core's at
  *  or below its cursor. */

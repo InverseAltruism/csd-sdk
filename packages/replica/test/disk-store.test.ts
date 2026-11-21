@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { FINAL_DEPTH, resolve, stateHash } from "@inversealtruism/cairnx-core";
 import { local, nodeBlocks } from "../src/browser.js";
 import { derivePin } from "../src/derive-pin.js";
-import { BOUNDS_HASH_START, boundsHashStep, diskStoreWith } from "../src/disk-store.js";
+import { diskStoreWith } from "../src/disk-store.js";
+import { BOUNDS_HASH_START, boundsHashStep } from "../src/store-format.js";
 import { LOADED_GATES } from "../src/gates.js";
 import { STALE_MS, takeLease, type Lease } from "../src/lease.js";
 import { open, pinned, ReplicaConfigError, replicaLoop, type BlockRow, type Boundary, type Pin, type Store } from "../src/index.js";
@@ -74,7 +75,7 @@ function rewrite(dir: string, edit: (x: Lines) => void, after: (bounds: Record<s
   const recomputed: Record<string, unknown>[] = x.bounds.map((b) => ({ ...b, rowsHash: rowsAt(b.height) }));
   after(recomputed);
   const bounds = recomputed.map((b) => JSON.stringify(b));
-  for (const l of bounds) chain = boundsHashStep(chain, l);
+  for (const b of recomputed) chain = boundsHashStep(chain, b as unknown as Boundary);
   const rowText = rows.map((r) => JSON.stringify(r) + "\n").join(""), boundText = bounds.map((l) => l + "\n").join("");
   writeFileSync(join(dir, "rows.jsonl"), rowText); writeFileSync(join(dir, "bounds.jsonl"), boundText);
   m.meta.rowsHash = rh; m.rowsBytes = Buffer.byteLength(rowText); m.boundsBytes = Buffer.byteLength(boundText); m.boundsHash = chain;
