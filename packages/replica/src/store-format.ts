@@ -1,6 +1,7 @@
 // The record both persistent stores keep beside their rows (disk-store.ts, idb-store.ts), and its checks at open: the
-// store's tag and format, the StoreMeta's form, the chain over the boundaries and the header window's digest. Every
-// digest here is payloadHash, so the module runs in a browser and in Node alike.
+// store's tag and format, the StoreMeta's form and the chain over the boundaries; the header window's digest, checked
+// where the window is read (headerWindow()). Every digest here is payloadHash, so the module runs in a browser and in
+// Node alike.
 import { HASH_RE, payloadHash } from "@inversealtruism/cairnx-core";
 import { hx } from "@inversealtruism/csd-codec";
 import { checkBasis } from "./basis.js";
@@ -45,14 +46,14 @@ export function metaOf(v: Record<string, unknown>): StoreMeta {
   ok(isObject(m));
   const x = m as Record<string, unknown>, r = x.rule as Record<string, unknown>;
   ok(isObject(r) && typeof r.domain === "string" && count(r.activationHeight) && (x.cursor === null || cursor(x.cursor)) && hash(x.eventsHash) &&
-    hash(x.rowsHash) && count(x.eventCount) && (x.windowSha256 === null || hash(x.windowSha256)) && (x.work === null || typeof x.work === "string") &&
+    hash(x.rowsHash) && count(x.eventCount) && (x.work === null || typeof x.work === "string") &&
     (x.workRoot === null || cursor(x.workRoot)) && isObject(x.gates) && Object.values(x.gates).every(count));
   let basis: StoreMeta["basis"];
   try { basis = checkBasis(x.basis); } catch { throw new Corrupt("the record's basis is out of form"); }
   return {
     format: FORMAT, rule: { domain: r.domain as string, activationHeight: r.activationHeight as number }, basis, cursor: x.cursor as Cursor | null,
     eventsHash: x.eventsHash as string, rowsHash: x.rowsHash as string, eventCount: x.eventCount as number, witnessed: null,
-    windowSha256: x.windowSha256 as string | null, work: x.work as string | null, workRoot: x.workRoot as Cursor | null, gates: x.gates as Record<string, number>,
+    work: x.work as string | null, workRoot: x.workRoot as Cursor | null, gates: x.gates as Record<string, number>,
   };
 }
 

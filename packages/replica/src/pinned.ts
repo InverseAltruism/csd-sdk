@@ -81,6 +81,7 @@ export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): S
   return {
     basis, floor: at, rule: pin.rule, pin,
     tip: (signal) => then.tip(signal),
+    ...(then.windowAt === undefined || then.restoreWindow === undefined ? {} : { windowAt: then.windowAt, restoreWindow: then.restoreWindow }),
     async next(ctx) {
       if (refused !== null) return refused;
       if (ctx.cursor !== null) {
