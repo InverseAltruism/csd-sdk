@@ -196,7 +196,8 @@ An answer is verified only when every condition holds. Each failed one adds its 
 |---|---|
 | `INPUT_INVALID` | the read's input is well formed (a name matching `NAME_RE`, an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
 | `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
-| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
+| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports; under a pin, also the pin's table at or below its height |
+| `PIN_MISMATCH`, `PIN_OFF_CHAIN` | under a pinned basis: the source has not refused its pin ("Pins" below). The source keeps the refusal, so the code stays for the life of the source |
 | `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
 | `BEHIND` | the cursor is not below the tip |
 | `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
@@ -210,7 +211,7 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
 the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
-`UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
+`UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
 
@@ -276,13 +277,26 @@ contract at or below the pin (`PIN_MISMATCH`); its events hash (`PIN_MISMATCH`);
 core's at or below the pin (`RULES_DIFFER`); its state hash, replayed with `resolve` (`PIN_MISMATCH`). It then takes
 `then`'s step from the pin, whose root checks the pin's block hash: one's own node must link the block above to it,
 an anchor root's seed must end at it, a caller's headers must hold it. A reorg, or a chain that does not hold the
-pin's block, is `PIN_OFF_CHAIN`. The log's rows and that step are committed together, so the log loads in one step:
+pin's block, is `PIN_OFF_CHAIN`; a root whose tip is below the pin is `SOURCE_UNAVAILABLE`, nothing committed. Under
+an anchor root a header above the pin that names another parent is `HEADER_INVALID` while the window still starts at
+the pin, and `PIN_OFF_CHAIN` once the window has moved up. The log's rows and that step are committed together, so the log loads in one step:
 at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
 a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
 43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Later steps go to `then`; a reorg
-below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A refusal of the pin is the answer to every
-later step of that source, so a later step cannot clear it, and the answers carry its code in `why`. A store reopened
-under the same pin meets the same checks again, and one reopened under another basis is reset.
+below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A node that moves to a branch forking below the
+pin whose tip is still below the pin's height reads as behind the cursor (`SOURCE_UNAVAILABLE`), so the answer stays
+as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
+the answer to every later step of that source, so a later step cannot clear it, and the answers carry its code in
+`why`. A store reopened under the same basis (the pin's height and block hash and the log's `logSha256`) is bound to
+the descriptor once per source without reading the log: the block hash, the events hash and the state hash (replayed
+from the stored rows) at the pin must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at
+or below the pin (`RULES_DIFFER`). The log's bytes and its contract are not checked again then: the stored rows were
+checked against the contract and their own running hashes when they were read back. A store reopened under another
+basis is reset.
+
+What the checks prove: they tie the log to its descriptor and the descriptor's block to the header chain, not the
+log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
+by design: below the pin the trust is the release, and a second derivation on another host is the check on it.
 
 `hosted({ pin, origin, witness?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is what
 `open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the pin

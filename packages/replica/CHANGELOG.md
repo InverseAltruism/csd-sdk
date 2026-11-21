@@ -10,6 +10,11 @@
   `derivePin(fixture)` in `./server`; `local({ node, pin })` and `hosted({ pin, origin, witness })` in `./browser` and
   `./server`. Internal: `StepContext.floor` (the pin, else the activation height less one), where the roots and the
   fork search stop; `floorBreak` takes the floor.
+- `pinned`, after review: the reader takes a refusal of the pin into `why` only under a pinned basis (an unpinned
+  anchor root's `PIN_OFF_CHAIN` stays a step's refusal, as before); a first step whose root's tip is below the pin is
+  `SOURCE_UNAVAILABLE` with nothing committed; a store that holds the pin's rows is bound to the descriptor once per
+  source (block hash, events hash, state hash at the pin, gate table) without reading the log; `derivePin` refuses a
+  fixture that starts above the activation height. Internal: `StepContext.stateHashAt`.
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),
   `checkBasis`, `levelOf`, `proofOf` and `basisKey`; the source, step and store types; `NOT_VERIFIED_CODES` and

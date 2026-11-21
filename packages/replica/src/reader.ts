@@ -101,7 +101,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     // During a step's commit the loop holds a half state: it is not synced until the commit ends.
     const busy = loop.committing();
     const synced = !busy && s.store === "open" && s.cursor !== null && s.tip !== null ? { cursor: s.cursor, tip: s.tip } : null;
-    const e = s.lastError?.code, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
+    // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
+    const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
       level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused,
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),

@@ -19,7 +19,7 @@ export interface VerdictInput {
   peerAhead(tip: TipView): boolean;
   /** Null when the root needs no witness (one's own node, a feed); else the time of the confirmation held, or null. */
   readonly witness: { readonly at: number | null } | null;
-  /** The source's refusal of its pin (pinned.ts), which it repeats at every later step; else null. */
+  /** Under a pinned basis, the source's refusal of its pin (pinned.ts), which it repeats at every later step; else null. */
   readonly refused: "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "RULES_DIFFER" | null;
 }
 
