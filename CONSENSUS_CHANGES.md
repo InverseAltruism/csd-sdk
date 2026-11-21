@@ -71,29 +71,49 @@ height at which the head of an expiry queue falls due, in ascending order: an of
 `(k + 1) * EPOCH_LEN`, a reservation or recapture reservation from `finalizeBy + 1`, and V21 while no sweep has
 reached it, where offers and bids anchored below V22 take their capped keys. Each item thus expires at the first
 height it is due, and the sequence of expiry effects does not depend on the heights at which sweeps run. 0.2.8 and
-`cairnx_ref.py` apply every due expiry in one batch before each event; the two give the same state because expiry
-effects commute: what is due only grows with height, whether an item is due reads that item alone, each effect is an
-addition to one seller's balance, an idempotent unlock, a status write on the item itself or the deletion of one key,
-and a sweep writes no log entry. CONVENTION.md section 5 now states the property. Check mode asserts each batch
-against the walk at its height and that no item of a batch was due one height lower.
+`cairnx_ref.py` apply every due expiry in one batch before each event; for the heights a chain produces the two give
+the same state because expiry effects commute: what is due only grows with height, whether an item is due reads that
+item alone, each effect is an addition to one seller's balance, an idempotent unlock, a status write on the item
+itself or the deletion of one key, and a sweep writes no log entry. CONVENTION.md section 5 now states the property.
+Check mode asserts each batch against the walk at its height and, while sweeps split, that no item of a batch was due
+one height lower.
 
 A later change breaks the property, and needs the sweep's order proved again, if it writes a log entry per expiry,
 records on an item when it expired, lets one expiry close or change another item (a bid's end voiding its answers, a
 reservation's end touching offers, a lapse applied by the sweep), makes a release other than an addition, or makes
-being due depend on another item. Each also makes a replay depend on events that write nothing, which
-`conformance/fuzz-resolve.mjs` now checks in JS and in the reference on every run.
+being due depend on another item. Each also makes a replay depend on events that write nothing. What catches that is
+the reference side of `conformance/fuzz-resolve.mjs --expiry`: the Python reference sweeps before each event and
+resolves each sequence again with events that write nothing added. The JS side does not go red there, since
+cairnx-core's sweep runs the same batches with or without them, and a log entry per expiry would not show at all, the
+gate comparing canonical state.
+
+An input no chain produces broke the equality in the first build of this entry (the other vendor's review): an offer
+whose event height is NaN has a NaN cap from V21 on, so it is due below V21 and at no height from V21 on. 0.2.8
+expires it only when a sweep runs between its raw expiry and V21; the sweep by due height ran a batch there whenever a
+later sweep passed it, and a later transfer of the give then applied where 0.2.8 refuses it. The class, from
+`effExpiry`, `finalizeBy` and the V21 cap: an offer or bid whose effective expiry at V21 is not at most its effective
+expiry below V21. With today's gates that is an offer stored with a NaN height: a bid at a NaN height is refused by
+the v1.2 gate, a negative or -Infinity height is below activation, an offer or bid at +Infinity is refused as past,
+fractional and 2^53-and-above heights keep the property, an expiry that is not a safe integer is refused, and
+`height > finalizeBy` grows with height for every value. The store clears one flag where such an item enters
+(`addOffer`, `addBid`); from then on each sweep runs the one batch 0.2.8 runs. Sweep streams X and X2 pin the case at
+V21 - 1, V21 and V21 + 100 (the counterexample with a transfer at V21, and the same with an event below V21), and the
+seal's step (d3) compares the sequences of the new `fuzz-resolve.mjs --malformed` with 0.2.8.
 
 The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.8`, each baseline bound to npm:
 `canonicalState` byte-identical to 0.2.4 and the whole result identical to 0.2.8 including codes and moves over the
 97 cases of the case files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of
-`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 61 stream inputs (the growth streams at full size
-and the eight of `conformance/sweep-streams.mjs`), and the 3,000 sequences of the new `fuzz-resolve.mjs --expiry`
-mode (an expired offer with a later event in 2,170 of them, a bid in 1,744, a swept reservation in 1,398, a swept
-recapture reservation in 301, an expiry under the V21 cap in 403; floor 60 each, read from 0.2.8), each also resolved
-with 842,620 events that write nothing added in all, none changing a result; a dense walk over those sequences and the
-sweep streams, 871,934 tips, each equal to 0.2.8's whole result; check mode clean on 24,098 inputs; the token moves of
-25,725 inputs; `parseRecord` equal over 248,759 records; 1,418 client-surface checks; crosslang green, with the
-inert-event check in both fuzz modes. cairnx-api 0.1.2 is a peer-only step onto this core.
+`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 63 stream inputs (the growth streams at full size
+and the ten of `conformance/sweep-streams.mjs`), the 3,000 sequences of the new `fuzz-resolve.mjs --expiry` mode (an
+expired offer with a later event in 2,170 of them, a bid in 1,744, a swept reservation in 1,398, a swept recapture
+reservation in 301, an expiry under the V21 cap in 403; floor 60 each, read from 0.2.8), each also resolved with
+842,620 events that write nothing added in all, none changing a result, and the 3,000 of `--malformed` (a malformed
+field met on an offer in 2,388, a bid in 1,301, a reservation in 404, a recapture reservation in 317; 2,009 crossing
+V21 and 841 wholly above it; a NaN-height offer open past V21 though its raw expiry fell due below it in 674; floor 60
+each, read from 0.2.8); a dense walk over the sequences of both modes and the sweep streams, 6,010 walks and 1,966,138
+tips, each equal to 0.2.8's whole result; check mode clean on 27,100 inputs; the token moves of 28,727 inputs;
+`parseRecord` equal over 277,800 records; 1,418 client-surface checks; crosslang green, with the inert-event check in
+the three fuzz modes. cairnx-api 0.1.2 is a peer-only step onto this core.
 
 ## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 

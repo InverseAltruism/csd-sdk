@@ -4,13 +4,16 @@
 
 - The replay runs as a fold (one step per event, an end at the tip that alone reads the tip) and its expiry sweep
   applies each expiry at the first height it is due, one batch per such height in ascending order, where 0.2.8
-  applied every due expiry in one batch before each event. No rule changed: `scripts/seal-differential.mjs` finds the
-  whole result, codes and moves included, identical to npm's 0.2.8 on every input, among them 3,000 sequences built
-  so that offers, bids, reservations and recapture reservations end between events and a dense walk of 871,934 tips;
-  no export changed. CONVENTION.md section 5 states that the state at a tip does not depend on the heights at which
-  sweeps ran; `conformance/fuzz-resolve.mjs` checks it in JS and in the Python reference by adding events that write
-  nothing, and gains `--expiry` with a floor per kind of expiry; `test/sweep.test.ts` pins eight constructed streams;
-  check mode asserts that each expiry lands at the first height it is due.
+  applied every due expiry in one batch before each event; from the first offer held with a NaN height (an input no
+  chain produces, whose expiry rises across V21) it runs one batch per sweep, as 0.2.8 does. No rule changed:
+  `scripts/seal-differential.mjs` finds the whole result, codes and moves included, identical to npm's 0.2.8 on every
+  input, among them 3,000 sequences built so that offers, bids, reservations and recapture reservations end between
+  events, 3,000 whose heights and expiries no chain produces, and a dense walk of 1,966,138 tips; no export changed.
+  CONVENTION.md section 5 states that the state at a tip does not depend on the heights at which sweeps ran, for the
+  heights a chain produces, and the NaN-height case; `conformance/fuzz-resolve.mjs` checks the property in the Python
+  reference by adding events that write nothing, and gains `--expiry` and `--malformed` with a floor per kind;
+  `test/sweep.test.ts` pins ten constructed streams; check mode asserts that each expiry lands at the first height it
+  is due.
 
 ## 0.2.8
 
