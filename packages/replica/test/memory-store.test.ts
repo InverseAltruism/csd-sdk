@@ -6,5 +6,5 @@ import { storeSuite } from "./store-suite.js";
 console.log("store suite, memoryStore:");
 const checks = await storeSuite(() => memoryStore());
 for (const c of checks) ok(c.name, c.ok);
-ok("the suite ran its 29 checks", checks.length === 29);
+ok("the suite ran its 32 checks", checks.length === 32);
 done("cairnx-replica memoryStore");

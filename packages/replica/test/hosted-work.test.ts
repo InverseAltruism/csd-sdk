@@ -77,7 +77,7 @@ ok("the server then names A to 1087, lighter than the B held: LESS_WORK, the sto
 
 console.log("a rollback whose commit failed:");
 let failed = false;
-const inner = memoryStore(), failing: Store = { ...inner, commit: async (c) => (c.rollbackTo !== undefined && !failed && (failed = true) ? { ok: false, code: "STORE_FAILED" } : inner.commit(c)) };
+const inner = memoryStore(), failing: Store = { ...inner, commit: async (c) => ("rollbackTo" in c && !failed && (failed = true) ? { ok: false, code: "STORE_FAILED" } : inner.commit(c)) };
 const fc: Hosted = { answers: onA, tip: 1089 }, fd = drive(fc, 8, { store: failing });
 await fd.run();
 fc.answers = onB; fc.tip = 1091;

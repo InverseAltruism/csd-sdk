@@ -25,6 +25,9 @@ export function gatesOf(core: object): Gates {
   return out;
 }
 
+/** The gate table of the cairnx-core this process loaded. */
+export const LOADED_GATES: Gates = Object.freeze(gatesOf(loaded));
+
 /** Whether `a` and `b` differ in a gate at or below `tip`: one lacks a gate the other has there, or they place it at
  *  different heights at least one of which is at or below `tip`. */
 export function gatesDiffer(a: Gates, b: Gates, tip: number): boolean {

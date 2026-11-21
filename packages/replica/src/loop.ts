@@ -9,21 +9,26 @@
 // boundary becomes deep only when the boundary lies at most STATE_WINDOW below the tip the step reports. A catch-up to
 // a tip that holds still therefore replays at most 24 boundaries, and then one per epoch as the tip moves; an older
 // boundary is stored with a null state hash and replayed on demand (Loop.boundary).
-import { CAIRNX_EVENT_RULE, EPOCH_LEN, EVENTS_HASH_START, FINAL_DEPTH, stateHash, type CairnXState, type EventRule } from "@inversealtruism/cairnx-core";
+import { CAIRNX_EVENT_RULE, EPOCH_LEN, EVENTS_HASH_START, FINAL_DEPTH, payloadHash, stateHash, type CairnXState, type EventRule } from "@inversealtruism/cairnx-core";
 import { checkStep, reorgBreak } from "./contract.js";
 import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
+import { LOADED_GATES, gatesDiffer } from "./gates.js";
 import { Held, verifyRows } from "./held.js";
 import { fullReplay } from "./replay.js";
+import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
 type Reset = "format" | "rule" | "basis" | "corrupt" | "unavailable";
-/** Internal. How a loop's store opened: refused with the store's reason, or `corrupt` when its rows do not match its
- *  meta and boundaries (held.ts). */
+/** Internal. How a loop's store opened: refused with the store's reason, `corrupt` when its rows do not match its
+ *  meta and boundaries (held.ts), or `rule` when the gate table it was written under differs from the loaded core's at
+ *  or below its cursor. */
 export type LoopOpen = { ok: true } | { ok: false; reset: Reset };
-/** Internal. `maxBlocks` and `maxRequests` are passed to the source as each step's budget. */
+/** Internal. `maxBlocks` and `maxRequests` are passed to the source as each step's budget. With `resetRefused`, every
+ *  load the store refuses for a reason other than `unavailable` resets the store and loads once more (the reader's
+ *  rule), whether at the first open or at a later reload. */
 export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
-  readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number;
+  readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number; readonly resetRefused?: boolean;
 }
 /** Internal. `store` is null before the first open; `retryAt` is when a backed-off loop next calls its source. */
 export interface LoopStatus {
@@ -114,20 +119,36 @@ export function replicaLoop(o: LoopOptions): Loop {
   const cursor = (): Cursor | null => meta?.cursor ?? null;
   const hashAt = (h: number): string | null => held.hashAt(h) ?? (cursor()?.height === h ? cursor()!.hash : null);
   const eventsHashAt = (h: number): string | null => { const c = cursor(); return c === null || h > c.height ? null : held.eventsHashAt(h); };
+  // Replayed from the rows held: a boundary's stored state hash is never read here, since a store can hold a wrong one.
   const stateHashAt = (h: number): string | null => {
-    const c = cursor(), b = bounds.find((x) => x.height === h);
+    const c = cursor();
     if (c === null || h > c.height) return null;
-    if (b?.stateHash) return b.stateHash;
     const s = m.stateAt(h, 0);
     return s === null ? null : stateHash(s);
   };
+  const logSha256At = (h: number): string | null => {
+    const c = cursor();
+    return c === null || h > c.height ? null : payloadHash(held.rows.filter((r) => r.height <= h).flatMap((r) => r.events));
+  };
   const metaAt = (c: Cursor): StoreMeta => ({
     ...(meta ?? { format: 1, rule, basis: source.basis, witnessed: null, windowSha256: null, work: null, workRoot: null }),
-    cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
+    gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
   });
 
-  // A store that throws while it is read is unavailable; a basis it refuses is the caller's error and is thrown.
+  // The one reset path: a refusal other than `unavailable` resets the store and reads it again, once per load.
   async function load(): Promise<LoopOpen> {
+    const first = await read();
+    if (first.ok || first.reset === "unavailable" || o.resetRefused !== true) return first;
+    try { await store.reset(); } catch (e) {
+      if (e instanceof ReplicaConfigError) throw e;
+      change("replace", 0, 0, () => { opened = "unavailable"; });
+      return { ok: false, reset: "unavailable" };
+    }
+    return read();
+  }
+
+  // A store that throws while it is read is unavailable; a basis it refuses is the caller's error and is thrown.
+  async function read(): Promise<LoopOpen> {
     let r: Awaited<ReturnType<Store["open"]>>, h: Held | null = null, b: Boundary[] = [];
     const rows: BlockRow[] = [];
     try {
@@ -136,6 +157,7 @@ export function replicaLoop(o: LoopOptions): Loop {
         for await (const row of store.rows(0)) rows.push(row);
         b = await store.boundaries();
         h = verifyRows(rows, b, r.meta, rule);
+        if (h !== null && r.meta !== null && gatesDiffer(r.meta.gates, LOADED_GATES, r.meta.cursor?.height ?? -1)) r = { ok: false, reset: "rule" };
       }
     } catch (e) {
       if (e instanceof ReplicaConfigError) throw e;
@@ -169,9 +191,9 @@ export function replicaLoop(o: LoopOptions): Loop {
     try { c = build(); } catch (e) { await load(); throw e; }
     try { r = await store.commit(c); } catch (e) { r = { ok: false, code: "STORE_FAILED" }; why = messageOf(e); }
     if (r.ok) {
-      const keep = c.rollbackTo?.height ?? Number.POSITIVE_INFINITY;
+      const keep = keptHeight(c);
       meta = c.meta;
-      bounds = [...bounds.filter((b) => b.height <= keep), ...c.boundaries];
+      bounds = [...bounds.filter((b) => b.height <= keep), ...("rollbackTo" in c ? [] : c.boundaries)];
       for (const h of [...filled.keys()]) if (h > keep) filled.delete(h);
       return "ok";
     }
@@ -190,7 +212,7 @@ export function replicaLoop(o: LoopOptions): Loop {
       const hash = held.hashAt(b);
       if (hash === null) continue;
       const state = tip - b <= STATE_WINDOW ? m.stateAt(b, 0) : null;
-      out.push({ height: b, hash, eventsHash: held.eventsHashAt(b), stateHash: state === null ? null : stateHash(state) });
+      out.push({ height: b, hash, eventsHash: held.eventsHashAt(b), rowsHash: held.rowsHashAt(b), stateHash: state === null ? null : stateHash(state) });
     }
     return out;
   }
@@ -221,7 +243,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     const to = { height: s.to.height, hash: s.to.hash }, r = await commit(() => {
       change("replace", 0, 0, () => held.truncate(to.height));
       m.rollback(to.height);
-      return { expect: at, rollbackTo: to, rows: [], boundaries: [], meta: metaAt(to) };
+      return { expect: at, rollbackTo: to, meta: metaAt(to) };
     });
     if (r !== "ok") return r;
     lastReorg = { from: at!, to: cursor()!, at: clock() };
@@ -232,7 +254,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   async function step(signal: AbortSignal, deadlineAt: number): Promise<"more" | "stop"> {
     let s: Step;
     try {
-      s = await source.next({ rule, cursor: cursor(), sofar: held, floor, hashAt, eventsHashAt, stateHashAt, budget: { deadlineAt, ...limits }, signal, now: clock });
+      s = await source.next({ rule, cursor: cursor(), sofar: held, floor, hashAt, eventsHashAt, stateHashAt, logSha256At, budget: { deadlineAt, ...limits }, signal, now: clock });
     } catch (e) {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }

@@ -19,6 +19,9 @@ export const BACKOFF_MAX_MS = 300_000;
 
 export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** The `code` of a thrown value (a Node system error's `ENOENT`, `EEXIST`, ...), or undefined. */
+export const codeOf = (e: unknown): unknown => (e as { code?: unknown } | null)?.code;
+
 /** The `cannot` step for what a source threw: its SourceError, else SOURCE_UNAVAILABLE. */
 export const cannotOf = (e: unknown): Step => e instanceof SourceError ? { kind: "cannot", code: e.code, reason: e.message, retryAfterMs: e.retryAfterMs }
   : { kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: messageOf(e), retryAfterMs: null };

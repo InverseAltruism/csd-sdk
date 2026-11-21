@@ -92,9 +92,9 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   const same = headers === null ? undefined : witnesses.find((w) => originOf(w.origin) === originOf(headers));
   if (same !== undefined) throw new ReplicaConfigError(`open: the witness ${same.id} is on the header source's origin ${originOf(headers!)}`);
   const core = coreCheck(o.core), board = witnessBoard(witnesses, clock), store = o.store ?? memoryStore();
-  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock });
-  let opened = await loop.open();
-  if (!opened.ok && opened.reset !== "unavailable") { await store.reset(); opened = await loop.open(); }
+  // A store refused for a reason other than `unavailable` is reset and refilled at whichever load finds it (loop.ts).
+  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true });
+  await loop.open();
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;
 

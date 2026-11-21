@@ -45,9 +45,12 @@ export interface BlockEvents { readonly height: number; readonly hash: string | 
 export interface StepContext {
   readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar; readonly floor?: number;
   hashAt(height: number): string | null; eventsHashAt(height: number): string | null;
-  /** The state hash at `height` from the rows held, replayed when no boundary there keeps one; null above the cursor or
-   *  when the loop holds no state. Absent in a context built outside the loop. */
+  /** The state hash at `height`, replayed from the rows held; null above the cursor or when the loop holds no state.
+   *  Absent in a context built outside the loop. */
   stateHashAt?(height: number): string | null;
+  /** payloadHash of the events held at or below `height` (a pin's logSha256 when they are its log); null above the
+   *  cursor. Absent in a context built outside the loop. */
+  logSha256At?(height: number): string | null;
   readonly budget: { readonly deadlineAt: number; readonly maxRequests: number; readonly maxBlocks: number };
   readonly signal: AbortSignal; now(): number;
 }
@@ -116,11 +119,12 @@ export interface BlocksSource extends Source {
   block(height: number, o: { readonly authors: AuthorScope; readonly rule: EventRule; readonly prev: string | null; readonly signal: AbortSignal }): Promise<BoundBlock>;
 }
 
-/** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts). */
+/** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts);
+ *  `gates` is the gate table of the cairnx-core that wrote the rows and boundary state hashes (loop.ts checks it at open). */
 export interface StoreMeta {
   readonly format: 1; readonly rule: EventRule; readonly basis: Basis; readonly cursor: Cursor | null; readonly eventsHash: string;
   readonly rowsHash: string; readonly eventCount: number; readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number } | null;
-  readonly windowSha256: string | null; readonly work: string | null; readonly workRoot: Cursor | null;
+  readonly windowSha256: string | null; readonly work: string | null; readonly workRoot: Cursor | null; readonly gates: Readonly<Record<string, number>>;
 }
 
 /** Internal. One block's events with the events hash and the rows hash after it. */
@@ -128,14 +132,18 @@ export interface BlockRow {
   readonly height: number; readonly hash: string | null; readonly events: ChainEvent[]; readonly eventsHash: string; readonly rowsHash: string;
 }
 
-/** Internal. An epoch boundary the store keeps; `stateHash` is null when it was not replayed as it became deep (loop.ts). */
-export interface Boundary { readonly height: number; readonly hash: string; readonly eventsHash: string; readonly stateHash: string | null }
-
-/** Internal. One commit: applied whole or not at all, and only when `expect` is the stored cursor. */
-export interface Commit {
-  readonly expect: Cursor | null; readonly rollbackTo?: Cursor | null; readonly rows: BlockRow[]; readonly boundaries: Boundary[];
-  readonly meta: StoreMeta; readonly headerWindow?: Uint8Array;
+/** Internal. An epoch boundary the store keeps, with the events hash and rows hash of the rows at or below it;
+ *  `stateHash` is null when it was not replayed as it became deep (loop.ts). */
+export interface Boundary {
+  readonly height: number; readonly hash: string; readonly eventsHash: string; readonly rowsHash: string; readonly stateHash: string | null;
 }
+
+/** Internal. One commit: applied whole or not at all, and only when `expect` is the stored cursor. An extend appends
+ *  rows and boundaries; a rollback drops what lies above `rollbackTo` and carries nothing else, so a store can make it
+ *  by replacing its meta alone (disk-store.ts). */
+export type Commit =
+  | { readonly expect: Cursor | null; readonly rows: BlockRow[]; readonly boundaries: Boundary[]; readonly meta: StoreMeta; readonly headerWindow?: Uint8Array }
+  | { readonly expect: Cursor | null; readonly rollbackTo: Cursor | null; readonly meta: StoreMeta };
 
 /** Internal. What turns the rows a loop holds into a resolved state; nothing it holds is persisted. `height` is the
  *  loop's cursor: the rows given hold every event at or below it, and null means the loop holds nothing. */

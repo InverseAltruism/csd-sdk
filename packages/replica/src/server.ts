@@ -13,6 +13,7 @@ export { hostedBlocks, type HostedBlocksOptions } from "./hosted-blocks.js";
 export { hostedWitness, nodeWitness } from "./http-witness.js";
 export { hosted, type HostedOptions } from "./presets.js";
 export { derivePin } from "./derive-pin.js";
+export { diskStore } from "./disk-store.js";
 /** Internal, for the pin generator: the gate table this package was built against, and the compare open() makes. */
 export { BUILT_GATES, gatesDiffer, gatesOf } from "./gates.js";
 

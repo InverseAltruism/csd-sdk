@@ -36,6 +36,7 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
+- `./server` also has `diskStore({ dir })` ("The disk store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
   accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
@@ -140,10 +141,8 @@ replayed on demand.
   `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
   `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
   the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
-  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. Nothing checks a stored boundary's state
-  hash at open, and a pinned source's bind compares the one kept on the pin's boundary: a store that could hold a
-  wrong one there (a disk store, written under another core) must recheck it at open, which is the disk store's
-  slice to do. A memory store holds only what the loop computed.
+  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. A boundary's stored state hash is not
+  checked at open; a pinned source's bind replays its own ("Pins" below).
 
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
@@ -217,7 +216,7 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -365,16 +364,20 @@ an anchor root a header above the pin that names another parent is `HEADER_INVAL
 the pin, and `PIN_OFF_CHAIN` once the window has moved up. The log's rows and that step are committed together, so the log loads in one step:
 at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
 a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
-43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Later steps go to `then`; a reorg
+43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Loading in steps would not shorten
+it, since no row counts before the whole log's sha256, events hash and state hash hold; the trigger to revisit is a
+first step over 5 s on a server or a browser store's transaction found too large, and the answer then is a resumable
+replay context and a log fetched by its hash, not steps. Later steps go to `then`; a reorg
 below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A node that moves to a branch forking below the
 pin whose tip is still below the pin's height reads as behind the cursor (`SOURCE_UNAVAILABLE`), so the answer stays
 as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
 the answer to every later step of that source, so a later step cannot clear it, and the answers carry its code in
 `why`. A store reopened under the same basis (the pin's height and block hash and the log's `logSha256`) is bound to
-the descriptor once per source without reading the log: the block hash, the events hash and the state hash at the pin
-must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at or below the pin (`RULES_DIFFER`).
-The state hash is the one the store keeps on the pin's boundary when it keeps one, compared without a replay; else it
-is replayed from the stored rows. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
+the descriptor once per source without reading the log: the block hash, the events hash, the digest of the stored
+events at or below the pin (payloadHash, so their content, which the events hash does not cover, must give the
+`logSha256`) and the state hash at the pin must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded
+core's at or below the pin (`RULES_DIFFER`). The state hash is replayed from the stored rows, never read from the pin's
+boundary, which a store can hold wrong. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
 checked against the contract and their own running hashes when they were read back. A store reopened under another
 basis is reset.
 
@@ -387,6 +390,40 @@ by design: below the pin the trust is the release, and a second derivation on an
 as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
 anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
 the witness's to confirm.
+
+## The disk store
+
+`diskStore({ dir })`, in `./server`, keeps a store in `dir`, an absolute path on a local filesystem (created with mode
+700 at open; a relative path, or one that is a file or cannot be created, throws `ReplicaConfigError`). Pass it as
+`store` to `open` or `openLog`. Files: `meta.json` (the store's tag and format, the meta without `witnessed`, the
+committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
+`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
+writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
+`open` throw `ReplicaConfigError` naming it, with nothing removed. A commit appends at the committed lengths, syncs
+each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
+directory; a rollback is that rename alone. While one holder's directory syncs return, nothing is written below the
+lengths of a meta that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
+(`test/disk-kill.test.ts` kills a process at every point of a 20-commit sequence with a rollback, 209 times); the
+order of the syncs, which a kill cannot show, is what carries this past a power loss (`test/disk-store.test.ts`). An
+extend after a rollback whose directory sync did not land, or a refill after a reset cut short, can leave files that
+open `corrupt`; the store is then refilled, as for any file that fails its checks.
+
+At open, in order: the format, the rule, the basis and the gate table the rows were written under (another table at or
+below the cursor resets the store, reason `rule`); then the files (a file shorter than its committed length, a line
+out of form, a boundary chain or window digest other than the meta's: `corrupt`, and the reader resets and refills);
+then the loop's checks of every row against the contract and both running hashes, and under a pin the bind above. A
+store refused for any reason but `unavailable` is reset and refilled whenever the reader loads it, also when it first
+found the store held by another process. The checks prove that the files agree with each other, not where they came
+from: rows above a pin, and every row without one, are not compared with the chain at open, so a consistent edit of
+them passes. For a server that credits deposits from the replica, the directory is as sensitive as its table of
+credits. Do not use a store someone else wrote.
+
+One process writes a directory at a time, by a lease on `lock`: the holder touches it every 5 s, and one not touched
+for 20 s is stale and taken over. While another process holds it, `open` is `unavailable` (the answers carry
+`NOT_SYNCED` and the note `STORE_UNAVAILABLE`) and the next advance tries again. A holder whose lease was taken
+over while it waited between commits fails its next commit and writes nothing; one stopped after that commit's check
+of its lease finishes the commit over the taker's files, and the store then opens `corrupt` and is refilled. The package installs no signal handler: a server calls `close()` at
+shutdown, which releases the lease; after a crash the next start waits until the lease is stale.
 
 ## Display
 
