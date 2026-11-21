@@ -17,6 +17,23 @@
   fixture that starts above the activation height. Internal: `StepContext.stateHashAt`.
 - The reopen bind compares no state hash where the loop holds none, so `openLog` over a pin of its own rule is
   verified again (it was refused `PIN_MISMATCH` from its second step).
+- `transfers(address | null, since, { ticker?, limit?, minDepth? })`: the token moves of cairnx-core's applied log
+  (CONVENTION section 41) in the deep view, one row per move (`Transfer`: txid, height, position, leg, ticker, the
+  state's deploy id, from, to, amount, the entry's own record's memo, `applied`, code), answered through the reader's
+  verified rule. Rows by height then position; a page holds whole entries. The cursor, `BoundCursor`, is
+  `height:pos:eventsHash`; a cursor whose events hash is no longer the replica's at its height is `CURSOR_OFF_BRANCH`
+  (a new not-verified code), nothing shown. `Page` takes the cursor type as a second parameter. The README's server
+  example runs over a 20-block reorg in `test/transfers-reorg.test.ts`; it raises `CURSOR_OFF_BRANCH` to its operator,
+  and the test runs the README's recovery (from the newest earlier cursor still accepted).
+- `events` takes the cursor of `transfers`, `height:pos:eventsHash`, and resumes after the event the cursor names in
+  the apply order of CONVENTION section 33.3: a page cut between a block's Propose and an Attest at a lower position
+  of the same block lost the Attest (the `height:pos` cursor was compared as a sort key). Both reads parse and check
+  the cursor in one module: a stored `events` cursor of the `height:pos` form, and a position that names no held
+  event other than the largest, are `INPUT_INVALID`; `events` answers `CURSOR_OFF_BRANCH` as `transfers` does.
+  `TransferCursor` is removed; `Page`'s cursor type defaults to `BoundCursor`. While the deep height lies above the
+  replica's cursor (a catch-up, a rollback before the blocks after it) and after `close()`, both reads show no page
+  and answer the state's code (`BEHIND`, `NOT_SYNCED`).
+- `dryRun`'s `at` is the tip at depth 0 (it carried the deep view's), and it takes no `minDepth`.
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),
   `checkBasis`, `levelOf`, `proofOf` and `basisKey`; the source, step and store types; `NOT_VERIFIED_CODES` and
@@ -56,7 +73,7 @@
 - 2026-11-18, a copy: `src/http.ts` holds a copy of csd-client's capped body read, which is private to `CsdClient`.
   Remove it when csd-client exports that read.
 - The reader: `open` and `openLog`, the answer types (`Answer`, `At`, `ReadOptions`, `BalanceValue`, `Page`,
-  `TransferCursor`, `ReplicaStatus`, `Witness`), the reads `balance` (deep view, `atTip`), `primary` (`SHALLOW`),
+  `ReplicaStatus`, `Witness`), the reads `balance` (deep view, `atTip`), `primary` (`SHALLOW`),
   `state` and `events` with `minDepth`, and `advance`, `status`, `subscribe`, `close`. An answer is verified only
   when the input is well formed, the basis is level 3, the gate tables agree at or below the tip (`RULES_DIFFER`;
   `TWO_CORES` noted), the loop is synced at its tip (`NOT_SYNCED`, `BEHIND`, `BRANCH_UNRESOLVED`), the tip is at most

@@ -1,6 +1,6 @@
 // What a reader answers (design section 5). `value` is null unless the answer is verified; the unverified value is in
 // `shown`. Every answer carries its level, the proof of its records and the basis that vouches for them.
-import type { NameView } from "@inversealtruism/cairnx-core";
+import type { NameView, TokenMove } from "@inversealtruism/cairnx-core";
 import type { BlockHeader } from "@inversealtruism/csd-codec";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import type { Basis, Cursor, RecordProof, TipView } from "./types.js";
@@ -33,9 +33,20 @@ export interface BalanceValue {
 /** A name as a reader shows it: cairnx-core's NameView (CONVENTION section 35.4). `state` is `held`, `pending`, `lapsed`,
  *  `free` (absent) or `reserved`; `addr` and `profile` are a held name's only. */
 export type NameValue = NameView;
-/** A position in the event order, height and transaction position, exclusive when it starts a page. */
-export type TransferCursor = `${number}:${number}`;
-export interface Page<T> { readonly items: readonly T[]; readonly next: TransferCursor; readonly more: boolean }
+/** The cursor of `events` and `transfers`, opaque to a caller: the height and transaction position of a page's last
+ *  item, exclusive when it starts a page, with the replica's events hash at that height (CONVENTION section 34.2), which
+ *  covers every event at or below it (cursor.ts). */
+export type BoundCursor = `${number}:${number}:${string}`;
+export interface Page<T, C extends string = BoundCursor> { readonly items: readonly T[]; readonly next: C; readonly more: boolean }
+/** One token move of an applied entry (CONVENTION section 41): `amount` base units of `ticker` from `from` (null for a
+ *  mint) to `to`, written by `txid` at `height` and `pos`. `deployId` is the state's `tokens[ticker].deployId`; `memo`
+ *  is the memo of the entry's own record, null when it has none (a fill is an Attest, which carries no record). A
+ *  refused record moves nothing, so every row is of an applied one, with its applied code. */
+export interface Transfer {
+  readonly txid: string; readonly height: number; readonly pos: number; readonly leg: TokenMove["leg"]; readonly ticker: string;
+  readonly deployId: string; readonly from: string | null; readonly to: string; readonly amount: string; readonly memo: string | null;
+  readonly applied: true; readonly code: string | null;
+}
 
 /** A tip a witness names, with its header. */
 export type WitnessTip = TipView & { readonly header: BlockHeader };

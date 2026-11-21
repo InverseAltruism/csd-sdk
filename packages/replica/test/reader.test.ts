@@ -6,7 +6,7 @@ import * as core from "@inversealtruism/cairnx-core";
 import { CAIRNX_EVENT_RULE, FINAL_DEPTH, TREASURY_ADDR, nameRegFee, resolve, stateHash, type CairnXState, type EventRule } from "@inversealtruism/cairnx-core";
 import { hostedBlocks, hostedWitness, nodeWitness } from "../src/browser.js";
 import { BUILT_GATES, coreCheck, gatesOf } from "../src/gates.js";
-import { memoryStore, open, openLog, ReplicaConfigError, type Answer, type Store, type Witness } from "../src/index.js";
+import { memoryStore, open, openLog, ReplicaConfigError, type Answer, type BoundCursor, type Store, type Witness } from "../src/index.js";
 import { fixtureSource, fixtures, type BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus, fx } from "./core-files.js";
@@ -54,12 +54,12 @@ async function caller(tip: number, witnesses: Witness[] = [], extra = {}) {
   await x.r.advance();
   return x;
 }
-// name() answers through the same verdict as balance(): each condition below is asserted on both reads. NAMED is held
-// with one record over the whole capture, so its two views agree and no SHALLOW enters.
+// name() and transfers() answer through the same verdict as balance(): each condition below is asserted on all three.
+// NAMED is held with one record over the whole capture, so its two views agree and no SHALLOW enters.
 const NAMED = "xname-8ma941";
 const balanceWhy = async (x: { r: Awaited<ReturnType<typeof open>> }, o = {}) => {
-  const b = codes(await x.r.balance("CAIRN", HOLDER, o)), n = codes(await x.r.name(NAMED, o));
-  return b === n ? b : `balance ${b}, name ${n}`;
+  const b = codes(await x.r.balance("CAIRN", HOLDER, o)), n = codes(await x.r.name(NAMED, o)), t = codes(await x.r.transfers(HOLDER, null, o));
+  return b === n && b === t ? b : `balance ${b}, name ${n}, transfers ${t}`;
 };
 
 console.log("each condition alone:");
@@ -183,13 +183,13 @@ const ab = await ownR.balance("CAIRN", mover[0], { minDepth: md });
 ok(`a transfer at ${XFER.height} inside the last ${md} blocks: the deep balance as the value, the tip's as atTip`, ab.verified &&
   ab.value.available === (mover[1] ?? "0") && ab.value.atTip?.available === mover[2]);
 const bad = [await ownR.balance("cairn", HOLDER), await ownR.balance("CAIRN", "0x12"), await ownR.balance("CAIRN", HOLDER, { minDepth: -1 }),
-  await ownR.balance("CAIRN", HOLDER, { minDepth: TIP + 1 }), await ownR.events("12:x" as `${number}:${number}`), await ownR.events(null, { limit: 0 })];
+  await ownR.balance("CAIRN", HOLDER, { minDepth: TIP + 1 }), await ownR.events("12:x" as BoundCursor), await ownR.events(null, { limit: 0 })];
 ok("a lower-case ticker, a short address, a negative depth, a depth above the tip, a bad cursor, a zero limit: INPUT_INVALID alone, nothing shown",
   bad.every((a) => codes(a) === "INPUT_INVALID" && !a.verified && a.shown === null));
 ok("an address in upper case is read in lower case", ((await ownR.balance("CAIRN", HOLDER.toUpperCase().replace("0X", "0x"))) as Answer<{ address: string }>).value?.address === HOLDER);
-const ahead = await ownR.events("40000:0");
+const aheadCursor: BoundCursor = `40000:0:0x${"e".repeat(64)}`, ahead = await ownR.events(aheadCursor);
 ok("an events cursor above the replica's: CURSOR_ABOVE_TIP noted, no items, the cursor kept", ahead.verified && ahead.notes.some((n) => n.code === "CURSOR_ABOVE_TIP") &&
-  ahead.value.items.length === 0 && ahead.value.next === "40000:0");
+  ahead.value.items.length === 0 && ahead.value.next === aheadCursor);
 const other = witnessOn({ ...all, ...branchFrom(TIP - 3) }, TIP, { id: "other", origin: "https://other.example" });
 const dis = await caller(TIP, [witnessOn(all, TIP).witness, other.witness]);
 const da = await dis.r.balance("CAIRN", HOLDER);
@@ -233,7 +233,7 @@ const lg = await openLog({ rule: RULE, source: scripted([{ height: 1_002, hash: 
 await lg.advance();
 const l12 = await lg.events(null), l0 = await lg.events(null, { minDepth: 0 });
 ok("its events at depth 0 are both, verified at level 3; at depth 12 (deep height 1,008) both too", l0.verified && l0.value.items.length === 2 && l12.verified &&
-  l12.value.items.length === 2 && l12.value.next === `1008:${Number.MAX_SAFE_INTEGER}` && l0.level === 3);
+  l12.value.items.length === 2 && l12.value.next.startsWith(`1008:${Number.MAX_SAFE_INTEGER}:0x`) && l0.level === 3);
 const l18 = await lg.events(null, { minDepth: 18 });
 ok("at depth 18 (deep height 1,002) only the first", l18.verified && l18.value.items.length === 1 && l18.value.items[0]!.height === 1_002);
 

@@ -6,15 +6,17 @@
 import {
   CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, NameValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
+import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
+import { movesPage } from "./transfers.js";
 import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
 import { verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
@@ -26,8 +28,9 @@ export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
 }
 export interface EventLog {
-  /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. */
-  events(after: TransferCursor | null, o?: ReadOptions & { readonly limit?: number }): Promise<Answer<Page<ChainEvent>>>;
+  /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
+   *  whose events hash is no longer the replica's at its height is CURSOR_OFF_BRANCH, nothing shown (cursor.ts). */
+  events(after: BoundCursor | null, o?: ReadOptions & { readonly limit?: number }): Promise<Answer<Page<ChainEvent>>>;
   status(): ReplicaStatus;
   subscribe(fn: (s: ReplicaStatus) => void): () => void;
   advance(o?: { readonly budgetMs?: number; readonly signal?: AbortSignal }): Promise<ReplicaStatus>;
@@ -38,12 +41,17 @@ export interface Reader extends EventLog {
    *  writes it (lower case, no `.csd`): any other string is INPUT_INVALID. */
   name(name: string, o?: ReadOptions): Promise<Answer<NameValue>>;
   balance(ticker: string, address: string, o?: ReadOptions): Promise<Answer<BalanceValue>>;
+  /** The token moves to `address` (every address when null, which needs `ticker`) of the applied log at the deep view,
+   *  narrowed to `ticker` when given, after `since` in (height, position) order. A `since` whose events hash is no
+   *  longer the replica's at its height is CURSOR_OFF_BRANCH, nothing shown. */
+  transfers(address: string | null, since: BoundCursor | null, o?: ReadOptions & { readonly limit?: number; readonly ticker?: string }): Promise<Answer<Page<Transfer, BoundCursor>>>;
   primary(address: string, o?: ReadOptions): Promise<Answer<{ readonly address: string; readonly name: string | null }>>;
   /** The deep view, a copy. */
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
   /** What cairnx-core's resolve() does with `tx`, a Propose or an Attest by `author`, in the block above the cursor
-   *  after every event held: whether it applies, with the reason code and note of the applied log. */
-  dryRun(tx: DryRunTx, author: string, o?: ReadOptions): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
+   *  after every event held: whether it applies, with the reason code and note of the applied log. It reads the tip
+   *  view, so its `at` is the tip at depth 0. */
+  dryRun(tx: DryRunTx, author: string, o?: Omit<ReadOptions, "minDepth">): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
@@ -54,12 +62,6 @@ const TRY_TXID = `0x${"f".repeat(64)}`;
 type Views = { deep: CairnXState | null; top: CairnXState | null; deepHeight: number };
 type Out<T> = { value: T | null; shown: T | null; why?: NotVerifiedCode[]; notes?: NoteCode[] };
 
-const CURSOR = /^(0|[1-9][0-9]{0,15}):(0|[1-9][0-9]{0,15})$/;
-const cursorOf = (c: TransferCursor | null): [number, number] | null | undefined => {
-  if (c === null) return null;
-  const m = typeof c === "string" ? CURSOR.exec(c) : null;
-  return m !== null && Number.isSafeInteger(Number(m[1])) && Number.isSafeInteger(Number(m[2])) ? [Number(m[1]), Number(m[2])] : undefined;
-};
 const rootOf = (b: Basis): { root: HeaderRoot; pin: Cursor | null } | null =>
   b.kind === "blocks" ? { root: b.root, pin: null } : b.kind === "pinned" ? { root: b.above.root, pin: b.pin } : null;
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
@@ -170,33 +172,47 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const views: Views = busy || s.tip === null || s.cursor === null ? { deep: null, top: null, deepHeight }
       : { deep: loop.stateAt(s.tip.height, minDepth), top: loop.stateAt(Math.min(s.cursor.height, s.tip.height), 0), deepHeight };
     const out: Out<T> = busy ? { value: null, shown: null } : f(views), own = [...(out.why ?? [])];
+    // A cursor is checked against the rows held, inside the read; its refusal comes alone, as every other input's.
+    if (own.includes("INPUT_INVALID")) return invalid();
     if (j.codes.length + own.length === 0 && out.value === null) own.push("NOT_SYNCED");
     const why = [...j.why, ...own.map((code) => ({ code }))], notes = [...j.notes, ...(out.notes ?? []).map((code) => ({ code }))];
     return why.length === 0 ? { ...meta, why, notes, at: j.at, verified: true, value: out.value! } : { ...meta, why, notes, at: j.at, verified: false, value: null, shown: out.shown };
   }
 
+  // The chain both paged reads page and check a cursor against. None while the store is not open (after close() the
+  // loop answers events hashes and no rows) or while the deep height lies above the replica's cursor (a catch-up, or a
+  // rollback before the blocks after it), where no events hash is held for a cursor to be made at.
+  function pagedChain(deepHeight: number): HeldChain | null {
+    const s = loop.status(), c = s.cursor;
+    if (s.store !== "open" || c === null || deepHeight > c.height) return null;
+    return { cursorHeight: c.height, eventsHashAt: (h) => loop.eventsHashAt(h), rows: (h) => loop.rows(h) };
+  }
+
   const log: EventLog = {
     events(after, o = {}) {
-      const from = cursorOf(after), limit = o.limit ?? 100;
+      const from = boundOf(after), limit = o.limit ?? 100;
       return read(o, from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000, (v) => {
-        const c = loop.status().cursor;
-        if (c === null) return { value: null, shown: null };
-        const [h0, p0] = from ?? [-1, 0], items: ChainEvent[] = [];
+        const held = pagedChain(v.deepHeight);
+        if (held === null) return { value: null, shown: null };
+        const r = resumeOf(from!, held), items: ChainEvent[] = [];
+        if (r.kind === "off-branch") return { value: null, shown: null, why: ["CURSOR_OFF_BRANCH"] };
+        if (r.kind === "invalid") return { value: null, shown: null, why: ["INPUT_INVALID"] };
         let more = false;
-        for (const row of loop.rows(Math.max(h0, 0))) {
+        // Rows hold their events in apply order; the page resumes after the cursor's event in that order. A cursor
+        // above the replica's has no rows above it.
+        const start = r.kind === "from" ? r : null;
+        for (const row of start === null ? [] : loop.rows(start.since?.height ?? 0)) {
           if (row.height > v.deepHeight) break;
           for (const e of row.events) {
-            if (e.height < h0 || (e.height === h0 && e.pos <= p0)) continue;
+            if (!afterInApplyOrder(e, start!)) continue;
             if (items.length === limit) { more = true; break; }
             items.push(e);
           }
           if (more) break;
         }
-        const last = items.at(-1), mark: TransferCursor = `${v.deepHeight}:${Number.MAX_SAFE_INTEGER}`;
-        const next: TransferCursor = more && last !== undefined ? `${last.height}:${last.pos}` : from !== null && h0 > v.deepHeight ? after! : mark;
         // The held events are the loop's and the materializer's own objects: a page carries copies.
-        const page = { items: structuredClone(items), next, more };
-        return { value: page, shown: page, notes: from !== null && h0 > c.height ? ["CURSOR_ABOVE_TIP"] : [] };
+        const page = { items: structuredClone(items), next: nextOf(held, v.deepHeight, r, items.at(-1), more), more };
+        return { value: page, shown: page, notes: r.kind === "above-tip" ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },
     status,
@@ -204,7 +220,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     advance,
     async close() { await running?.catch(() => undefined); await loop.close(); },
   };
-  return { log, read, loop };
+  return { log, read, loop, pagedChain };
 }
 
 /** A replica of another rule's events (design section 5, M12): the event log and its status, no resolved state. */
@@ -216,7 +232,7 @@ export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Pr
  *  that cannot give every event from activation (`code` BELOW_FLOOR), a pin of another rule (`code` PIN_MISMATCH) or a
  *  witness on the header source's origin. */
 export async function open(o: OpenOptions): Promise<Reader> {
-  const { log, read, loop } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
+  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
   return {
     ...log,
     balance(ticker, address, ro) {
@@ -228,6 +244,18 @@ export async function open(o: OpenOptions): Promise<Reader> {
         const atTip = top !== null && deep !== null && (top.available !== deep.available || top.locked !== deep.locked) ? { atTip: { available: top.available, locked: top.locked } } : {};
         const value: BalanceValue = { ticker, address: a!, deployId: base.deployId, available: base.available, locked: base.locked, ...atTip };
         return { value: deep === null ? null : value, shown: value };
+      });
+    },
+    transfers(address, since, ro = {}) {
+      const to = address === null ? null : addressOf(address), ticker = ro.ticker ?? null, from = boundOf(since), limit = ro.limit ?? 100;
+      const inputOk = (address === null ? ticker !== null : to !== null) && (ticker === null || (typeof ticker === "string" && TICKER_RE.test(ticker))) &&
+        from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000;
+      return read<Page<Transfer, BoundCursor>>(ro, inputOk, (v) => {
+        const held = pagedChain(v.deepHeight);
+        if (v.deep === null || held === null) return { value: null, shown: null };
+        const r = movesPage({ ...held, deep: v.deep, deepHeight: v.deepHeight, to, ticker, since: from!, limit });
+        if (r.kind !== "page") return { value: null, shown: null, why: [r.kind === "off-branch" ? "CURSOR_OFF_BRANCH" : "INPUT_INVALID"] };
+        return { value: r.page, shown: r.page, notes: r.aboveTip ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },
     name(name, ro) {
@@ -244,7 +272,7 @@ export async function open(o: OpenOptions): Promise<Reader> {
       const a = addressOf(author);
       let ev: ChainEvent | null = null;
       try { ev = a === null ? null : eventOfTx({ pos: 1, txid: TRY_TXID, tx }, Number.MAX_SAFE_INTEGER - 1, a); } catch { ev = null; }   // refused by the rule
-      return read(ro, ev !== null, () => {
+      return read({ ...ro, minDepth: 0 }, ev !== null, () => {
         const c = log.status().cursor;
         if (c === null) return { value: null, shown: null };
         const h = c.height + 1, events = [...loop.rows(0).flatMap((r) => r.events), { ...ev!, height: h }];
