@@ -46,13 +46,22 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const absentOr = (v: unknown, ok: (x: unknown) => boolean): boolean => v === undefined || ok(v);
 const strings = (v: unknown): boolean => isObject(v) && Object.values(v).every((x) => typeof x === "string");
 const amount = (v: unknown): boolean => typeof v === "string" && /^(0|[1-9][0-9]*)$/.test(v);
+const isAddress = (v: unknown): boolean => typeof v === "string" && addressOf(v) === v;
 // The fields of a served NameState that nameView reads, each in its type's form.
-const servedName = (b: unknown, name: string): b is NameState => isObject(b) && b.name === name && addressOf(b.owner) === b.owner &&
-  absentOr(b.addr, (x) => addressOf(x) === x) && absentOr(b.pending, (x) => x === true) && absentOr(b.expired, (x) => x === true) &&
+const servedName = (b: unknown, name: string): b is NameState => isObject(b) && b.name === name && isAddress(b.owner) &&
+  absentOr(b.addr, isAddress) && absentOr(b.pending, (x) => x === true) && absentOr(b.expired, (x) => x === true) &&
   absentOr(b.profile, strings) && absentOr(b.paidThroughEpoch, (x) => Number.isSafeInteger(x) && (x as number) >= 0);
 const servedToken = (b: unknown, ticker: string, address: string): b is { deployId: string; holders: Record<string, { available: string; locked: string }> } =>
   isObject(b) && b.ticker === ticker && typeof b.deployId === "string" && HASH_RE.test(b.deployId) && isObject(b.holders) &&
   absentOr(b.holders[address], (h) => isObject(h) && amount(h.available) && amount(h.locked));
+
+// The resolver's 404 bodies for an absent record, the only 404s read as an answer. NAME_ABSENT: /cairnx/name/:name
+// when `names` holds no such own key; TICKER_ABSENT: /cairnx/token/:ticker for a ticker with no token (cairnx
+// src/service.ts at a0d3f27). Any other 404 (the resolver's catch-all "not found", the front door's "not a cairnx read
+// endpoint", a reworded refusal) is no answer, so an origin set to the wrong server shows nothing rather than "free".
+const NAME_ABSENT = "unregistered name";
+const TICKER_ABSENT = "unknown ticker";
+const refusal = (b: unknown, error: string): boolean => isObject(b) && Object.keys(b).length === 2 && b.ok === false && b.error === error;
 
 /** A reader of a display source. Throws ReplicaConfigError for any other basis: a replica is read through `open` of
  *  the root entry, and nothing here can report its level. */
@@ -64,12 +73,12 @@ export async function open(o: { readonly source: DisplaySource }): Promise<Displ
     level: 1, proof, vouch: basis, notes: [], at: null, verified: false, value: null, shown,
     why: [...(lv === null ? [] : [{ code: lv }]), ...(code === undefined ? [] : [detail === undefined ? { code } : { code, detail }])],
   });
-  // A 404 is an absent name or ticker only with the resolver's JSON refusal; anything else not 200 is no answer.
-  async function served<T>(path: string, ro: DisplayReadOptions, f: (body: unknown | null) => T | null): Promise<DisplayAnswer<T>> {
+  // `f` gets the body of a 200, or null for a 404 that is the read's `absent` refusal; anything else is no answer.
+  async function served<T>(path: string, absent: string, ro: DisplayReadOptions, f: (got: { readonly body: unknown } | null) => T | null): Promise<DisplayAnswer<T>> {
     try {
       const r = await source.get(path, ro.signal);
-      if (r.status !== 200 && !(r.status === 404 && isObject(r.body) && r.body.ok === false)) return answer<T>(null, "SOURCE_UNAVAILABLE", `${path} answered ${r.status}`);
-      const v = f(r.status === 200 ? r.body : null);
+      if (r.status !== 200 && !(r.status === 404 && refusal(r.body, absent))) return answer<T>(null, "SOURCE_UNAVAILABLE", `${path} answered ${r.status}`);
+      const v = f(r.status === 200 ? { body: r.body } : null);
       return v === null ? answer<T>(null, "SOURCE_UNAVAILABLE", `${path}: the answer is out of form`) : answer(v);
     } catch (e) {
       return answer<T>(null, "SOURCE_UNAVAILABLE", messageOf(e));
@@ -78,14 +87,19 @@ export async function open(o: { readonly source: DisplaySource }): Promise<Displ
   return {
     async name(name, ro = {}) {
       if (typeof name !== "string" || !NAME_RE.test(name)) return answer<NameValue>(null, "INPUT_INVALID");
-      return served(`name/${name}`, ro, (b) => (b === null ? nameView({}, name) : servedName(b, name) ? nameView({ [name]: b }, name) : null));
+      return served(`name/${name}`, NAME_ABSENT, ro, (got) => {
+        if (got === null) return nameView({}, name);
+        const b = got.body;
+        return servedName(b, name) ? nameView({ [name]: b }, name) : null;
+      });
     },
     async balance(ticker, address, ro = {}) {
       const a = addressOf(address);
       if (a === null || typeof ticker !== "string" || !TICKER_RE.test(ticker)) return answer<BalanceValue>(null, "INPUT_INVALID");
-      return served(`token/${ticker}`, ro, (b) => {
-        if (b !== null && !servedToken(b, ticker, a)) return null;
-        const s = b === null ? { tokens: {}, balances: {} } : { tokens: { [ticker]: b }, balances: { [ticker]: b.holders } };
+      return served(`token/${ticker}`, TICKER_ABSENT, ro, (got) => {
+        const s = got === null ? { tokens: {}, balances: {} }
+          : servedToken(got.body, ticker, a) ? { tokens: { [ticker]: got.body }, balances: { [ticker]: got.body.holders } } : null;
+        if (s === null) return null;
         const v = balanceOf(s, ticker, a);
         return { ticker, address: a, deployId: v.deployId, available: v.available, locked: v.locked };
       });
