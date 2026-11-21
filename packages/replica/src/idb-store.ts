@@ -45,11 +45,11 @@ function takeLock(name: string): Promise<Lock | null> {
   const locks = (globalThis as { navigator?: { locks?: LockManager } }).navigator?.locks;
   if (locks === undefined) throw new ReplicaConfigError("idbStore: the Web Locks API is not available here");
   return new Promise((resolve, reject) => {
-    let held = false, end = () => undefined as void;
+    let held = false;
     const gone = locks.request(name, { ifAvailable: true }, (lock) => {
       if (lock === null) { resolve(null); return undefined; }
       held = true;
-      return new Promise<void>((e) => { end = e; resolve({ held: () => held, release: () => { held = false; end(); }, gone: settled }); });
+      return new Promise<void>((end) => resolve({ held: () => held, release: () => { held = false; end(); }, gone: settled }));
     });
     const settled: Promise<void> = gone.then(() => { held = false; }, (e: unknown) => { held = false; reject(e); });
   });
