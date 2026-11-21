@@ -47,8 +47,9 @@ export interface Reader extends EventLog {
   /** The deep view, a copy. */
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
   /** What cairnx-core's resolve() does with `tx`, a Propose or an Attest by `author`, in the block above the cursor
-   *  after every event held: whether it applies, with the reason code and note of the applied log. */
-  dryRun(tx: DryRunTx, author: string, o?: ReadOptions): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
+   *  after every event held: whether it applies, with the reason code and note of the applied log. It reads the tip
+   *  view, so its `at` is the tip at depth 0. */
+  dryRun(tx: DryRunTx, author: string, o?: Omit<ReadOptions, "minDepth">): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
@@ -262,7 +263,7 @@ export async function open(o: OpenOptions): Promise<Reader> {
       const a = addressOf(author);
       let ev: ChainEvent | null = null;
       try { ev = a === null ? null : eventOfTx({ pos: 1, txid: TRY_TXID, tx }, Number.MAX_SAFE_INTEGER - 1, a); } catch { ev = null; }   // refused by the rule
-      return read(ro, ev !== null, () => {
+      return read({ ...ro, minDepth: 0 }, ev !== null, () => {
         const c = log.status().cursor;
         if (c === null) return { value: null, shown: null };
         const h = c.height + 1, events = [...loop.rows(0).flatMap((r) => r.events), { ...ev!, height: h }];

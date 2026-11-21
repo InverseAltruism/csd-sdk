@@ -38,6 +38,7 @@ const send = (amount: bigint): DryRunTx => ({ app: app({ v: 1, t: "transfer", ti
 const okSend = await r.dryRun(send(1n), HOLDER), tooMuch = await r.dryRun(send(have + 1n), HOLDER);
 ok("a transfer of 1 CAIRN by a holder: verified, applied, the answer resolve() gives", okSend.verified && okSend.value.applied &&
   JSON.stringify(okSend.value) === JSON.stringify(direct(send(1n), HOLDER)));
+ok("its at is the tip it was tried above, at depth 0", okSend.at?.height === TIP && okSend.at.deepHeight === TIP && okSend.at.depth === 0 && okSend.at.tipHeight === TIP);
 ok("one above the holder's balance: verified, not applied, resolve()'s code", tooMuch.verified && !tooMuch.value.applied && tooMuch.value.code !== null &&
   JSON.stringify(tooMuch.value) === JSON.stringify(direct(send(have + 1n), HOLDER)));
 const name = (paid: boolean): DryRunTx => ({ app: app({ v: 1, t: "name", name: "zzdryrun" }),
