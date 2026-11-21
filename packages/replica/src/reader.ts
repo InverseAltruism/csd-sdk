@@ -17,8 +17,8 @@ import { replicaLoop } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
-import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
-import { verdict } from "./verdict.js";
+import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
+import { FRESH_MS, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
@@ -95,6 +95,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   // A store refused for a reason other than `unavailable` is reset and refilled at whichever load finds it (loop.ts).
   const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true });
   await loop.open();
+  restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;
 
@@ -106,7 +107,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused,
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed,
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
@@ -117,6 +118,25 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
     const why = codes.map((code) => (code === "NOT_SYNCED" && busy ? { code, detail: "a step's commit is in flight" } : { code }));
     return { codes, why, notes: notes.map((code) => ({ code })), at };
+  }
+
+  // A view the store kept from before a restart of its context, taken whole or not at all, and only where a running
+  // reader would answer from it: the tip is the block at the cursor and at most FRESH_MS old; where the root needs a
+  // witness, the confirmation is of a block held, at most FRESH_MS old, by one of this reader's witnesses, and was held
+  // with that tip. Otherwise the reader starts as a fresh one (test/browser/idb-store.test.ts, the restore cases).
+  function restore(v: KeptView | null): void {
+    if (v === null) return;
+    const now = clock(), w = v.witnessed, needs = r !== null && r.root.kind !== "own-node";
+    if (!(now - v.tip.time * 1000 <= FRESH_MS)) return;
+    if (needs && !(w !== null && w.tip === v.tip.hash && now - w.at <= FRESH_MS && witnesses.some((x) => x.id === w.by) && loop.hashAt(w.height) === w.hash)) return;
+    if (!loop.resume(v.tip)) return;
+    if (needs) board.restore({ height: w!.height, hash: w!.hash, by: w!.by, at: w!.at, generation: loop.generation() });
+  }
+  // What the store keeps for the next start of its context: the last step's tip and the confirmation held with it.
+  async function keep(): Promise<void> {
+    const s = loop.status(), w = board.witnessed(loop.generation());
+    if (store.keep === undefined || s.store !== "open" || s.tip === null) return;
+    await store.keep({ tip: s.tip, witnessed: w === null ? null : { height: w.height, hash: w.hash, by: w.by, at: w.at, tip: s.tip.hash } });
   }
 
   function status(): ReplicaStatus {
@@ -132,6 +152,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const run = (async () => {
       await Promise.all([loop.advance(a), board.tips(signal)]);
       await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h), generation: () => loop.generation() }, signal);
+      await keep();
       const s = status();
       for (const f of listeners) f(s);
       return s;

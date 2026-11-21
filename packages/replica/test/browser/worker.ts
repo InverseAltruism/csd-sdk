@@ -3,7 +3,7 @@
 // command a control page sends with chrome.runtime.sendMessage.
 import { CAIRNX_EVENT_RULE, eventsHashStep, payloadHash } from "@inversealtruism/cairnx-core";
 import { idbStore, idbStoreWith, sessionSlot } from "../../src/idb-store.js";
-import { open, replicaLoop, type Boundary, type BlockRow, type BlocksSource, type Commit, type Step, type Store } from "../../src/index.js";
+import { open, replicaLoop, type Boundary, type BlockRow, type BlocksSource, type Commit, type Step, type Store, type Witness } from "../../src/index.js";
 import { rowsHashStep } from "../../src/rowshash.js";
 import { boundsHashStep, BOUNDS_HASH_START } from "../../src/store-format.js";
 import { fixtures } from "../../src/testing.js";
@@ -17,24 +17,41 @@ type Args = Record<string, unknown> & { name?: string; top?: number; nth?: numbe
 const chrome = (globalThis as unknown as { chrome: Chrome }).chrome;
 const ACT = CAIRNX_EVENT_RULE.activationHeight, TOP = ACT + 2_000, f = fixtures();
 
-// The stub chain: a block at every height from activation, a Propose at every 37th, a hash a height.
+// The stub chain: a block at every height from activation, `dense` Proposes at every 37th, a hash a height. Under a
+// caller root (`caller`) a reader needs a witness; `offline` refuses every step, as a source with no network.
 const hashOf = (h: number) => `0x${h.toString(16).padStart(8, "0")}${"ab".repeat(28)}`;
-const eventsAt = (h: number) => (h % 37 === 0 ? [f.prop({ v: 1, t: "nrenew", name: "alice" }, { proposer: `0x${"a1".repeat(20)}`, height: h, pos: 1, id: `0x${h.toString(16).padStart(64, "0")}` })] : []);
-function source(top: number): BlocksSource {
+const eventsAt = (h: number, dense: number) => (h % 37 !== 0 ? [] : Array.from({ length: dense }, (_, i) =>
+  f.prop({ v: 1, t: "nrenew", name: "alice" }, { proposer: `0x${"a1".repeat(20)}`, height: h, pos: i + 1, id: `0x${h.toString(16).padStart(56, "0")}${(i + 1).toString(16).padStart(8, "0")}` })));
+type Kind = { readonly caller?: boolean; readonly offline?: boolean; readonly dense?: number };
+const calls = { next: 0, tip: 0 };
+function source(top: number, k: Kind = {}): BlocksSource {
   const tip = () => ({ height: top, hash: hashOf(top), time: Math.floor(Date.now() / 1000) });
+  const root = k.caller === true ? { kind: "caller", floor: ACT - 1, origin: "https://headers.example" } as const : { kind: "own-node", node: "http://127.0.0.1:8789" } as const;
   return {
-    basis: { kind: "blocks", root: { kind: "own-node", node: "http://127.0.0.1:8789" }, bodies: "http://127.0.0.1:8789" }, floor: null,
+    basis: { kind: "blocks", root, bodies: k.caller === true ? "https://bodies.example" : "http://127.0.0.1:8789" }, floor: null,
     tip: async () => tip(), block: async () => { throw new Error("the stub source serves steps only"); },
     async next(ctx): Promise<Step> {
+      calls.next++;
+      if (k.offline === true) return { kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: "offline", retryAfterMs: null };
       const after = ctx.cursor?.height ?? ACT - 1;
       if (after >= top) return { kind: "idle", tip: tip() };
       const blocks = [];
-      for (let h = after + 1; h <= Math.min(top, after + ctx.budget.maxBlocks); h++) blocks.push({ height: h, hash: hashOf(h), events: eventsAt(h) });
+      for (let h = after + 1; h <= Math.min(top, after + ctx.budget.maxBlocks); h++) blocks.push({ height: h, hash: hashOf(h), events: eventsAt(h, k.dense ?? 1) });
       return { kind: "blocks", blocks, cursor: { height: blocks.at(-1)!.height, hash: blocks.at(-1)!.hash }, tip: tip() };
     },
   };
 }
 const slotKey = (name: string) => `slot:${name}`;
+// A witness on another origin at the stub chain's top; `offline` throws, as a witness with no network.
+const witness = (offline: boolean): Witness => ({
+  id: "w1", origin: "https://witness.example",
+  async tip() { calls.tip++; if (offline) throw new Error("offline"); return { height: TOP, hash: hashOf(TOP), time: Math.floor(Date.now() / 1000), header: {} as never }; },
+  async hashAt(h) { if (offline) throw new Error("offline"); return hashOf(h); },
+});
+// The reader of the production call shape over `name`'s store: open() with idbStore and sessionSlot.
+const viewReader = (name: string, k: Kind, clock?: () => number) => open({ source: source(TOP, k), store: idbStore({ name, slot: sessionSlot(slotKey(name)) }),
+  witnesses: k.caller === true ? [witness(k.offline === true)] : [], ...(clock === undefined ? {} : { clock }) });
+const codesOf = (a: { why: readonly { code: string }[] }) => a.why.map((w) => w.code);
 // A store recording each open's answer and each commit's cursor once taken.
 function watched(s: Store, opens: string[], cursors: (number | null)[]): Store {
   return { ...s, rows: (h) => s.rows(h), async open(e) { const o = await s.open(e); opens.push(o.ok ? "ok" : o.reset); return o; },
@@ -119,8 +136,62 @@ const cmds: Record<string, (a: Args) => Promise<unknown>> = {
     const forged = { ...record, meta: { ...record.meta, eventsHash, rowsHash, eventCount: record.meta.eventCount + 1 }, boundsHash: chain };
     await put(db, [["rows", last, last.height], ["meta", forged, "meta"], ...bounds.map((b): [string, unknown, IDBValidKey] => ["bounds", b, b.height])]);
     db.close();
-    if (a.slotToo === true) await chrome.storage.session.set({ [slotKey(a.name!)]: JSON.stringify([payloadHash(forged)]) });
+    if (a.slotToo === true) await chrome.storage.session.set({ [slotKey(a.name!)]: JSON.stringify({ hashes: [payloadHash(forged)] }) });
     return { forgedAt: last.height };
+  },
+  // The view a reader keeps: online until verified (under a caller root with its witness), then closed.
+  async fillView(a) {
+    const r = await viewReader(a.name!, { caller: true, dense: Number(a.dense ?? 1) });
+    let s = await r.advance({ budgetMs: 120_000 });
+    for (let i = 0; i < 5 && !s.verified; i++) s = await r.advance({ budgetMs: 120_000 });
+    await r.close();
+    return { verified: s.verified, why: codesOf(s), cursor: s.cursor?.height ?? null, slotBytes: await (chrome.storage.session as unknown as { getBytesInUse(k: string): Promise<number> }).getBytesInUse(slotKey(a.name!)) };
+  },
+  // A worker's first read, offline (every step and witness refused): from the worker's start and from the open.
+  async readView(a) {
+    calls.next = 0; calls.tip = 0;
+    const t0 = performance.now(), r = await viewReader(a.name!, { caller: true, offline: true }), t1 = performance.now();
+    const n = await r.name("alice"), t2 = performance.now();
+    await r.close();
+    return { verified: n.verified, why: codesOf(n), sinceStart: t2, openMs: t1 - t0, readMs: t2 - t1, nextCalls: calls.next, tipCalls: calls.tip };
+  },
+  // Each binding of a kept view broken alone: the reader answers as one with no view does (`fresh`), offline.
+  async bindings() {
+    const out: Record<string, unknown> = {};
+    const other = `0x${"cd".repeat(32)}`, old = 31 * 60;
+    const cases: Record<string, (held: { record: string; tip: { height: number; hash: string; time: number }; witnessed: { height: number; hash: string; by: string; at: number; tip: string } }) => void> = {
+      honest: () => undefined,
+      record: (v) => { v.record = other; },
+      tipAbove: (v) => { v.tip.height += 5; },
+      tipBlock: (v) => { v.tip.hash = other; },
+      tipOld: (v) => { v.tip.time -= old; },
+      witBlock: (v) => { v.witnessed.hash = other; },
+      witOld: (v) => { v.witnessed.at -= old * 1000; },
+      witBy: (v) => { v.witnessed.by = "w2"; },
+      witTip: (v) => { v.witnessed.tip = other; },
+    };
+    for (const [c, mutate] of Object.entries(cases)) {
+      const name = fresh(`bind-${c.toLowerCase()}`), filled = await cmds.fillView!({ name }) as { verified: boolean };
+      const key = slotKey(name), slot = JSON.parse((await chrome.storage.session.get(key))[key] as string);
+      mutate(slot.held);
+      await chrome.storage.session.set({ [key]: JSON.stringify(slot) });
+      const restored = await cmds.readView!({ name }) as { verified: boolean; why: string[] };
+      await chrome.storage.session.set({ [key]: JSON.stringify({ hashes: slot.hashes }) });
+      const freshRead = await cmds.readView!({ name }) as { verified: boolean; why: string[] };
+      out[c] = { filled: filled.verified, restored: restored.why, verified: restored.verified, fresh: freshRead.why };
+    }
+    return out;
+  },
+  // A browser start: the slot empty, the store reset and refilled; STORE_UNCONFIRMED until the refill reaches the tip.
+  async unconfirmedRefill(a) {
+    await state(a.name!);
+    await chrome.storage.session.remove(slotKey(a.name!));
+    const r = await open({ source: source(TOP), store: idbStore({ name: a.name!, slot: sessionSlot(slotKey(a.name!)) }) });
+    const during = r.status(), firstStep = await r.advance({ budgetMs: 1 });
+    let s = firstStep;
+    for (let i = 0; i < 50 && !s.verified; i++) s = await r.advance({ budgetMs: 120_000 });
+    await r.close();
+    return { during: codesOf(during), firstStep: codesOf(firstStep), after: codesOf(s), verified: s.verified, cursor: s.cursor?.height ?? null };
   },
   // A loop that keeps the store open, so it holds the lock, until the worker stops.
   async hold(a) {

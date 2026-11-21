@@ -36,6 +36,8 @@ export interface LoopStatus {
   readonly tip: TipView | null; readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;
   readonly lastError: { readonly code: SourceCode | "STORE_FAILED"; readonly reason: string; readonly at: number } | null;
   readonly retryAt: number | null; readonly replayMs: number | null;
+  /** Whether the store was reset as unconfirmed and the loop has not yet reached a step's tip since. */
+  readonly unconfirmed: boolean;
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
@@ -46,6 +48,8 @@ export interface Loop {
   /** Runs steps until caught up, backed off, aborted or past `budgetMs`, and resolves after the last commit. */
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
   status(): LoopStatus;
+  /** Takes `tip` as the last step's tip when it is the block at the cursor, held; false otherwise. */
+  resume(tip: TipView): boolean;
   eventsHashAt(height: number): string | null;
   /** The block hash the loop holds at `height`: a row's, the cursor's, or one of the last FINAL_DEPTH + 1 blocks'
    *  that steps of this generation carried; else null. */
@@ -89,7 +93,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
-  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve();
+  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), unconfirmed = false;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -139,7 +143,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   async function load(): Promise<LoopOpen> {
     const first = await read();
     if (first.ok || first.reset === "unavailable" || o.resetRefused !== true) return first;
-    try { await store.reset(); } catch (e) {
+    try { await store.reset(); unconfirmed ||= first.reset === "unconfirmed"; } catch (e) {
       if (e instanceof ReplicaConfigError) throw e;
       change("replace", 0, 0, () => { opened = "unavailable"; });
       return { ok: false, reset: "unavailable" };
@@ -181,7 +185,10 @@ export function replicaLoop(o: LoopOptions): Loop {
     failures++;
     return "stop";
   }
-  function settled(t: TipView): void { tip = t; lastError = null; retryAt = null; failures = 0; }
+  function settled(t: TipView): void {
+    tip = t; lastError = null; retryAt = null; failures = 0;
+    if ((cursor()?.height ?? -1) >= t.height) unconfirmed = false;
+  }
 
   // `build` moves the rows and the materializer ahead of the commit, since a boundary's state is replayed from them.
   // When it throws, or the commit throws or is refused, both are read back from the store, so the loop never holds
@@ -280,13 +287,19 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   const status = (): LoopStatus => ({
     store: opened, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
-    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs,
+    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };
   return {
     open: () => queued(load),
     advance: (a = {}) => queued(() => drive(a.budgetMs ?? Number.POSITIVE_INFINITY, a.signal)),
     status, eventsHashAt,
+    resume(t) {
+      const c = cursor();
+      if (opened !== "open" || c === null || c.height !== t.height || c.hash !== t.hash) return false;
+      tip = t;
+      return true;
+    },
     hashAt: (h) => (opened === "open" ? hashAt(h) ?? recent.get(h) ?? null : null),
     generation: () => generation,
     committing: () => busy !== null,

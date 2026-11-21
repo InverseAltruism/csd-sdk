@@ -210,6 +210,7 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
+| `STORE_UNCONFIRMED` | the store was not reset as unconfirmed since the loop last reached a step's tip ("The browser store" below): it is set from that reset until the refill's step reaches the tip |
 | `SHALLOW` | `name` and `primary`: the deep view and the tip view agree |
 | `CURSOR_OFF_BRANCH` | `events` and `transfers`: the events hash in the cursor is the replica's at the cursor's height; nothing is shown |
 
@@ -218,7 +219,7 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or
-context holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+context holds it). Exported and not emitted yet:
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -387,9 +388,9 @@ What the checks prove: they tie the log to its descriptor and the descriptor's b
 log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
 by design: below the pin the trust is the release, and a second derivation on another host is the check on it.
 
-`hosted({ pin, origin, witness?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is what
-`open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the pin
-as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
+`hosted({ pin, origin, witness?, store?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is
+what `open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the
+pin as its anchor, `store` (default `memoryStore()`; an extension passes `idbStore`), and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
 anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
 the witness's to confirm.
 
@@ -461,6 +462,31 @@ caller must not steal the store's lock (`navigator.locks.request` with `steal`):
 successor keeps its confirmation, but that reader answers nothing verified until its context starts again. A record of
 another tag in the database is `corrupt` and reset, where the disk store refuses another program's `meta.json`: the
 database's name carries this package's prefix, so nothing else is expected in it.
+
+The slot also keeps what the reader had settled when it last advanced: the tip of its last step and the witness
+confirmation it held then, bound to the record hash it was kept under. When the context starts again (an MV3 worker
+is stopped after about half a minute idle), the reader takes that view back, whole or not at all, only where a running
+reader would answer from it: the record is the one kept with it, the tip is the block at the store's cursor and at
+most 30 minutes old, and, where the root needs a witness, the confirmation is of a block the store holds, at most 30
+minutes old, by one of this reader's witnesses, held with that tip. Then the first read answers as the stopped worker
+would have, with no request; otherwise the reader starts as a fresh one, with a fresh one's `why`. Under a pin the
+view is taken before this context's source binds the stored rows to the descriptor: the record it is bound to was
+committed in this browser session after such a bind, and an extension update, which brings a new pin, empties the
+session area. A commit drops the view until the next advance keeps one for the new record.
+
+Who reaches the slot: the extension's own contexts (its worker and its pages, the popup included: the test reads it
+from a page); not content scripts, by the session area's default access level (`TRUSTED_CONTEXTS`, which the platform
+documents and the store does not change), and not a page of another origin, which has no `chrome.storage` of this
+extension. The rig tests the extension page only, since it loads no site. The slot's value after a kept view measured
+under 4,096 bytes in the test (the area's quota is 10,485,760 bytes).
+
+Measured on 2026-11-21, Chromium 153 headless on the maintainers' host, in the test's worker: a store of 2,000 blocks
+with 1,512 synthetic Proposes, unpinned, under a caller root with a witness; the worker stopped and woken, the network
+refused: wake to the first verified read 94 ms (median of 7, 82 to 101), of which the open 38.4 ms and the read with
+its two replays 39.9 ms. Without a kept view (a browser start), the first verified answer waits for the refill. At the
+shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, the design pass measured 235 and 258 ms
+(medians of 7), three replays of about 36 ms each among them; the plan's 150 ms row for a worker restart is missed
+until cairnx-core's resumable replay lets one pass serve the bind and both views.
 
 ## Display
 

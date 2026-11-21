@@ -78,6 +78,8 @@ export function witnessBoard(witnesses: readonly Witness[], clock: () => number)
       if (against || blind) witnessed = null;
       else if (agreed !== null) witnessed = agreed;
     },
+    /** Takes a confirmation kept from before a restart (reader.ts checks what binds it). */
+    restore(w: Witnessed): void { witnessed = w; },
     /** The confirmation held, if it is of the chain the loop holds now. */
     witnessed: (generation: number): Witnessed | null => (witnessed !== null && witnessed.generation === generation ? witnessed : null),
     disagree: (): boolean => disagree,

@@ -8,7 +8,7 @@ import type { NodeBlocksOptions } from "./node-blocks.js";
 import { pinned } from "./pinned.js";
 import type { OpenOptions } from "./reader.js";
 import type { Witness } from "./answer.js";
-import type { BlocksSource, Pin } from "./types.js";
+import type { BlocksSource, Pin, Store } from "./types.js";
 
 /** `local` over an entry's own `nodeBlocks`: one's own node, above `pin` when one is given. */
 export const localOf = (nodeBlocks: (o: NodeBlocksOptions) => BlocksSource) => (o: NodeBlocksOptions & { readonly pin?: Pin }): OpenOptions => {
@@ -17,13 +17,14 @@ export const localOf = (nodeBlocks: (o: NodeBlocksOptions) => BlocksSource) => (
 };
 
 /** `origin`: the front door whose /api/blocks are read (required); `witness`: a source on another origin that confirms
- *  the branch, without which no answer is verified; `window`: hostedBlocks's window above the pin. */
-export interface HostedOptions extends HttpOptions { readonly pin: Pin; readonly origin: string; readonly witness?: Witness; readonly window?: number }
+ *  the branch, without which no answer is verified; `window`: hostedBlocks's window above the pin; `store`: where the
+ *  rows are kept (default memoryStore(); an extension passes idbStore). */
+export interface HostedOptions extends HttpOptions { readonly pin: Pin; readonly origin: string; readonly witness?: Witness; readonly window?: number; readonly store?: Store }
 
 /** `pin`'s log, then complete blocks from `origin` bound to headers verified from the pin as the anchor. */
 export function hosted(o: HostedOptions): OpenOptions {
-  const { pin: p, origin, witness, window, ...http } = o, pin = checkPin(p);
+  const { pin: p, origin, witness, window, store, ...http } = o, pin = checkPin(p);
   const anchor = { height: pin.height, hash: pin.blockHash };
   const then = hostedBlocks({ origin, root: { kind: "anchor", anchor, ...(window === undefined ? {} : { window }) }, ...http });
-  return { source: pinned({ pin, then }), store: memoryStore(), witnesses: witness === undefined ? [] : [witness] };
+  return { source: pinned({ pin, then }), store: store ?? memoryStore(), witnesses: witness === undefined ? [] : [witness] };
 }

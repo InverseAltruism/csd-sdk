@@ -47,6 +47,12 @@ ok("hosted with a witness: verified, the deep state equal to resolve() over the 
 const h1 = await open({ ...hostedOf(), clock }), hs1 = await h1.advance();
 ok("hosted with no witness: NOT_WITNESSED alone, never verified (the pin's branch is confirmed by no one)", codes(hs1) === "NOT_WITNESSED" && !hs1.verified);
 await h0.close(); await h1.close();
+const own = memoryStore(), h2 = await open({ ...hosted({ pin: pinOf(), origin: ORIGIN, fetch: front({ answers: all }).f, witness: live.witness, store: own }), clock });
+const hs2 = await h2.advance();
+await h2.close();
+const o2 = await own.open({ format: 1, rule: CAIRNX_EVENT_RULE, basis: hs2.vouch });
+ok("hosted with a store: the reader fills that store, verified; without one each call has a memory store of its own",
+  hs2.verified && o2.ok && o2.meta?.cursor?.height === TIP && hostedOf().store !== hostedOf().store && hostedOf().store !== undefined, codes(hs2));
 const bl = replicaLoop({ source: pinned({ pin: pinOf(), then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) }), store: memoryStore() });
 await bl.advance();
 const pb = bl.boundary(P);

@@ -19,6 +19,8 @@ export interface VerdictInput {
   peerAhead(tip: TipView): boolean;
   /** Null when the root needs no witness (one's own node, a feed); else the time of the confirmation held, or null. */
   readonly witness: { readonly at: number | null } | null;
+  /** Whether the store was reset as unconfirmed and is being refilled (LoopStatus.unconfirmed). */
+  readonly unconfirmed: boolean;
   /** Under a pinned basis, the source's refusal of its pin (pinned.ts), which it repeats at every later step; else null. */
   readonly refused: "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "RULES_DIFFER" | null;
 }
@@ -40,6 +42,7 @@ export function verdict(v: VerdictInput): NotVerifiedCode[] {
     if (v.now / 1000 - s.tip.time > FRESH_MS / 1000) why.push("TIP_STALE");
     if (v.peerAhead(s.tip)) why.push("TIP_BEHIND_PEER");
   }
+  if (v.unconfirmed) why.push("STORE_UNCONFIRMED");
   if (v.witness !== null) {
     if (v.witness.at === null) why.push("NOT_WITNESSED");
     else if (v.now - v.witness.at > FRESH_MS) why.push("WITNESS_SILENT");

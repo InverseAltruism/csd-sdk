@@ -10,6 +10,12 @@
   that holds a boundary or a header window (its chain and window name were sha256 over raw bytes) opens `corrupt` and
   is refilled. Internal:
   `Store.open`'s reason `unconfirmed`, `TrustedSlot`.
+- `hosted({ ..., store })`: the store, default `memoryStore()`. `STORE_UNCONFIRMED` is set from an unconfirmed reset
+  until the refill reaches a step's tip. The browser store's slot also keeps the reader's last settled tip and witness
+  confirmation, bound to the record hash; a reader whose context starts again takes them back, whole or not at all,
+  only where a running reader would answer from them (the block at the cursor, 30 minutes, a held block confirmed by
+  one of its witnesses with that tip), else it starts fresh. Internal: `Store.keep`, `Store.kept`, `KeptView`,
+  `Loop.resume`, `LoopStatus.unconfirmed`.
 - `idbStore`, after review: a store whose Web Lock was stolen is lost (it opens `unavailable` and writes nothing to the
   database or the slot), and a commit's last slot write is made only while the slot still holds the pair that commit
   wrote, so a writer that lost its lock cannot overwrite its successor's confirmation.

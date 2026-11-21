@@ -165,6 +165,17 @@ export interface Store {
     Promise<{ ok: true; meta: StoreMeta | null } | { ok: false; reset: "format" | "rule" | "basis" | "corrupt" | "unconfirmed" | "unavailable" }>;
   rows(fromHeight: number): AsyncIterable<BlockRow>; boundaries(): Promise<Boundary[]>; headerWindow(): Promise<Uint8Array | null>;
   commit(c: Commit): Promise<{ ok: true } | { ok: false; code: "CURSOR_MOVED" | "STORE_FAILED" }>; reset(): Promise<void>; close(): void;
+  /** Optional: a store that keeps a reader's settled view across a restart of its context, bound to the record it was
+   *  kept with (idb-store.ts). `kept` gives it after an open that confirmed that record, else null. */
+  keep?(view: KeptView): Promise<void>;
+  kept?(): KeptView | null;
+}
+
+/** Internal. What a reader had settled when it last advanced: the tip of its last step, and the witness confirmation
+ *  it held then with the hash of that tip. */
+export interface KeptView {
+  readonly tip: TipView;
+  readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number; readonly tip: string } | null;
 }
 
 /** A value only this program's trusted contexts can read and write and that a browser start clears: the wallet's is

@@ -123,6 +123,33 @@ try {
   ok("stolen before A's first slot write: A writes no pair over B's confirmation, B's store reopens confirmed",
     sl.first?.bOpen === "ok" && sl.first.bCommit === true && sl.first.aCommit !== "ok" && sl.first.reopened === "ok", show(sl.first));
   ok("the slot changed under A before its last write: A's commit is refused and the other value stays", sl.changed?.aCommit === "STORE_FAILED" && sl.changed.slotKept === true, show(sl.changed));
+  console.log("the view a reader keeps across a worker stop (tip and witness confirmation):");
+  const fv = await page.call("fillView", { name: "view", dense: 28 });
+  const median = (xs: number[]) => [...xs].sort((x, y) => x - y)[xs.length >> 1]!;
+  const runs: { wall: number; verified: boolean; why: string[]; sinceStart: number; openMs: number; readMs: number; nextCalls: number; tipCalls: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    await b.stopWorker(page);
+    const t = Date.now(), v = await page.call("readView", { name: "view" });
+    runs.push({ ...v, wall: Date.now() - t });
+  }
+  ok(`filled under a caller root with a witness: verified; the slot holds ${fv.slotBytes} bytes of a 10,485,760 quota`, fv.verified && fv.slotBytes > 0 && fv.slotBytes < 4096, show(fv));
+  ok("after each of 7 worker stops, offline (every step and witness refused): the first read is verified from the kept view",
+    runs.every((r) => r.verified && r.why.length === 0), show(runs.map((r) => r.why)));
+  console.log(`    wake to verified read, medians of 7: ${median(runs.map((r) => r.wall))} ms (range ${Math.min(...runs.map((r) => r.wall))} to ${Math.max(...runs.map((r) => r.wall))});` +
+    ` worker start to read ${median(runs.map((r) => r.sinceStart)).toFixed(1)} ms, open ${median(runs.map((r) => r.openMs)).toFixed(1)} ms, read ${median(runs.map((r) => r.readMs)).toFixed(1)} ms;` +
+    ` refused step and witness calls per read ${median(runs.map((r) => r.nextCalls))} and ${median(runs.map((r) => r.tipCalls))}`);
+  const bd = await page.call("bindings");
+  ok("the kept view on the honest path: verified with no step or witness answer", bd.honest?.filled === true && bd.honest.verified === true && bd.honest.restored.length === 0, show(bd.honest));
+  for (const c of ["record", "tipAbove", "tipBlock", "tipOld", "witBlock", "witOld", "witBy", "witTip"]) {
+    const x = bd[c];
+    ok(`a kept view broken by ${c}: nothing restored, the answer a fresh reader's (${x?.fresh?.join(",")})`,
+      x?.filled === true && x.verified === false && x.fresh.length > 0 && x.restored.join() === x.fresh.join(), show(x));
+  }
+  const uc = await page.call("unconfirmedRefill", { name: "refill" });
+  ok("a browser start: STORE_UNCONFIRMED from the reset through the refill's steps, gone once it reaches the tip, then verified",
+    uc.during.includes("STORE_UNCONFIRMED") && uc.firstStep.includes("STORE_UNCONFIRMED") && !uc.after.includes("STORE_UNCONFIRMED") && uc.verified === true, show(uc));
+  const seen = await page.eval(`chrome.storage.session.get("slot:view").then((v) => typeof v["slot:view"])`);
+  ok("another extension page of the extension reads the slot (it is the extension's own context)", seen === "string", show(seen));
   const rf = await page.call("refusals");
   ok("ReplicaConfigError for a name outside [a-z0-9-]{1,64}, a missing slot and an empty slot key", show(rf) === show({ badName: "ReplicaConfigError", noSlot: "ReplicaConfigError", emptyKey: "ReplicaConfigError" }), show(rf));
 } finally {

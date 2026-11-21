@@ -2,6 +2,8 @@
 // `cairnx-replica:<name>`, IndexedDB version 1 (the layout); its object stores, the only names it writes or removes:
 //   meta    key "meta": the record { store, format, meta (no `witnessed`), boundsHash, window } (store-format.ts)
 //   rows    key height: a BlockRow        bounds   key height: a Boundary        window   key "window": its bytes
+// The slot holds JSON { hashes, held? }: the record hashes it confirms, and the view a reader kept (keep()) with the
+// record hash it was kept under.
 // A commit is one readwrite transaction that first reads the stored cursor and aborts unless it is `expect`, so a
 // writer that got past the lock does not interleave. The slot is written before it with the pair [stored record's
 // hash, new record's hash] and after it with the new hash alone, so a context stopped at any point leaves a record the
@@ -12,9 +14,9 @@
 import { payloadHash } from "@inversealtruism/cairnx-core";
 import { checkBasis } from "./basis.js";
 import { ReplicaConfigError } from "./errors.js";
-import { BOUNDS_HASH_START, Corrupt, FORMAT, TAG, boundsHashStep, checkedChain, hash, isObject, metaOf, storedMeta, windowDigest } from "./store-format.js";
+import { BOUNDS_HASH_START, Corrupt, FORMAT, TAG, boundsHashStep, checkedChain, count, hash, isObject, metaOf, storedMeta, windowDigest } from "./store-format.js";
 import { commitShapeOk, keptHeight, keyDifference, sameCursor, type Hashes, type StoreKey } from "./store-rules.js";
-import type { BlockRow, Boundary, Commit, Store, StoreMeta, TrustedSlot } from "./types.js";
+import type { BlockRow, Boundary, Commit, KeptView, Store, StoreMeta, TrustedSlot } from "./types.js";
 
 const STORES = ["meta", "rows", "bounds", "window"], NAME = /^[a-z0-9-]{1,64}$/;
 
@@ -56,6 +58,24 @@ function takeLock(name: string): Promise<Lock | null> {
   });
 }
 
+const slotText = (hashes: string[], held?: unknown): string => JSON.stringify(held === undefined ? { hashes } : { hashes, held });
+// The slot's value, or null when it is out of form (which confirms no record).
+function slotValue(v: string | null): { hashes: string[]; held: unknown } | null {
+  let x: unknown;
+  try { x = v === null ? { hashes: [] } : JSON.parse(v); } catch { return null; }
+  return isObject(x) && Array.isArray(x.hashes) && x.hashes.every((h) => typeof h === "string") ? { hashes: x.hashes as string[], held: x.held } : null;
+}
+// The view kept under the record hash `h`, or null for another record's or one out of form.
+function keptOf(held: unknown, h: string): KeptView | null {
+  if (!isObject(held) || held.record !== h || !isObject(held.tip)) return null;
+  const t = held.tip, w = held.witnessed;
+  if (!count(t.height) || !hash(t.hash) || !count(t.time)) return null;
+  const tip = { height: t.height, hash: t.hash, time: t.time };
+  if (w === null) return { tip, witnessed: null };
+  if (!isObject(w) || !count(w.height) || !hash(w.hash) || typeof w.by !== "string" || !count(w.at) || !hash(w.tip)) return null;
+  return { tip, witnessed: { height: w.height, hash: w.hash, by: w.by, at: w.at, tip: w.tip } };
+}
+
 const request = <T>(r: IDBRequest<T>): Promise<T> => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 
 type Stored = { store: string; format: number; meta: Omit<StoreMeta, "witnessed">; boundsHash: string; window: string | null };
@@ -79,7 +99,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
   let db: IDBDatabase | null = null, lock: Lock | null = null, opened: StoreKey | null = null, durable = EMPTY(), newer = false;
   // A store whose lock was stolen is lost for good: it opens `unavailable` and commits nothing, to the database or the
   // slot, so it cannot write over the successor that took the lock (test/browser/idb-store.test.ts, the steal cases).
-  let lost = false;
+  let lost = false, kept: KeptView | null = null;
   const fenced = (): boolean => (lost ||= lock?.lost() === true) || lock === null || !lock.held();
 
   function connect(): Promise<IDBDatabase> {
@@ -122,12 +142,12 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
       rowEnds: rows.map((r) => ({ height: r.height, eventsHash: r.eventsHash, rowsHash: r.rowsHash })) };
   }
 
-  // Check (2): the slot names the record.
+  // Check (2): the slot names the record. A view kept under that record is taken with it.
   async function confirmed(h: string): Promise<boolean> {
-    const v = await slot.get();
-    let hs: unknown;
-    try { hs = v === null ? [] : JSON.parse(v); } catch { return false; }   // a slot out of form names no record
-    return Array.isArray(hs) && hs.includes(h);
+    const v = slotValue(await slot.get());
+    if (v === null || !v.hashes.includes(h)) return false;
+    kept = keptOf(v.held, h);
+    return true;
   }
 
   // The commit's transaction: "moved" when the stored cursor is not `expect`, else it resolves on complete.
@@ -164,7 +184,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
   }
   return {
     async open(expect) {
-      opened = null;
+      opened = null; kept = null;
       checkBasis(expect.basis);
       if (lost || lock?.lost() === true) { lost = true; return unavailable; }
       if (lock === null || !lock.held()) {
@@ -179,7 +199,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
         throw e;
       }
       if (read === "format") return { ok: false, reset: "format" };
-      if (read.hash !== null && !(await confirmed(read.hash))) return { ok: false, reset: "unconfirmed" };
+      if (read.hash !== null && !(await confirmed(read.hash))) { kept = null; return { ok: false, reset: "unconfirmed" }; }
       durable = read;
       const meta = read.meta, reset = meta === null ? null : keyDifference(meta, expect);
       if (reset !== null) return { ok: false, reset };
@@ -215,9 +235,10 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
         if (c.headerWindow !== undefined) window = windowDigest(c.headerWindow);
       }
       const record: Stored = { store: TAG, format: FORMAT, meta: storedMeta(c.meta), boundsHash: chain, window }, h = payloadHash(record);
-      const failed = { ok: false, code: "STORE_FAILED" } as const, pair = JSON.stringify(durable.hash === null ? [h] : [durable.hash, h]);
+      const failed = { ok: false, code: "STORE_FAILED" } as const, pair = slotText(durable.hash === null ? [h] : [durable.hash, h]);
       await hooks.point?.("slot pair");
       if (fenced()) return failed;
+      kept = null;
       await slot.set(pair);
       await hooks.point?.("transaction");
       if (fenced()) return failed;
@@ -227,7 +248,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
       // Only over the pair this commit wrote: another writer's value stays, and the pair still names this record, so the
       // loop reads the store back and finds it confirmed.
       if (fenced() || (await slot.get()) !== pair) return failed;
-      await slot.set(JSON.stringify([h]));
+      await slot.set(slotText([h]));
       await hooks.point?.("done");
       return { ok: true };
     },
@@ -246,9 +267,21 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
         for (const s of STORES) tx.objectStore(s).clear();
         await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onabort = () => rej(tx.error ?? new Error("idbStore: the reset aborted")); });
       }
-      await slot.set("[]");
+      await slot.set(slotText([]));
+      kept = null;
       durable = EMPTY(); opened = null;
     },
     close,
+    kept: () => kept,
+    // Only while the slot confirms the stored record alone, so it neither names an older record nor writes over another
+    // writer's value.
+    async keep(view) {
+      const h = durable.hash;
+      if (fenced() || h === null || opened === null) return;
+      const now = await slot.get(), v = slotValue(now);
+      if (v === null || v.hashes.length !== 1 || v.hashes[0] !== h) return;
+      const next = slotText([h], { record: h, tip: view.tip, witnessed: view.witnessed });
+      if (next !== now) await slot.set(next);
+    },
   };
 }
