@@ -22,8 +22,10 @@ console.log("the honest run and --check:");
 const honest = await run({}), want = (await derivePin(upTo(30_240))).pin;
 ok("the pin at 30,240 equals the one derivePin gives over cairnx-core's recording to 30,240, in every field",
   honest.r !== null && JSON.stringify(honest.r.pin) === JSON.stringify(want) && honest.r.file === "delta-30001-30240.json", honest.e);
-ok("its delta holds only blocks that hold an event, and at least one", honest.r !== null && honest.r.delta.blocks.length > 0 &&
-  honest.r.delta.blocks.every((b) => b.txs.some((t) => t.app.type === "Attest" || t.app.domain === "cairnx:v1")));
+const wantLog = JSON.parse(new TextDecoder().decode((await derivePin(upTo(30_240))).log)) as { height: number }[];
+const evH = [...new Set(wantLog.filter((e) => e.height > 30_000).map((e) => e.height))];
+ok(`its delta holds exactly the blocks of the range that hold an event (${evH.join(", ")}), not every block with a payload (30,048 has one)`,
+  honest.r !== null && JSON.stringify(honest.r.delta.blocks.map((b) => b.height)) === JSON.stringify(evH) && evH.length > 0);
 const checked = await run({ check: true, deltas: honest.r ? [honest.r.delta] : [], pin: honest.r?.pin ?? null });
 ok("--check over the committed delta and pin passes", checked.r !== null, checked.e);
 const edited: Descriptor | null = honest.r ? { ...honest.r.pin, stateHash: want.eventsHash } : null;

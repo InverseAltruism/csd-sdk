@@ -27,6 +27,10 @@ ok(`the fixture and the ${deltas.length} delta(s) give the shipped log byte for 
 ok("the derived pin repeats pin.json in every field but core, and its logSha256, eventsHash and stateHash are the log's own",
   shipped.differing(d.pin, pinJson).length === 0 && `0x${sha(shippedLog)}` === pinJson.logSha256 && d.pin.eventsHash === pinJson.eventsHash &&
   stateHash(resolve(events, pinJson.height)) === pinJson.stateHash);
+const fields = ["blockHash", "logSha256", "eventsHash", "stateHash"] as const;
+ok("the build's compare names each of the block hash, the three hashes and a gate it is handed wrong, and ignores core",
+  fields.every((k) => shipped.differing({ ...pinJson, [k]: `0x${"1".repeat(64)}` }, pinJson).join() === k) &&
+  shipped.differing({ ...pinJson, gates: { ...pinJson.gates, V11_HEIGHT: 1 } }, pinJson).join() === "gates" && shipped.differing({ ...pinJson, core: "9.9.9" }, pinJson).length === 0);
 ok("PIN is pin.json with log()", JSON.stringify({ ...PIN, log: undefined }) === JSON.stringify({ ...pinJson, log: undefined }) && typeof PIN.log === "function");
 const deltaText = deltas.map((x) => readFileSync(new URL(`../fixtures/delta-${x.from}-${x.to}.json`, import.meta.url), "utf8"));
 ok("each delta file is the recorder's byte form of what it holds", deltas.every((x, i) => chainRead.renderFixture(x) === deltaText[i]));
