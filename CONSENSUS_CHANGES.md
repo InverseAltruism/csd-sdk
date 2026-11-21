@@ -101,10 +101,11 @@ each `{ leg, ticker, from, to, amount }` (`TokenMove` in `types.ts`): a mint's c
 writes them on applied entries only, as the entry's last key, and writes no zero amount. `resolve.ts` and `records.ts`
 are byte-identical to 0.2.7 (`git diff edc20e9` over them prints nothing, `edc20e9` being the commit 0.2.7 was
 published from). The log is outside canonical state, so `stateHash`, `eventsHash`, every pinned vector and
-`replay-hashes.json` are unchanged. `test/vectors/moves.json` (12 cases, `conformance/gen-moves-vectors.mjs`) pins the
-moves, and `conformance/moves-check.mjs` checks them against the state: for every ticker and address, received less
-sent equals available plus locked; a ticker's mint moves sum to `minted`; each fill's moves are what its fill record
-gives. `types.ts` and `resolve/` changed, so `scripts/check-consumer-pins.mjs` grades a consumer pinned to 0.2.7 as
+`replay-hashes.json` are unchanged. `test/vectors/moves.json` (13 cases, `conformance/gen-moves-vectors.mjs`) pins the
+moves, and `conformance/moves-check.mjs` checks them against the input events and the state: for every ticker and
+address, received less sent equals available plus locked; a ticker's mint moves sum to `minted`; each transfer's move
+is its own record's (ticker, proposer, `to`, amount) and each mint's carries its record's ticker and its proposer as
+`to`; each fill's moves are what its fill record gives. `types.ts` and `resolve/` changed, so `scripts/check-consumer-pins.mjs` grades a consumer pinned to 0.2.7 as
 consensus-surface drift. cairnx-api's event rows name their fields and carry no `moves`.
 
 The proof. `scripts/seal-differential.mjs cairnx-core-0.2.4 edc20e9` passes, with each baseline build bound to npm
@@ -112,9 +113,9 @@ The proof. `scripts/seal-differential.mjs cairnx-core-0.2.4 edc20e9` passes, wit
 after its sha512 integrity check): `canonicalState` byte-identical to 0.2.4 and the whole result identical once `code`
 and `moves` are left out, and identical to 0.2.7 with `code` once `moves` is left out, over the 97 cases of the case
 files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of `codes.json`, the 14 cases of
-`forward.json` and the 12 of `moves.json`, and the 53 growth-stream inputs; check mode clean on 21,090 inputs; the
-moves of 22,716 inputs pass `moves-check.mjs` (identity on 45,056 ticker and address pairs; 8,418 xfer, 51,307 mint,
-43,990 fill, 1,397 sale and 1,397 fee moves); `parseRecord` equal over 200,987 records; 1,418 client-surface checks;
+`forward.json` and the 13 of `moves.json`, and the 53 growth-stream inputs; check mode clean on 21,090 inputs; the
+moves of 22,717 inputs pass `moves-check.mjs` (identity on 45,059 ticker and address pairs; 8,418 xfer, 51,308 mint,
+43,990 fill, 1,398 sale and 1,398 fee moves); `parseRecord` equal over 200,991 records; 1,418 client-surface checks;
 crosslang green. cairnx-api 0.1.1 is a peer-only step onto this core.
 
 The convention text. Documentation, vectors and a test: `resolve()`, canonical state and every pinned replay hash are
