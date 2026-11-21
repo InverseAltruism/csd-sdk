@@ -2,6 +2,19 @@
 
 ## 0.1.0 (unreleased)
 
+- `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
+  `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
+  last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last
+  boundary a step's budget reached. The recorded capture to 117,000 through it gives cairnx-core's corpus and pinned
+  events hash (`test/indexer-feed.test.ts`). After review: an Attest on a Propose mined before activation is left out
+  (the loop refused every step); the store is compared only up to the scan's top, so a verified tip that moves back
+  rolls nothing back; the block hashes the store holds (the cursor's, its boundary rows') are compared with the
+  indexer's and a replaced block rolls back to the last that agrees; a boundary at the tip takes the scan's tip hash.
+- Moved from the private CairnX resolver, byte for byte apart from import paths and then cleaned: the Scanner
+  (`src/scanner.ts`, exported from `./server` with `branchRefusal`), its kept events (`src/kept.ts`) and the
+  name-history selector (`nameHistory`, exported from `.`), with 22 of the Scanner's suites and the selector's three;
+  `scripts/move-residual.mjs` prints the residual against the resolver at a commit. The Scanner now reads at most
+  `MAX_TX_OUTPUTS` (512) outputs of a /tx answer, where it read 1,024.
 - Under an anchor root the store keeps the source's header window: each commit of blocks carries the window's headers
   up to the cursor and sets `StoreMeta.work` and `workRoot`, and a source started over a filled store takes the
   stored window instead of walking the headers from the anchor, once csd-light has verified it again and it holds

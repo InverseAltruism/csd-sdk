@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Fails when a tracked .md outside docs/archive/ contains an em dash (U+2014), or when tracked code reads a
-// sibling checkout (a parent-relative cairn* or csd-* directory, or the host's absolute checkout root). Docs may
-// name those paths; only code is checked for them. The check sees literal paths, not ones computed at run time.
-// This file is byte-identical in every repo that runs it; each repo's exceptions, with reasons, live in
+// sibling checkout (a parent-relative cairn* or csd-* directory, the host's absolute checkout root, or a path in a
+// home directory under /home). Docs may name those paths; only code is checked for them. The check sees literal paths, not ones computed
+// at run time. Other repos run their own copies of this file, kept in step by hand, and each pins its copy with its
+// own test (test/check-dashes-paths.test.ts here); each repo's exceptions, with reasons, live in
 // scripts/dashes-exceptions.json as {"dashes": {file: reason}, "paths": {file: reason}}.
 // Run: node scripts/check-dashes-paths.mjs [repo root]
 import { execFileSync } from "node:child_process";
@@ -10,7 +11,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const SIBLING = /\.\.\/(?:cairn[a-z-]*|csd-[a-z-]+)(?![\w.])|\/opt\/cairn_substrate\//;
+export const SIBLING = /\.\.\/(?:cairn[a-z-]*|csd-[a-z-]+)(?![\w.])|\/opt\/cairn_substrate\/|\/home\//;
 const CODE = /\.(?:[cm]?js|[cm]?ts|tsx|sh|json|ya?ml|html)$/;
 
 /** @param {unknown} v @returns {v is Record<string, string>} */

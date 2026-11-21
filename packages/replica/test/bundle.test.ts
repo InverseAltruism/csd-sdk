@@ -38,6 +38,10 @@ for (const file of ["index.js", "display.js", "browser.js"]) {
 const browser = await bundle({ file: "browser.js" });
 ok("./browser carries hostedBlocks with the header window (its routes and csd-light's tryReorg are in the bundle)",
   "text" in browser && browser.text.includes("/api/blocks/") && browser.text.includes("/api/headers/") && browser.text.includes("tryReorg"));
+// The Scanner's tip read names this route; ./server carries it (the control below), `.` and ./browser do not.
+const SCANNER = "/blocks/tip/height";
+const root = await bundle({ file: "index.js" });
+ok("neither . nor ./browser carries the indexer Scanner", "text" in root && "text" in browser && !root.text.includes(SCANNER) && !browser.text.includes(SCANNER));
 const display = await bundle({ file: "display.js" }), small = await bundle({ file: "display.js" }, true);
 const gz = "text" in small ? gzipSync(small.text).length : Number.POSITIVE_INFINITY;
 ok(`./display carries neither resolve() nor the block reads, and minified is ${gz} bytes gzip, under 6,144`, gz < 6144 && "text" in display &&
@@ -48,5 +52,6 @@ ok("control: an entry importing node:fs does not bundle for the browser", "error
 // here so that the scan runs.
 const server = await bundle({ file: "server.js" }, false, ["node:*", "crypto", "fs", "fs/promises", "path"]);
 ok("control: the scan finds process.env in ./server", "text" in server && BANNED.test(server.text) && server.text.includes("process.env.CAIRNX_OWN_NODE_HOSTS"));
+ok("control: ./server carries the Scanner", "text" in server && server.text.includes(SCANNER));
 
 done("cairnx-replica bundle");
