@@ -1,0 +1,42 @@
+{
+  "name": "@inversealtruism/csd-anchors",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "description": "The shared block-hash anchors of the CSD chain: one table on a 4,096-block grid with its floor and the CairnX activation root, as data, with the generator that makes the next table.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./anchors.json": "./anchors.json"
+  },
+  "files": [
+    "dist",
+    "anchors.json",
+    "scripts/table.mjs",
+    "scripts/render-wallet.mjs",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "tsx test/anchors.test.ts && tsx test/generate.test.ts",
+    "prepack": "pnpm build",
+    "prepublishOnly": "node ../../scripts/publish-guard.mjs"
+  },
+  "devDependencies": {
+    "@inversealtruism/csd-codec": "workspace:*",
+    "@inversealtruism/csd-light": "workspace:*"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InverseAltruism/csd-sdk.git",
+    "directory": "packages/anchors"
+  },
+  "homepage": "https://cairn-substrate.com"
+}
