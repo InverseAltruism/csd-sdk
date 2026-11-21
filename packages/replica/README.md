@@ -140,7 +140,10 @@ replayed on demand.
   `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
   `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
   the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
-  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again.
+  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. Nothing checks a stored boundary's state
+  hash at open, and a pinned source's bind compares the one kept on the pin's boundary: a store that could hold a
+  wrong one there (a disk store, written under another core) must recheck it at open, which is the disk store's
+  slice to do. A memory store holds only what the loop computed.
 
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
@@ -288,9 +291,10 @@ pin whose tip is still below the pin's height reads as behind the cursor (`SOURC
 as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
 the answer to every later step of that source, so a later step cannot clear it, and the answers carry its code in
 `why`. A store reopened under the same basis (the pin's height and block hash and the log's `logSha256`) is bound to
-the descriptor once per source without reading the log: the block hash, the events hash and the state hash (replayed
-from the stored rows) at the pin must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at
-or below the pin (`RULES_DIFFER`). The log's bytes and its contract are not checked again then: the stored rows were
+the descriptor once per source without reading the log: the block hash, the events hash and the state hash at the pin
+must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at or below the pin (`RULES_DIFFER`).
+The state hash is the one the store keeps on the pin's boundary when it keeps one, compared without a replay; else it
+is replayed from the stored rows. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
 checked against the contract and their own running hashes when they were read back. A store reopened under another
 basis is reset.
 
