@@ -39,18 +39,20 @@ try {
   put("packages/cairnx/test/vectors/VECTORS.md", `a ${EM} b\n`);
   put("notes.txt", `a ${EM} b\n`);
   put("untracked.md", `a ${EM} b\n`, false);
-  put("docs/guide.md", "load ../cairn-wallet/dist and /opt/cairn_substrate/csd-sdk\n");
+  put("docs/guide.md", "load ../cairn-wallet/dist, /opt/cairn_substrate/csd-sdk and /home/someone/notes\n");
   put("src/reads-sdk.mjs", 'const d = process.env.X ?? "../csd-sdk/packages";\n');
   put("src/reads-host.ts", 'import x from "/opt/cairn_substrate/cairn/public/a.js";\n');
   put("tools/run.sh", 'cd "${DIR:-../cairnx}"\n');
+  put("src/reads-home.ts", 'const plan = "/home/someone/plans/next.md";\n');
   put("src/local.ts", 'import { a } from "../cairnx.js";\nimport { b } from "../csd-local.ts";\n');
   put("packages/cairnx/test/primary.test.ts", 'const p = "../../../../cairnx/test/fixtures/primary-vectors.json";\n');
   const found = offences(dir);
   const files = found.map((l) => l.split(":")[0]).sort();
   ok("only the tracked offences outside the exceptions are reported",
-    JSON.stringify(files) === JSON.stringify(["README.md", "src/reads-host.ts", "src/reads-sdk.mjs", "tools/run.sh"]), files.join(", "));
+    JSON.stringify(files) === JSON.stringify(["README.md", "src/reads-home.ts", "src/reads-host.ts", "src/reads-sdk.mjs", "tools/run.sh"]), files.join(", "));
   ok("an em dash is reported as one", found.includes("README.md: em dash (U+2014)"));
   ok("a sibling read names the path it matched", found.includes("src/reads-sdk.mjs: reads a sibling checkout (../csd-sdk)"));
+  ok("a path under /home/ in code is reported; in a doc it is not", found.includes("src/reads-home.ts: reads a sibling checkout (/home/)") && !files.includes("docs/guide.md"));
 
   const refuses = (text: string) => {
     put("scripts/dashes-exceptions.json", text);

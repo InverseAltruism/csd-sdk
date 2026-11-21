@@ -16,7 +16,8 @@ throw `ReplicaConfigError` for one at run time. `basisKey` names a store without
 root and bodies names the same store, which is kept only on the conditions of "Pins" below.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
-  the reader, `open` and `openLog` ("Reading" below), and `checkPin` and `pinned` ("Pins" below).
+  the reader, `open` and `openLog` ("Reading" below), `checkPin` and `pinned` ("Pins" below), and `nameHistory`
+  ("A csd-indexer feed" below).
 - `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
   `resolve()` or the block machinery.
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
@@ -36,8 +37,8 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
-- `./server` also has `diskStore({ dir })` ("The disk store" below) and `ownNode({ node, dir, pin?, witness? })`
-  ("One's own node on disk" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
+- `./server` also has `diskStore({ dir })` ("The disk store" below), `ownNode({ node, dir, pin?, witness? })`
+  ("One's own node on disk" below) and `indexerFeed`, `Scanner` and `branchRefusal` ("A csd-indexer feed" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
   store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
@@ -475,6 +476,33 @@ A day of blocks (720) above a pin, read through `open` on a disk store from a no
 Limits: the pin's log loads in one step ("Pins" above). Revisit that when a first step takes over 5 s on a server or
 a browser store's transaction is found too large; the answer then is a resumable replay context and a log fetched by
 its hash, not steps.
+
+## A csd-indexer feed
+
+`indexerFeed(options)`, in `./server` only, is a source over the CairnX resolver's Scanner, which reads the cairnx:v1
+proposals and attestations a csd-indexer serves; `options` are the Scanner's (`ScanOptions`: `indexerUrl`, `fetch`,
+`timeoutMs`, page sizes, and for `verifyInclusion` the header merkle, raw transaction and verified tip reads). Its
+basis is a feed: level 1, or 2 with `verifyInclusion`, where each payment's transaction is bound to its txid and
+merkle-proven against the caller's header source and each record's fields and author come from the node's body. The
+Scanner checks no proof of work, so that level is as good as the header source the caller wires.
+
+Each step is one scan. A scan whose tip block changed during the pull, or whose hash could not be read before and
+after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The scan's events at or below the cursor
+are compared with the store by their events hash; where it first differs the step is a reorg to the last event block
+that agrees (CONVENTION section 34.3), and the next step reads the new branch above it. The events above the cursor are
+the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
+the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
+with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step
+whose request or block budget runs out ends at the last boundary it read, with the tip as its reach. The feed records
+no header time, so its tip's time is 0 and the reader adds `TIP_STALE` to its answers; with `verifyInclusion` the cursor
+sits below the tip, so they carry `BEHIND` as well. Neither changes the level, which a feed caps at 2. Each step's scan reads the
+whole domain the first time and the indexer's chain-order feeds after it; the scan is not cut short by the step's
+signal.
+
+The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
+byte for byte apart from import paths, then cleaned under review; `scripts/move-residual.mjs <resolver git dir>
+<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not part of
+this package yet.
 
 ## The browser store
 

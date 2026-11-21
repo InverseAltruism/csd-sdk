@@ -2,6 +2,16 @@
 
 ## 0.1.0 (unreleased)
 
+- `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
+  `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
+  last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last
+  boundary a step's budget reached. The recorded capture to 117,000 through it gives cairnx-core's corpus and pinned
+  events hash (`test/indexer-feed.test.ts`).
+- Moved from the private CairnX resolver, byte for byte apart from import paths and then cleaned: the Scanner
+  (`src/scanner.ts`, exported from `./server` with `branchRefusal`), its kept events (`src/kept.ts`) and the
+  name-history selector (`nameHistory`, exported from `.`), with 22 of the Scanner's suites and the selector's three;
+  `scripts/move-residual.mjs` prints the residual against the resolver at a commit. The Scanner now reads at most
+  `MAX_TX_OUTPUTS` (512) outputs of a /tx answer, where it read 1,024.
 - `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
   contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
   `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not
