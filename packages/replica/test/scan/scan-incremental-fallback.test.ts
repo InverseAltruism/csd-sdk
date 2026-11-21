@@ -207,6 +207,41 @@ for (const [name, tamper] of pageEndCases) {
   ok("a full pull with an attestation whose proposal lies above the kept height keeps nothing: every scan pulls in full");
 }
 
+// An indexer that lies about a record's height in its rows and in /tx alike: the reads on from the kept events must
+// still emit what a fresh scanner's full pull does, neither dropping nor doubling an attestation.
+{
+  const J = (b: unknown) => ({ ok: true, status: 200, json: async () => b }) as unknown as Response;
+  const lying = (tip: number, txHeight: Record<string, number>, feedExtra: (path: string, rows: Record<string, unknown>[]) => Record<string, unknown>[] = (_p, r) => r) =>
+    (async (url: string) => {
+      const u = new URL(url), r = await chain.indexer({ tip, rowHeight: txHeight })(url);
+      if (!r.ok) return r;
+      const id = /^\/tx\/(0x[0-9a-f]+)$/.exec(u.pathname)?.[1];
+      if (id !== undefined && txHeight[id] !== undefined) return J({ ...((await r.json()) as object), height: txHeight[id] });
+      if (u.pathname === "/attestations") { const b = (await r.json()) as Body; return J({ ...b, rows: feedExtra(u.pathname, b.rows) }); }
+      return r;
+    }) as unknown as typeof fetch;
+  const twoScans = async (f1: typeof fetch, f2: typeof fetch) => {
+    let f = f1;
+    const s = new Scanner({ indexerUrl: "http://idx", fetch: ((u: string) => f(u)) as unknown as typeof fetch });
+    await s.scan();
+    f = f2;
+    return { got: (await s.scan()).events, want: (await new Scanner({ indexerUrl: "http://idx", fetch: f2 }).scan()).events };
+  };
+  // The proposal at H0 + 2 said to be at H0 + 9, above the first scan's tip, while one of its attestations lies at H0 + 6.
+  const P = chain.txs[1]!.txid, raised = { [P]: H0 + 9 };
+  const a = await twoScans(lying(H0 + 8, raised), lying(H0 + 10, raised));
+  assert.deepEqual(a.got, a.want);
+  ok("an attestation whose proposal is said to lie above the kept height is not dropped when the proposal arrives later");
+  // A kept attestation served again by the feed at a later height, which /tx confirms.
+  const K = chain.txs[2]!.txid, row = { txid: K, proposal_id: chain.txs[0]!.txid, attester: B, score: 1, confidence: 0, height: H0 + 7, pos: chain.txs[2]!.pos };
+  const order = (x: Record<string, unknown>, y: Record<string, unknown>) => Number(x.height) - Number(y.height) || Number(x.pos) - Number(y.pos);
+  const again = lying(H0 + 8, {}, (_p, rows) => (rows.length ? [...rows, row].sort(order) : rows));
+  const atTx = (async (url: string) => (new URL(url).pathname === `/tx/${K}` ? J({ ...((await (await again(url)).json()) as object), height: H0 + 7 }) : again(url))) as unknown as typeof fetch;
+  const b = await twoScans(lying(H0 + 4, {}), atTx);
+  assert.deepEqual(b.got, b.want);
+  ok("a kept attestation the feed serves again at a later height is not taken twice");
+}
+
 // The bound: past `keptMax` events nothing is kept and every scan is the full pull, which drops no event.
 {
   const { scan } = rig({ keptMax: 2 });

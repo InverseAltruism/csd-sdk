@@ -505,9 +505,13 @@ merkle-proven against the caller's header source and each record's fields and au
 Scanner checks no proof of work, so that level is as good as the header source the caller wires.
 
 Each step is one scan. A scan whose tip block changed during the pull, or whose hash could not be read before and
-after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The scan's events at or below the cursor
-are compared with the store by their events hash; where it first differs the step is a reorg to the last event block
-that agrees (CONVENTION section 34.3), and the next step reads the new branch above it. The events above the cursor are
+after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The rule's events are those at or above
+its activation, an Attest only on a Propose among them (CONVENTION section 33.1). Up to the lower of the cursor and the
+scan's top they are compared with the store by their events hash, and the block hashes the store holds there (the
+cursor's and its boundary rows', walked down until one agrees) with the indexer's; the step is a reorg to the lower of
+the last event block whose events hash agrees (section 34.3) and the last held hash the indexer still gives, and the
+next step reads the new branch above it. A verified tip that moves back below the cursor is no reorg: the step is idle
+until it passes the cursor again. The events above the cursor are
 the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
 the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
 with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step
@@ -520,7 +524,8 @@ signal.
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
 byte for byte apart from import paths, then cleaned under review; `scripts/move-residual.mjs <resolver git dir>
 <commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not part of
-this package yet.
+this package yet. The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
+with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
 
 ## The browser store
 

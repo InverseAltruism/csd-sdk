@@ -1,10 +1,13 @@
 // indexerFeed: the replica source over the resolver's Scanner, which reads a csd-indexer. Its basis is a feed, level 1,
 // or 2 with verifyInclusion, whose bodies, heights and authors are bound as the Scanner binds them. Each step is one
-// scan. Its events at or below the cursor are checked against the store: where their events hash first differs, the
-// step is a reorg to the last event block that agrees (CONVENTION section 34.3). Its events above the cursor are the
-// step's blocks, grouped by height in the order of section 33.3, with a row and its hash at each epoch boundary. The
-// cursor is the last block the scan answered for whole: the tip, or with verifyInclusion the final height (the Scanner
-// emits nothing above it), or the last boundary the request budget reached, the tip then being the step's reach.
+// scan. The events of the rule are those at or above its activation, Attests only on a Propose among them (CONVENTION
+// section 33.1). Up to the lower of the cursor and the scan's top they are checked against the store, and so are the
+// block hashes it holds there (the cursor's and its boundary rows'): the step is a reorg to the lower of the last event
+// block whose events hash agrees (section 34.3) and the last held block hash the indexer still gives. Its events above
+// the cursor are the step's blocks, grouped by height in the order of section 33.3, with a row and its hash at each
+// epoch boundary. The cursor is the last block the scan answered for whole: the tip, or with verifyInclusion the final
+// height (the Scanner emits nothing above it), or the last boundary the request budget reached, the tip then being the
+// step's reach.
 import { DOMAIN, EPOCH_LEN, EVENTS_HASH_START, HASH_RE, eventsHashStep, type ChainEvent } from "@inversealtruism/cairnx-core";
 import { floorOf } from "./contract.js";
 import { SourceError, cannotOf } from "./errors.js";
@@ -43,6 +46,31 @@ function lastAgreeing(blocks: Map<number, ChainEvent[]>, at: number, floor: numb
   return held(at) === hash ? at : best;
 }
 
+/** Of the cursor (when at or below `at`) and the boundary rows the store holds at or below `at`, walked down from the
+ *  top, the first whose block hash the indexer still gives: null when that is the first one walked or none is held, so
+ *  no held hash moved; `floor` when none agrees. A block hash commits its parent, so every block below one that agrees
+ *  is the indexer's too, and the walk reads one hash while nothing moved. */
+async function lastHashAgreeing(ctx: StepContext, at: number, floor: number, now: (h: number) => Promise<string>): Promise<number | null> {
+  const c = ctx.cursor!, heights = c.height <= at ? [c.height] : [];
+  for (let b = Math.floor(at / EPOCH_LEN) * EPOCH_LEN; b > floor; b -= EPOCH_LEN) if (b !== c.height) heights.push(b);
+  let first = true;
+  for (const h of heights) {
+    const held = h === c.height ? c.hash : ctx.hashAt(h);
+    if (held === null) continue;
+    if ((await now(h)) === held) return first ? null : h;
+    first = false;
+  }
+  return first ? null : floor;
+}
+
+/** The events of `rule` among a scan's: at or above its activation, and an Attest only on a Propose kept (an Attest on
+ *  a Propose mined before activation is no event). */
+function ruleEvents(events: readonly ChainEvent[], activationHeight: number): ChainEvent[] {
+  const kept = events.filter((e) => e.height >= activationHeight);
+  const proposes = new Set(kept.flatMap((e) => (e.kind === "propose" ? [e.id] : [])));
+  return kept.filter((e) => e.kind === "propose" || proposes.has(e.proposalId));
+}
+
 /** `indexerUrl` and the rest of the Scanner's options (ScanOptions): one Scanner serves every step, so its caches and
  *  kept events carry over. `fetch` and `timeoutMs` also serve the block-hash reads. */
 export function indexerFeed(o: ScanOptions): Source {
@@ -50,6 +78,8 @@ export function indexerFeed(o: ScanOptions): Source {
   const base = o.indexerUrl.replace(/\/$/, "");
   const session = httpSessions(base, { ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.timeoutMs === undefined ? {} : { timeoutMs: o.timeoutMs }) });
   const hashOf = async (s: Session, h: number) => blockHash(await s.json(`/block-height/${h}`, false), h);
+  // The tip's hash is the one the scan read before and after its pull: a later read of that height may name another.
+  const hashIn = (s: Session, tip: TipView) => (h: number) => (h === tip.height ? Promise.resolve(tip.hash) : hashOf(s, h));
 
   async function step(s: Session, ctx: StepContext): Promise<Step> {
     if (ctx.rule.domain !== DOMAIN) throw new SourceError("RULES_DIFFER", `the Scanner reads ${DOMAIN}, not ${ctx.rule.domain}`);
@@ -58,10 +88,12 @@ export function indexerFeed(o: ScanOptions): Source {
     if (moved !== null) throw new SourceError("BRANCH_MOVED", moved);
     const tip: TipView = { height: r.tipHeight, hash: blockHash(r.anchor.hashAfter, r.tipHeight), time: 0 };
     const top = Math.min(r.tipHeight, scanner.finalHeight ?? r.tipHeight);
-    const floor = floorOf(ctx), blocks = byHeight(r.events.filter((e) => e.height >= ctx.rule.activationHeight));
+    const floor = floorOf(ctx), blocks = byHeight(ruleEvents(r.events, ctx.rule.activationHeight)), now = hashIn(s, tip);
     if (ctx.cursor !== null) {
-      const to = lastAgreeing(blocks, ctx.cursor.height, floor, ctx.eventsHashAt);
-      if (to !== ctx.cursor.height) return { kind: "reorg", to: { height: to, hash: await hashOf(s, to) }, tip };
+      // Above the scan's top the Scanner emitted nothing, so the store is compared only up to it.
+      const at = Math.min(ctx.cursor.height, top);
+      const to = Math.min(lastAgreeing(blocks, at, floor, ctx.eventsHashAt), (await lastHashAgreeing(ctx, at, floor, now)) ?? at);
+      if (to !== at) return { kind: "reorg", to: { height: to, hash: await now(to) }, tip };
     }
     const after = ctx.cursor?.height ?? floor;
     if (top <= after) return { kind: "idle", tip };
@@ -76,7 +108,7 @@ export function indexerFeed(o: ScanOptions): Source {
       let hash: string | null = null;
       if (h % EPOCH_LEN === 0) {
         if (cursor !== null && (s.requests() >= reads || out.length >= most)) break;
-        hash = await hashOf(s, h);
+        hash = await now(h);
         cursor = { height: h, hash };
       }
       out.push({ height: h, hash, events: blocks.get(h) ?? [] });
@@ -84,7 +116,7 @@ export function indexerFeed(o: ScanOptions): Source {
     if (cursor !== null && out.length < heights.size) {
       return { kind: "blocks", blocks: out.filter((b) => b.height <= cursor!.height), cursor, tip, reach: top };
     }
-    const end = cursor?.height === top ? cursor : { height: top, hash: top === tip.height ? tip.hash : await hashOf(s, top) };
+    const end = cursor?.height === top ? cursor : { height: top, hash: await now(top) };
     return { kind: "blocks", blocks: out, cursor: end, tip };
   }
 

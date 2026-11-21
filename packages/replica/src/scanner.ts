@@ -213,7 +213,7 @@ export class Scanner {
   /** How many times a scan dropped its caches because the chain under them changed or could not be confirmed
    *  (invalidateCacheOnReorg). Any reorg that replaces a block at or below the previous scan's tip moves it. */
   get reorgEpoch(): number { return this.reorgClears; }
-  /** CONVENTION §34's final depth (cairnx-core `FINAL_DEPTH`), read by the tuple boundaries and the reorg guards. */
+  /** CONVENTION §34's final depth (cairnx-core `FINAL_DEPTH`), read by the reorg guards. */
   static readonly FINALITY = FINAL_DEPTH;
 
   constructor(opts: ScanOptions) {

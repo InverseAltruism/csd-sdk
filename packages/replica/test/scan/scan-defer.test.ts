@@ -102,8 +102,8 @@ const closedChain = buildChain([
   { kind: "attest", of: 0, attester: KB, score: 1, confidence: 0, height: H0 + 9 },
 ], { keys: KEYS });
 const ATT = closedChain.txs[1]!.txid;
-const closedScanner = (vt: { h: number }) => new Scanner({
-  indexerUrl: URL0, fetch: closedChain.indexer({ tip: H0 + 200 }),
+const closedScanner = (vt: { h: number }, feed = true) => new Scanner({
+  indexerUrl: URL0, fetch: closedChain.indexer({ tip: H0 + 200, feed }),
   ...closedChain.verified({ verifiedTip: H0 + 200 }), verifiedTipHeight: async () => vt.h,
 });
 
@@ -123,6 +123,15 @@ await at("a cached closed-window list is still cut at a lower cutoff (the verifi
   const evs = (await s.scan()).events;
   assert.ok(!has(evs, ATT));
   assert.ok(evs.every((e) => e.height <= H0 + 8));
+});
+
+await at("without the chain-order feeds every scan pulls in full, and the cached list is cut there too", async () => {
+  const vt = { h: H0 + 30 };
+  const s = closedScanner(vt, false);
+  assert.ok(has((await s.scan()).events, ATT));
+  vt.h = H0 + 20;
+  const evs = (await s.scan()).events;
+  assert.ok(!has(evs, ATT) && evs.every((e) => e.height <= H0 + 8));
 });
 
 console.log(`scan-defer: ${passed} passed`);

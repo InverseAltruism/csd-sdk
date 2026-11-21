@@ -336,7 +336,7 @@ console.log("\nOpen-lane claim-to-fill (the documented sufficiency EXCEPTION, sc
 
 // ── A name-for-TOKEN fill is ALSO scoped-insufficient (out-of-scope buyer
 // balance), even when TAKER-BOUND, so the flag must not be gated on the open lane / V17 alone ──
-console.log("\nM1 name-for-token fill (scoped-insufficient via out-of-scope buyer token balance):");
+console.log("\nName-for-token fill (scoped-insufficient via out-of-scope buyer token balance):");
 {
   const H = V15_HEIGHT + 500;
   const tip = H + 20;
