@@ -366,8 +366,9 @@ function runStdin() {
 }
 
 // only run the CLI when invoked directly (not when findBurns is imported by race-harness.mjs)
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const argv = process.argv.slice(2);
   if (argv.includes("--stdin")) runStdin();
   else runCorpus(argv.includes("--selftest"));

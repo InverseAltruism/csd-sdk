@@ -1,7 +1,7 @@
 // scripts/check-dashes-paths.mjs on a throwaway git sandbox (one file per case) and on this repo.
 // Run: pnpm exec tsx test/check-dashes-paths.test.ts   (offline)
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +65,37 @@ try {
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
+
+console.log("run through a symlinked path:");
+// Node gives a script's import.meta.url its real path, so a guard that compares it with argv[1] unresolved is false when the
+// tree is reached through a symlink and the script then does nothing and exits 0: a gate that passes without checking.
+const linkRoot = mkdtempSync(join(tmpdir(), "csdsdk-dashes-link-"));
+try {
+  symlinkSync(join(root, "scripts"), join(linkRoot, "scripts-link"));
+  const tree = (name: string, readme: string) => {
+    const t = join(linkRoot, name);
+    mkdirSync(join(t, "scripts"), { recursive: true });
+    copyFileSync(join(root, "scripts/dashes-exceptions.json"), join(t, "scripts/dashes-exceptions.json"));
+    writeFileSync(join(t, "README.md"), readme);
+    execFileSync("git", ["init", "-q"], { cwd: t });
+    execFileSync("git", ["add", "."], { cwd: t });
+    return t;
+  };
+  const viaLink = (t: string) => spawnSync(process.execPath, [join(linkRoot, "scripts-link/check-dashes-paths.mjs"), t], { encoding: "utf8" });
+  const bad = viaLink(tree("dirty", `a ${EM} b\n`));
+  ok("through a symlinked scripts directory a tree with a tracked em dash is refused: exit 1 naming the file",
+    bad.status === 1 && /README\.md: em dash \(U\+2014\)/.test(bad.stderr) && /1 offence/.test(bad.stdout), `exit ${bad.status}: ${bad.stdout}${bad.stderr}`);
+  const good = viaLink(tree("clean", "a - b\n"));
+  ok("through the symlink a clean tree passes: exit 0 and its line printed", good.status === 0 && /check-dashes-paths: clean/.test(good.stdout), `exit ${good.status}: ${good.stdout}${good.stderr}`);
+} finally {
+  rmSync(linkRoot, { recursive: true, force: true });
+}
+
+// Every script that decides whether to run by comparing argv[1] with import.meta.url resolves argv[1]'s symlinks first.
+const tracked = execFileSync("git", ["ls-files", "-z", "--", "*.mjs"], { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
+const guards = tracked.flatMap((f) => read(f).split("\n").filter((l) => l.includes("process.argv[1]") && l.includes("import.meta.url")).map((l) => ({ f, l })));
+const unresolved = guards.filter((g) => !g.l.includes("realpathSync(process.argv[1])")).map((g) => g.f);
+ok(`each of the ${guards.length} main guards in the tracked .mjs files resolves argv[1] with realpathSync`, guards.length >= 12 && unresolved.length === 0, unresolved.join(", "));
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

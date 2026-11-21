@@ -16,7 +16,7 @@
 // The pack is not byte-reproducible (published-dist.mjs says why), so files are compared, not a tarball hash.
 //
 // Usage: node scripts/verify-tarball.mjs <package dir> <tarball>      exit 0 = these bytes may be published
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { headTree, readBlobs } from "./git-head.mjs";
@@ -99,7 +99,7 @@ export function verifyTarball(tgz, pkgDir, versions) {
  *  @param {string} root */
 export const workspaceVersions = (root) => versionMap(workspacePackagesAtHead(root));
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const [pkgDir, tgz] = process.argv.slice(2);
   if (!pkgDir || !tgz) { console.error("usage: node scripts/verify-tarball.mjs <package dir> <tarball>"); process.exit(2); }
   const root = fileURLToPath(new URL("..", import.meta.url));

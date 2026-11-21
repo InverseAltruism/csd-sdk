@@ -66,5 +66,25 @@ ok(`no CI step and no package script runs a live block script (${manifests.lengt
 ok("no CI step and no package script runs the pin generator", existsSync(new URL("../packages/pin/scripts/generate-pin.mjs", import.meta.url)) &&
   runners.every((text) => !text.includes("generate-pin.mjs")));
 
+// The anchors table's network re-walk is its own workflow, started by hand with its two bases as inputs: ci.yml stays
+// offline, and nothing in either runs the generator from a push or a pull request.
+ok("no CI step and no package script runs the anchors generator", existsSync(new URL("../packages/anchors/scripts/generate-anchors.mjs", import.meta.url)) &&
+  runners.every((text) => !text.includes("generate-anchors.mjs")));
+const workflows = readdirSync(new URL("../.github/workflows/", import.meta.url)).sort();
+ok("the workflows are ci.yml and anchors-check.yml", workflows.join() === "anchors-check.yml,ci.yml", workflows.join());
+const check = readFileSync(new URL("../.github/workflows/anchors-check.yml", import.meta.url), "utf8");
+const triggers = (/^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(check)?.[1] ?? "").split("\n").flatMap((l) => (/^ {2}\w/.test(l) ? [l.trim().replace(/:.*$/, "")] : []));
+ok("anchors-check.yml runs on workflow_dispatch alone", triggers.join() === "workflow_dispatch", triggers.join());
+const inputs = (/^ {4}inputs:\n((?: {6,}.*\n)*)/m.exec(check)?.[1] ?? "").split("\n").flatMap((l) => (/^ {6}\w/.test(l) ? [l.trim().replace(/:.*$/, "")] : []));
+const runs = [...check.matchAll(/^\s*- run: (.*)$/gm)].map((m) => m[1]!);
+ok("it takes the headers source and the second RPC as inputs and hands them to --check through the environment, not into shell text",
+  inputs.join() === "headers,rpc" && runs.some((r) => /generate-anchors\.mjs --check --headers "\$HEADERS" --rpc "\$RPC"$/.test(r)) && runs.every((r) => !r.includes("${{")) &&
+  /HEADERS: \$\{\{ inputs\.headers \}\}/.test(check) && /RPC: \$\{\{ inputs\.rpc \}\}/.test(check));
+ok("it names no host", !/https?:\/\//.test(check.split("\n").filter((l) => !/^\s*#|description:/.test(l)).join("\n")));
+const checkUses = [...check.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]!);
+ok("its actions are pinned to full commit SHAs, its token is read-only and its checkout keeps no credentials",
+  checkUses.length === 3 && checkUses.every((u) => /@[0-9a-f]{40}$/.test(u)) && /^permissions:\n  contents: read\n/m.test(check) && !/:\s*write\b/.test(check) &&
+  /actions\/checkout@[^\n]*\n\s+with:\n\s+persist-credentials: false/.test(check));
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

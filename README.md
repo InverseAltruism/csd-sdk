@@ -78,6 +78,7 @@ Runnable walkthrough (read-only, it never broadcasts): [`examples/quickstart.mjs
 | `@inversealtruism/csd-vectors` | The shared test fixtures that pin every package to the official node's behaviour. |
 | `@inversealtruism/cairnx-replica` | Unreleased. A CairnX replica that keeps the chain's records and says how far each answer can be trusted, from the one source its store was filled from. |
 | `@inversealtruism/cairnx-pin` | Unreleased. The pin a new replica starts from: the chain's CairnX records at an epoch boundary with its block hash, events hash and state hash, checked by the replica against its own headers. |
+| `@inversealtruism/csd-anchors` | Unreleased. The block-hash anchors of the chain as data: one table on a 4,096-block grid with its floor and the CairnX activation root, and the generator that makes the next table. |
 | `@inversealtruism/cairnx-api` | Pre-1.0. The types, parameter parser, cursors and pure handlers of the CairnX read API, version 1, for the CairnX resolver to mount; not a live HTTP API, and the contract can change in any release before 1.0.0. |
 
 ## Why the light client matters
