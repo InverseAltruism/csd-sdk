@@ -1,8 +1,8 @@
 // CairnX pure deterministic resolver (CONVENTION.md). (events, tipHeight) → CairnXState.
 // No I/O, no clocks, no randomness, no float math on values: two resolvers fed the same chain
-// prefix MUST produce byte-identical canonical state — that determinism IS the trust model. This is
+// prefix MUST produce byte-identical canonical state: that determinism IS the trust model. This is
 // GUARDED (not merely asserted) by the JS⇄Python differential in conformance/: the raw regex-vs-regex
-// check, the full parse gate, the nprofile cross-lang + constant-PARITY check, and the resolve fuzz —
+// check, the full parse gate, the nprofile cross-lang + constant-PARITY check, and the resolve fuzz,
 // each byte-identical or the build fails.
 //
 // v1.1 adds: names (commit-reveal back-dated registrar + transfer + set + name offers) and
@@ -24,7 +24,7 @@ import { applyDeploy, applyMint, applyTmeta, applyTransfer } from "./resolve/tok
 
 export { ptAmt };
 
-// Ordinal (code-unit) string comparison — the ONLY comparator allowed anywhere in the resolver.
+// Ordinal (code-unit) string comparison: the ONLY comparator allowed anywhere in the resolver.
 // localeCompare is ICU-collation-dependent and therefore non-reproducible across runtimes; a
 // third-party (Rust/Go/…) resolver must be able to match byte-for-byte from plain byte order.
 const ord = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -145,7 +145,7 @@ function materialize(c: ResolveCtx, tipHeight: number): CairnXState {
   const tipEpoch = epochOf(tipHeight);
   for (const [nm, n] of [...names.entries()].sort(([a], [b]) => ord(a, b))) {
     if (tipV25 && n.pending) {
-      // v2.5 reservation: a minimal shape (no addr/viaFill/profile/lease — it holds none yet). The closing sweep
+      // v2.5 reservation: a minimal shape (no addr/viaFill/profile/lease: it holds none yet). The closing sweep
       // drops any reservation past finalizeBy, so a materialized `pending` name is always still finalizable
       // (finalizeBy > tipHeight). Emitted only at v2.5+ tips, so every pre-v2.5 canonical hash is byte-identical.
       namesOut[nm] = { name: nm, owner: n.owner, claimId: n.id, height: n.height, effectiveHeight: n.effHeight, locked: n.locked, pending: true as const, finalizeBy: n.finalizeBy! };
@@ -162,7 +162,7 @@ function materialize(c: ResolveCtx, tipHeight: number): CairnXState {
   for (const [id, o] of [...offers.entries()].sort(([a], [b]) => ord(a, b))) offersOut[id] = o;
   const bidsOut: Record<string, BidState> = {};
   for (const [id, b] of [...bids.entries()].sort(([a], [b2]) => ord(a, b2))) bidsOut[id] = b;
-  // v2.6: the recapture reservations are a DIAGNOSTIC surface (like `events`) — EXCLUDED from canonicalState
+  // v2.6: the recapture reservations are a DIAGNOSTIC surface (like `events`): EXCLUDED from canonicalState
   // (see below), so zero fork surface. The cairnx service exposes it so a wallet/UI can confirm it is still the
   // current recapture winner BEFORE spending the premium at nfinalize (a finalize by a reserver who was
   // displaced in the reserve->freeze window would burn the premium; this lets the client refuse that).
@@ -177,9 +177,9 @@ function materialize(c: ResolveCtx, tipHeight: number): CairnXState {
   return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, recaptures: recapturesOut, fclaims: fclaimsOut, events: log, feesPaid: c.feesPaid.toString() };
 }
 
-/** Canonical serialization of state (FORMAT 2) — byte-identical across honest resolvers.
+/** Canonical serialization of state (FORMAT 2): byte-identical across honest resolvers.
  *  The canonical surface is the DATA ONLY: {tipHeight, tokens, balances, names, offers, bids,
- *  feesPaid}. The applied-event log is deliberately EXCLUDED — its free-text reason strings are
+ *  feesPaid}. The applied-event log is deliberately EXCLUDED: its free-text reason strings are
  *  implementation diagnostics, and making them normative would force every third-party resolver
  *  to reproduce English prose byte-for-byte. (Format 1, pre-2026-06-12, included the log and
  *  sorted with localeCompare; pinned format-1 hashes live in test/vectors/replay-hashes.json

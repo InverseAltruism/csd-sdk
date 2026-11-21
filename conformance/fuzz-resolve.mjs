@@ -1,4 +1,4 @@
-// DIFFERENTIAL FUZZER (non-self-fulfilling) — generate thousands of random + adversarial CairnX event
+// DIFFERENTIAL FUZZER (non-self-fulfilling): generate thousands of random + adversarial CairnX event
 // sequences and assert the shipping JS resolver and the INDEPENDENT Python port (cairnx_ref.py) produce
 // byte-identical canonicalState on EVERY one. Neither side is told the expected answer; a single
 // divergence = a latent cross-language consensus fork. Seeded for reproducibility (prints the seed).
@@ -40,7 +40,7 @@ const addr = () => "0x" + (ADDRS[ri(0, ADDRS.length - 1)].slice(2)); // includes
 const TICKERS = ["GOLD", "PAY", "TKN", "ZZZ9", "A1B", "WCSD"];
 // names: numeric (integer-key ordering), boundary indices, non-canonical-decimal, strings, invalid
 const NAMES = ["1", "2", "10", "42", "0", "007", "4294967294", "4294967295", "0x", "alice", "zzz", "a-b", "BAD!", "", "x".repeat(33)];
-// token (deploy) names CAN be unicode ≤32 — exercise canonical-JSON emit + UTF-16 length
+// token (deploy) names CAN be unicode ≤32: exercise canonical-JSON emit + UTF-16 length
 const TOKNAMES = [undefined, "Gold", "金", "𝕏coin", "á", "💎", "￿x", "x".repeat(32), "x".repeat(33), "lone\uD800"];
 const AMOUNTS = ["1", "100", "999999999", "79228162514264337593543950335" /*2^96-1*/, "79228162514264337593543950336" /*2^96*/, "0"];
 const BIGEXP = [10, 1500, 9007199254740991, 9007199254740992, 1e21];
@@ -49,7 +49,7 @@ const validOr = (fn) => { try { return fn(); } catch { return null; } };
 const amt = () => pick(AMOUNTS);
 const tick = () => chance(0.85) ? pick(TICKERS) : ("T" + ri(0, 99));
 // v1.9 nprofile `p` maps: valid pkeys (lowercase/dotted/integer-index ≤32ch) + sometimes empty (= clear),
-// values incl. astral/emoji and boundary 256-byte — exercises the V19 gate/apply/LWW/clear/materialize branches.
+// values incl. astral/emoji and boundary 256-byte: exercises the V19 gate/apply/LWW/clear/materialize branches.
 const PKEYS = ["display", "avatar", "bio", "url", "com.twitter", "a.b.c", "x", "k0", "k1", "2", "10", "z".repeat(32)];
 const pmap = () => { const n = ri(0, 6); const m = {}; for (let i = 0; i < n; i++) m[pick(PKEYS)] = chance(0.15) ? "\u{1F600}" : (chance(0.1) ? "x".repeat(256) : "v" + ri(0, 9999)); return m; };
 
@@ -88,7 +88,7 @@ function buildRec() {
 let idc = 1;
 const nid = () => "0x" + (idc++).toString(16).padStart(64, "0");
 
-// A COHERENT flow that actually SUCCEEDS — so the V16 accept path (rebate math + state mutation) is
+// A COHERENT flow that actually SUCCEEDS: so the V16 accept path (rebate math + state mutation) is
 // exercised, not just parse/reject. deploy→mint→[bid]→offer→fill, with paidTo computed correctly
 // (incl. the rebate for a bid-answered v1.6 offer) OR deliberately underpaid.
 function coherentFlow(h0) {
@@ -159,7 +159,7 @@ function v23ClearFlow(h0) {
   const regH = Math.min(R.V25_HEIGHT, R.V23_HEIGHT) - 200;
   const NM = "z" + ri(100, 9999); reg(NM, regH); set(NM, D, regH + 2);
   if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, regH + 3); set(NM2, D, regH + 4); }  // 2nd self-pointing name -> primary recompute on clear
-  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the clear can land a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior) — not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
+  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the clear can land a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior): not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
   set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is owned+paid so it APPLIES)
   if (chance(0.4)) { h += 2; set(NM, B, h); }   // sometimes re-point after clear (clear-then-reset)
   return ev;
@@ -251,7 +251,7 @@ function fclaimFlow(h0) {
 }
 
 // v1.9 nprofile materialization (H1): register a name by its owner ABOVE the V19 gate, set a profile
-// (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear — exercising the
+// (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear: exercising the
 // apply / last-write-wins / clear-on-transfer / tip-materialization branches the random fuzzer rarely hits.
 function nprofileFlow(h0) {
   const ev = []; const O = "0x" + "ce".repeat(20), B = "0x" + "bd".repeat(20);
@@ -392,7 +392,7 @@ function genSeq() {
     } else {
       // an attest (fill/cancel/claim/garbage) referencing a real-ish or random proposal id
       const pidRef = offerIds.length && chance(0.8) ? pick(offerIds) : nid();
-      const score = pick([0, 100, 100, 50, 50, ri(0, 200)]); // 50 = SCORE_CLAIM (v1.7) — exercise the claim branch
+      const score = pick([0, 100, 100, 50, 50, ri(0, 200)]); // 50 = SCORE_CLAIM (v1.7): exercise the claim branch
       const confidence = pick([0, 100, 1_000_000, ri(0, 2_000_000)]);
       events.push({ kind: "attest", txid: nid(), proposalId: pidRef, attester: addr(), score, confidence, height: h, pos, paidTo: randPaidTo() });
     }
@@ -406,7 +406,7 @@ function randPaidTo() {
   const vals = ["1", "1000000", "100000000", "125500000", "1500000", "500000000", "79228162514264337593543950335"];
   // adversarial NON-canonical forms: raw BigInt()/int() historically DIVERGED on these (one yields a value,
   // the other throws). The AMOUNT_RE gate (ptAmt / _pt) must make BOTH treat them as 0, so the differential
-  // MUST stay byte-identical — this is the regression guard for QA finding #1 (paidTo input-contract).
+  // MUST stay byte-identical: this is the regression guard for QA finding #1 (paidTo input-contract).
   const adversarial = ["0x10", "0b101", "1_000", "", " 5 ", "+5", "007", "0xff", "1.0", "-3", "1e3", "0xdeadbeef"];
   for (let i = 0; i < k; i++) m[addr()] = chance(0.25) ? pick(adversarial) : pick(vals);
   if (chance(0.5)) m[TREAS] = chance(0.25) ? pick(adversarial) : pick(["1500000", "1000000", "100000000", "0", "25500000"]);
@@ -484,8 +484,8 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
     mk(R.nameSet({ name: NM, addr: R.ZERO_ADDR }), H),                                       // CLEAR at >=V23
   ];
   const n = resolve(seq, H + 5).names[NM];
-  if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED — owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
-  if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0 — the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
+  if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED: owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
+  if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0: the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
   console.log(`✓ v23 clear self-check: a paid+owned name was genuinely cleared (addr->undefined); fuzz exercised the branch ${gV23Clears}x`);
 }
 // V25 self-check: prove a commit -> PAYMENT-FREE reveal -> nfinalize genuinely FINALIZES to a NORMAL owned name
@@ -501,9 +501,9 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   ];
   const st = resolve(seq, hf + 3), n = st.names[NM];
   if (!n || n.owner !== A.toLowerCase() || n.pending || n.viaFill || Number(st.feesPaid) !== Number(R.nameRegFee(NM, hf))) {
-    console.error(`✗ v25 finalize self-check FAILED — reserve→finalize did not yield a clean owned name (owner=${n && n.owner}, pending=${n && n.pending}, viaFill=${n && n.viaFill}, feesPaid=${st.feesPaid})`); process.exit(1);
+    console.error(`✗ v25 finalize self-check FAILED: reserve→finalize did not yield a clean owned name (owner=${n && n.owner}, pending=${n && n.pending}, viaFill=${n && n.viaFill}, feesPaid=${st.feesPaid})`); process.exit(1);
   }
-  if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0 — the fuzz never materialized a V25 reservation"); process.exit(1); }
+  if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0: the fuzz never materialized a V25 reservation"); process.exit(1); }
   console.log(`✓ v25 finalize self-check: commit→payment-free reveal→nfinalize yields a normal owned name (fee once, not viaFill); fuzz materialized ${cov.pendingReg} pending reservation(s)`);
 }
 // V28 self-check (REBIND B0a). The headline defect this batch closes: before it, NOT ONE attest in 20,000
