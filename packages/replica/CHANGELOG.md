@@ -2,6 +2,14 @@
 
 ## 0.1.0 (unreleased)
 
+- A store filled under an older pin is kept under a newer one when both are pinned with one `basisKey`, the new pin
+  is higher, the store's cursor is at or above it and the stored rows give its block hash, events hash and log digest
+  (`keepsStore`, internal); the bind then replays its state hash, and the next commit records the new pin. Every other
+  change of basis resets the store, as before (`test/disk-pins.test.ts`). Internal: a store compares the basis by its
+  key; `Source.pin`.
+- `ownNode({ node, dir, pin?, witness?, fetch?, paceMs?, timeoutMs? })` in `./server`: `local`'s source, `diskStore`,
+  the witness only when one is named, and a step budget of 512 blocks and 600 requests (internal: `OpenOptions.step`).
+  A day above a pin on disk went from 81 commits to 2.
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash

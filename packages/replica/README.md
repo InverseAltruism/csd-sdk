@@ -13,7 +13,7 @@ level of every answer (CairnX `CONVENTION.md` section 37) is a function of that 
 
 Only blocks sit above a pin: a pin over a feed does not compile, and `checkBasis`, `levelOf`, `proofOf` and `basisKey`
 throw `ReplicaConfigError` for one at run time. `basisKey` names a store without its pin, so a newer pin over the same
-root and bodies names the same store.
+root and bodies names the same store, which is kept only on the conditions of "Pins" below.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
   the reader, `open` and `openLog` ("Reading" below), and `checkPin` and `pinned` ("Pins" below).
@@ -36,7 +36,8 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
-- `./server` also has `diskStore({ dir })` ("The disk store" below).
+- `./server` also has `diskStore({ dir })` ("The disk store" below) and `ownNode({ node, dir, pin?, witness? })`
+  ("One's own node on disk" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
   accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
@@ -251,7 +252,7 @@ rebuilt and released against it; every new gate therefore needs a release of the
 event from activation (`code` `BELOW_FLOOR`: an anchor above the activation height less one, or a caller's floor
 above it, or above the pin under one); and a witness on the header source's origin (the front door's under an
 anchor root, the caller's `origin` under a caller root). A store that opens refused for its format, rule, basis or
-rows is reset and filled again; the newer-pin exception of the design is the disk store's slice.
+rows is reset and filled again, except a store filled under an older pin that a newer one keeps ("Pins" below).
 
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
@@ -365,9 +366,8 @@ the pin, and `PIN_OFF_CHAIN` once the window has moved up. The log's rows and th
 at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
 a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
 43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Loading in steps would not shorten
-it, since no row counts before the whole log's sha256, events hash and state hash hold; the trigger to revisit is a
-first step over 5 s on a server or a browser store's transaction found too large, and the answer then is a resumable
-replay context and a log fetched by its hash, not steps. Later steps go to `then`; a reorg
+it, since no row counts before the whole log's sha256, events hash and state hash hold; when to revisit is under
+"Limits" in "One's own node on disk" below. Later steps go to `then`; a reorg
 below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A node that moves to a branch forking below the
 pin whose tip is still below the pin's height reads as behind the cursor (`SOURCE_UNAVAILABLE`), so the answer stays
 as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
@@ -378,8 +378,15 @@ events at or below the pin (payloadHash, so their content, which the events hash
 `logSha256`) and the state hash at the pin must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded
 core's at or below the pin (`RULES_DIFFER`). The state hash is replayed from the stored rows, never read from the pin's
 boundary, which a store can hold wrong. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
-checked against the contract and their own running hashes when they were read back. A store reopened under another
-basis is reset.
+checked against the contract and their own running hashes when they were read back.
+
+A store reopened under another basis is reset, with one exception: a store filled under an older pin is kept under a
+newer one when both are pinned with one `basisKey` (the same root and bodies), the new pin lies above the old, the
+store's cursor is at or above the new pin, and the stored rows give the new pin's block hash, events hash and log
+digest; the bind above then replays the state hash at the new pin (`PIN_MISMATCH` when it is not the pin's). A kept store answers without reading the new log
+and records the new pin with its next commit. Every other change resets it and refills from the new log: an older pin,
+another log at the same height, a cursor below the new pin, rows that give another value at it, another node or body
+origin, an anchor root in place of one's own node, a feed's or an unpinned store (`test/disk-pins.test.ts`).
 
 What the checks prove: they tie the log to its descriptor and the descriptor's block to the header chain, not the
 log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
@@ -424,6 +431,39 @@ for 20 s is stale and taken over. While another process holds it, `open` is `una
 over while it waited between commits fails its next commit and writes nothing; one stopped after that commit's check
 of its lease finishes the commit over the taker's files, and the store then opens `corrupt` and is refilled. The package installs no signal handler: a server calls `close()` at
 shutdown, which releases the lease; after a crash the next start waits until the lease is stale.
+
+## One's own node on disk
+
+`ownNode({ node, dir, pin?, witness?, fetch?, paceMs?, timeoutMs? })`, in `./server`, is what `open` takes for a
+server's replica of its own node kept across restarts: the source of `local` (`nodeBlocks` at `node` under the
+server's address rule, above `pin` when one is given; the caller imports the pin, from `@inversealtruism/cairnx-pin`
+for ours), `diskStore({ dir })`, the witness when one is given, and a step budget of 512 blocks and 600 requests in
+place of the loop's 64 and 10, since every commit on disk costs its syncs. A node outside the rule or a relative `dir`
+throws `ReplicaConfigError`, and `open` throws it for a `dir` that is a file or cannot be created; a lock another
+process holds, or a disk error at open, is `NOT_SYNCED` with the note `STORE_UNAVAILABLE`, tried again at the next
+advance.
+
+```ts
+import { PIN } from "@inversealtruism/cairnx-pin";
+import { hostedWitness, open, ownNode } from "@inversealtruism/cairnx-replica/server";
+const replica = await open(ownNode({ node: "http://127.0.0.1:8789", dir: "/var/lib/deposits/replica", pin: PIN,
+  witness: hostedWitness({ origin: "https://cairn-substrate.com" }) }));   // the witness line is optional
+```
+
+No witness is set unless the caller names one: the package asks no host the caller did not name. One's own node is
+the header root, so its answers need no witness to be verified. A witness on another origin only withholds
+`verified`: it adds `TIP_BEHIND_PEER` when it names a higher tip with a valid header (one's node is behind,
+or on a branch the witness does not follow) and the note `SOURCES_DISAGREE` when it holds another block at the height
+compared.
+
+A day of blocks (720) above a pin, read through `open` on a disk store from a node serving the recorded capture to
+30,300 and blocks holding 30,300's transactions above it: with `ownNode`'s budget 2 steps and 2 commits, the advance
+0.34 to 0.39 s; with `local`'s source over the same `diskStore` (the loop's budget) 81 steps and 81 commits, 2.42 to
+2.45 s (three runs each, Node 26 on this host, 2026-11-21).
+
+Limits: the pin's log loads in one step ("Pins" above). Revisit that when a first step takes over 5 s on a server or
+a browser store's transaction is found too large; the answer then is a resumable replay context and a log fetched by
+its hash, not steps.
 
 ## Display
 

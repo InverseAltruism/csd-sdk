@@ -23,9 +23,11 @@ import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
 /** `source`: a block source (or, in tests, a feed); `store` defaults to memoryStore(); `witnesses` are asked with each
- *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms. */
+ *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms.
+ *  `step`, internal: the budget of each step, default the loop's (64 blocks, 10 requests). */
 export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
+  readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
 export interface EventLog {
   /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
@@ -93,7 +95,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   if (same !== undefined) throw new ReplicaConfigError(`open: the witness ${same.id} is on the header source's origin ${originOf(headers!)}`);
   const core = coreCheck(o.core), board = witnessBoard(witnesses, clock), store = o.store ?? memoryStore();
   // A store refused for a reason other than `unavailable` is reset and refilled at whichever load finds it (loop.ts).
-  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true });
+  const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true, ...o.step });
   await loop.open();
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;

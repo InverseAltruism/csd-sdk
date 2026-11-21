@@ -10,6 +10,7 @@
 // a tip that holds still therefore replays at most 24 boundaries, and then one per epoch as the tip moves; an older
 // boundary is stored with a null state hash and replayed on demand (Loop.boundary).
 import { CAIRNX_EVENT_RULE, EPOCH_LEN, EVENTS_HASH_START, FINAL_DEPTH, payloadHash, stateHash, type CairnXState, type EventRule } from "@inversealtruism/cairnx-core";
+import { keepsStore, sameBasis } from "./basis.js";
 import { checkStep, reorgBreak } from "./contract.js";
 import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
 import { LOADED_GATES, gatesDiffer } from "./gates.js";
@@ -70,6 +71,13 @@ export function chainExtends(before: readonly BlockRow[], after: readonly BlockR
   return toHeight > fromHeight && after.length >= before.length && before.every((r, i) => after[i] === r);
 }
 
+// What `held`, with its cursor `c`, gives at height `h`: a row's block hash or the cursor's; the events hash; the
+// payloadHash of the events at or below `h` (a pin's logSha256 when they are its log). The last two are null above `c`.
+const hashIn = (held: Held, c: Cursor | null, h: number): string | null => held.hashAt(h) ?? (c?.height === h ? c.hash : null);
+const eventsHashIn = (held: Held, c: Cursor | null, h: number): string | null => (c === null || h > c.height ? null : held.eventsHashAt(h));
+const logSha256In = (held: Held, c: Cursor | null, h: number): string | null =>
+  c === null || h > c.height ? null : payloadHash(held.rows.filter((r) => r.height <= h).flatMap((r) => r.events));
+
 const BACKOFF_FIRST_MS = 1_000;
 /** How far below the tip a boundary is replayed as it becomes deep: 24 epochs, 720 blocks. */
 export const STATE_WINDOW = 24 * EPOCH_LEN;
@@ -117,8 +125,8 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   const cursor = (): Cursor | null => meta?.cursor ?? null;
-  const hashAt = (h: number): string | null => held.hashAt(h) ?? (cursor()?.height === h ? cursor()!.hash : null);
-  const eventsHashAt = (h: number): string | null => { const c = cursor(); return c === null || h > c.height ? null : held.eventsHashAt(h); };
+  const hashAt = (h: number): string | null => hashIn(held, cursor(), h);
+  const eventsHashAt = (h: number): string | null => eventsHashIn(held, cursor(), h);
   // Replayed from the rows held: a boundary's stored state hash is never read here, since a store can hold a wrong one.
   const stateHashAt = (h: number): string | null => {
     const c = cursor();
@@ -126,13 +134,11 @@ export function replicaLoop(o: LoopOptions): Loop {
     const s = m.stateAt(h, 0);
     return s === null ? null : stateHash(s);
   };
-  const logSha256At = (h: number): string | null => {
-    const c = cursor();
-    return c === null || h > c.height ? null : payloadHash(held.rows.filter((r) => r.height <= h).flatMap((r) => r.events));
-  };
+  const logSha256At = (h: number): string | null => logSha256In(held, cursor(), h);
+  // The source's basis, also over a store kept from an older pin, so its next commit records the pin it is now under.
   const metaAt = (c: Cursor): StoreMeta => ({
-    ...(meta ?? { format: 1, rule, basis: source.basis, witnessed: null, windowSha256: null, work: null, workRoot: null }),
-    gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
+    ...(meta ?? { format: 1, rule, witnessed: null, windowSha256: null, work: null, workRoot: null }),
+    basis: source.basis, gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
   });
 
   // The one reset path: a refusal other than `unavailable` resets the store and reads it again, once per load.
@@ -157,7 +163,14 @@ export function replicaLoop(o: LoopOptions): Loop {
         for await (const row of store.rows(0)) rows.push(row);
         b = await store.boundaries();
         h = verifyRows(rows, b, r.meta, rule);
-        if (h !== null && r.meta !== null && gatesDiffer(r.meta.gates, LOADED_GATES, r.meta.cursor?.height ?? -1)) r = { ok: false, reset: "rule" };
+        const m0 = r.meta, held0 = h;
+        if (held0 !== null && m0 !== null && gatesDiffer(m0.gates, LOADED_GATES, m0.cursor?.height ?? -1)) r = { ok: false, reset: "rule" };
+        // A store opens under its basis key; one filled under another pin is kept only by the exception (basis.ts).
+        else if (held0 !== null && m0 !== null && !sameBasis(m0.basis, source.basis)) {
+          const c = m0.cursor, at = { cursor: c, hashAt: (x: number) => hashIn(held0, c, x), eventsHashAt: (x: number) => eventsHashIn(held0, c, x),
+            logSha256At: (x: number) => logSha256In(held0, c, x) };
+          if (!keepsStore(m0.basis, source.basis, source.pin?.eventsHash ?? null, at)) r = { ok: false, reset: "basis" };
+        }
       }
     } catch (e) {
       if (e instanceof ReplicaConfigError) throw e;
