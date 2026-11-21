@@ -68,12 +68,21 @@ export function createStore(opts: StoreOptions = {}) {
   };
   // effExpiry reads its height only to ask whether it is at least V21; the queues hold the key of the next sweep.
   const regimeHeight = (): number => (maxSweep >= V21_HEIGHT ? V21_HEIGHT : V21_HEIGHT - 1);
+  // Whether a sweep may run batches below its own height. An offer or bid whose effective expiry rises across V21 (a
+  // NaN cap, from an anchor height that is not a number) is due below V21 and not at or above it, so from the first
+  // such item on a sweep runs only the batch at its height. Equal to one batch per sweep: before that item, being due
+  // only grows with height for every item held; from it on, the batches are the same as one batch per sweep.
+  let splitSweep = true;
+  const admitExpiry = (x: { expiresEpoch: number; height: number }) => {
+    if (!(effExpiry(x, V21_HEIGHT) <= effExpiry(x, V21_HEIGHT - 1))) splitSweep = false;
+  };
 
   // ── writes ──
   const addOffer = (o: OfferRec) => {
     if (!offers.has(o.id)) offerAt.set(o.id, ++stamp);
     offers.set(o.id, o);
     if (!openOffers.has(o.id)) { openOffers.add(o.id); openOfferAt.set(o.id, ++stamp); }
+    admitExpiry(o);
     offerQ.push(effExpiry(o, regimeHeight()), o.id);
     // a taker-bound offer anchored at V28+ is a firm quote no bulk cancel targets (both fields are fixed at creation)
     if (!(o.taker !== undefined && o.height >= V28_HEIGHT)) { addTo(bySeller, o.seller, o.id); addTo(bySellerAsset, assetKey(o.seller, o.give), o.id); }
@@ -94,6 +103,7 @@ export function createStore(opts: StoreOptions = {}) {
   const addBid = (b: BidRec) => {
     bids.set(b.id, b);
     if (!openBids.has(b.id)) { openBids.add(b.id); openBidAt.set(b.id, ++stamp); }
+    admitExpiry(b);
     bidQ.push(effExpiry(b, regimeHeight()), b.id);
   };
   const setBidStatus = (b: BidRec, status: Exclude<BidState["status"], "open">) => {
@@ -218,13 +228,14 @@ export function createStore(opts: StoreOptions = {}) {
    *  state"). A falling height takes the walk, as before. */
   const sweep = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(height >= maxSweep)) { walkSweep(height, expireOffer); return; }
-    for (let d = nextDue(); d < height; d = nextDue()) {
-      if (!(d > maxSweep)) break;   // a head due at or below the last batch's height: left to the batch at `height`
-      sweepAt(d, expireOffer);
+    let exact = splitSweep;   // check mode: whether each item of the last batch is at the first height it is due
+    if (splitSweep) for (let d = nextDue(); d < height; d = nextDue()) {
+      if (!(d > maxSweep)) { exact = false; break; }   // a head due at or below the last batch's height: left to the batch at `height`
+      sweepAt(d, expireOffer, true);
     }
-    sweepAt(height, expireOffer);
+    sweepAt(height, expireOffer, exact);
   };
-  const sweepAt = (height: number, expireOffer: (o: OfferRec) => void) => {
+  const sweepAt = (height: number, expireOffer: (o: OfferRec) => void, exact: boolean) => {
     if (!(maxSweep >= V21_HEIGHT) && height >= V21_HEIGHT) {
       // the first sweep at V21 or above: offers and bids anchored below V22 now expire at their capped epoch
       stats.visits += openOffers.size + openBids.size;
@@ -243,8 +254,8 @@ export function createStore(opts: StoreOptions = {}) {
       same(`expired bids at ${height}`, dueBids, want.bids);
       same(`expired reservations at ${height}`, dueNames, want.names);
       same(`expired recaptures at ${height}`, dueRecaptures, want.recaptures);
-      // each item expires at the first height it is due: none of the batch was due one height lower
-      const early = [...dueOffers.filter((id) => offerDue(offers.get(id), height - 1)), ...dueBids.filter((id) => bidDue(bids.get(id), height - 1)),
+      // each item expires at the first height it is due, where the batches split exactly: none was due one height lower
+      const early = !exact ? [] : [...dueOffers.filter((id) => offerDue(offers.get(id), height - 1)), ...dueBids.filter((id) => bidDue(bids.get(id), height - 1)),
         ...dueNames.filter((nm) => nameDue(names.get(nm), height - 1)), ...dueRecaptures.filter((nm) => height - 1 > recaptures.get(nm)!.finalizeBy)];
       if (early.length) throw new Error(`replay index check: expired at ${height}, due before it: ${early.join(", ")}`);
     }

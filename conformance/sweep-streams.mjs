@@ -35,7 +35,8 @@ const expectCodes = (pairs) => (resolveAt) => {
   return bad;
 };
 
-/** The constructed streams. Heights are at V29 or above, except where a name must lapse or V21 must be crossed. */
+/** The constructed streams. Heights are at V29 or above, except where a name must lapse or V21 must be crossed, and X
+ *  and X2 hold a height that is not a number. */
 export function sweepStreams(R) {
   const out = [];
   const ep = (h) => R.epochOf(h), L = R.EPOCH_LEN;
@@ -196,14 +197,38 @@ export function sweepStreams(R) {
         return bad;
       } });
   }
+  // X. An offer whose event carries a height that is not a number (an input no chain produces; resolve() accepts it):
+  // its cap is NaN, so it is due below V21 and never at or above it. With no event between its raw expiry and V21 it
+  // stays open past V21 and the seller's transfer at V21 is refused, as in 0.2.8; X2 puts an event there, which
+  // expires it, so a later transfer applies.
+  for (const [key, between] of [["X", false], ["X2", true]]) {
+    const k = kit(R, key === "X" ? "b9" : "ba"), ev = [], S = ad(70), X = ad(71);
+    ev.push(...k.token("BUG", 10, S, R.ACTIVATION_HEIGHT));
+    const O = k.P(R.offer({ give: { ticker: "BUG", amount: "10" }, want: { value: "1000" } }), Number.NaN, 0, S, 1000);
+    const mid = k.P(R.transfer({ ticker: "BUG", to: X, amount: "4" }), 30_100, 0, S, FAR);
+    const late = k.P(R.transfer({ ticker: "BUG", to: X, amount: "6" }), R.V21_HEIGHT, 0, S, FAR);
+    ev.push(O, ...(between ? [mid] : []), late);
+    out.push({ key, label: between ? "a NaN-height offer expires at an event below V21, so the give is spent" : "a NaN-height offer whose cap is NaN stays open past V21",
+      events: ev, tipHeight: R.V21_HEIGHT + 100,
+      expect(resolveAt) {
+        const st = resolveAt(), bad = [];
+        if (st.offers[O.id]?.status !== (between ? "expired" : "open")) bad.push(`the offer ${between ? "expired" : "open"} at the tip`);
+        if (between && codeOf(st, mid.id) !== "TOKEN_TRANSFERRED") bad.push("the transfer below V21 applies");
+        if (codeOf(st, late.id) !== (between ? "TOKEN_TRANSFERRED" : "TOKEN_BALANCE_LOW")) bad.push(`the transfer at V21 ${between ? "applies" : "is refused"}`);
+        return bad;
+      } });
+  }
   return out.map((s) => ({ ...s, tips: [] }));
 }
+
+/** The events a walk replays at tip `t`: every event not above it (one whose height is not a number is in every prefix). */
+export const upTo = (events, t) => events.filter((e) => !(e.height > t));
 
 /** The tips of a dense walk over `events` up to `tip`: every height from two below the first event when the span is at
  *  most `span` blocks; otherwise every height from two below to three epochs above each event height, the two heights
  *  around each height in `extra`, and the tip. Ascending, at or above 0. */
 export function denseTips(events, tip, EPOCH_LEN, extra = [], span = 2_000) {
-  const hs = [...new Set(events.map((e) => e.height))].sort((a, b) => a - b);
+  const hs = [...new Set(events.map((e) => e.height).filter(Number.isFinite))].sort((a, b) => a - b);
   if (!hs.length) return [tip];
   const lo = Math.max(0, hs[0] - 2), s = new Set([tip]);
   if (tip - lo <= span) for (let h = lo; h <= tip; h++) s.add(h);

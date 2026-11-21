@@ -15,6 +15,7 @@ export interface SweepStream {
 }
 
 export declare function sweepStreams(R: Core): SweepStream[];
+export declare function upTo(events: readonly ChainEvent[], t: number): ChainEvent[];
 export declare function denseTips(events: readonly ChainEvent[], tip: number, EPOCH_LEN: number, extra?: readonly number[], span?: number): number[];
 export declare function inertEvents(heights: readonly number[], tag?: string): ChainEvent[];
 export interface ExpiryKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; v21: boolean }
