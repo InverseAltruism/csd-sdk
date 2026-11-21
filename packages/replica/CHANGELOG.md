@@ -2,6 +2,28 @@
 
 ## 0.1.0 (unreleased)
 
+- `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
+  contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
+  `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not
+  name opens `unconfirmed` and is reset and refilled; one writer by a Web Lock. The record checks and the boundary
+  chain are one module both stores import, every digest in it `payloadHash`. A disk store written before this change
+  that holds a boundary or a header window (its chain and window name were sha256 over raw bytes) opens `corrupt` and
+  is refilled. Internal:
+  `Store.open`'s reason `unconfirmed`, `TrustedSlot`.
+- `hosted({ ..., store })`: the store, default `memoryStore()`. `STORE_UNCONFIRMED` is set from an unconfirmed reset
+  until the refill reaches a step's tip. The browser store's slot also keeps the reader's last settled tip and witness
+  confirmation, bound to the record hash; a reader whose context starts again takes them back, whole or not at all,
+  only where a running reader would answer from them (the block at the cursor, 30 minutes, a held block confirmed by
+  one of its witnesses with that tip), else it starts fresh. Internal: `Store.keep`, `Store.kept`, `KeptView`,
+  `Loop.resume`, `LoopStatus.unconfirmed`.
+- The kept view, after review: kept only while the reader's verdict has no code, cleared by any other verdict; taken
+  back only with a clock no earlier than at the keep and from a record committed under the source's basis; a store
+  that throws while keeping it fails soft (`ReplicaStatus.keepError`). Both stores refuse a boundary out of form at
+  open (a state hash NaN or Infinity, which canonical JSON writes as null). README: each store a slot key of its own;
+  the open order as the code runs.
+- `idbStore`, after review: a store whose Web Lock was stolen is lost (it opens `unavailable` and writes nothing to the
+  database or the slot), and a commit's last slot write is made only while the slot still holds the pair that commit
+  wrote, so a writer that lost its lock cannot overwrite its successor's confirmation.
 - A store filled under an older pin is kept under a newer one when both are pinned with one `basisKey`, the new pin
   is higher, the store's cursor is at or above it and the stored rows give its block hash, events hash and log digest
   (`keepsStore`, internal); the bind then replays its state hash, and the next commit records the new pin. Every other

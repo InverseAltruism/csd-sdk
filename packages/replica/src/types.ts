@@ -159,10 +159,26 @@ export interface Materializer {
   readonly replayMs: number | null;
 }
 
-/** Internal. Format, rule and basis key a store; `open` refuses any other and names the difference. */
+/** Internal. Format, rule and basis key a store; `open` refuses any other and names the difference. `unconfirmed`: a
+ *  browser store whose record the trusted slot does not name (idb-store.ts). */
 export interface Store {
   open(expect: { readonly format: 1; readonly rule: EventRule; readonly basis: Basis }):
-    Promise<{ ok: true; meta: StoreMeta | null } | { ok: false; reset: "format" | "rule" | "basis" | "corrupt" | "unavailable" }>;
+    Promise<{ ok: true; meta: StoreMeta | null } | { ok: false; reset: "format" | "rule" | "basis" | "corrupt" | "unconfirmed" | "unavailable" }>;
   rows(fromHeight: number): AsyncIterable<BlockRow>; boundaries(): Promise<Boundary[]>; headerWindow(): Promise<Uint8Array | null>;
   commit(c: Commit): Promise<{ ok: true } | { ok: false; code: "CURSOR_MOVED" | "STORE_FAILED" }>; reset(): Promise<void>; close(): void;
+  /** Optional: a store that keeps a reader's settled view across a restart of its context, bound to the record it was
+   *  kept with (idb-store.ts); null clears it. `kept` gives it after an open that confirmed that record, else null. */
+  keep?(view: KeptView | null): Promise<void>;
+  kept?(): KeptView | null;
 }
+
+/** Internal. What a reader had settled when it last advanced verified: the clock's reading then (`at`, ms), the tip of
+ *  its last step, and the witness confirmation it held then with the hash of that tip. */
+export interface KeptView {
+  readonly at: number; readonly tip: TipView;
+  readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number; readonly tip: string } | null;
+}
+
+/** A value only this program's trusted contexts can read and write and that a browser start clears: the wallet's is
+ *  chrome.storage.session (sessionSlot). A browser store keeps the hashes of its record in it. */
+export interface TrustedSlot { get(): Promise<string | null>; set(value: string): Promise<void> }

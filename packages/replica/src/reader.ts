@@ -11,14 +11,14 @@ import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
-import { ReplicaConfigError } from "./errors.js";
+import { ReplicaConfigError, messageOf } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
-import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
-import { verdict } from "./verdict.js";
+import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
+import { FRESH_MS, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
@@ -59,13 +59,14 @@ export interface Reader extends EventLog {
 export type DryRunTx = EventRuleTx["tx"];
 /** Internal. The detail of STORE_UNAVAILABLE for each reason a load gives (loop.ts StoreReason). */
 export const STORE_DETAILS: Readonly<Record<StoreReason, string>> = Object.freeze({
-  held: "another process holds the store",
+  held: "another process or context holds the store",
   foreign: "the store refuses its directory: another program's file is there",
   io: "a read or write of the store failed",
   format: "the store is of another format and its reset failed",
   rule: "the store was written under another rule or gate table and its reset failed",
   basis: "the store was filled under another basis and its reset failed",
   corrupt: "the store's files fail their checks and its reset failed",
+  unconfirmed: "the store's trusted slot does not name its record and its reset failed",
 });
 // The id a tried transaction takes. Its entry in the applied log is found by this id at the height above the cursor,
 // where no held event lies.
@@ -107,6 +108,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   // A store refused for a reason other than `unavailable` is reset and refilled at whichever load finds it (loop.ts).
   const loop = replicaLoop({ source: o.source, store, rule, materializer: m, clock, resetRefused: true, ...o.step });
   await loop.open();
+  restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
   let running: Promise<ReplicaStatus> | null = null;
 
@@ -118,7 +120,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused,
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed,
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
@@ -134,10 +136,39 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     return { codes, why, notes, at };
   }
 
+  // A view the store kept from before a restart of its context, kept only while the reader was verified, taken whole or
+  // not at all, and only where a running reader would answer from it: the clock reads no earlier than at the keep (a
+  // running reader voids its confirmation on a clock set back); the tip is the block at the cursor, in a record
+  // committed under this basis (loop.resume), and at most FRESH_MS old; where the root needs a witness, the
+  // confirmation is of a block held, at most FRESH_MS old and not later than the clock, by one of this reader's
+  // witnesses, and was held with that tip. Otherwise the reader starts as a fresh one (test/browser/idb-store.test.ts).
+  function restore(v: KeptView | null): void {
+    if (v === null) return;
+    const now = clock(), w = v.witnessed, needs = r !== null && r.root.kind !== "own-node";
+    if (now < v.at || !(now - v.tip.time * 1000 <= FRESH_MS)) return;
+    if (needs && !(w !== null && w.tip === v.tip.hash && now >= w.at && now - w.at <= FRESH_MS && witnesses.some((x) => x.id === w.by) && loop.hashAt(w.height) === w.hash)) return;
+    if (!loop.resume(v.tip)) return;
+    if (needs) board.restore({ height: w!.height, hash: w!.hash, by: w!.by, at: w!.at, generation: loop.generation() });
+  }
+  // What the store keeps for the next start of its context: while the verdict has no code, the last step's tip and the
+  // confirmation held with it; under any other verdict nothing, so a restart does not forget a denial. A store that
+  // throws fails soft: the error goes to status(), the view is cleared where the store lets it, and the advance goes on.
+  let keepError: string | null = null;
+  async function keep(): Promise<void> {
+    if (store.keep === undefined) return;
+    const s = loop.status(), w = board.witnessed(loop.generation()), now = Math.floor(clock());
+    const view: KeptView | null = s.store === "open" && s.tip !== null && judge(FINAL_DEPTH).codes.length === 0
+      ? { at: now, tip: s.tip, witnessed: w === null ? null : { height: w.height, hash: w.hash, by: w.by, at: Math.floor(w.at), tip: s.tip.hash } } : null;
+    try { await store.keep(view); keepError = null; } catch (e) {
+      keepError = messageOf(e);
+      if (view !== null) await store.keep(null).catch((e2: unknown) => { keepError += `; clearing it: ${messageOf(e2)}`; });
+    }
+  }
+
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
-      storeReason: s.storeReason, storeError: s.storeError,
+      storeReason: s.storeReason, storeError: s.storeError, keepError,
       witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
   }
 
@@ -148,6 +179,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const run = (async () => {
       await Promise.all([loop.advance(a), board.tips(signal)]);
       await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h), generation: () => loop.generation() }, signal);
+      await keep();
       const s = status();
       for (const f of listeners) f(s);
       return s;
