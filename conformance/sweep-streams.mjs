@@ -228,10 +228,10 @@ export const upTo = (events, t) => events.filter((e) => !(e.height > t));
  *  most `span` blocks; otherwise every height from two below to three epochs above each event height, the two heights
  *  around each height in `extra`, and the tip. Ascending, at or above 0. */
 export function denseTips(events, tip, EPOCH_LEN, extra = [], span = 2_000) {
-  const hs = [...new Set(events.map((e) => e.height).filter(Number.isFinite))].sort((a, b) => a - b);
+  const hs = [...new Set(events.map((e) => e.height).filter(Number.isSafeInteger))].sort((a, b) => a - b);
   if (!hs.length) return [tip];
   const lo = Math.max(0, hs[0] - 2), s = new Set([tip]);
-  if (tip - lo <= span) for (let h = lo; h <= tip; h++) s.add(h);
+  if (Number.isSafeInteger(tip) && tip - lo <= span) for (let h = lo; h <= tip; h++) s.add(h);
   else {
     for (const h of hs) for (let d = -2; d <= 3 * EPOCH_LEN; d++) s.add(h + d);
     for (const x of extra) for (const d of [-1, 0, 1]) s.add(x + d);
@@ -271,4 +271,39 @@ export function expiryKinds(R, events, state) {
   const offers = Object.values(state.offers), bids = Object.values(state.bids);
   return { offer: offers.some(ended), bid: bids.some(ended), reservation: twice("NAME_RESERVED"), recapture: twice("NAME_RECAPTURE_RESERVED"),
     v21: offers.some(capped) || bids.some(capped) };
+}
+
+/** JSON text that keeps the numbers JSON has no form for (NaN, +-Infinity) as `{"$num": "NaN"}`; parseNumbers reads it back. */
+export const stringifyNumbers = (value) => JSON.stringify(value, (_k, v) => (typeof v === "number" && !Number.isFinite(v) ? { $num: String(v) } : v));
+export const parseNumbers = (text) => JSON.parse(text, (_k, v) => (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$num === "string" ? Number(v.$num) : v));
+
+// Whether an event carries a height or an expiry a chain does not produce (not a safe integer).
+const malformed = (e) => !Number.isSafeInteger(e.height) || (e.kind === "propose" && !Number.isSafeInteger(e.expiresEpoch));
+
+/** What the replay read of the malformed fields in `events`, from its log and state: an offer, bid, reservation or
+ *  recapture reservation entry whose event (or, for a reveal or finalize, whose commit) is malformed; such an entry in
+ *  a sequence that crosses V21 (an event below it, the tip at or above it) or lies wholly at or above it; an offer
+ *  stored with a NaN height in a sequence that crosses V21 (the class whose expiry rises across V21). Reservations and
+ *  recapture reservations are told apart by the generator's name prefixes (`em`, `rm`). */
+export function malformedKinds(R, events, state) {
+  const byId = new Map(events.map((e) => [e.kind === "propose" ? e.id : e.txid, e]));
+  const commits = new Map(events.filter((e) => e.kind === "propose").map((e) => [R.parseRecord(e.uri, e.payloadHash)?.commit, e]).filter(([c]) => c !== undefined));
+  const out = { offer: false, bid: false, reservation: false, recapture: false, crossV21: false, aboveV21: false, nanOffer: false };
+  for (const x of state.events) {
+    const e = byId.get(x.id);
+    if (!e) continue;
+    const rec = e.kind === "propose" ? R.parseRecord(e.uri, e.payloadHash) : null;
+    const viaCommit = rec?.salt !== undefined && rec?.name !== undefined && (() => { const c = commits.get(R.nameCommit(rec.name, rec.salt, e.proposer.toLowerCase())); return c !== undefined && malformed(c); })();
+    if (!malformed(e) && !viaCommit) continue;
+    if (x.kind === "offer") out.offer = true;
+    else if (x.kind === "bid") out.bid = true;
+    else if ((x.kind === "name" || x.kind === "nfinalize") && rec?.name?.startsWith("em")) out.reservation = true;
+    else if ((x.kind === "name" || x.kind === "nfinalize") && rec?.name?.startsWith("rm")) out.recapture = true;
+  }
+  const any = out.offer || out.bid || out.reservation || out.recapture;
+  const safe = events.map((e) => e.height).filter(Number.isSafeInteger);
+  out.crossV21 = any && safe.some((h) => h < R.V21_HEIGHT) && state.tipHeight >= R.V21_HEIGHT;
+  out.aboveV21 = any && safe.every((h) => h >= R.V21_HEIGHT);
+  out.nanOffer = out.crossV21 && Object.values(state.offers).some((o) => Number.isNaN(o.height));
+  return out;
 }

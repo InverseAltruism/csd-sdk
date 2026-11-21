@@ -143,11 +143,12 @@ const offer = (id: string, height: number, expiresEpoch: number): OfferRec =>
 
 // ── the sweep's loop guard: a due height that rounds below the height that pops its entry ──
 // An offer keyed 2^53 - 297: (k + 1) * EPOCH_LEN rounds to a height whose epoch is still k, so the batch there pops
-// nothing; the guard ends the loop and the batch at the asked height expires it, as one batch per sweep does.
+// nothing; the guard ends the loop and the batch at the asked height expires it, as one batch per sweep does. Check
+// mode stays off here: its "not due one height lower" needs a due height a double can hold.
 {
   const k = 2 ** 53 - 297, d = (k + 1) * EPOCH_LEN;
   ok(epochOf(d) === k, "the computed due height of the entry falls in its own epoch (the case the guard exists for)");
-  const s = createStore({ check: true });
+  const s = createStore();
   const o = offer("0x" + "ee".repeat(32), 90_002, k);
   s.addOffer(o);
   let released = 0;

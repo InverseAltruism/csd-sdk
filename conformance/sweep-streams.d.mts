@@ -21,3 +21,7 @@ export declare function inertEvents(heights: readonly number[], tag?: string): C
 export interface ExpiryKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; v21: boolean }
 export declare function dueHeights(R: Core, events: readonly ChainEvent[]): number[];
 export declare function expiryKinds(R: Core, events: readonly ChainEvent[], state: CairnXState): ExpiryKinds;
+export interface MalformedKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; crossV21: boolean; aboveV21: boolean; nanOffer: boolean }
+export declare function stringifyNumbers(value: unknown): string;
+export declare function parseNumbers(text: string): unknown;
+export declare function malformedKinds(R: Core, events: readonly ChainEvent[], state: CairnXState): MalformedKinds;

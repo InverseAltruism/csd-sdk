@@ -7,13 +7,17 @@
 //                                                            differential (scripts/seal-differential.mjs replays them)
 //   --expiry   sequences built so that offers, bids, reservations and recapture reservations end inside them, at heights
 //              with no event, and later events read what each released; a floor per kind of expiry fails a thin run.
-// Every run also checks that events which write nothing change nothing (CONVENTION section 5): each sequence is
-// resolved again with an Attest on an unknown proposal at many heights, by JS (whole result) and by the reference.
+//   --malformed  sequences whose offers, bids, reservations and recapture reservations carry heights or expiries no
+//              chain produces (NaN, +-Infinity, negative, fractional, 2^53 and above), on both sides of V21 and of an
+//              epoch edge, with a floor per kind; the reference gets only those it accepts (it refuses every float).
+// Every run also checks that events which write nothing change nothing (CONVENTION section 5) on the sequences whose
+// heights a chain can produce: each is resolved again with an Attest on an unknown proposal at many heights, by JS
+// (whole result) and by the reference (canonical state).
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
-import { denseTips, dueHeights, expiryKinds, inertEvents } from "./sweep-streams.mjs";
+import { denseTips, dueHeights, expiryKinds, inertEvents, malformedKinds, stringifyNumbers } from "./sweep-streams.mjs";
 let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
 // REBIND B0a: v2.8 fclaim GENERATION-SIDE counters. These record what the generator INTENDED to emit; they
 // are NOT evidence that the resolver reached the branch. Denied fclaims are not canonically observable
@@ -35,6 +39,9 @@ if (EMIT_AT >= 0 && !EMIT) { console.error("--emit needs a file path"); process.
 const EXPIRY_AT = ARGS.indexOf("--expiry");
 const EXPIRY = EXPIRY_AT >= 0;
 if (EXPIRY) ARGS.splice(EXPIRY_AT, 1);
+const MALFORMED_AT = ARGS.indexOf("--malformed");
+const MALFORMED = MALFORMED_AT >= 0;
+if (MALFORMED) ARGS.splice(MALFORMED_AT, 1);
 const N = Number(ARGS[0] || 3000);
 let SEED = Number(ARGS[1] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
 const rng = () => { SEED = (SEED * 1664525 + 1013904223) >>> 0; return SEED / 0x100000000; };
@@ -455,6 +462,73 @@ function recaptureExpirySeq() {
   return { events: ev, tipHeight: last + ri(0, 90) };
 }
 
+// --malformed. A seller's offers and bids, sealed reservations and recapture reservations, each carrying now and then a
+// height or an expiry from the malformed lists, around a base height on either side of V21 and next to an epoch edge;
+// NaN-height offers get expiries due below V21 (the class whose expiry rises across V21); transfers and tips around
+// V21 and the epoch edges read what the sweeps released. Recapture reservations need a lapsed lease, so theirs lie far
+// above V21. Heights and expiries kept valid elsewhere so that the malformed field is the one the replay meets; a
+// sequence's tip is an integer read from its valid heights.
+const BAD_H = [Number.NaN, Infinity, -Infinity, -5, 0.5, 2 ** 53, 2 ** 53 + 2, 1e17];
+const BAD_E = [Number.NaN, Infinity, -Infinity, -3, 0.5, 2 ** 53, 2 ** 53 + 2, 1e21];
+function malformedSeq() {
+  const L = R.EPOCH_LEN, ev = [], at = new Map(), FAR = 9_000_000_000;
+  const posAt = (hh) => { const k = String(hh); const p = at.get(k) ?? 0; at.set(k, p + 1); return p; };
+  const S = "0x" + "c1".repeat(20), B = "0x" + "c3".repeat(20), C = "0x" + "c4".repeat(20), X = "0x" + "c5".repeat(20);
+  const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
+  // two sequences in five carry only integers, so that the reference (which refuses every float) replays them too
+  const ints = chance(0.4), okInt = (v) => !ints || (Number.isInteger(v) && Math.abs(v) < 1e21);
+  const badH = (h) => { const v = chance(0.25) && !ints ? Number.NaN : pick(BAD_H.filter(okInt)); return v === 0.5 ? h + 0.5 : v; };
+  const badE = (e) => { const v = pick(BAD_E.filter(okInt)); return v === 0.5 ? e + 0.5 : v; };
+  if (chance(0.15)) {
+    // a lapsed name, reserved for recapture with a malformed commit, reveal or finalize height
+    const NM = "rm" + ri(1000, 99999), sE = "c7c7c7c7c7c7c7c7c7", sF = "f8f8f8f8f8f8f8f8f8";
+    const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+    P(validOr(() => R.nameClaim({ name: NM })), RC_D, regH, FAR, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+    const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * L + ri(0, 600);
+    const which = ri(0, 2);
+    P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), RC_E, which === 0 ? badH(cEh) : cEh, FAR);
+    P(validOr(() => R.nameClaim({ name: NM, salt: sE })), RC_E, which === 1 ? badH(cEh + 1) : cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    const end = cEh + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+    if (which === 2 || chance(0.3)) { const hf = which === 2 ? badH(end - 2) : end - ri(0, 10); P(validOr(() => R.nameFinalize({ name: NM, salt: sE })), RC_E, hf, FAR, { [TREAS]: recapturePremium(NM, regH, Number.isFinite(hf) ? hf : end).toString() }); }
+    const cFh = end + ri(-4, 40);
+    P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), RC_F, cFh, FAR);
+    P(validOr(() => R.nameClaim({ name: NM, salt: sF })), RC_F, cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    return { events: ev, tipHeight: Math.max(...ev.map((e) => e.height).filter((x) => Number.isSafeInteger(x) && x < 1e9)) + ri(0, 90) };
+  }
+  const below = chance(0.5);
+  let h = below ? R.V21_HEIGHT - ri(40, 900) : (chance(0.5) ? R.V21_HEIGHT + ri(0, 900) : R.V29_HEIGHT + ri(0, 20_000));
+  h = Math.floor(h / L) * L + pick([-2, -1, 0, 1, 28]);   // next to an epoch edge
+  const T1 = "M" + ri(100, 999);
+  P(validOr(() => R.deploy({ ticker: T1, decimals: 0, supply: "1000", mint: "issuer" })), S, h - 4, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T1, amount: "1000" })), S, h - 3, FAR);
+  const len = ri(4, 12);
+  for (let i = 0; i < len; i++) {
+    h += chance(0.3) ? ri(0, 2) : ri(1, 40);
+    const r = rng(), mh = chance(0.5), me = !mh || chance(0.3);
+    if (r < 0.35) {
+      const hh = mh ? badH(h) : h;
+      // a NaN-height offer due below V21, so that the stream crosses V21 with it held
+      const ee = Number.isNaN(hh) ? R.epochOf(R.V21_HEIGHT) - ri(1, 30) : me ? badE(R.epochOf(h) + ri(0, 2)) : R.epochOf(h) + ri(0, 2);
+      P(validOr(() => R.offer({ give: { ticker: T1, amount: String(ri(1, 50)) }, want: { value: "1000" }, ...(chance(0.5) ? { taker: B } : {}) })), S, hh, ee);
+    } else if (r < 0.5) {
+      P(validOr(() => R.bid({ want: { ticker: T1, amount: "1" }, give: { value: "1000" } })), B, mh ? badH(h) : h, me ? badE(R.epochOf(h) + ri(0, 2)) : R.epochOf(h) + ri(0, 2));
+    } else if (r < 0.7 && h >= R.V25_HEIGHT) {
+      const nm = "em" + ri(1000, 99999), salt = "c4c4c4c4c4c4c4c4c4", which = ri(0, 2);
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, C) })), C, which === 0 ? badH(h) : h, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), C, which === 1 ? badH(h + 1) : h + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+      const hf = h + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS);
+      if (which === 2 || chance(0.3)) P(validOr(() => R.nameFinalize({ name: nm, salt })), C, which === 2 ? badH(hf) : hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() });
+    } else {
+      P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, h, FAR);
+    }
+  }
+  // transfers on both sides of V21 and of the next epoch edge read what the sweeps released
+  const edge = (R.epochOf(h) + 1) * L;
+  for (const hh of [edge - 1, edge, R.V21_HEIGHT - 1, R.V21_HEIGHT + ri(0, 3)]) if (hh > h - 40) P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, hh, FAR);
+  const last = Math.max(...ev.map((e) => e.height).filter((x) => Number.isSafeInteger(x) && x < 1e9));
+  return { events: ev, tipHeight: last + ri(0, 3 * L) };
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -531,13 +605,22 @@ function randPaidTo() {
 }
 
 // generate, run JS, batch to Python, diff
-const seqs = Array.from({ length: N }, EXPIRY ? expirySeq : genSeq);
+const seqs = Array.from({ length: N }, MALFORMED ? malformedSeq : EXPIRY ? expirySeq : genSeq);
 if (EMIT) {
-  writeFileSync(EMIT, JSON.stringify(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
+  writeFileSync(EMIT, stringifyNumbers(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
   console.log(`emitted ${N} sequences to ${EMIT}`);
   process.exit(0);
 }
-const js = seqs.map((s) => { try { return canonicalState(resolve(s.events, s.tipHeight)); } catch (e) { return "JS_THROW:" + (e?.message || e); } });
+const runs = seqs.map((s) => { try { return { st: resolve(s.events, s.tipHeight) }; } catch (e) { return { err: "JS_THROW:" + (e?.message || e) }; } });
+const js = runs.map((r) => r.err ?? canonicalState(r.st));
+// --malformed: the reference gets the sequences whose numbers are all integers JSON writes as such. Its arithmetic
+// on NaN and the infinities is Python's, not JavaScript's (a NaN key in its sort, min(E, NaN) = E, inf // 30 = NaN),
+// and it refuses to write a state that holds a float; neither reaches a chain input. The events that write nothing go
+// where the property is claimed (CONVENTION section 5), so not where an offer with a NaN height is held.
+const intOnly = (s) => [s.tipHeight, ...s.events.flatMap((e) => [e.height, e.pos, ...(e.kind === "propose" ? [e.expiresEpoch] : [])])]
+  .every((x) => Number.isInteger(x) && Math.abs(x) < 1e21);
+const toRef = seqs.map((s) => !MALFORMED || intOnly(s));
+const withTwin = runs.map((r) => !MALFORMED || (r.st !== undefined && !Object.values(r.st.offers).some((o) => Number.isNaN(o.height))));
 // each sequence's twin: an event that writes nothing at each height of a dense walk (at most 300, the expiry heights kept)
 const inertAt = (s) => {
   const due = dueHeights(R, s.events).filter((x) => x <= s.tipHeight);
@@ -545,23 +628,26 @@ const inertAt = (s) => {
   const keep = new Set(due.flatMap((x) => [x - 1, x]));
   return tips.length <= 300 ? tips : tips.filter((x, i) => keep.has(x) || i % Math.ceil(tips.length / 300) === 0);
 };
-const twins = seqs.map((s) => ({ events: [...inertEvents(inertAt(s)), ...s.events], tipHeight: s.tipHeight }));
+const twins = seqs.map((s, i) => (withTwin[i] ? { events: [...inertEvents(inertAt(s)), ...s.events], tipHeight: s.tipHeight } : null));
 let inertJs = 0, inertPy = 0, inertN = 0;
 seqs.forEach((s, i) => {
+  if (!twins[i]) return;
   inertN += twins[i].events.length - s.events.length;
-  let a, b;
-  try { a = JSON.stringify(resolve(s.events, s.tipHeight)); } catch (e) { a = "JS_THROW:" + (e?.message || e); }
+  let b;
+  const a = runs[i].err ?? JSON.stringify(runs[i].st);
   try { b = JSON.stringify(resolve(twins[i].events, s.tipHeight)); } catch (e) { b = "JS_THROW:" + (e?.message || e); }
   if (a !== b && ++inertJs <= 5) console.error(`✗ seq #${i} JS: events that write nothing changed the result`);
 });
+const refIdx = seqs.map((_, i) => i).filter((i) => toRef[i]), twinIdx = refIdx.filter((i) => twins[i]);
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname],
-  { input: JSON.stringify({ resolve: [...seqs, ...twins].map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 2048 * 1024 * 1024 });
+  { input: JSON.stringify({ resolve: [...refIdx.map((i) => seqs[i]), ...twinIdx.map((i) => twins[i])].map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 2048 * 1024 * 1024 });
 if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0, 4000)); process.exit(1); }
 const pall = JSON.parse(py.stdout).resolve;
-const pj = pall.slice(0, N);
-for (let i = 0; i < N; i++) if (pall[N + i] !== pj[i] && ++inertPy <= 5) console.error(`✗ seq #${i} reference: events that write nothing changed the canonical state`);
+const pj = new Array(N);
+refIdx.forEach((i, k) => { pj[i] = pall[k]; });
+twinIdx.forEach((i, k) => { if (pall[refIdx.length + k] !== pj[i] && ++inertPy <= 5) console.error(`✗ seq #${i} reference: events that write nothing changed the canonical state`); });
 
-let diverged = 0, jsThrows = 0;
+let diverged = 0, jsThrows = 0, notToRef = 0;
 const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
 for (let i = 0; i < N; i++) {
   // A throw fails the run: every replayer would stop at that sequence's block, whatever Python answers.
@@ -588,6 +674,7 @@ for (let i = 0; i < N; i++) {
     // a recapturer owns a name only through a v2.6 recapture nfinalize: no flow registers or transfers one to them
     if (st.names && Object.values(st.names).some((n) => n && (n.owner === RC_E || n.owner === RC_F) && !n.pending && !n.expired)) cov.recaptureFinalized++;
   } catch { /* JS state always parses */ }
+  if (!toRef[i]) { notToRef++; continue; }
   if (js[i] !== pj[i]) {
     diverged++;
     if (diverged <= 5) {
@@ -599,14 +686,25 @@ for (let i = 0; i < N; i++) {
     }
   }
 }
-console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw`);
+console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows - notToRef} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw${MALFORMED ? ` · ${notToRef} not given to the reference (a number that is not an integer)` : ""}`);
 // cov.* are STATE-DERIVED (read back out of canonical state, so they are evidence the resolver reached the
 // branch). gen.* are GENERATION-SIDE intent only and are never asserted; see the note at the top.
 console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`);
 console.log(`gen (intent only, not evidence): ${JSON.stringify({ fclaimGrants: gFclaimGrants, fclaimDenies: gFclaimDenies, v28LegacyEmitted: gV28LegacyEmitted })}`);
-console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeight, ...s.events.map((e) => e.height)), 0)} (V28 = ${R.V28_HEIGHT})`);
-console.log(`events that write nothing: ${inertN} added over ${N} twins; results changed: JS ${inertJs}, reference ${inertPy}`);
+console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeight, ...s.events.map((e) => e.height).filter(Number.isSafeInteger)), 0)} (V28 = ${R.V28_HEIGHT})`);
+console.log(`events that write nothing: ${inertN} added over ${twins.filter(Boolean).length} twins (${twinIdx.length} to the reference); results changed: JS ${inertJs}, reference ${inertPy}`);
 if (inertJs || inertPy) process.exit(1);
+if (MALFORMED) {
+  // the floors: sequences in which the replay met a malformed field on each kind, on each side of V21, and an offer
+  // with a NaN height held across it
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, crossV21: 0, aboveV21: 0, nanOffer: 0 };
+  seqs.forEach((s, i) => { if (!runs[i].st) return; const k = malformedKinds(R, s.events, runs[i].st); for (const x of Object.keys(reach)) if (k[x]) reach[x]++; });
+  const floor = Math.max(1, Math.floor(N / 50));
+  console.log(`malformed reach (sequences, floor ${floor} each): ${JSON.stringify(reach)}`);
+  const thin = Object.entries(reach).filter(([, n]) => n < floor);
+  if (thin.length) { console.error(`✗ malformed reach below the floor: ${thin.map(([k, n]) => `${k} ${n}`).join(", ")}`); process.exit(1); }
+  process.exit(diverged || jsThrows ? 1 : 0);
+}
 if (EXPIRY) {
   // the floors: sequences in which each kind of expiry happens with a later event at or above its height
   const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, v21: 0 };

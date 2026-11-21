@@ -6,7 +6,7 @@
 //   tsx test/support/check-replay.ts <fuzz.json> [<more fuzz.json> ...]
 import { readFileSync } from "node:fs";
 import { fullGrowthStreams } from "../../../../conformance/growth-streams.mjs";
-import { sweepStreams } from "../../../../conformance/sweep-streams.mjs";
+import { parseNumbers, sweepStreams } from "../../../../conformance/sweep-streams.mjs";
 import * as R from "../../src/index.js";
 import { replay } from "../../src/resolve.js";
 import type { ChainEvent } from "../../src/index.js";
@@ -38,7 +38,7 @@ const fuzzFiles = process.argv.slice(2);
 if (!fuzzFiles.length) { console.error("usage: check-replay.ts <fuzz.json> [<more fuzz.json> ...]"); process.exit(2); }
 let threw = 0;
 for (const [f, file] of fuzzFiles.entries()) {
-  const seqs: { events: ChainEvent[]; tipHeight: number }[] = JSON.parse(readFileSync(file, "utf8"));
+  const seqs = parseNumbers(readFileSync(file, "utf8")) as { events: ChainEvent[]; tipHeight: number }[];
   seqs.forEach((s, i) => {
     let plain: unknown = null;
     try { R.resolve(s.events, s.tipHeight); } catch (e) { plain = e; }

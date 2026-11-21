@@ -35,7 +35,8 @@ whose build derives its log from recorded blocks and writes one esm module with 
   section 41) on the applied entry at the line that moves the balance, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
   queues in `resolve/minqueue.ts`; candidates per owner for the reservation caps, per holder for the live-hold cap, per
   seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on; its
-  sweep applies each expiry at the first height it is due, one batch per such height in ascending order.
+  sweep applies each expiry at the first height it is due, one batch per such height in ascending order, and from the
+  first offer it holds with a NaN height (CONVENTION section 5) one batch per sweep.
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
   claimWindowOf.
 - `records.ts`: parseRecord, explainRecord (the record code of a refusal) and its per-record key allow-sets; the

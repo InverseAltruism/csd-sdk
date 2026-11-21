@@ -68,10 +68,9 @@ export function createStore(opts: StoreOptions = {}) {
   };
   // effExpiry reads its height only to ask whether it is at least V21; the queues hold the key of the next sweep.
   const regimeHeight = (): number => (maxSweep >= V21_HEIGHT ? V21_HEIGHT : V21_HEIGHT - 1);
-  // Whether a sweep may run batches below its own height. An offer or bid whose effective expiry rises across V21 (a
-  // NaN cap, from an anchor height that is not a number) is due below V21 and not at or above it, so from the first
-  // such item on a sweep runs only the batch at its height. Equal to one batch per sweep: before that item, being due
-  // only grows with height for every item held; from it on, the batches are the same as one batch per sweep.
+  // Cleared by the first offer or bid whose effective expiry rises across V21 (a NaN cap: due below V21, never above).
+  // Before that item, being due only grows with height for every item held, so batches at due heights equal one batch
+  // per sweep; from it on a sweep runs one batch, at its height, as 0.2.8 did.
   let splitSweep = true;
   const admitExpiry = (x: { expiresEpoch: number; height: number }) => {
     if (!(effExpiry(x, V21_HEIGHT) <= effExpiry(x, V21_HEIGHT - 1))) splitSweep = false;
@@ -228,14 +227,13 @@ export function createStore(opts: StoreOptions = {}) {
    *  state"). A falling height takes the walk, as before. */
   const sweep = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(height >= maxSweep)) { walkSweep(height, expireOffer); return; }
-    let exact = splitSweep;   // check mode: whether each item of the last batch is at the first height it is due
     if (splitSweep) for (let d = nextDue(); d < height; d = nextDue()) {
-      if (!(d > maxSweep)) { exact = false; break; }   // a head due at or below the last batch's height: left to the batch at `height`
-      sweepAt(d, expireOffer, true);
+      if (!(d > maxSweep)) break;   // a head due at or below the last batch's height: left to the batch at `height`
+      sweepAt(d, expireOffer);
     }
-    sweepAt(height, expireOffer, exact);
+    sweepAt(height, expireOffer);
   };
-  const sweepAt = (height: number, expireOffer: (o: OfferRec) => void, exact: boolean) => {
+  const sweepAt = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(maxSweep >= V21_HEIGHT) && height >= V21_HEIGHT) {
       // the first sweep at V21 or above: offers and bids anchored below V22 now expire at their capped epoch
       stats.visits += openOffers.size + openBids.size;
@@ -254,8 +252,8 @@ export function createStore(opts: StoreOptions = {}) {
       same(`expired bids at ${height}`, dueBids, want.bids);
       same(`expired reservations at ${height}`, dueNames, want.names);
       same(`expired recaptures at ${height}`, dueRecaptures, want.recaptures);
-      // each item expires at the first height it is due, where the batches split exactly: none was due one height lower
-      const early = !exact ? [] : [...dueOffers.filter((id) => offerDue(offers.get(id), height - 1)), ...dueBids.filter((id) => bidDue(bids.get(id), height - 1)),
+      // each item expires at the first height it is due, while sweeps split: none of the batch was due one height lower
+      const early = !splitSweep ? [] : [...dueOffers.filter((id) => offerDue(offers.get(id), height - 1)), ...dueBids.filter((id) => bidDue(bids.get(id), height - 1)),
         ...dueNames.filter((nm) => nameDue(names.get(nm), height - 1)), ...dueRecaptures.filter((nm) => height - 1 > recaptures.get(nm)!.finalizeBy)];
       if (early.length) throw new Error(`replay index check: expired at ${height}, due before it: ${early.join(", ")}`);
     }

@@ -228,10 +228,20 @@ effective expiry epoch, as the sweep at `tipHeight + 1` computes it, is `epochOf
 `tipHeight` is the last height of that epoch (`tipHeight mod 30 = 29`), and as `open` at every earlier tip of the
 epoch. For an offer or bid anchored below V22 that sweep applies the §24 cap once `tipHeight + 1` reaches V21
 (40 100), that is from tip 40 099 on. A name's `expired` (§17) is read at the tip's own epoch: it is present when
-`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`. The state at a tip does not depend on the heights at
-which sweeps ran between events: an event that writes nothing (§40.1) adds only a sweep at its height and changes no
-state, so a resolver may apply each expiry at the first height it is due, as the reference implementation does, or
-apply every due expiry before each event.
+`epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
+
+For the heights a chain produces (block heights, non-negative integers below 2^53) the state at a tip does not depend
+on the heights at which sweeps ran between events: an item only becomes due as the height grows, whether it is due
+reads that item alone, and an expiry writes the item's status and what it releases (an addition to one seller's
+balance, or the unlock of one name) or deletes one reservation. A resolver may apply each expiry at the first height
+it is due, as cairnx-core does from 0.2.9, or every due expiry before each event, as cairnx-core 0.2.8 and the Python
+reference do. So an event that writes nothing (§40.1) changes no state: at most it adds a sweep at its height and runs
+the flush of the previous block's deferred cancels (§16) that the next event at a new height would run before its own
+sweep; below activation, or repeated at V29 or above, it adds neither. `resolve()` also takes events whose height is
+not such a number; of those, one case breaks the property: an offer whose event height is NaN has a NaN cap (§24) at
+and above V21, so it is due below V21 (`epochOf(h) > expiresEpoch`) and at no height from V21 on. From the first such
+offer the replay holds, cairnx-core runs only the sweep before each event and the one at `tipHeight + 1`, so its state
+is the state of the sweep before each event.
 
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.

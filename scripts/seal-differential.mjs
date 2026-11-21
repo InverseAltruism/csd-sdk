@@ -28,11 +28,15 @@
 //      was built to meet read from the new log, and the streams of conformance/sweep-streams.mjs, (d2) the sequences of
 //      conformance/fuzz-resolve.mjs --expiry (offers, bids, reservations and recapture reservations that end between
 //      events), with a floor per kind of expiry read back from the baseline outputs and each sequence resolved again
-//      with events that write nothing (CONVENTION section 5), (w) a dense walk over the sequences of (d2) and the sweep
-//      streams: each at every tip from two below its first event to its tip (over a span of more than 2,000 blocks,
-//      every tip within three epochs above each event height and beside each expiry height and gate), against the
-//      code baseline's whole result when one is given, else the baseline's canonicalState, (g) when the tree has the
-//      replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d), (d2), the
+//      with events that write nothing (CONVENTION section 5), (d3) the sequences of conformance/fuzz-resolve.mjs
+//      --malformed (offers, bids, reservations and recapture reservations carrying heights or expiries no chain
+//      produces, NaN and the infinities included, on both sides of V21 and of an epoch edge), with a floor per kind read
+//      back from the baseline outputs, (w) a dense walk over the sequences of (d2) and (d3) and the sweep streams: each
+//      at every tip from two below its first event to its tip (over a span of more than 2,000 blocks, every tip within
+//      three epochs above each event height and beside each expiry height and gate; an event whose height is not a
+//      number is in every prefix), against the code baseline's whole result when one is given, else the baseline's
+//      canonicalState, (g) when the tree has the replay's check mode (packages/cairnx/test/support/check-replay.ts),
+//      every input of (a), (c), (d), (d2), (d3), the
 //      codes.json cases of (e), (f) and the sweep streams replayed with it: each indexed read compared with the plain
 //      walk, each expiry checked to land at the first height it is due, the index invariants asserted after every
 //      event (every 64th on a stream of more than 1,000 events);
@@ -433,6 +437,38 @@ const expirySeqs = [];
   for (const [k, n] of Object.entries(reach)) if (n < floor) problems.push(`expiry reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
 }
 
+// The malformed sequences: what the replay does with fields no chain produces must not move either (resolve() takes
+// them; CONVENTION section 5 says what its sweep does with them).
+const MALFORMED_N = 3_000;
+step(`resolve differential (d3): conformance/fuzz-resolve.mjs --malformed --emit, ${MALFORMED_N} sequences, seed ${FUZZ_SEED}, floors read from ${CODE ? CODE_BASELINE_REF : BASELINE_REF}`);
+const malformedSeqs = [];
+{
+  const file = join(wt, "seal-fuzz-malformed.json");
+  const r = sh(process.execPath, [join(ROOT, "conformance", "fuzz-resolve.mjs"), String(MALFORMED_N), String(FUZZ_SEED), "--malformed", "--emit", file]);
+  if (r.status !== 0) die(`fuzz-resolve --malformed --emit failed: ${r.stderr || r.stdout}`);
+  malformedSeqs.push(...SW.parseNumbers(readFileSync(file, "utf8")));
+  if (malformedSeqs.length !== MALFORMED_N) die(`fuzz-resolve --malformed emitted ${malformedSeqs.length} sequences, not ${MALFORMED_N}`);
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, crossV21: 0, aboveV21: 0, nanOffer: 0 };
+  let events = 0, threw = 0;
+  malformedSeqs.forEach((s, i) => {
+    events += s.events.length;
+    let bs = null, oldThrow = null, newThrow = null;
+    try { bs = BASE.resolve(s.events, s.tipHeight); } catch (e) { oldThrow = String(e?.message ?? e); }
+    try { NEW.resolve(s.events, s.tipHeight); } catch (e) { newThrow = String(e?.message ?? e); }
+    if (oldThrow !== null || newThrow !== null) {
+      threw++;
+      if (oldThrow !== newThrow) report(`malformed#${i}`, "throw", s.events, String(oldThrow), String(newThrow));
+      return;
+    }
+    diffCase(`malformed#${i}`, s.events, s.tipHeight);
+    const k = SW.malformedKinds(BASE, s.events, bs);
+    for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
+  });
+  const floor = Math.floor(MALFORMED_N / 50);
+  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw in both builds alike` : ""}; reach (sequences in which the baseline met a malformed field of that kind; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height held across V21): ${JSON.stringify(reach)}, floor ${floor} each`);
+  for (const [k, n] of Object.entries(reach)) if (n < floor) problems.push(`malformed reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
+}
+
 const CODES_FILE = `${VEC}/codes.json`;
 const codesVectors = existsSync(join(ROOT, ...CODES_FILE.split("/"))) ? readJson(CODES_FILE) : null;
 step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors ? "" : " (absent)"}, and the cases of forward.json and moves.json`);
@@ -469,13 +505,13 @@ step("resolve differential (f): conformance/growth-streams.mjs at full size, wit
   console.log(`  ${inputs} stream inputs diffed (growth streams and the ${SW.sweepStreams(NEW).length} sweep streams)`);
 }
 
-step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (d2) and the sweep streams, against ${CODE ? `${CODE_BASELINE_REF}'s whole result` : `${BASELINE_REF}'s canonicalState`}`);
+step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (d2), the ${MALFORMED_N} of (d3) and the sweep streams, against ${CODE ? `${CODE_BASELINE_REF}'s whole result` : `${BASELINE_REF}'s canonicalState`}`);
 {
   let walks = 0, tips = 0, walkDiffs = 0;
   const walk = (name, events, tip) => {
     walks++;
     for (const t of SW.denseTips(events, tip, NEW.EPOCH_LEN, [...SW.dueHeights(NEW, events), ...Object.values(NEW.GATE_HEIGHTS)])) {
-      const upto = events.filter((e) => e.height <= t);
+      const upto = SW.upTo(events, t);
       const ns = NEW.resolve(upto, t), bs = BASE.resolve(upto, t);
       const a = CODE ? JSON.stringify(bs) : OLD.canonicalState(bs);
       const b = CODE ? JSON.stringify(CODE_MOVES ? ns : stripMoves(ns)) : NEW.canonicalState(ns);
@@ -484,15 +520,16 @@ step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (
     }
   };
   expirySeqs.forEach((s, i) => walk(`expiry#${i}`, s.events, s.tipHeight));
+  malformedSeqs.forEach((s, i) => walk(`malformed#${i}`, s.events, s.tipHeight));
   for (const s of SW.sweepStreams(NEW)) walk(`sweep ${s.key}`, s.events, s.tipHeight);
   console.log(`  ${walks} walks, ${tips} tips, ${walkDiffs} tip(s) differ`);
 }
 
 const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
 const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
-step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (d2), the codes.json cases of (e), (f) and the sweep streams${hasCheck ? "" : " (absent in this tree)"}`);
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (d2), (d3), the codes.json cases of (e), (f) and the sweep streams${hasCheck ? "" : " (absent in this tree)"}`);
 if (hasCheck) {
-  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json"), join(wt, "seal-fuzz-expiry.json")], { stdio: "inherit" });
+  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json"), join(wt, "seal-fuzz-expiry.json"), join(wt, "seal-fuzz-malformed.json")], { stdio: "inherit" });
   if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
 }
 
