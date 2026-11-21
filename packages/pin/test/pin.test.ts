@@ -4,7 +4,8 @@
 // of the standby node from 143,296 to 143,356 (bodies kept from 143,341; below, the headers the anchor root seeds from).
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { FINAL_DEPTH, resolve, stateHash, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { FINAL_DEPTH, canonicalJson, resolve, stateHash, type ChainEvent } from "@inversealtruism/cairnx-core";
+import type { BoundCursor } from "@inversealtruism/cairnx-replica";
 import { memoryStore, nodeBlocks, pinned, replicaLoop } from "@inversealtruism/cairnx-replica/server";
 import { hosted, local, open } from "@inversealtruism/cairnx-replica/browser";
 import { PIN } from "../dist/index.js";
@@ -51,6 +52,22 @@ const n = node({ answers: cap.answers, tip: TIP }), r0 = await open({ ...local({
 const below = n.log.filter((l) => /^\/block\/height\/[0-9]+$/.test(l.path) && Number(l.path.split("/")[3]) <= P).length;
 ok("local({ node, pin: PIN }): verified at level 3, proof pinned, the deep state the log's, no block at or below the pin read",
   s0.verified && s0.level === 3 && s0.proof === "pinned" && s0.cursor?.height === TIP && st0.verified && stateHash(st0.value) === truth && below === 0, `${codes(s0)} below=${below}`);
+// A log consumer pages events() from null with each page's next, at the read's defaults (limit 100, depth 12).
+const read: ChainEvent[] = [];
+let pages = 0, allVerified = true;
+for (let c: BoundCursor | null = null; ;) {
+  const p = await r0.events(c);
+  pages++;
+  if (!p.verified) { allVerified = false; break; }
+  read.push(...p.value.items); c = p.value.next;
+  if (!p.value.more) break;
+}
+const cuts = [...new Set(events.map((e) => e.height))].filter((h) => {
+  const here = events.filter((e) => e.height === h);
+  return here.some((a) => a.kind === "attest" && here.some((p) => p.kind === "propose" && p.pos > a.pos));
+}).length;
+ok(`local({ node, pin: PIN }): events() paged from null in ${pages} verified pages equals the shipped log at the deep height byte for byte (${read.length} events; ${cuts} blocks with an Attest below a Propose)`,
+  allVerified && canonicalJson(read) === canonicalJson(events.filter((e) => e.height <= DEEP)), `${read.length} of ${events.length}`);
 await r0.close();
 const hostedOf = (witness?: ReturnType<typeof witnessOn>["witness"]) =>
   hosted({ origin: "https://front.example", pin: PIN, fetch: front({ answers: cap.answers, tip: TIP }).f, ...(witness ? { witness } : {}) });
