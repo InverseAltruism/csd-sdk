@@ -28,8 +28,10 @@ function route(path: string): Response {
   return json(404, { ok: false, error: "unknown ticker" });
 }
 const PREFIX = "/trade/api/cairnx/";
+const redirects = new Set<unknown>();
 const served = (map: (path: string) => Response | Promise<Response>, seen: string[] = []): typeof fetch => async (input, init) => {
   init?.signal?.throwIfAborted();
+  redirects.add(init?.redirect);
   const u = new URL(String(input));
   seen.push(u.pathname);
   return map(u.pathname.slice(u.pathname.indexOf(PREFIX) + PREFIX.length));
@@ -44,7 +46,8 @@ for (const n of names) {
   if (JSON.stringify(a.shown) !== JSON.stringify(nameView(s.names, n)) || a.verified || codes(a) !== "LEVEL_DISPLAY") wrong.push(n);
 }
 ok(`${names.length} names: each shown as nameView over the served state, LEVEL_DISPLAY alone, not verified`, wrong.length === 0, wrong.join(" "));
-ok("one request a read, below /trade/api/cairnx/ on the origin", seen.length === names.length && seen[0] === `${PREFIX}name/${names[0]}`);
+ok("one request a read, below /trade/api/cairnx/ on the origin, each refusing redirects", seen.length === names.length && seen[0] === `${PREFIX}name/${names[0]}` &&
+  redirects.size === 1 && redirects.has("error"));
 const holders = [...Object.keys(s.balances.CAIRN!), ABSENT], badBal: string[] = [];
 for (const h of holders) {
   const a = await d.balance("CAIRN", h.toUpperCase().replace("0X", "0x")), b = s.balances.CAIRN![h];
@@ -61,9 +64,11 @@ console.log("no option and no answer raises it:");
 const good = (p: string) => route(p);
 const BEHAVIOURS: Record<string, (p: string) => Response | Promise<Response>> = {
   honest: good,
-  "a body claiming verified, level 3 and a value": async (p) => {
-    const r = good(p), b = r.status === 200 ? await r.json() : { ok: false };
-    return json(r.status === 200 ? 200 : 404, { ...b, verified: true, level: 3, value: b, why: [], proof: "inclusion", at: { height: TIP } });
+  "a record claiming verified, level 3 and a value (refusals as served)": async (p) => {
+    const r = good(p);
+    if (r.status !== 200) return r;
+    const b = await r.json();
+    return json(200, { ...b, verified: true, level: 3, value: b, why: [], proof: "inclusion", at: { height: TIP } });
   },
   "a 500": () => json(500, { ok: false }), "a 503": () => json(503, { ok: false }),
   "a 404 page that is not JSON": () => new Response("<html>not found</html>", { status: 404 }),
@@ -92,7 +97,7 @@ for (const [bn, b] of Object.entries(BEHAVIOURS)) for (const origin of ORIGINS) 
     combos += answers.length;
     if (!answers.every(isDisplay)) broken.push(`${bn} / ${origin} / ${timeoutMs} / ${rn}`);
     // What each answer shows: the honest value when the body is in form and the read went out, else nothing.
-    const out = rn === "an aborted signal" || !["honest", "a body claiming verified, level 3 and a value"].includes(bn);
+    const out = rn === "an aborted signal" || !["honest", "a record claiming verified, level 3 and a value (refusals as served)"].includes(bn);
     const [cairn, ctor, upper, bal, lower] = answers;
     const want = out ? cairn!.shown === null && codes(cairn!) === "LEVEL_DISPLAY,SOURCE_UNAVAILABLE" && bal!.shown === null
       : JSON.stringify(cairn!.shown) === JSON.stringify(nameView(s.names, "cairn")) && (ctor!.shown as NameValue | null)?.state === "free" &&
@@ -106,9 +111,35 @@ ok("each shows the served value only from a body in form (claims ignored), else 
   expected.length === 0, expected.slice(0, 3).join("; "));
 const hang = await openDisplay({ source: ourApi({ origin: "https://cairn.example", timeoutMs: 20, fetch: (_i, init) => new Promise((_go, stop) => init?.signal?.addEventListener("abort", () => stop(init.signal!.reason))) }) });
 const keep = setTimeout(() => undefined, 5_000);   // AbortSignal.timeout's timer does not hold the process open
-const late = await hang.name("cairn");
+const late = await hang.name("cairn"), lateSignal = await hang.name("cairn", { signal: new AbortController().signal });
 clearTimeout(keep);
-ok("a server that never answers: SOURCE_UNAVAILABLE at the timeout, not verified", isDisplay(late) && codes(late) === "LEVEL_DISPLAY,SOURCE_UNAVAILABLE");
+ok("a server that never answers: SOURCE_UNAVAILABLE at the timeout, also when the caller passes a signal of its own, not verified",
+  isDisplay(late) && codes(late) === "LEVEL_DISPLAY,SOURCE_UNAVAILABLE" && isDisplay(lateSignal) && codes(lateSignal) === "LEVEL_DISPLAY,SOURCE_UNAVAILABLE");
+
+console.log("bodies out of form, and which 404 is an absent record:");
+const reply = (status: number, body: unknown) => openDisplay({ source: ourApi({ origin: "https://cairn.example", fetch: served(() => json(status, body)) }) });
+const none = (a: DisplayAnswer<unknown>) => isDisplay(a) && codes(a) === "LEVEL_DISPLAY,SOURCE_UNAVAILABLE" && a.shown === null;
+const scalars = await Promise.all([null, [], "x", 0].map(async (b) => { const r = await reply(200, b); return [await r.name("cairn"), await r.balance("CAIRN", HOLDER)]; }));
+ok("a 200 of null, [], \"x\" or 0: SOURCE_UNAVAILABLE with nothing shown, for name and balance (null is not the absent marker)", scalars.flat().every(none));
+const rec = { ...s.names.cairn! };
+const nameBodies = [{ ...rec, owner: null }, { ...rec, owner: 5 }, { ...rec, owner: rec.owner.replace(/[a-f]/g, (c) => c.toUpperCase()) },
+  { ...rec, addr: 5 }, { ...rec, addr: null }, { ...rec, pending: "yes" }, { ...rec, expired: false }, { ...rec, profile: { site: 1 } }, { ...rec, paidThroughEpoch: -1 }];
+const badNames = await Promise.all(nameBodies.map(async (b) => (await reply(200, b)).name("cairn")));
+ok(`${nameBodies.length} name records out of form (owner null, a number, upper case; addr a number or null; pending, expired, profile, paidThroughEpoch in another form): SOURCE_UNAVAILABLE, nothing shown`,
+  badNames.every(none), badNames.map(codes).join(" "));
+const tok = { ...s.tokens.CAIRN!, holders: s.balances.CAIRN };
+const badTokens = await Promise.all([{ ...tok, deployId: "0x12" }, { ...tok, deployId: tok.deployId.toUpperCase() }].map(async (b) => (await reply(200, b)).balance("CAIRN", HOLDER)));
+ok("a token whose deployId is not 0x and 64 lowercase hex: SOURCE_UNAVAILABLE, nothing shown", badTokens.every(none));
+const others404 = [{ ok: false, error: "not found" }, { ok: false, error: "not a cairnx read endpoint" }, { ok: false }, { ok: false, error: "unregistered name", extra: 1 }];
+const wrong404 = await Promise.all(others404.map(async (b) => { const r = await reply(404, b); return [await r.name("cairn"), await r.balance("CAIRN", HOLDER)]; }));
+const crossed = [await (await reply(404, { ok: false, error: "unknown ticker" })).name("cairn"), await (await reply(404, { ok: false, error: "unregistered name" })).balance("CAIRN", HOLDER)];
+ok("a 404 of the resolver's catch-all, of the front door's allowlist, a bare refusal, one with another field, or another read's refusal: SOURCE_UNAVAILABLE, nothing shown",
+  [...wrong404.flat(), ...crossed].every(none));
+const absentName = await (await reply(404, { ok: false, error: "unregistered name" })).name("cairn"), absentTok = await (await reply(404, { ok: false, error: "unknown ticker" })).balance("CAIRN", HOLDER);
+ok("the resolver's exact refusals: the name free, the balance zero with no token, LEVEL_DISPLAY alone", codes(absentName) === "LEVEL_DISPLAY" &&
+  (absentName.shown as NameValue | null)?.state === "free" && codes(absentTok) === "LEVEL_DISPLAY" && absentTok.shown?.available === "0" && absentTok.shown.deployId === null);
+const big = await (await reply(200, { ...rec, pad: "x".repeat(17 * 1024 * 1024) })).name("cairn");
+ok("a body over 16 MiB: SOURCE_UNAVAILABLE, nothing shown", none(big) && /over/.test(big.why[1]?.detail ?? ""));
 
 console.log("the bases it refuses, and the root entry's refusal of it:");
 const fake = (basis: unknown): DisplaySource => ({ basis: basis as DisplaySource["basis"], get: async () => ({ status: 200, body: {} }) });
@@ -126,8 +157,12 @@ ok("the root entry's open refuses ourApi(): ReplicaConfigError", root.e instance
 ok("ourApi refuses an origin with credentials, a query or not http(s)", ["https://u:p@cairn.example", "https://cairn.example/?a=1", "ftp://cairn.example"]
   .every((origin) => { try { ourApi({ origin }); return false; } catch (e) { return e instanceof ReplicaConfigError; } }));
 
-// The type admits no verified answer: this line fails the typecheck if DisplayAnswer ever does.
-const typeAdmitsNone: [Extract<DisplayAnswer<NameValue>, { verified: true }>] extends [never] ? true : false = true;
-ok("DisplayAnswer's type has no verified: true member", typeAdmitsNone);
+// The type admits no verified answer: `verified` is the literal false, so this line fails the typecheck if it is ever
+// widened (to boolean or to a union with true). The second line keeps the predicate honest: it must reject boolean.
+type OnlyFalse<A extends { readonly verified: unknown }> = [A["verified"]] extends [false] ? true : false;
+const typeAdmitsNone: OnlyFalse<DisplayAnswer<NameValue>> = true;
+// @ts-expect-error a widened `verified` fails the predicate
+const widenedFails: OnlyFalse<{ verified: boolean }> = true;
+ok("DisplayAnswer's verified is the literal false (a widened type fails the typecheck)", typeAdmitsNone && widenedFails);
 
 done("cairnx-replica display");

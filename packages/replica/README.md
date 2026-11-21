@@ -305,6 +305,12 @@ request per read, redirects refused, `timeoutMs` (default 10 s) per request. `op
 over the served name record) and `BalanceValue` (without `atTip`) a replica answers. It refuses every source but a
 display one with `ReplicaConfigError`, and the root entry's `open` refuses a display source.
 
+These are the resolver's legacy routes. When the versioned API's reads are live, the display entry moves to them.
+`balance` reads the token's whole `holders` map and takes one entry, so its answer grows with the number of holders:
+on the pinned corpus at its tip 117,000 the largest of its 19 tokens, CAIRN, has 25 holders and a 2,463-byte answer.
+Past 16 MiB the front door and this entry both refuse it. The versioned API's `holders?keys=` read, which names the
+addresses asked, replaces it when live.
+
 What a display answer proves: nothing beyond what the server said. It is the server's state at the server's tip, with
 no record checked, no depth and no witness. Every answer is `{ verified: false, value: null, shown }` with
 `level: 1`, `proof: "served"`, `at: null`, the display basis as `vouch`, and `why` led by `LEVEL_DISPLAY` (the
@@ -313,8 +319,12 @@ answer is built with `verified: false`, and no option can change it: the tests c
 model (an honest answer, a body that claims `verified` and level 3, errors, bodies out of form, a fetch that throws
 or never answers) with each origin form, timeout and read option the entry takes. A further `why` code:
 `INPUT_INVALID` for a name or ticker out of form, `SOURCE_UNAVAILABLE` (with a detail) for no answer, a status other
-than 200, a 404 that is not the resolver's JSON refusal, or a body out of form; `shown` is then null. A 404 with the
-resolver's refusal is an absent name (`free`, or `reserved`) or an unknown ticker (no balance). A caller that needs
+than 200, a 404 other than the resolver's refusal for that read, or a body out of form (a JSON `null` included);
+`shown` is then null. Only the exact refusal `{"ok":false,"error":"unregistered name"}` of the name route is an absent
+name (`free`, or `reserved`), and only `{"ok":false,"error":"unknown ticker"}` of the token route an unknown ticker
+(no balance). Any other 404, such as the resolver's catch-all or the front door's allowlist refusal, is
+`SOURCE_UNAVAILABLE`, so an origin set to the wrong server shows nothing rather than every name free; a reworded
+refusal fails the same way. A caller that needs
 `verified` reads the name from a replica of level 3 (`open` of the root entry).
 
 The minified bundle of `./display` measured 5,208 bytes gzip on 2026-11-21 and is pinned under 6 KB by

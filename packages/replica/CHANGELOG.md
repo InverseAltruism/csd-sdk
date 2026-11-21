@@ -89,5 +89,9 @@
   now exported by `verdict.ts`; `SOURCE_UNAVAILABLE` for no answer or one out of form. It refuses every basis but a
   display. `http.ts` exports its capped JSON read and signal join for it. The minified bundle is pinned under 6 KB
   gzip, not the design's 4 KB: any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
+- `./display` after review: a 200 whose body is JSON `null` is out of form (no longer read as an absent record); an
+  owner or address must be a lower-case address string; a 404 is an absent name or ticker only with the resolver's
+  exact refusal for that read (`unregistered name`, `unknown ticker`), any other 404 `SOURCE_UNAVAILABLE`. The README
+  says `balance` reads the token's whole `holders` map from the legacy route.
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
   follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").
