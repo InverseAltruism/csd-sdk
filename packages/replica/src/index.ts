@@ -12,4 +12,6 @@ export { readBlocks } from "./read-blocks.js";
 export { fullReplay } from "./replay.js";
 export { replicaLoop, type Loop, type LoopOpen, type LoopOptions, type LoopStatus } from "./loop.js";
 export { open, openLog, type DryRunTx, type EventLog, type OpenOptions, type Reader } from "./reader.js";
-export type { Answer, AnswerMeta, At, BalanceValue, NameValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness, WitnessTip } from "./answer.js";
+export type {
+  Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, TransferCursor, Witness, WitnessTip,
+} from "./answer.js";

@@ -6,7 +6,7 @@
 import {
   CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, NameValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, TransferCursor, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
@@ -15,6 +15,7 @@ import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
+import { boundOf, movesPage } from "./transfers.js";
 import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
 import { verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
@@ -38,6 +39,10 @@ export interface Reader extends EventLog {
    *  writes it (lower case, no `.csd`): any other string is INPUT_INVALID. */
   name(name: string, o?: ReadOptions): Promise<Answer<NameValue>>;
   balance(ticker: string, address: string, o?: ReadOptions): Promise<Answer<BalanceValue>>;
+  /** The token moves to `address` (every address when null, which needs `ticker`) of the applied log at the deep view,
+   *  narrowed to `ticker` when given, after `since` in (height, position) order. A `since` whose events hash is no
+   *  longer the replica's at its height is CURSOR_OFF_BRANCH, nothing shown. */
+  transfers(address: string | null, since: BoundCursor | null, o?: ReadOptions & { readonly limit?: number; readonly ticker?: string }): Promise<Answer<Page<Transfer, BoundCursor>>>;
   primary(address: string, o?: ReadOptions): Promise<Answer<{ readonly address: string; readonly name: string | null }>>;
   /** The deep view, a copy. */
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
@@ -228,6 +233,19 @@ export async function open(o: OpenOptions): Promise<Reader> {
         const atTip = top !== null && deep !== null && (top.available !== deep.available || top.locked !== deep.locked) ? { atTip: { available: top.available, locked: top.locked } } : {};
         const value: BalanceValue = { ticker, address: a!, deployId: base.deployId, available: base.available, locked: base.locked, ...atTip };
         return { value: deep === null ? null : value, shown: value };
+      });
+    },
+    transfers(address, since, ro = {}) {
+      const to = address === null ? null : addressOf(address), ticker = ro.ticker ?? null, from = boundOf(since), limit = ro.limit ?? 100;
+      const inputOk = (address === null ? ticker !== null : to !== null) && (ticker === null || (typeof ticker === "string" && TICKER_RE.test(ticker))) &&
+        from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000;
+      return read<Page<Transfer, BoundCursor>>(ro, inputOk, (v) => {
+        const c = loop.status().cursor;
+        if (v.deep === null || c === null) return { value: null, shown: null };
+        const r = movesPage({ deep: v.deep, deepHeight: v.deepHeight, cursorHeight: c.height, eventsHashAt: (h) => loop.eventsHashAt(h), rows: (h) => loop.rows(h),
+          to, ticker, since: from!, limit });
+        if (r.kind === "off-branch") return { value: null, shown: null, why: ["CURSOR_OFF_BRANCH"] };
+        return { value: r.page, shown: r.page, notes: r.aboveTip ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },
     name(name, ro) {
