@@ -2,13 +2,17 @@
 // section 33.3, where a block's Proposes precede its Attests whatever their positions. A block with an Attest at a
 // lower position than a Propose of its block, read through open() and openLog() in every page size, must give every
 // event once, in that order, each page verified; generated blocks of mixed orders must page to the unpaged read. Then
-// the refusals: a cursor of the old form, a cursor from another branch, a position that names no held event.
-import { applyOrder, eventId, type ChainEvent } from "@inversealtruism/cairnx-core";
-import { open, openLog, type BlockEvents, type BoundCursor, type EventLog, type Source } from "../src/index.js";
+// the refusals: a cursor of the old form, a cursor from another branch, a position that names no held event. Last, a
+// replica behind its tip by more than minDepth (a catch-up, a rollback before the blocks after it) and a closed one:
+// no page, the code of the state, never a throw.
+import { applyOrder, eventId, FINAL_DEPTH, TREASURY_ADDR, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { local } from "../src/browser.js";
+import { open, openLog, type Answer, type BlockEvents, type BoundCursor, type EventLog, type Page, type Reader, type Source, type Step } from "../src/index.js";
 import { fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
-import { moveVectors as vectors } from "./core-files.js";
-import { scripted, synth } from "./reader-harness.js";
+import { corpus, moveVectors as vectors } from "./core-files.js";
+import { cap, NODE, node } from "./node-harness.js";
+import { OWN, scripted, synth, timeAt } from "./reader-harness.js";
 
 const TIME = 1_800_000_000, clock = () => TIME * 1000 + 60_000;
 const codes = (a: { why: readonly { code: string }[] }) => a.why.map((w) => w.code).join(",");
@@ -111,5 +115,65 @@ const fa = await feed.events(`${hh}:9:${hash}` as BoundCursor, { minDepth: 0 }),
 ok("under a feed: a position naming no held event is INPUT_INVALID alone; the cursor handed out is LEVEL_FEED with its page shown",
   codes(fa) === "INPUT_INVALID" && fa.at === null && codes(fb) === "LEVEL_FEED" && !fb.verified && fb.shown !== null, `${codes(fa)} / ${codes(fb)}`);
 for (const x of [r, lg, other, feed]) await x.close();
+
+console.log("behind the tip by more than minDepth, and after close():");
+// The production call shape: open(local({ node })) over the recorded capture, the node answering a turn later, read
+// with the defaults from the first moment, the way a consumer started with the replica polls it. While the replica
+// catches up the deep height lies above its cursor, where it holds no events hash for a cursor to be made at.
+const DEEP = cap.to - FINAL_DEPTH, now = (timeAt(cap.to) + 60) * 1_000;
+async function poll(read: (x: Reader) => Promise<Answer<Page<unknown>>>) {
+  const inner = node({ answers: cap.answers }).f, slow: typeof fetch = async (i, init) => { await new Promise((go) => setImmediate(go)); return inner(i, init); };
+  const x = await open({ ...local({ node: NODE, fetch: slow }), clock: () => now }), seen = new Map<string, number>();
+  let threw = "", last: Answer<Page<unknown>> | null = null;
+  for (let n = 0; n < 20_000 && last?.verified !== true; n++) {
+    try { last = await read(x); const k = last.verified ? "verified" : `${codes(last)}${last.shown === null ? "" : " shown"}`; seen.set(k, (seen.get(k) ?? 0) + 1); }
+    catch (e) { threw ||= e instanceof Error ? e.message : String(e); break; }
+    await new Promise((go) => setImmediate(go));
+  }
+  return { x, seen, threw, keys: [...seen.keys()].sort().join(", "), tally: [...seen].map(([k, n]) => `${k} ${n}`).join("; ") };
+}
+const ev = await poll((x) => x.events(null)), want12 = corpus.events.filter((e) => e.height <= DEEP).sort(applyOrder);
+const evPages: ChainEvent[] = [];
+for (let c: BoundCursor | null = null; ev.threw === "";) { const p = await ev.x.events(c); if (!p.verified) break; evPages.push(...p.value.items); c = p.value.next; if (!p.value.more) break; }
+// Behind with the deep height above the cursor: nothing shown; at or below it, a page shown (BEHIND shown).
+const catchUp = "BEHIND, BEHIND shown, NOT_SYNCED, verified";
+ok(`events() polled through a catch-up: no throw, NOT_SYNCED or BEHIND until verified (${ev.tally}), then it pages the ${want12.length} events at the deep height`,
+  ev.threw === "" && ev.keys === catchUp && ids(evPages) === ids(want12), ev.threw || ev.keys);
+await ev.x.close();
+const tr = await poll((x) => x.transfers(TREASURY_ADDR, null));
+ok(`transfers() polled the same way: NOT_SYNCED or BEHIND until verified (${tr.tally})`, tr.threw === "" && tr.keys === catchUp, tr.threw || tr.keys);
+await tr.x.close();
+
+// A rollback to 30,200 whose step names the other branch's tip 30,300, the blocks of that branch held back until
+// released: between the two the replica's cursor is 30,200 and the deep height 30,288.
+const g = fixtures({ lower: true }), hashB = (h: number) => `0x${"d".repeat(58)}${h.toString(16).padStart(6, "0")}`;
+const send = (h: number) => g.prop({ v: 1, t: "transfer", ticker: "DUST", to: BUYER, amount: "1" }, { proposer: SENDER, height: h });
+const onA = [30_010, 30_100, 30_200, 30_250].map(send), onB = [...onA.slice(0, 3), ...[30_260, 30_280].map(send)], TOP = 30_300;
+let mode: "fill" | "reorg" | "hold" | "idle" = "fill", release = () => undefined as void;
+const held = new Promise<void>((go) => { release = go; }), tipB = { height: TOP, hash: hashB(TOP), time: now / 1_000 };
+const forked: Source = { basis: OWN, floor: null, tip: async () => tipB, async next(ctx): Promise<Step> {
+  if (mode === "fill") { mode = "idle"; return { kind: "blocks", blocks: asBlocks(onA), cursor: { height: TOP, hash: synth(TOP) }, tip: { height: TOP, hash: synth(TOP), time: now / 1_000 } }; }
+  if (mode === "reorg") { mode = "hold"; return { kind: "reorg", to: { height: 30_200, hash: synth(30_200) }, tip: tipB }; }
+  if (mode === "hold") { await held; mode = "idle"; return { kind: "blocks", blocks: asBlocks(onB).filter((b) => b.height > 30_200).map((b) => ({ ...b, hash: hashB(b.height) })), cursor: { height: TOP, hash: hashB(TOP) }, tip: tipB }; }
+  return { kind: "idle", tip: ctx.cursor === null ? tipB : { height: ctx.cursor.height, hash: ctx.cursor.hash, time: now / 1_000 } };
+} };
+const rb = await open({ source: forked, clock: () => now });
+await rb.advance();
+const before = await rb.events(null, { minDepth: 0, limit: 1 }), kept = before.verified ? before.value.next : null;
+await rb.advance();   // the run the read started, so that the next advance is a run of its own
+mode = "reorg";
+const stepping = rb.advance();
+for (let i = 0; i < 50 && rb.status().cursor?.height !== 30_200; i++) await new Promise((go) => setImmediate(go));
+const between = rb.status().cursor?.height === 30_200 ? await Promise.all([rb.events(null), rb.events(null, { limit: 1_000 }), rb.events(kept), rb.transfers(BUYER, null), rb.transfers(BUYER, kept)].map((p) => p.then(codes, (e: unknown) => `threw ${String(e)}`))) : ["the rollback was not reached"];
+ok(`between a rollback and the blocks after it: events() from null and from a cursor below the fork, and transfers(), each BEHIND (${[...new Set(between)].join(", ")})`,
+  between.length === 5 && between.every((c) => c === "BEHIND"), between.join(" | "));
+release(); await stepping;
+const after = await rb.events(null, { minDepth: 0, limit: 1_000 });
+ok("once the blocks after it are held, the other branch's events, verified", after.verified && ids(after.value.items) === ids([...onB].sort(applyOrder)));
+const cutB = await rb.events(null, { minDepth: 0, limit: 2 }), cursorB = cutB.verified ? cutB.value.next : null;
+await rb.close();
+const closed = [await rb.events(cursorB), await rb.transfers(BUYER, cursorB)];
+ok("after close(): events() and transfers() with a cursor a read handed out, NOT_SYNCED alone, nothing shown",
+  cursorB !== null && closed.every((a) => codes(a) === "NOT_SYNCED" && !a.verified && a.shown === null), closed.map(codes).join(" | "));
 
 done("cairnx-replica events");

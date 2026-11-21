@@ -10,7 +10,7 @@ import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
-import { afterInApplyOrder, boundOf, nextOf, resumeOf } from "./cursor.js";
+import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop } from "./loop.js";
@@ -179,13 +179,21 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     return why.length === 0 ? { ...meta, why, notes, at: j.at, verified: true, value: out.value! } : { ...meta, why, notes, at: j.at, verified: false, value: null, shown: out.shown };
   }
 
+  // The chain both paged reads page and check a cursor against. None while the store is not open (after close() the
+  // loop answers events hashes and no rows) or while the deep height lies above the replica's cursor (a catch-up, or a
+  // rollback before the blocks after it), where no events hash is held for a cursor to be made at.
+  function pagedChain(deepHeight: number): HeldChain | null {
+    const s = loop.status(), c = s.cursor;
+    if (s.store !== "open" || c === null || deepHeight > c.height) return null;
+    return { cursorHeight: c.height, eventsHashAt: (h) => loop.eventsHashAt(h), rows: (h) => loop.rows(h) };
+  }
+
   const log: EventLog = {
     events(after, o = {}) {
       const from = boundOf(after), limit = o.limit ?? 100;
       return read(o, from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000, (v) => {
-        const c = loop.status().cursor;
-        if (c === null) return { value: null, shown: null };
-        const held = { cursorHeight: c.height, eventsHashAt: (h: number) => loop.eventsHashAt(h), rows: (h: number) => loop.rows(h) };
+        const held = pagedChain(v.deepHeight);
+        if (held === null) return { value: null, shown: null };
         const r = resumeOf(from!, held), items: ChainEvent[] = [];
         if (r.kind === "off-branch") return { value: null, shown: null, why: ["CURSOR_OFF_BRANCH"] };
         if (r.kind === "invalid") return { value: null, shown: null, why: ["INPUT_INVALID"] };
@@ -212,7 +220,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     advance,
     async close() { await running?.catch(() => undefined); await loop.close(); },
   };
-  return { log, read, loop };
+  return { log, read, loop, pagedChain };
 }
 
 /** A replica of another rule's events (design section 5, M12): the event log and its status, no resolved state. */
@@ -224,7 +232,7 @@ export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Pr
  *  that cannot give every event from activation (`code` BELOW_FLOOR), a pin of another rule (`code` PIN_MISMATCH) or a
  *  witness on the header source's origin. */
 export async function open(o: OpenOptions): Promise<Reader> {
-  const { log, read, loop } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
+  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
   return {
     ...log,
     balance(ticker, address, ro) {
@@ -243,10 +251,9 @@ export async function open(o: OpenOptions): Promise<Reader> {
       const inputOk = (address === null ? ticker !== null : to !== null) && (ticker === null || (typeof ticker === "string" && TICKER_RE.test(ticker))) &&
         from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000;
       return read<Page<Transfer, BoundCursor>>(ro, inputOk, (v) => {
-        const c = loop.status().cursor;
-        if (v.deep === null || c === null) return { value: null, shown: null };
-        const r = movesPage({ deep: v.deep, deepHeight: v.deepHeight, cursorHeight: c.height, eventsHashAt: (h) => loop.eventsHashAt(h), rows: (h) => loop.rows(h),
-          to, ticker, since: from!, limit });
+        const held = pagedChain(v.deepHeight);
+        if (v.deep === null || held === null) return { value: null, shown: null };
+        const r = movesPage({ ...held, deep: v.deep, deepHeight: v.deepHeight, to, ticker, since: from!, limit });
         if (r.kind !== "page") return { value: null, shown: null, why: [r.kind === "off-branch" ? "CURSOR_OFF_BRANCH" : "INPUT_INVALID"] };
         return { value: r.page, shown: r.page, notes: r.aboveTip ? ["CURSOR_ABOVE_TIP"] : [] };
       });

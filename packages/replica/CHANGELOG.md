@@ -30,7 +30,9 @@
   of the same block lost the Attest (the `height:pos` cursor was compared as a sort key). Both reads parse and check
   the cursor in one module: a stored `events` cursor of the `height:pos` form, and a position that names no held
   event other than the largest, are `INPUT_INVALID`; `events` answers `CURSOR_OFF_BRANCH` as `transfers` does.
-  `TransferCursor` is removed; `Page`'s cursor type defaults to `BoundCursor`.
+  `TransferCursor` is removed; `Page`'s cursor type defaults to `BoundCursor`. While the deep height lies above the
+  replica's cursor (a catch-up, a rollback before the blocks after it) and after `close()`, both reads show no page
+  and answer the state's code (`BEHIND`, `NOT_SYNCED`).
 - `dryRun`'s `at` is the tip at depth 0 (it carried the deep view's), and it takes no `minDepth`.
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),

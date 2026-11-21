@@ -21,7 +21,8 @@ export function boundOf(c: unknown): Bound | null | undefined {
   return Number.isSafeInteger(height) && Number.isSafeInteger(pos) ? { height, pos, hash: m[3]! } : undefined;
 }
 
-/** What a cursor is checked against: the replica's cursor height, its events hashes and its held rows (Loop's). */
+/** What a cursor is checked against: the replica's cursor height, its events hashes and its held rows (Loop's), while
+ *  the store is open and the deep height lies at or below that cursor. */
 export interface HeldChain {
   readonly cursorHeight: number;
   eventsHashAt(height: number): string | null;
@@ -54,7 +55,8 @@ export function afterInApplyOrder(e: ChainEvent, r: Extract<Resume, { kind: "fro
 const text = (b: Bound): BoundCursor => `${b.height}:${b.pos}:${b.hash}`;
 function cursorAt(q: Pick<HeldChain, "eventsHashAt">, height: number, pos: number): BoundCursor {
   const hash = q.eventsHashAt(height);
-  // Every height a cursor is made at lies at or below the deep height, which lies at or below the replica's cursor.
+  // An internal check, unreachable from a read: every height a cursor is made at lies at or below the deep height, and
+  // a read gets a chain only while the deep height lies at or below the replica's cursor (reader.ts pagedChain).
   if (hash === null) throw new Error(`cursor: no events hash held at ${height}`);
   return text({ height, pos, hash });
 }
