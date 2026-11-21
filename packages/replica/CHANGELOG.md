@@ -67,8 +67,22 @@
   (after a restart, reload or rollback) voids the confirmation.
 - No value a read returns shares a mutable object with the reader: the basis is frozen at `open`; `events()` pages
   and `status()`'s cursor, last reorg and last error are copies.
-- Not yet in the reader: `name()`, which waits for a forward-resolution selector in cairnx-core 0.2.8; `transfers`,
-  which waits for the core to export an address's token movements; `./display`; a poll timer (the caller drives
-  `advance()` or reads).
+- Not yet in the reader: `transfers`, which waits for the core to export an address's token movements; a poll timer
+  (the caller drives `advance()` or reads).
+- `name(name)`: cairnx-core 0.2.8's `nameView` at the deep view (`NameValue`: `held`, `pending`, `lapsed`, `free`,
+  `reserved`, with owner, address, profile and `paidThroughEpoch`), through the verified rule every read shares, and
+  `SHALLOW` with the tip view in `shown` when the views differ (one helper with `primary`, which now compares its two
+  views the same way). A string that does not match `NAME_RE` is `INPUT_INVALID`: the caller lowercases and drops
+  `.csd`. `addressOf` moved to `views.ts`; `balanceOf` takes any state with tokens and balances.
+- `./display`: `ourApi({ origin, fetch?, timeoutMs? })` over the front door's `/trade/api/cairnx/name/:name` and
+  `/trade/api/cairnx/token/:ticker`, and its own `open({ source })` with `name` and `balance`. Every answer is level 1
+  and `verified: false` by type and construction, `why` led by `LEVEL_DISPLAY` from `levelCode`, the level condition
+  now exported by `verdict.ts`; `SOURCE_UNAVAILABLE` for no answer or one out of form. It refuses every basis but a
+  display. `http.ts` exports its capped JSON read and signal join for it. The minified bundle is pinned under 6 KB
+  gzip, not the design's 4 KB: any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
+- `./display` after review: a 200 whose body is JSON `null` is out of form (no longer read as an absent record); an
+  owner or address must be a lower-case address string; a 404 is an absent name or ticker only with the resolver's
+  exact refusal for that read (`unregistered name`, `unknown ticker`), any other 404 `SOURCE_UNAVAILABLE`. The README
+  says `balance` reads the token's whole `holders` map from the legacy route.
 - Not yet: a store does not persist the window's `work` and `workRoot`, so a source started over a filled store
   follows any proof-of-work-valid chain from the anchor that reaches the cursor (README, "What a store must keep").

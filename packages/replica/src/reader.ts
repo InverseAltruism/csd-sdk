@@ -4,9 +4,9 @@
 // timer, so a caller drives advance() or reads. No value is computed from a source's tip(): depth is counted from the
 // tip the loop's last step reported.
 import {
-  ADDR_RE, CAIRNX_EVENT_RULE, FINAL_DEPTH, TICKER_RE, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
+  CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, NameValue, Page, ReadOptions, ReplicaStatus, TransferCursor, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { ReplicaConfigError } from "./errors.js";
@@ -16,7 +16,7 @@ import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
 import { verdict } from "./verdict.js";
-import { balanceOf, primaryOf } from "./views.js";
+import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
 /** `source`: a block source (or, in tests, a feed); `store` defaults to memoryStore(); `witnesses` are asked with each
@@ -33,6 +33,9 @@ export interface EventLog {
   close(): Promise<void>;
 }
 export interface Reader extends EventLog {
+  /** cairnx-core's nameView of `name` at the deep view, SHALLOW when the tip view differs. `name` is asked as `names`
+   *  writes it (lower case, no `.csd`): any other string is INPUT_INVALID. */
+  name(name: string, o?: ReadOptions): Promise<Answer<NameValue>>;
   balance(ticker: string, address: string, o?: ReadOptions): Promise<Answer<BalanceValue>>;
   primary(address: string, o?: ReadOptions): Promise<Answer<{ readonly address: string; readonly name: string | null }>>;
   /** The deep view, a copy. */
@@ -56,7 +59,6 @@ const cursorOf = (c: TransferCursor | null): [number, number] | null | undefined
   const m = typeof c === "string" ? CURSOR.exec(c) : null;
   return m !== null && Number.isSafeInteger(Number(m[1])) && Number.isSafeInteger(Number(m[2])) ? [Number(m[1]), Number(m[2])] : undefined;
 };
-const addressOf = (a: unknown): string | null => (typeof a === "string" && ADDR_RE.test(a.toLowerCase()) ? a.toLowerCase() : null);
 const rootOf = (b: Basis): { root: HeaderRoot; pin: Cursor | null } | null =>
   b.kind === "blocks" ? { root: b.root, pin: null } : b.kind === "pinned" ? { root: b.above.root, pin: b.pin } : null;
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
@@ -66,6 +68,13 @@ const deepFreeze = <T>(v: T): T => {
   return v;
 };
 const copy = <T>(v: T): T => (v === null ? v : structuredClone(v));
+// name and primary: the deep view is the value; when the tip view differs, SHALLOW with the tip view in `shown`, since
+// a recent change of a name is the caution (design section 5).
+function bothViews<T>(v: Views, f: (s: CairnXState) => T): Out<T> {
+  const deep = v.deep === null ? null : f(v.deep), top = v.top === null ? null : f(v.top);
+  const shallow = deep !== null && top !== null && canonicalJson(deep) !== canonicalJson(top);
+  return { value: deep, shown: top ?? deep, why: shallow ? ["SHALLOW"] : [] };
+}
 const noState: Materializer = { load: () => undefined, apply: () => undefined, rollback: () => undefined, stateAt: () => null, replayMs: null };
 
 async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
@@ -215,13 +224,12 @@ export async function open(o: OpenOptions): Promise<Reader> {
         return { value: deep === null ? null : value, shown: value };
       });
     },
+    name(name, ro) {
+      return read(ro, typeof name === "string" && NAME_RE.test(name), (v) => bothViews(v, (s) => nameOf(s, name)!));
+    },
     primary(address, ro) {
       const a = addressOf(address);
-      return read(ro, a !== null, (v) => {
-        const deep = v.deep === null ? null : { address: a!, name: primaryOf(v.deep, a!) }, top = v.top === null ? null : { address: a!, name: primaryOf(v.top, a!) };
-        const shallow = deep !== null && top !== null && deep.name !== top.name;
-        return { value: deep, shown: top ?? deep, why: shallow ? ["SHALLOW"] : [] };
-      });
+      return read(ro, a !== null, (v) => bothViews(v, (s) => ({ address: a!, name: primaryOf(s, a!) })));
     },
     state(ro) {
       return read(ro, true, (v) => { const s = v.deep === null ? null : structuredClone(v.deep); return { value: s, shown: s }; });
