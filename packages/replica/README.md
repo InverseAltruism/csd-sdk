@@ -219,7 +219,9 @@ table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was com
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; the note's `detail` names why from a
 fixed list: another process holds it, it refuses its directory, a read or write failed, or a reset it needed failed;
-the store's own message, which holds paths, is not put in an answer). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+the store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
+`storeError`, that message in full: it is for the server's own logs and is not forwarded to clients, since it can hold
+paths. Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).

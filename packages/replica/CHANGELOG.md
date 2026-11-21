@@ -13,8 +13,8 @@
 - `STORE_UNAVAILABLE` carries in its `detail` why the store is unavailable, one of a fixed list (another process holds
   it, it refuses its directory, a read or write failed, a reset it needed failed), so a refusal of the store's
   directory met after a start that found it held (which rejects only `advance()`) reaches a caller that only reads;
-  the store's message, which holds paths, stays on the loop's status (internal: `LoopStatus.storeReason`,
-  `storeError`). README: give the store a directory of its own; two processes of
+  the store's message, which holds paths, is in `status()` as `storeReason` and `storeError`, for the server's own
+  logs (internal: `LoopStatus.storeReason`, `storeError`). README: give the store a directory of its own; two processes of
   different configuration on one directory reset each other's store.
 - The server example is a file, `examples/deposits.ts` (`openReplica` over `ownNode`, `creditDeposits`, `recover`),
   which the README points at; `test/deposits.test.ts` runs it over the recorded node across a restart, a 20-block

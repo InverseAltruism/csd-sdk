@@ -137,6 +137,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
+      storeReason: s.storeReason, storeError: s.storeError,
       witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
   }
 

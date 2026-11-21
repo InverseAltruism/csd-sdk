@@ -223,19 +223,20 @@ await lateStart("a gate table that differs at or below the cursor", (dir) => {
   const held = await r.advance(), heldNote = held.notes.find((x) => x.code === "STORE_UNAVAILABLE");
   now.t = t0 + STALE_MS + 5_000;
   const thrownBy = await r.advance().then(() => null, (e: unknown) => e), st = await r.state(), note = st.notes.find((x) => x.code === "STORE_UNAVAILABLE");
-  ok("a foreign meta.json met once a held lease goes stale: advance() rejects with ReplicaConfigError naming it; a read answers NOT_SYNCED, STORE_UNAVAILABLE's detail the list's, no path in any answer",
+  ok("a foreign meta.json met once a held lease goes stale: advance() rejects with ReplicaConfigError naming it; a read answers NOT_SYNCED, STORE_UNAVAILABLE's detail the list's, without the path, which status() carries",
     heldNote?.detail === STORE_DETAILS.held && thrownBy instanceof ReplicaConfigError && thrownBy.message.includes(dir) && !st.verified && codes(st).includes("NOT_SYNCED") &&
-    note?.detail === STORE_DETAILS.foreign && ![held, st, r.status()].some((x) => JSON.stringify(x).includes(dir)), `${JSON.stringify(heldNote)} ${JSON.stringify(st.notes)}`);
+    note?.detail === STORE_DETAILS.foreign && !JSON.stringify(st).includes(dir) && r.status().storeReason === "foreign" && r.status().storeError?.includes(dir) === true,
+    `${JSON.stringify(heldNote)} ${JSON.stringify(st.notes)}`);
   unlinkSync(join(dir, "meta.json"));
   const healed = await r.advance();
   ok("the foreign file moved away, the next advance opens and fills the store: verified, no STORE_UNAVAILABLE", healed.verified && healed.notes.length === 0, codes(healed));
   await r.close(); holder.close();
 }
 
-// Each reason a load gives, from stores that answer it with a path and a marker in their messages: the answers carry
-// the list's detail and neither string; the loop's own status keeps both for the operator's process.
+// Each reason a load gives, from stores that answer it with a path and a marker in their messages: the answers of the
+// reads carry the list's detail and neither string; status(), for the server's own logs, and the loop keep both.
 {
-  const PATH = "/srv/replica/private/meta.json", MARK = "MARKER-7b-not-for-pages", says = `${PATH} ${MARK}`;
+  const BOTH_ADDR = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016", PATH = "/srv/replica/private/meta.json", MARK = "MARKER-7b-not-for-pages", says = `${PATH} ${MARK}`;
   const scripted = (o: { open: (n: number) => Promise<Awaited<ReturnType<Store["open"]>>>; reset?: () => Promise<void> }): Store => {
     const m = memoryStore();
     let n = 0;
@@ -252,16 +253,20 @@ await lateStart("a gate table that differs at or below the cursor", (dir) => {
   for (const [reason, make] of cases) {
     const rd = await open({ source: scripted0([], tip), store: make(), clock });
     await rd.advance().catch(() => undefined);
-    const answers = [rd.status(), await rd.state({ waitMs: 2_000 }), await rd.name("alice", { waitMs: 2_000 })], details = answers.map((x) => x.notes.find((y) => y.code === "STORE_UNAVAILABLE")?.detail);
+    const answers = [await rd.state({ waitMs: 2_000 }), await rd.name("alice", { waitMs: 2_000 }), await rd.balance("CAIRN", BOTH_ADDR, { waitMs: 2_000 }),
+      await rd.events(null, { waitMs: 2_000 }), await rd.transfers(BOTH_ADDR, null, { waitMs: 2_000 })];
+    const st = rd.status(), details = [...answers, st].map((x) => x.notes.find((y) => y.code === "STORE_UNAVAILABLE")?.detail);
+    const logged = st.storeReason === reason && (reason === "held" ? st.storeError === null : st.storeError?.includes(PATH) === true && st.storeError.includes(MARK));
     await rd.close();
     const loop = replicaLoop({ source: scripted0([], tip), store: make(), resetRefused: true });
     await loop.open().catch(() => undefined); await loop.advance().catch(() => undefined);
     const ls = loop.status(), kept = reason === "held" ? ls.storeError === null : ls.storeError?.includes(PATH) === true && ls.storeError.includes(MARK);
     await loop.close();
-    if (!details.every((x) => x === STORE_DETAILS[reason]) || answers.some((x) => JSON.stringify(x).includes(PATH) || JSON.stringify(x).includes(MARK)) || ls.storeReason !== reason || !kept)
+    if (!details.every((x) => x === STORE_DETAILS[reason]) || answers.some((x) => JSON.stringify(x).includes(PATH) || JSON.stringify(x).includes(MARK)) || !logged ||
+      ls.storeReason !== reason || !kept)
       bad.push(`${reason}: ${JSON.stringify(details)} ${ls.storeReason} ${ls.storeError}`);
   }
-  ok(`each of the ${cases.length} reasons: the answers' detail is the list's, no path or marker in an answer, the loop's storeError keeps both`, bad.length === 0, bad.join("; "));
+  ok(`each of the ${cases.length} reasons: the detail of five reads' answers and of status() is the list's, no path or marker in a read's answer, status() and the loop keep the reason and both`, bad.length === 0, bad.join("; "));
 }
 
 console.log("missing files, out-of-form fields, short writes:");
