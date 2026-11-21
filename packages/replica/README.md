@@ -564,10 +564,10 @@ Under an anchor root, measured on 2026-11-21 in the same rig: `hosted({ pin, ori
 the pin at 30,000 over the recorded chain to 30,300 (not the rig's synthetic chain: the anchor root verifies real
 proof of work), the front door served inside the worker, so no time below includes a network. The store held 31 rows
 and a window of 28,984 bytes (345 headers). From a wake to the first verified read, which waits for the advance it
-starts, medians of 7: with the store's window, 77 ms (69 to 87) and 1 request (the server's tip), no header read;
-with the window withheld, as before the store kept it, 82 ms (75 to 88) and 3 requests, the seed and 300 headers from
-the pin. Over a network the difference is those requests: the walk reads the seed and one request per 512 headers
-above the pin.
+starts, medians of 7: with the store's window, 72 ms (64 to 74), of it the read with its advance 26.0 ms, and 1
+request (the server's tip), no header read; with the window withheld, as before the store kept it, 74 ms (70 to 91),
+the read with its advance 37.1 ms, and 3 requests, the seed and 300 headers from the pin. Over a network the
+difference is those requests: the walk reads the seed and one request per 512 headers above the pin.
 
 ## Display
 
