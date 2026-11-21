@@ -58,10 +58,12 @@ export async function launch(binary: string, extDir: string, profile: string): P
   }
   return {
     pid, ext, page, workers,
+    // Throws unless the worker is gone, so no check that needs a stop passes without one.
     async stopWorker(p) {
       await send("ServiceWorker.enable", {}, p.session);
       await send("ServiceWorker.stopAllWorkers", {}, p.session);
       for (let i = 0; i < 200 && (await workers()) > 0; i++) await sleep(10);
+      if ((await workers()) > 0) throw new Error("the extension's worker did not stop");
     },
     async close() {
       await Promise.race([send("Browser.close").catch(() => undefined), sleep(5_000)]);

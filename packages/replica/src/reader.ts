@@ -11,7 +11,7 @@ import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
-import { ReplicaConfigError } from "./errors.js";
+import { ReplicaConfigError, messageOf } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
@@ -136,29 +136,39 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     return { codes, why, notes, at };
   }
 
-  // A view the store kept from before a restart of its context, taken whole or not at all, and only where a running
-  // reader would answer from it: the tip is the block at the cursor and at most FRESH_MS old; where the root needs a
-  // witness, the confirmation is of a block held, at most FRESH_MS old, by one of this reader's witnesses, and was held
-  // with that tip. Otherwise the reader starts as a fresh one (test/browser/idb-store.test.ts, the restore cases).
+  // A view the store kept from before a restart of its context, kept only while the reader was verified, taken whole or
+  // not at all, and only where a running reader would answer from it: the clock reads no earlier than at the keep (a
+  // running reader voids its confirmation on a clock set back); the tip is the block at the cursor, in a record
+  // committed under this basis (loop.resume), and at most FRESH_MS old; where the root needs a witness, the
+  // confirmation is of a block held, at most FRESH_MS old and not later than the clock, by one of this reader's
+  // witnesses, and was held with that tip. Otherwise the reader starts as a fresh one (test/browser/idb-store.test.ts).
   function restore(v: KeptView | null): void {
     if (v === null) return;
     const now = clock(), w = v.witnessed, needs = r !== null && r.root.kind !== "own-node";
-    if (!(now - v.tip.time * 1000 <= FRESH_MS)) return;
-    if (needs && !(w !== null && w.tip === v.tip.hash && now - w.at <= FRESH_MS && witnesses.some((x) => x.id === w.by) && loop.hashAt(w.height) === w.hash)) return;
+    if (now < v.at || !(now - v.tip.time * 1000 <= FRESH_MS)) return;
+    if (needs && !(w !== null && w.tip === v.tip.hash && now >= w.at && now - w.at <= FRESH_MS && witnesses.some((x) => x.id === w.by) && loop.hashAt(w.height) === w.hash)) return;
     if (!loop.resume(v.tip)) return;
     if (needs) board.restore({ height: w!.height, hash: w!.hash, by: w!.by, at: w!.at, generation: loop.generation() });
   }
-  // What the store keeps for the next start of its context: the last step's tip and the confirmation held with it.
+  // What the store keeps for the next start of its context: while the verdict has no code, the last step's tip and the
+  // confirmation held with it; under any other verdict nothing, so a restart does not forget a denial. A store that
+  // throws fails soft: the error goes to status(), the view is cleared where the store lets it, and the advance goes on.
+  let keepError: string | null = null;
   async function keep(): Promise<void> {
-    const s = loop.status(), w = board.witnessed(loop.generation());
-    if (store.keep === undefined || s.store !== "open" || s.tip === null) return;
-    await store.keep({ tip: s.tip, witnessed: w === null ? null : { height: w.height, hash: w.hash, by: w.by, at: w.at, tip: s.tip.hash } });
+    if (store.keep === undefined) return;
+    const s = loop.status(), w = board.witnessed(loop.generation()), now = Math.floor(clock());
+    const view: KeptView | null = s.store === "open" && s.tip !== null && judge(FINAL_DEPTH).codes.length === 0
+      ? { at: now, tip: s.tip, witnessed: w === null ? null : { height: w.height, hash: w.hash, by: w.by, at: Math.floor(w.at), tip: s.tip.hash } } : null;
+    try { await store.keep(view); keepError = null; } catch (e) {
+      keepError = messageOf(e);
+      if (view !== null) await store.keep(null).catch((e2: unknown) => { keepError += `; clearing it: ${messageOf(e2)}`; });
+    }
   }
 
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
-      storeReason: s.storeReason, storeError: s.storeError,
+      storeReason: s.storeReason, storeError: s.storeError, keepError,
       witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
   }
 

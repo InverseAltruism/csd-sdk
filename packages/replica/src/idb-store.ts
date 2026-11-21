@@ -20,9 +20,9 @@ import type { BlockRow, Boundary, Commit, KeptView, Store, StoreMeta, TrustedSlo
 
 const STORES = ["meta", "rows", "bounds", "window"], NAME = /^[a-z0-9-]{1,64}$/;
 
-/** Internal, for tests: `point` is called before the slot's first write ("slot pair"), before the transaction
- *  ("transaction"), once the transaction's requests are issued ("issued", not awaited: an await there would let it
- *  commit), before the slot's last write ("slot new") and at the end ("done"). */
+/** Internal, for tests: `point` is called before the slot's first write ("slot pair"), before the transaction's fence
+ *  check ("transaction"), past it as the transaction is opened ("write"), once its requests are issued ("issued", not
+ *  awaited: an await there would let it commit), before the slot's last write ("slot new") and at the end ("done"). */
 export interface IdbHooks { point?(name: string): void | Promise<void> }
 
 type SessionArea = { get(key: string): Promise<Record<string, unknown>>; set(items: Record<string, unknown>): Promise<void> };
@@ -67,13 +67,13 @@ function slotValue(v: string | null): { hashes: string[]; held: unknown } | null
 }
 // The view kept under the record hash `h`, or null for another record's or one out of form.
 function keptOf(held: unknown, h: string): KeptView | null {
-  if (!isObject(held) || held.record !== h || !isObject(held.tip)) return null;
+  if (!isObject(held) || held.record !== h || !isObject(held.tip) || !count(held.at)) return null;
   const t = held.tip, w = held.witnessed;
   if (!count(t.height) || !hash(t.hash) || !count(t.time)) return null;
   const tip = { height: t.height, hash: t.hash, time: t.time };
-  if (w === null) return { tip, witnessed: null };
+  if (w === null) return { at: held.at, tip, witnessed: null };
   if (!isObject(w) || !count(w.height) || !hash(w.hash) || typeof w.by !== "string" || !count(w.at) || !hash(w.tip)) return null;
-  return { tip, witnessed: { height: w.height, hash: w.hash, by: w.by, at: w.at, tip: w.tip } };
+  return { at: held.at, tip, witnessed: { height: w.height, hash: w.hash, by: w.by, at: w.at, tip: w.tip } };
 }
 
 const request = <T>(r: IDBRequest<T>): Promise<T> => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -152,6 +152,7 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
 
   // The commit's transaction: "moved" when the stored cursor is not `expect`, else it resolves on complete.
   async function write(c: Commit, keep: number, record: Stored): Promise<"ok" | "moved"> {
+    await hooks.point?.("write");
     const tx = (await connection()).transaction(STORES, "readwrite", { durability: "relaxed" });
     let moved = false;
     const end = new Promise<"ok" | "moved">((res, rej) => {
@@ -274,13 +275,13 @@ export function idbStoreWith(o: { readonly name: string; readonly slot: TrustedS
     close,
     kept: () => kept,
     // Only while the slot confirms the stored record alone, so it neither names an older record nor writes over another
-    // writer's value.
+    // writer's value. A null view clears the one kept.
     async keep(view) {
       const h = durable.hash;
       if (fenced() || h === null || opened === null) return;
       const now = await slot.get(), v = slotValue(now);
       if (v === null || v.hashes.length !== 1 || v.hashes[0] !== h) return;
-      const next = slotText([h], { record: h, tip: view.tip, witnessed: view.witnessed });
+      const next = view === null ? slotText([h]) : slotText([h], { record: h, at: view.at, tip: view.tip, witnessed: view.witnessed });
       if (next !== now) await slot.set(next);
     },
   };

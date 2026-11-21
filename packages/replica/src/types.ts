@@ -167,15 +167,15 @@ export interface Store {
   rows(fromHeight: number): AsyncIterable<BlockRow>; boundaries(): Promise<Boundary[]>; headerWindow(): Promise<Uint8Array | null>;
   commit(c: Commit): Promise<{ ok: true } | { ok: false; code: "CURSOR_MOVED" | "STORE_FAILED" }>; reset(): Promise<void>; close(): void;
   /** Optional: a store that keeps a reader's settled view across a restart of its context, bound to the record it was
-   *  kept with (idb-store.ts). `kept` gives it after an open that confirmed that record, else null. */
-  keep?(view: KeptView): Promise<void>;
+   *  kept with (idb-store.ts); null clears it. `kept` gives it after an open that confirmed that record, else null. */
+  keep?(view: KeptView | null): Promise<void>;
   kept?(): KeptView | null;
 }
 
-/** Internal. What a reader had settled when it last advanced: the tip of its last step, and the witness confirmation
- *  it held then with the hash of that tip. */
+/** Internal. What a reader had settled when it last advanced verified: the clock's reading then (`at`, ms), the tip of
+ *  its last step, and the witness confirmation it held then with the hash of that tip. */
 export interface KeptView {
-  readonly tip: TipView;
+  readonly at: number; readonly tip: TipView;
   readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number; readonly tip: string } | null;
 }
 

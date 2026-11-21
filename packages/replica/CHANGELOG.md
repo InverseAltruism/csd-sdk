@@ -16,6 +16,11 @@
   only where a running reader would answer from them (the block at the cursor, 30 minutes, a held block confirmed by
   one of its witnesses with that tip), else it starts fresh. Internal: `Store.keep`, `Store.kept`, `KeptView`,
   `Loop.resume`, `LoopStatus.unconfirmed`.
+- The kept view, after review: kept only while the reader's verdict has no code, cleared by any other verdict; taken
+  back only with a clock no earlier than at the keep and from a record committed under the source's basis; a store
+  that throws while keeping it fails soft (`ReplicaStatus.keepError`). Both stores refuse a boundary out of form at
+  open (a state hash NaN or Infinity, which canonical JSON writes as null). README: each store a slot key of its own;
+  the open order as the code runs.
 - `idbStore`, after review: a store whose Web Lock was stolen is lost (it opens `unavailable` and writes nothing to the
   database or the slot), and a commit's last slot write is made only while the slot still holds the pair that commit
   wrote, so a writer that lost its lock cannot overwrite its successor's confirmation.

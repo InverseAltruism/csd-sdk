@@ -22,8 +22,14 @@ export const BOUNDS_HASH_START = "0x" + "00".repeat(32);
 /** The boundary chain after `b` from `prev`: payloadHash({ prev, boundary }). Boundaries follow in ascending height. */
 export const boundsHashStep = (prev: string, b: Boundary): string => payloadHash({ prev, boundary: b });
 
-/** The chain after each of `bounds`, or Corrupt when the last is not `want` (the record's boundsHash). */
+// A boundary in form: canonicalJson writes NaN and Infinity as null, so a value the chain cannot see is refused here.
+const boundaryOk = (b: unknown): boolean => isObject(b) && count(b.height) && hash(b.hash) && hash(b.eventsHash) && hash(b.rowsHash) &&
+  (b.stateHash === null || hash(b.stateHash));
+
+/** The chain after each of `bounds`, or Corrupt when a boundary is out of form or the last is not `want` (the
+ *  record's boundsHash). */
 export function checkedChain(bounds: readonly Boundary[], want: unknown): string[] {
+  if (!bounds.every(boundaryOk)) throw new Corrupt("a boundary is out of form");
   let chain = BOUNDS_HASH_START, ends: string[];
   try { ends = bounds.map((b) => (chain = boundsHashStep(chain, b))); } catch { throw new Corrupt("a boundary is not JSON data"); }
   if (chain !== want) throw new Corrupt("the boundaries' chain is not the record's boundsHash");

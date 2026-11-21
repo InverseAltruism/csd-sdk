@@ -55,7 +55,8 @@ export interface Loop {
   /** Runs steps until caught up, backed off, aborted or past `budgetMs`, and resolves after the last commit. */
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
   status(): LoopStatus;
-  /** Takes `tip` as the last step's tip when it is the block at the cursor, held; false otherwise. */
+  /** Takes `tip` as the last step's tip when it is the block at the cursor, held, in a record committed under the
+   *  source's basis; false otherwise. */
   resume(tip: TipView): boolean;
   eventsHashAt(height: number): string | null;
   /** The block hash the loop holds at `height`: a row's, the cursor's, or one of the last FINAL_DEPTH + 1 blocks'
@@ -322,7 +323,9 @@ export function replicaLoop(o: LoopOptions): Loop {
     status, eventsHashAt,
     resume(t) {
       const c = cursor();
-      if (opened !== "open" || c === null || c.height !== t.height || c.hash !== t.hash) return false;
+      // The record must be one committed under this source's basis: a store kept from an older pin has not yet been
+      // bound to the new one (pinned.ts binds at the first step), so its view waits for that step.
+      if (opened !== "open" || c === null || c.height !== t.height || c.hash !== t.hash || meta === null || !sameBasis(meta.basis, source.basis)) return false;
       tip = t;
       return true;
     },

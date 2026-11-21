@@ -47,8 +47,8 @@ try {
   const r1 = await page.call("reader", { name: "reader" });
   await b.stopWorker(page);
   const r2 = await page.call("reader", { name: "reader" });
-  ok("open() over idbStore and sessionSlot: verified at the top, and after a worker stop opened confirmed, verified again",
-    r1.verified && r2.verified && r2.cursor === 31_860 && r2.opens.join() === "ok", `${show(r1)} ${show(r2)}`);
+  ok("open() over idbStore and sessionSlot: verified at the top, and after a worker stop (a new worker) opened confirmed, verified again",
+    r1.verified && r2.verified && r2.cursor === 31_860 && r2.opens.join() === "ok" && r2.origin !== r1.origin, `${show(r1)} ${show(r2)}`);
 
   console.log("the worker stopped at each point of the 5th commit's writes:");
   for (const [point, at] of [["slot pair", cursors[3]], ["transaction", cursors[3]], ["slot new", cursors[4]], ["done", cursors[4]]] as const) {
@@ -123,6 +123,8 @@ try {
   ok("stolen before A's first slot write: A writes no pair over B's confirmation, B's store reopens confirmed",
     sl.first?.bOpen === "ok" && sl.first.bCommit === true && sl.first.aCommit !== "ok" && sl.first.reopened === "ok", show(sl.first));
   ok("the slot changed under A before its last write: A's commit is refused and the other value stays", sl.changed?.aCommit === "STORE_FAILED" && sl.changed.slotKept === true, show(sl.changed));
+  ok("stolen past the last check before A's transaction: the transaction refuses, the stored record stays at A's first commit",
+    sl.write?.aCommit === "STORE_FAILED" && sl.write.storedCursor === 30_010, show(sl.write));
   console.log("the view a reader keeps across a worker stop (tip and witness confirmation):");
   const fv = await page.call("fillView", { name: "view", dense: 28 });
   const median = (xs: number[]) => [...xs].sort((x, y) => x - y)[xs.length >> 1]!;
@@ -133,8 +135,8 @@ try {
     runs.push({ ...v, wall: Date.now() - t });
   }
   ok(`filled under a caller root with a witness: verified; the slot holds ${fv.slotBytes} bytes of a 10,485,760 quota`, fv.verified && fv.slotBytes > 0 && fv.slotBytes < 4096, show(fv));
-  ok("after each of 7 worker stops, offline (every step and witness refused): the first read is verified from the kept view",
-    runs.every((r) => r.verified && r.why.length === 0), show(runs.map((r) => r.why)));
+  ok("after each of 7 worker stops (each read in a new worker), offline (every step and witness refused): the first read is verified from the kept view",
+    runs.every((r) => r.verified && r.why.length === 0) && new Set(runs.map((r) => (r as unknown as { origin: number }).origin)).size === runs.length, show(runs.map((r) => r.why)));
   console.log(`    wake to verified read, medians of 7: ${median(runs.map((r) => r.wall))} ms (range ${Math.min(...runs.map((r) => r.wall))} to ${Math.max(...runs.map((r) => r.wall))});` +
     ` worker start to read ${median(runs.map((r) => r.sinceStart)).toFixed(1)} ms, open ${median(runs.map((r) => r.openMs)).toFixed(1)} ms, read ${median(runs.map((r) => r.readMs)).toFixed(1)} ms;` +
     ` refused step and witness calls per read ${median(runs.map((r) => r.nextCalls))} and ${median(runs.map((r) => r.tipCalls))}`);
@@ -148,6 +150,34 @@ try {
   const uc = await page.call("unconfirmedRefill", { name: "refill" });
   ok("a browser start: STORE_UNCONFIRMED from the reset through the refill's steps, gone once it reaches the tip, then verified",
     uc.during.includes("STORE_UNCONFIRMED") && uc.firstStep.includes("STORE_UNCONFIRMED") && !uc.after.includes("STORE_UNCONFIRMED") && uc.verified === true, show(uc));
+  console.log("a view is kept only while the reader is verified (each denial, then a worker stop):");
+  for (const code of ["TIP_BEHIND_PEER", "RULES_DIFFER", "NOT_WITNESSED", "WITNESS_SILENT", "TIP_STALE", "BEHIND", "BRANCH_UNRESOLVED", "NOT_SYNCED", "STORE_UNCONFIRMED", "PIN_MISMATCH", "LEVEL_FEED"]) {
+    const d = await page.call("denyKeep", { code });
+    await b.stopWorker(page);
+    const w = await page.call("afterWake", { name: d.name, code, now: d.now });
+    ok(`${code} at the last advance: no view kept, and after a worker stop the first answer is a fresh worker's (${w.fresh?.read?.join(",")})`,
+      d.filled === true && d.codes?.includes(code) && d.held === false && !w.restored.verified && w.restored.status.join() === w.fresh.status.join() && w.restored.read.join() === w.fresh.read.join(),
+      show({ d, w }));
+  }
+  const kh = await page.call("keepHonest", { name: "honest" });
+  await b.stopWorker(page);
+  // One minute on first: the clock set back then refuses the view, and that start's denial clears it.
+  const onward = await page.call("clockCase", { name: "honest", now: kh.now, on: 60_000 }), back = await page.call("clockCase", { name: "honest", now: kh.now, back: 2 * 3_600_000 });
+  ok("a clock set back 2 hours while the worker was stopped: nothing restored (a fresh answer); a clock one minute on: verified",
+    kh.filled && kh.held && !back.verified && back.read.includes("NOT_SYNCED") && onward.verified, show({ kh, back, onward }));
+  const ag = await page.call("ages");
+  ok("a confirmation 29 minutes old is restored and kept again with its own time: at 31 minutes that reader answers WITNESS_SILENT, and a new one restores nothing",
+    ag.filled && ag.at29.length === 0 && ag.at31.includes("WITNESS_SILENT") && !ag.restarted31.verified && ag.restarted31.read.join() === ag.fresh31.read.join(), show(ag));
+  const pm = await page.call("pinMoved");
+  ok("the pin moved in the session with the store kept: not verified before the new pin's bind (status and first read), verified after it",
+    pm.filled && pm.before.length > 0 && !pm.firstRead.verified && pm.verifiedAfter && pm.after.length === 0, show(pm));
+  const st2 = await page.call("slotThrows");
+  ok("a slot that throws on keeping a view: three advances resolve and tell the listener, reads stay verified, the error is on status(), a later start restores nothing",
+    st2.rejected === 0 && st2.told >= 3 && st2.last?.verified && typeof st2.last.keepError === "string" && st2.read && st2.held === false && !st2.later.verified, show(st2));
+  const kc = await page.call("keepSlotCheck");
+  ok("the store's keep writes nothing while the slot names another record", kc.kept === true, show(kc));
+  const bf = await page.call("boundaryForm");
+  ok("a boundary's null state hash changed to NaN or Infinity in the profile: corrupt", bf.NaN === "corrupt" && bf.Infinity === "corrupt", show(bf));
   const seen = await page.eval(`chrome.storage.session.get("slot:view").then((v) => typeof v["slot:view"])`);
   ok("another extension page of the extension reads the slot (it is the extension's own context)", seen === "string", show(seen));
   const rf = await page.call("refusals");

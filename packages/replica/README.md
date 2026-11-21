@@ -493,13 +493,16 @@ the new record's hashes, after it the new one alone, so a worker stopped at any 
 (`test/browser/idb-store.test.ts` stops it before, between and after the writes, with the transaction issued, and at
 random times).
 
-At open, in order: the record's tag, format and form, the rule, basis and gate table as for the disk store; then the
-slot: a record whose hash it does not name is `unconfirmed`, and the reader resets the store and refills it; then the
-chain, the window's digest and the loop's checks of every row (`corrupt`), and under a pin the bind. The slot is what
-tells this package's commits from a profile written by another program: an edit of the database, however consistent,
-or an older copy put back, is not named by the slot, and after every browser start the slot is empty, so the store is
-refilled: rows at or below a pin from the release's log, every block above it from the source again. A database of a
-later layout is `format`, deleted and made again by the reset.
+At open, in order, as the code runs: the record's tag, format and form, the chain over the boundaries (each in form:
+three hashes, a height, a state hash null or a hash, since canonical JSON writes NaN and Infinity as null) and the
+window's digest (`corrupt`, `format`); then the slot: a record whose hash it does not name is `unconfirmed`, and the
+reader resets the store and refills it; then the format, rule and basis key (`format`, `rule`, `basis`); then the loop's
+checks of every row (`corrupt`), the gate table (`rule`) and the newer-pin rule (`basis`), and under a pin the bind. The
+slot is what tells this package's commits from a profile written by another program: an edit of the database, however
+consistent, or an older copy put back, is not named by the slot, and after every browser start the slot is empty, so the
+store is refilled: rows at or below a pin from the release's log, every block above it from the source again. A database
+of a later layout is `format`, deleted and made again by the reset. Each store needs a slot key of its own: two stores
+on one key replace each other's hash at every commit and refill each other without end.
 
 One context writes a store at a time, by the Web Lock `cairnx-replica:<name>` taken at `open` and held until `close()`
 or the end of the context that holds it (a stopped worker, a closed page). While another context holds it, `open` is
@@ -511,22 +514,28 @@ successor keeps its confirmation, but that reader answers nothing verified until
 another tag in the database is `corrupt` and reset, where the disk store refuses another program's `meta.json`: the
 database's name carries this package's prefix, so nothing else is expected in it.
 
-The slot also keeps what the reader had settled when it last advanced: the tip of its last step and the witness
-confirmation it held then, bound to the record hash it was kept under. When the context starts again (an MV3 worker
-is stopped after about half a minute idle), the reader takes that view back, whole or not at all, only where a running
-reader would answer from it: the record is the one kept with it, the tip is the block at the store's cursor and at
-most 30 minutes old, and, where the root needs a witness, the confirmation is of a block the store holds, at most 30
-minutes old, by one of this reader's witnesses, held with that tip. Then the first read answers as the stopped worker
-would have, with no request; otherwise the reader starts as a fresh one, with a fresh one's `why`. Under a pin the
-view is taken before this context's source binds the stored rows to the descriptor: the record it is bound to was
-committed in this browser session after such a bind, and an extension update, which brings a new pin, empties the
-session area. A commit drops the view until the next advance keeps one for the new record.
+The slot also keeps what the reader had settled when it last advanced verified: the clock's reading, the tip of its last
+step and the witness confirmation it held then, bound to the record hash it was kept under. An advance that ends with
+any code in the verdict (a witness's higher tip or gate table, a refused pin, a stale tip, a silent witness, behind or
+not synced) clears it, so a restart does not forget a denial. When the context starts again (an MV3 worker is stopped
+after about half a minute idle), the reader takes that view back, whole or not at all, only where a running reader would
+answer from it: the record is the one kept with it and was committed under this source's basis (a store kept from an
+older pin waits for a commit under the new one, after its bind), the clock reads no earlier than it did at the keep (a
+running reader voids its confirmation on a clock set back), the tip is the block at the store's cursor and at most 30
+minutes old, and, where the root needs a witness, the confirmation is of a block the store holds, at most 30 minutes old
+and not later than the clock, by one of this reader's witnesses, held with that tip. Then the first read answers as the
+stopped worker would have, with no request; otherwise the reader starts as a fresh one, with a fresh one's `why`. A
+commit drops the view until the next advance keeps one for the new record. A store that throws while it keeps or clears
+the view does not stop the advance: the error is `keepError` on `status()`, the view is cleared where the store lets it,
+and the next start restores nothing.
 
-Who reaches the slot: the extension's own contexts (its worker and its pages, the popup included: the test reads it
-from a page); not content scripts, by the session area's default access level (`TRUSTED_CONTEXTS`, which the platform
+Who reaches the slot: the extension's own contexts (its worker and its pages, the popup included: the test reads it from
+a page); not content scripts, by the session area's default access level (`TRUSTED_CONTEXTS`, which the platform
 documents and the store does not change), and not a page of another origin, which has no `chrome.storage` of this
-extension. The rig tests the extension page only, since it loads no site. The slot's value after a kept view measured
-496 bytes in the test (the area's quota is 10,485,760 bytes).
+extension. An extension that opens the session area to content scripts (`setAccessLevel`) hands the slot, and with it
+what counts as confirmed and the kept view, to every page its content scripts run in. The rig tests the extension page
+only, since it loads no site. The slot's value after a kept view measured 496 bytes in the test (the area's quota is
+10,485,760 bytes).
 
 Measured on 2026-11-21, Chromium 153 headless on the maintainers' host, in the test's worker: a store of 2,000 blocks
 with 1,512 synthetic Proposes, unpinned, under a caller root with a witness; the worker stopped and woken, the network

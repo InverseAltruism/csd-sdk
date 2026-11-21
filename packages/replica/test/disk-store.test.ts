@@ -120,6 +120,9 @@ await f2.close();
 const F3 = await filled();
 rewrite(F3, () => undefined, (bounds) => { bounds[0]!.rowsHash = wrong; });
 ok("a boundary whose rows hash is not the rows' there, its chain recomputed: corrupt", (await loopOpen(F3)) === "corrupt");
+const F4 = await filled();
+rewrite(F4, () => undefined, (bounds) => { bounds[0]!.stateHash = 7; });
+ok("a boundary whose state hash is a number, its chain recomputed: corrupt (the form at open, not the chain)", (await loopOpen(F4)) === "corrupt");
 const G = await filled();
 rewrite(G, (x) => { const r = x.rows.find((y) => y.height <= P && y.events.length > 0)!; (r.events[0] as unknown as Record<string, unknown>).note = "edited"; });
 ok("an event at or below the pin given a field, every running value recomputed (the events hash does not cover it): the store opens",
