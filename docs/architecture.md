@@ -37,8 +37,9 @@ checks its table and writes one esm module with its types.
   section 41) on the applied entry at the line that moves the balance, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
   queues in `resolve/minqueue.ts`; candidates per owner for the reservation caps, per holder for the live-hold cap, per
   seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on; its
-  sweep applies each expiry at the first height it is due, one batch per such height in ascending order, and from the
-  first offer it holds with a NaN height (CONVENTION section 5) one batch per sweep.
+  sweep applies each expiry at the first height it is due, one batch per such height in ascending order, while every
+  height and tip the fold has read is a safe integer, and one batch per sweep from the first that is not (the fold's
+  `inDomain` in `resolve.ts`, CONVENTION section 5).
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
   claimWindowOf.
 - `records.ts`: parseRecord, explainRecord (the record code of a refusal) and its per-record key allow-sets; the

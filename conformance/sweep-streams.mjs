@@ -35,8 +35,8 @@ const expectCodes = (pairs) => (resolveAt) => {
   return bad;
 };
 
-/** The constructed streams. Heights are at V29 or above, except where a name must lapse or V21 must be crossed, and X
- *  and X2 hold a height that is not a number. */
+/** The constructed streams. Heights are at V29 or above, except where a name must lapse or V21 must be crossed; X and
+ *  X2 hold a NaN height, Y and Y2 heights that are strings (Y also its tip). */
 export function sweepStreams(R) {
   const out = [];
   const ep = (h) => R.epochOf(h), L = R.EPOCH_LEN;
@@ -218,10 +218,39 @@ export function sweepStreams(R) {
         return bad;
       } });
   }
+  // Y. A reservation whose commit height is a string ("90000"): its deadline is "90000" + 8 + 20, the string
+  // "90000820", which the closing sweep at the string "100000000" + 1 compares as text and keeps, as in 0.2.8. Y2:
+  // three such reservations for one owner, then a fourth name committed and revealed at string heights far above;
+  // the sweep at that reveal compares text, so the three still count and the fourth is refused at the cap.
+  {
+    const k = kit(R, "bb"), W = ad(72), ev = [];
+    const c = k.commit("stringcase", W, "90000", 0), r = k.reveal("stringcase", W, 90_001, 0);
+    ev.push(c, r);
+    out.push({ key: "Y", label: "a reservation from a commit at a string height keeps its text deadline", events: ev, tipHeight: "100000000",
+      expect(resolveAt) {
+        const st = resolveAt(), bad = [];
+        if (codeOf(st, r.id) !== "NAME_RESERVED") bad.push("the reveal reserves the name");
+        if (!st.names.stringcase) bad.push("the reservation held at the tip");
+        return bad;
+      } });
+  }
+  {
+    const k = kit(R, "bc"), W = ad(73), ev = [];
+    for (const nm of ["stringcasea", "stringcaseb", "stringcasec"]) ev.push(k.commit(nm, W, "90000", 0), k.reveal(nm, W, 90_001, 0));
+    const last = k.reveal("stringcased", W, "1000000001", 0);
+    ev.push(k.commit("stringcased", W, "1000000000", 0), last);
+    out.push({ key: "Y2", label: "three text deadlines count at a reveal at a string height, so the fourth is refused", events: ev, tipHeight: 1_000_000_001,
+      expect(resolveAt) {
+        const st = resolveAt(), bad = [];
+        if (codeOf(st, last.id) !== "CAP_PENDING_RESERVATIONS") bad.push("the fourth reveal refused at the cap");
+        return bad;
+      } });
+  }
   return out.map((s) => ({ ...s, tips: [] }));
 }
 
-/** The events a walk replays at tip `t`: every event not above it (one whose height is not a number is in every prefix). */
+/** The events a walk replays at tip `t`: every event not above it (`!(height > t)`: a NaN height, or a string that is
+ *  not a number, is in every prefix). */
 export const upTo = (events, t) => events.filter((e) => !(e.height > t));
 
 /** The tips of a dense walk over `events` up to `tip`: every height from two below the first event when the span is at
@@ -273,29 +302,40 @@ export function expiryKinds(R, events, state) {
     v21: offers.some(capped) || bids.some(capped) };
 }
 
-/** JSON text that keeps the numbers JSON has no form for (NaN, +-Infinity) as `{"$num": "NaN"}`; parseNumbers reads it back. */
-export const stringifyNumbers = (value) => JSON.stringify(value, (_k, v) => (typeof v === "number" && !Number.isFinite(v) ? { $num: String(v) } : v));
-export const parseNumbers = (text) => JSON.parse(text, (_k, v) => (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$num === "string" ? Number(v.$num) : v));
+/** JSON text that keeps the values JSON has no form for: NaN and the infinities as `{"$num": "NaN"}`, a BigInt as
+ *  `{"$big": "90000"}` (undefined drops its key, which reads back as undefined); parseNumbers reads them back. */
+export const stringifyNumbers = (value) => JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? { $big: String(v) } : typeof v === "number" && !Number.isFinite(v) ? { $num: String(v) } : v));
+const marker = (v) => v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1;
+export const parseNumbers = (text) => JSON.parse(text, (_k, v) => (marker(v) && typeof v.$num === "string" ? Number(v.$num) : marker(v) && typeof v.$big === "string" ? BigInt(v.$big) : v));
 
 // Whether an event carries a height or an expiry a chain does not produce (not a safe integer).
 const malformed = (e) => !Number.isSafeInteger(e.height) || (e.kind === "propose" && !Number.isSafeInteger(e.expiresEpoch));
 
-/** What the replay read of the malformed fields in `events`, from its log and state: an offer, bid, reservation or
- *  recapture reservation entry whose event (or, for a reveal or finalize, whose commit) is malformed; such an entry in
- *  a sequence that crosses V21 (an event below it, the tip at or above it) or lies wholly at or above it; an offer
- *  with a NaN height open at a tip at or above V21 though its raw expiry fell due below V21 (the class whose expiry
- *  rises across V21, where a batch at that due height would have expired it). Reservations and recapture reservations
- *  are told apart by the generator's name prefixes (`em`, `rm`). */
-export function malformedKinds(R, events, state) {
+/** The types the malformed fuzz puts on heights, expiries and tips, beside the safe integers a chain produces. */
+export const MALFORMED_TYPES = ["nan", "inf", "frac", "negative", "huge", "numstr", "str", "null", "undefined", "bool", "array", "object", "bigint"];
+const typeOf = (v) => (typeof v === "number" ? (Number.isNaN(v) ? "nan" : !Number.isFinite(v) ? "inf" : !Number.isInteger(v) ? "frac" : v < 0 ? "negative" : Number.isSafeInteger(v) ? null : "huge")
+  : typeof v === "string" ? (/^[0-9]+$/.test(v) ? "numstr" : "str") : v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "boolean" ? "bool" : typeof v);
+
+/** What a malformed sequence carries and what the replay read of it. `types`: the types of MALFORMED_TYPES on its event
+ *  heights, its Proposes' expiries and its tip. From the log and state (`state`, null when resolve() threw): an offer,
+ *  bid, reservation or recapture reservation entry whose event (or, for a reveal or finalize, whose commit) is
+ *  malformed; such an entry in a sequence that crosses V21 (an event below it, the tip at or above it) or lies wholly
+ *  at or above it; an offer with a NaN height open at a tip at or above V21 though its raw expiry fell due below V21;
+ *  a reservation reserved from a commit at a string height (its deadline a string). `tip`: the tip is not a safe
+ *  integer. Reservations and recapture reservations are told apart by the generator's name prefixes (`em`, `rm`). */
+export function malformedKinds(R, events, tip, state) {
+  const types = new Set([tip, ...events.flatMap((e) => [e.height, ...(e.kind === "propose" ? [e.expiresEpoch] : [])])].map(typeOf).filter(Boolean));
+  const out = { offer: false, bid: false, reservation: false, recapture: false, tip: !Number.isSafeInteger(tip), crossV21: false, aboveV21: false, nanOffer: false, textDeadline: false, types };
+  if (!state) return out;
   const byId = new Map(events.map((e) => [e.kind === "propose" ? e.id : e.txid, e]));
   const commits = new Map(events.filter((e) => e.kind === "propose").map((e) => [R.parseRecord(e.uri, e.payloadHash)?.commit, e]).filter(([c]) => c !== undefined));
-  const out = { offer: false, bid: false, reservation: false, recapture: false, crossV21: false, aboveV21: false, nanOffer: false };
   for (const x of state.events) {
     const e = byId.get(x.id);
     if (!e) continue;
     const rec = e.kind === "propose" ? R.parseRecord(e.uri, e.payloadHash) : null;
-    const viaCommit = rec?.salt !== undefined && rec?.name !== undefined && (() => { const c = commits.get(R.nameCommit(rec.name, rec.salt, e.proposer.toLowerCase())); return c !== undefined && malformed(c); })();
-    if (!malformed(e) && !viaCommit) continue;
+    const commit = rec?.salt !== undefined && rec?.name !== undefined ? commits.get(R.nameCommit(rec.name, rec.salt, e.proposer.toLowerCase())) : undefined;
+    if (x.kind === "name" && x.ok && rec?.name?.startsWith("em") && typeof commit?.height === "string") out.textDeadline = true;
+    if (!malformed(e) && !(commit !== undefined && malformed(commit))) continue;
     if (x.kind === "offer") out.offer = true;
     else if (x.kind === "bid") out.bid = true;
     else if ((x.kind === "name" || x.kind === "nfinalize") && rec?.name?.startsWith("em")) out.reservation = true;

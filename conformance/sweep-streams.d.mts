@@ -7,6 +7,7 @@ export interface SweepStream {
   key: string;
   label: string;
   events: ChainEvent[];
+  /** Y's is the string "100000000", an input outside the domain, typed as the resolve() parameter it is given to */
   tipHeight: number;
   /** further tips, as in growth-streams.mjs; empty here */
   tips: number[];
@@ -21,7 +22,8 @@ export declare function inertEvents(heights: readonly number[], tag?: string): C
 export interface ExpiryKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; v21: boolean }
 export declare function dueHeights(R: Core, events: readonly ChainEvent[]): number[];
 export declare function expiryKinds(R: Core, events: readonly ChainEvent[], state: CairnXState): ExpiryKinds;
-export interface MalformedKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; crossV21: boolean; aboveV21: boolean; nanOffer: boolean }
+export interface MalformedKinds { offer: boolean; bid: boolean; reservation: boolean; recapture: boolean; tip: boolean; crossV21: boolean; aboveV21: boolean; nanOffer: boolean; textDeadline: boolean; types: Set<string> }
+export declare const MALFORMED_TYPES: string[];
 export declare function stringifyNumbers(value: unknown): string;
 export declare function parseNumbers(text: string): unknown;
-export declare function malformedKinds(R: Core, events: readonly ChainEvent[], state: CairnXState): MalformedKinds;
+export declare function malformedKinds(R: Core, events: readonly ChainEvent[], tip: unknown, state: CairnXState | null): MalformedKinds;

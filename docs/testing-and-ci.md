@@ -38,8 +38,9 @@ differential is described in `conformance/README.md` and the audit method in `co
   (the committed on-chain corpus at every pinned height), crosscheck-siwc.mjs, nprofile-crosslang.mjs,
   fuzz-resolve.mjs 1500 in its three modes (random sequences; `--expiry`, sequences in which offers, bids,
   reservations and recapture reservations end between events, with a floor per kind; `--malformed`, the same kinds
-  carrying heights or expiries no chain produces, the reference given the all-integer ones; each also checks, in JS
-  and in the reference, that events which write nothing change nothing where CONVENTION section 5 claims it), one
+  and the tip carrying values no chain produces, of every type, with a floor per kind and per type, the reference
+  given the all-integer ones; each also checks, in JS and in the reference, that events which write nothing change
+  nothing where CONVENTION section 5 claims it), one
   straddle test per gate (v20-v29), v20-incident-69csd.mjs,
   proven-terms-classification.mjs and unreachability-premises.mjs. The `test:crosslang` script in the root
   `package.json` is the list. Real-chain co-sign conformance (live co-sign and vendor-parity tests) lives downstream

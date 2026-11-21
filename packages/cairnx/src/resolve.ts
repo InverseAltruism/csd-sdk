@@ -75,8 +75,13 @@ function createFold(opts: StoreOptions) {
   const { refused, sweepExpired } = c;
   let pendingBlock = -1;
   const applyPendingCancels = () => { for (const f of c.pendingCancels) f(); c.pendingCancels = []; };
+  // The sweep's batches at due heights are proven for heights a chain produces: each event's height and the tip a safe
+  // integer. Inside that domain being due only grows with height, so the batches give the state of one batch per sweep;
+  // the first height outside it ends them before any sweep reads it; from then on every sweep is the batch 0.2.8 runs.
+  const inDomain = (height: unknown): void => { if (!Number.isSafeInteger(height)) store.endSplit(); };
 
   const apply = (ev: ChainEvent): void => {
+    inDomain(ev.height);
     if (ev.height >= V29_HEIGHT) { const k = eventId(ev); if (seenIds.has(k)) return; seenIds.add(k); }
     if (beforeActivation(ev.height)) return;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
@@ -117,6 +122,7 @@ function createFold(opts: StoreOptions) {
     // the tip, and an offer whose effExpiry epoch == epochOf(tip) is expired at the FIRST height of the next
     // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
     // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
+    inDomain(tipHeight);
     sweepExpired(tipHeight + 1);
     store.verify(tipHeight + 1, true);
     return materialize(c, tipHeight);

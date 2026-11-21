@@ -144,7 +144,8 @@ const offer = (id: string, height: number, expiresEpoch: number): OfferRec =>
 // ── the sweep's loop guard: a due height that rounds below the height that pops its entry ──
 // An offer keyed 2^53 - 297: (k + 1) * EPOCH_LEN rounds to a height whose epoch is still k, so the batch there pops
 // nothing; the guard ends the loop and the batch at the asked height expires it, as one batch per sweep does. Check
-// mode stays off here: its "not due one height lower" needs a due height a double can hold.
+// mode stays off here: its "not due one height lower" needs a due height a double can hold. Through resolve() the
+// guard is out of reach: a tip of 3e17 is not a safe integer, so the fold runs one batch per sweep.
 {
   const k = 2 ** 53 - 297, d = (k + 1) * EPOCH_LEN;
   ok(epochOf(d) === k, "the computed due height of the entry falls in its own epoch (the case the guard exists for)");
@@ -158,7 +159,7 @@ const offer = (id: string, height: number, expiresEpoch: number): OfferRec =>
     ({ kind: "propose", id: "0x" + String(pos + h).padStart(64, "0"), proposer: S, uri: b.uri, payloadHash: b.payloadHash, expiresEpoch: exp, height: h, pos, paidTo });
   const ev = [P(deploy({ ticker: "GRD", decimals: 0, supply: "10", mint: "issuer" }), 90_000, 0, FAR, { [TREASURY_ADDR]: String(DEPLOY_FEE) }),
     P(mint({ ticker: "GRD", amount: "10" }), 90_001, 0, FAR), P(offerRecord({ give: { ticker: "GRD", amount: "3" }, want: { value: "1000" }, taker: "0x" + "72".repeat(20) }), 90_002, 0, k)];
-  // the published cairnx-core 0.2.8 gives this stateHash for the same input
+  // the tip is outside the domain (one batch per sweep); the published cairnx-core 0.2.8 gives this stateHash
   ok(stateHash(resolve(ev, 3e17)) === "0xbbf78cf9c7fc161a63a7369bf41e6d0d6b6e1db0d4db29167bae7fb7b35b70ca", "resolve() at tip 3e17 equals 0.2.8");
 }
 

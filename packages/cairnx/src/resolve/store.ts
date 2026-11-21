@@ -68,20 +68,15 @@ export function createStore(opts: StoreOptions = {}) {
   };
   // effExpiry reads its height only to ask whether it is at least V21; the queues hold the key of the next sweep.
   const regimeHeight = (): number => (maxSweep >= V21_HEIGHT ? V21_HEIGHT : V21_HEIGHT - 1);
-  // Cleared by the first offer or bid whose effective expiry rises across V21 (a NaN cap: due below V21, never above).
-  // Before that item, being due only grows with height for every item held, so batches at due heights equal one batch
-  // per sweep; from it on a sweep runs one batch, at its height, as 0.2.8 did.
+  // Whether a sweep runs batches at the due heights below its own; the fold ends it at its first input outside the
+  // domain the batches are proven for (resolve.ts, inDomain), and from then on a sweep is the single batch.
   let splitSweep = true;
-  const admitExpiry = (x: { expiresEpoch: number; height: number }) => {
-    if (!(effExpiry(x, V21_HEIGHT) <= effExpiry(x, V21_HEIGHT - 1))) splitSweep = false;
-  };
 
   // ── writes ──
   const addOffer = (o: OfferRec) => {
     if (!offers.has(o.id)) offerAt.set(o.id, ++stamp);
     offers.set(o.id, o);
     if (!openOffers.has(o.id)) { openOffers.add(o.id); openOfferAt.set(o.id, ++stamp); }
-    admitExpiry(o);
     offerQ.push(effExpiry(o, regimeHeight()), o.id);
     // a taker-bound offer anchored at V28+ is a firm quote no bulk cancel targets (both fields are fixed at creation)
     if (!(o.taker !== undefined && o.height >= V28_HEIGHT)) { addTo(bySeller, o.seller, o.id); addTo(bySellerAsset, assetKey(o.seller, o.give), o.id); }
@@ -102,7 +97,6 @@ export function createStore(opts: StoreOptions = {}) {
   const addBid = (b: BidRec) => {
     bids.set(b.id, b);
     if (!openBids.has(b.id)) { openBids.add(b.id); openBidAt.set(b.id, ++stamp); }
-    admitExpiry(b);
     bidQ.push(effExpiry(b, regimeHeight()), b.id);
   };
   const setBidStatus = (b: BidRec, status: Exclude<BidState["status"], "open">) => {
@@ -380,6 +374,6 @@ export function createStore(opts: StoreOptions = {}) {
     names: names as ReadonlyMap<string, NameRec>,
     recaptures: recaptures as ReadonlyMap<string, Recapture>,
     addOffer, setOfferStatus, setClaim, addBid, setBidStatus, putName, setNameOwner, finalizeName, putRecapture, deleteRecapture,
-    sweep, pendingCount, recaptureCount, liveHoldCount, ocancelTargets, voidTargets, verify, stats,
+    sweep, endSplit: () => { splitSweep = false; }, pendingCount, recaptureCount, liveHoldCount, ocancelTargets, voidTargets, verify, stats,
   };
 }

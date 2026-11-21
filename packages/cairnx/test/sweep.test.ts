@@ -23,6 +23,8 @@ const PINS: Record<string, [string, string]> = {
   V: ["8b7798080aca3570", "1272c94642a09231"],
   X: ["b12648cf6033d939", "b81478b691447776"],
   X2: ["fa19b8d403075e99", "8f7fcfcb39227b29"],
+  Y: ["39077cf82797df0b", "4578b4bbe6c3e704"],
+  Y2: ["c39b888a3a4cf914", "07dcaad0b2760c53"],
 };
 // X and X2 also at V21 - 1 and V21 (events not above the tip): the counterexample's offer and transfer around V21
 const TIP_PINS: Record<string, [string, string]> = {
@@ -53,7 +55,7 @@ for (const s of sweepStreams(R)) {
     assert.equal(JSON.stringify(replay(upto, t, { check: true })), JSON.stringify(R.resolve(upto, t)), `${s.key}@${t}: check mode's result`);
     tips++;
   }
-  // the property holds for heights a chain can produce; X and X2 hold one that is not a number (CONVENTION section 5)
+  // the property holds for heights a chain can produce; X, X2, Y and Y2 hold others (CONVENTION section 5)
   if (s.events.every((e) => Number.isSafeInteger(e.height))) {
     const added = inertEvents(walk);
     assert.equal(JSON.stringify(R.resolve([...added, ...s.events], s.tipHeight)), JSON.stringify(whole), `${s.key}: events that write nothing changed the result`);
