@@ -115,6 +115,17 @@ for (const [name, what] of [["mint-remaining", "a mint capped at the remaining s
     JSON.stringify(got?.rows.map((x) => [x.leg, x.to, x.amount])));
 }
 
+// A block whose Propose applies before its Attest at a lower position (CONVENTION section 33.3): the fill at
+// position 0 and a transfer at position 1, both to the buyer. Pages of 1 must give both, by position.
+const tft = vectors.cases.find((k) => k.name === "token-fill-token")!, fillAt = tft.events.at(-1)!, BUYER = `0x${"b2".repeat(20)}`;
+const xfer = fixtures({ lower: true }).prop({ v: 1, t: "transfer", ticker: "DUST", to: BUYER, amount: "5" }, { proposer: `0x${"a1".repeat(20)}`, height: fillAt.height, pos: 1 });
+const ord = await open({ source: scripted(asBlocks([...tft.events, xfer]), { height: tft.tipHeight, hash: synth(tft.tipHeight), time: TIME }), clock });
+await ord.advance();
+const o1 = await ord.transfers(BUYER, null, { minDepth: 0, limit: 1, ticker: "DUST" }), o2 = await ord.transfers(BUYER, o1.verified ? o1.value.next : null, { minDepth: 0, limit: 1, ticker: "DUST" });
+ok("an Attest at position 0 applied after a Propose at position 1 of its block: pages of 1 give the fill, then the transfer",
+  o1.verified && o1.value.items[0]?.leg === "fill" && o1.value.more && o2.verified && o2.value.items.length === 1 && o2.value.items[0]?.leg === "xfer" && !o2.value.more);
+await ord.close();
+
 console.log("the memo, refused records, and the cursor:");
 // The deploy of DUST, its fee paid, and a mint of 100 to its author, from the transfer case; then transfers of ours.
 const base = vectors.cases.find((k) => k.name === "transfer")!.events.slice(0, 2) as ProposeEvent[];
