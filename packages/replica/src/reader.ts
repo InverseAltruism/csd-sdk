@@ -6,16 +6,17 @@
 import {
   CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, TransferCursor, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
+import { afterInApplyOrder, boundOf, nextOf, resumeOf } from "./cursor.js";
 import { ReplicaConfigError } from "./errors.js";
 import { coreCheck, type CoreModule } from "./gates.js";
 import { replicaLoop } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
-import { boundOf, movesPage } from "./transfers.js";
+import { movesPage } from "./transfers.js";
 import type { Basis, Cursor, HeaderRoot, Materializer, Source, Store } from "./types.js";
 import { verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
@@ -27,8 +28,9 @@ export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
 }
 export interface EventLog {
-  /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. */
-  events(after: TransferCursor | null, o?: ReadOptions & { readonly limit?: number }): Promise<Answer<Page<ChainEvent>>>;
+  /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
+   *  whose events hash is no longer the replica's at its height is CURSOR_OFF_BRANCH, nothing shown (cursor.ts). */
+  events(after: BoundCursor | null, o?: ReadOptions & { readonly limit?: number }): Promise<Answer<Page<ChainEvent>>>;
   status(): ReplicaStatus;
   subscribe(fn: (s: ReplicaStatus) => void): () => void;
   advance(o?: { readonly budgetMs?: number; readonly signal?: AbortSignal }): Promise<ReplicaStatus>;
@@ -60,12 +62,6 @@ const TRY_TXID = `0x${"f".repeat(64)}`;
 type Views = { deep: CairnXState | null; top: CairnXState | null; deepHeight: number };
 type Out<T> = { value: T | null; shown: T | null; why?: NotVerifiedCode[]; notes?: NoteCode[] };
 
-const CURSOR = /^(0|[1-9][0-9]{0,15}):(0|[1-9][0-9]{0,15})$/;
-const cursorOf = (c: TransferCursor | null): [number, number] | null | undefined => {
-  if (c === null) return null;
-  const m = typeof c === "string" ? CURSOR.exec(c) : null;
-  return m !== null && Number.isSafeInteger(Number(m[1])) && Number.isSafeInteger(Number(m[2])) ? [Number(m[1]), Number(m[2])] : undefined;
-};
 const rootOf = (b: Basis): { root: HeaderRoot; pin: Cursor | null } | null =>
   b.kind === "blocks" ? { root: b.root, pin: null } : b.kind === "pinned" ? { root: b.above.root, pin: b.pin } : null;
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
@@ -176,6 +172,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const views: Views = busy || s.tip === null || s.cursor === null ? { deep: null, top: null, deepHeight }
       : { deep: loop.stateAt(s.tip.height, minDepth), top: loop.stateAt(Math.min(s.cursor.height, s.tip.height), 0), deepHeight };
     const out: Out<T> = busy ? { value: null, shown: null } : f(views), own = [...(out.why ?? [])];
+    // A cursor is checked against the rows held, inside the read; its refusal comes alone, as every other input's.
+    if (own.includes("INPUT_INVALID")) return invalid();
     if (j.codes.length + own.length === 0 && out.value === null) own.push("NOT_SYNCED");
     const why = [...j.why, ...own.map((code) => ({ code }))], notes = [...j.notes, ...(out.notes ?? []).map((code) => ({ code }))];
     return why.length === 0 ? { ...meta, why, notes, at: j.at, verified: true, value: out.value! } : { ...meta, why, notes, at: j.at, verified: false, value: null, shown: out.shown };
@@ -183,26 +181,30 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
 
   const log: EventLog = {
     events(after, o = {}) {
-      const from = cursorOf(after), limit = o.limit ?? 100;
+      const from = boundOf(after), limit = o.limit ?? 100;
       return read(o, from !== undefined && Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000, (v) => {
         const c = loop.status().cursor;
         if (c === null) return { value: null, shown: null };
-        const [h0, p0] = from ?? [-1, 0], items: ChainEvent[] = [];
+        const held = { cursorHeight: c.height, eventsHashAt: (h: number) => loop.eventsHashAt(h), rows: (h: number) => loop.rows(h) };
+        const r = resumeOf(from!, held), items: ChainEvent[] = [];
+        if (r.kind === "off-branch") return { value: null, shown: null, why: ["CURSOR_OFF_BRANCH"] };
+        if (r.kind === "invalid") return { value: null, shown: null, why: ["INPUT_INVALID"] };
         let more = false;
-        for (const row of loop.rows(Math.max(h0, 0))) {
+        // Rows hold their events in apply order; the page resumes after the cursor's event in that order. A cursor
+        // above the replica's has no rows above it.
+        const start = r.kind === "from" ? r : null;
+        for (const row of start === null ? [] : loop.rows(start.since?.height ?? 0)) {
           if (row.height > v.deepHeight) break;
           for (const e of row.events) {
-            if (e.height < h0 || (e.height === h0 && e.pos <= p0)) continue;
+            if (!afterInApplyOrder(e, start!)) continue;
             if (items.length === limit) { more = true; break; }
             items.push(e);
           }
           if (more) break;
         }
-        const last = items.at(-1), mark: TransferCursor = `${v.deepHeight}:${Number.MAX_SAFE_INTEGER}`;
-        const next: TransferCursor = more && last !== undefined ? `${last.height}:${last.pos}` : from !== null && h0 > v.deepHeight ? after! : mark;
         // The held events are the loop's and the materializer's own objects: a page carries copies.
-        const page = { items: structuredClone(items), next, more };
-        return { value: page, shown: page, notes: from !== null && h0 > c.height ? ["CURSOR_ABOVE_TIP"] : [] };
+        const page = { items: structuredClone(items), next: nextOf(held, v.deepHeight, r, items.at(-1), more), more };
+        return { value: page, shown: page, notes: r.kind === "above-tip" ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },
     status,
@@ -245,7 +247,7 @@ export async function open(o: OpenOptions): Promise<Reader> {
         if (v.deep === null || c === null) return { value: null, shown: null };
         const r = movesPage({ deep: v.deep, deepHeight: v.deepHeight, cursorHeight: c.height, eventsHashAt: (h) => loop.eventsHashAt(h), rows: (h) => loop.rows(h),
           to, ticker, since: from!, limit });
-        if (r.kind === "off-branch") return { value: null, shown: null, why: ["CURSOR_OFF_BRANCH"] };
+        if (r.kind !== "page") return { value: null, shown: null, why: [r.kind === "off-branch" ? "CURSOR_OFF_BRANCH" : "INPUT_INVALID"] };
         return { value: r.page, shown: r.page, notes: r.aboveTip ? ["CURSOR_ABOVE_TIP"] : [] };
       });
     },

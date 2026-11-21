@@ -190,14 +190,17 @@ name is asked as `names` writes it: a caller lowercases its input and drops a `.
 section 35.4), since any string that does not match `NAME_RE` is `INPUT_INVALID`; cairnx-core exports no normalizer to
 reuse. `constructor` and other prototype keys are names like any other (`nameView` tests for an own key). `addr` is
 where a payment to the name goes, and a sender refuses a lapsed name's; `profile` is display data, never a send
-target (CONVENTION section 36.3). `events` pages in the order of CONVENTION section 33.3 from an exclusive `height:pos` cursor (`limit`
-default 100, at most 1,000); its `next` does not pass the deep height, also on an empty page.
+target (CONVENTION section 36.3). `events` pages in the order of CONVENTION section 33.3 from an exclusive cursor (`limit`
+default 100, at most 1,000); its `next` does not pass the deep height, also on an empty page. The cursor is the one
+`transfers` takes ("Transfers" below), opaque to a caller: it names the event a page ended on, and the next page
+resumes after that event in the apply order, where a block's Proposes precede its Attests whatever their positions. A
+stored `events` cursor of the earlier `height:pos` form is `INPUT_INVALID`.
 
 An answer is verified only when every condition holds. Each failed one adds its code, in this order:
 
 | Code | The condition that failed |
 |---|---|
-| `INPUT_INVALID` | the read's input is well formed (a name matching `NAME_RE`, an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
+| `INPUT_INVALID` | the read's input is well formed (a name matching `NAME_RE`, an address, a ticker in upper case, a cursor that a read handed out, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
 | `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
 | `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports; under a pin, also the pin's table at or below its height |
 | `PIN_MISMATCH`, `PIN_OFF_CHAIN` | under a pinned basis: the source has not refused its pin ("Pins" below). The source keeps the refusal, so the code stays for the life of the source |
@@ -208,7 +211,7 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
 | `SHALLOW` | `name` and `primary`: the deep view and the tip view agree |
-| `CURSOR_OFF_BRANCH` | `transfers`: the events hash in the cursor is the replica's at the cursor's height; nothing is shown |
+| `CURSOR_OFF_BRANCH` | `events` and `transfers`: the events hash in the cursor is the replica's at the cursor's height; nothing is shown |
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
@@ -279,8 +282,9 @@ Proposes precede its Attests), from the exclusive cursor `since` (null for the f
 at most `limit` rows (default 100, at most 1,000), more only when its first entry alone has more (a fill writes at most
 three moves). Each page walks the deep view's log once in memory and returns at most that page.
 
-The cursor is `height:pos:eventsHash`: the position of the page's last entry, or, on the last page, the deep height and
-the largest position, so `next` does not pass the deep height, also on an empty page, unless `since` already did (it is
+The cursor is `height:pos:eventsHash`, the same as `events`', and opaque to a caller: the position of the page's last
+entry, or, on the last page, the deep height and the largest position (a position that names no held event at that
+height, other than the largest, is `INPUT_INVALID`), so `next` does not pass the deep height, also on an empty page, unless `since` already did (it is
 then kept). The events hash is the replica's
 running hash at that height (CONVENTION section 34.2), over every event at or below it. The moves at or below a height
 follow from the events at or below it, so while that hash is the replica's, every row before the cursor is still the
