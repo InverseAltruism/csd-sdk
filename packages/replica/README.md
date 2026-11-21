@@ -478,12 +478,12 @@ Who reaches the slot: the extension's own contexts (its worker and its pages, th
 from a page); not content scripts, by the session area's default access level (`TRUSTED_CONTEXTS`, which the platform
 documents and the store does not change), and not a page of another origin, which has no `chrome.storage` of this
 extension. The rig tests the extension page only, since it loads no site. The slot's value after a kept view measured
-under 4,096 bytes in the test (the area's quota is 10,485,760 bytes).
+496 bytes in the test (the area's quota is 10,485,760 bytes).
 
 Measured on 2026-11-21, Chromium 153 headless on the maintainers' host, in the test's worker: a store of 2,000 blocks
 with 1,512 synthetic Proposes, unpinned, under a caller root with a witness; the worker stopped and woken, the network
-refused: wake to the first verified read 94 ms (median of 7, 82 to 101), of which the open 38.4 ms and the read with
-its two replays 39.9 ms. Without a kept view (a browser start), the first verified answer waits for the refill. At the
+refused: wake to the first verified read 86 ms (median of 7, 75 to 106), of which the open 34.2 ms and the read with
+its two replays 34.7 ms. Without a kept view (a browser start), the first verified answer waits for the refill. At the
 shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, the design pass measured 235 and 258 ms
 (medians of 7), three replays of about 36 ms each among them; the plan's 150 ms row for a worker restart is missed
 until cairnx-core's resumable replay lets one pass serve the bind and both views.
