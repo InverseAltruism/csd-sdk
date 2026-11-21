@@ -301,26 +301,18 @@ replica (which answers `NOT_SYNCED` or `BEHIND` until it has read to the tip aga
 cursor binds the events, not the rules that turn them into moves: a cairnx-core release that changed what an older
 entry's moves report would not refuse a stored cursor, and such a release says so in cairnx-core's CHANGELOG.
 
-A server crediting deposits from its own node, the example `test/transfers-reorg.test.ts` runs over a 20-block reorg:
+A server crediting deposits from its own node is `examples/deposits.ts` in this repository: `openReplica` (`open` over
+`ownNode`, the store on disk, so a restart reads on from the stored cursor), `creditDeposits` (each verified page
+credited once by the key `(txid, leg)`, its cursor stored with its credits in one transaction, `CURSOR_OFF_BRANCH`
+raised to the operator) and `recover` (below). `test/deposits.test.ts` runs it over the recorded node across a
+restart, a 20-block reorg while running and one while closed, and a newer pin; `test/transfers-reorg.test.ts` runs
+the two calls over a memory store at two depths.
 
 ```ts
-import { local, open } from "@inversealtruism/cairnx-replica/server";
-const replica = await open(local({ node: "http://127.0.0.1:8789" }));
-async function creditDeposits(address: string) {
-  for (;;) {
-    const a = await replica.transfers(address, await db.cursor(address), { minDepth: MIN_DEPTH });
-    if (!a.verified) {
-      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery below, and its operator is told.
-      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) await db.alert(address, "CURSOR_OFF_BRANCH");
-      return a;                                      // nothing credited, the cursor stays
-    }
-    await db.transaction(async (t) => {
-      for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) await t.credit(x);   // (txid, leg) a unique key
-      await t.setCursor(address, a.value.next);
-    });
-    if (!a.value.more) return a;
-  }
-}
+import { PIN } from "@inversealtruism/cairnx-pin";
+import { creditDeposits, openReplica } from "./deposits";   // examples/deposits.ts
+const replica = await openReplica({ node: "http://127.0.0.1:8789", dir: "/var/lib/deposits/replica", pin: PIN });
+for (const address of addresses) await creditDeposits(replica, db, address, { minDepth: MIN_DEPTH, pinned: PINNED });
 ```
 
 What `transfers` gives that server: each move to its address once across pages, only from a verified answer, only at
@@ -342,7 +334,8 @@ do itself:
   to the operator. A capped mint's amount (the remaining supply before it) and a partial fill's (the offer's fills
   before it) can change under one `(txid, leg)`, which `test/transfers.test.ts` shows. A transfer's, a sale's and a
   fee's do not, by the core's code (read, not tested here): a transfer moves its record's amount, a sale the price of
-  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). `test/transfers-reorg.test.ts` runs that recovery.
+  the offer the fill names, a fee that offer's fee on it (`resolve/tokens.ts`, `resolve/attest.ts` in cairnx-core). The
+  example's `recover` is that recovery.
 
 ## Pins
 

@@ -14,6 +14,10 @@
   the store's directory met after a start that found it held (which rejects only `advance()`) reaches a caller that
   only reads (internal: `LoopStatus.storeError`). README: give the store a directory of its own; two processes of
   different configuration on one directory reset each other's store.
+- The server example is a file, `examples/deposits.ts` (`openReplica` over `ownNode`, `creditDeposits`, `recover`),
+  which the README points at; `test/deposits.test.ts` runs it over the recorded node across a restart, a 20-block
+  reorg while running and one while closed, and a newer pin that keeps the store, and `test/transfers-reorg.test.ts`
+  runs its two calls over a memory store.
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash

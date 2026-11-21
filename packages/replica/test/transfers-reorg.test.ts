@@ -1,101 +1,23 @@
-// The server example of the README in its assembled form (local(): nodeBlocks over one's own node, a memory store)
-// over the recorded node capture and a 20-block reorg. Branch A is the capture to 30,300, where 30,284 and 30,286 each
-// hold a CAIRN transfer to a deposit address. Branch B forks at 30,281 (20 blocks replaced), is the same chain without
-// the transfer at 30,286, and runs on to 30,320. A server at minDepth 24 credits the deposit on both branches once,
+// The server example's creditDeposits and recover (examples/deposits.ts) over local() (nodeBlocks over one's own node,
+// a memory store), the recorded node capture and a 20-block reorg: branch A, the capture, and branch B, forking at
+// 30,281 without the transfer at 30,286 (deposits-harness.ts). A server at minDepth 24 credits the deposit on both branches once,
 // only once it is 24 deep on B, and never the one on A alone. A server at minDepth 12 credits both on A; after the
 // reorg its cursor is refused (CURSOR_OFF_BRANCH) instead of passing the change silently, the example raises it, and
 // the recovery of the README rereads from the newest earlier cursor still on B, credits nothing twice and names the
 // credit B no longer holds. A reorg that keeps every event keeps every cursor.
-import { resolve } from "@inversealtruism/cairnx-core";
-import { rpcHeaderToHeader } from "@inversealtruism/csd-client";
-import { headerHash, merkleRoot } from "@inversealtruism/csd-codec";
-import type { BoundCursor, Reader, Transfer } from "../src/index.js";
+import { creditDeposits as credit, recover as recoverFrom } from "../examples/deposits.js";
+import type { Reader } from "../src/index.js";
 import { local, open } from "../src/server.js";
 import { done, ok } from "./check.js";
-import { corpus } from "./core-files.js";
+import { A_ONLY, BOTH, branchB, database, FORK, END, PINNED } from "./deposits-harness.js";
 import { blockAt, branchFrom, cap, NODE, node, type Answers } from "./node-harness.js";
 
 const codes = (a: { why: readonly { code: string }[] }) => a.why.map((w) => w.code).join(",");
-const FORK = 30_281, DROPPED = 30_286, END = 30_320, BOTH = "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016", A_ONLY = "0x9d9305de03a77efd7f69720baff8e3e461cfe010";
-const PINNED: Record<string, string> = { CAIRN: resolve(corpus.events.filter((e) => e.height <= cap.to), cap.to).tokens.CAIRN!.deployId };
-
-/** Branch B: every block from FORK mined again on the one below, the block at DROPPED without its transfer, and blocks
- *  holding only 30,300's coinbase from 30,301 to END, two minutes apart. */
-function branchB(): Answers {
-  const out: Answers = { ...cap.answers }, last = blockAt(cap.answers, cap.to);
-  for (let h = FORK, prev = blockAt(cap.answers, FORK - 1).hash; h <= END; h++) {
-    const b = structuredClone(blockAt(cap.answers, Math.min(h, cap.to)));
-    b.height = h;
-    b.header.nonce += 1;
-    if (h > cap.to) b.header.time = Number(last.header.time) + 120 * (h - cap.to);
-    if (h === DROPPED) { b.txs = b.txs.slice(0, 1); b.header.merkle = merkleRoot(b.txs.map((t) => t.txid)); }
-    b.header.prev = prev;
-    prev = b.hash = headerHash(rpcHeaderToHeader(b.header as never));
-    out[`/block/height/${h}`] = JSON.stringify(b);
-  }
-  return out;
-}
 const B = branchB();
-
-// A server's database: the credits and each address's cursors (the current one last), written together, and what it
-// raised to its operator. `offered` counts every row the server tried to credit, so a row offered twice shows even
-// though the unique key refuses it; a row offered again with another amount is raised.
-type Credit = { credit(x: Transfer): void; setCursor(address: string, c: BoundCursor | null): void };
-function database() {
-  const credits = new Map<string, Transfer>(), cursors = new Map<string, (BoundCursor | null)[]>(), offered: string[] = [], alerts: string[] = [];
-  const t: Credit = {
-    credit(x) {
-      const k = `${x.txid}:${x.leg}`, had = credits.get(k);
-      offered.push(k);
-      if (had === undefined) credits.set(k, x);
-      else if (had.amount !== x.amount) alerts.push(`${x.to} ${k}: credited ${had.amount}, now ${x.amount}`);
-    },
-    setCursor: (a, c) => { cursors.set(a, [...(cursors.get(a) ?? []), c]); },
-  };
-  return {
-    credits, offered, alerts,
-    cursor: (address: string): BoundCursor | null => cursors.get(address)?.at(-1) ?? null,
-    earlier: (address: string): BoundCursor[] => (cursors.get(address) ?? []).filter((c): c is BoundCursor => c !== null).reverse(),
-    alert: (address: string, what: string) => { alerts.push(`${address} ${what}`); },
-    transaction(f: (t: Credit) => void) { f(t); },
-  };
-}
 type Db = ReturnType<typeof database>;
-
-// The server example (README): each verified page credited once, the cursor stored with its credits.
-async function creditDeposits(replica: Reader, db: Db, address: string, minDepth: number) {
-  for (;;) {
-    const a = await replica.transfers(address, db.cursor(address), { minDepth });
-    if (!a.verified) {
-      // A retry answers CURSOR_OFF_BRANCH again: the address waits for the recovery, and its operator is told.
-      if (a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) db.alert(address, "CURSOR_OFF_BRANCH");
-      return a;                                      // nothing credited, the cursor stays
-    }
-    db.transaction((t) => {
-      for (const x of a.value.items) if (x.deployId === PINNED[x.ticker]) t.credit(x);   // (txid, leg) a unique key
-      t.setCursor(address, a.value.next);
-    });
-    if (!a.value.more) return a;
-  }
-}
-
-// The recovery the README describes: the newest earlier cursor the read still accepts (null when none does) becomes
-// the cursor, the pages from it credit by the key, and a credit above it that they do not give again is raised.
-async function recover(replica: Reader, db: Db, address: string, minDepth: number): Promise<{ from: BoundCursor | null } | null> {
-  let from: BoundCursor | null = null;
-  for (const c of db.earlier(address)) {
-    const a = await replica.transfers(address, c, { minDepth, limit: 1 });
-    if (a.verified) { from = c; break; }
-    if (!a.why.some((w) => w.code === "CURSOR_OFF_BRANCH")) return null;   // not ready: retried later
-  }
-  const mark = db.offered.length, above = from === null ? -1 : Number(from.split(":")[0]);
-  db.transaction((t) => t.setCursor(address, from));
-  const end = await creditDeposits(replica, db, address, minDepth);
-  if (!end.verified) return null;
-  const again = new Set(db.offered.slice(mark));
-  for (const [k, x] of db.credits) if (x.to === address && x.height > above && !again.has(k)) db.alert(address, `${k}: credited, no longer on the chain`);
-  return { from };
-}
+// The example's two calls (examples/deposits.ts) at a test's minDepth, crediting CAIRN's deploy id.
+const creditDeposits = (replica: Reader, db: Db, address: string, minDepth: number) => credit(replica, db, address, { minDepth, pinned: PINNED });
+const recover = (replica: Reader, db: Db, address: string, minDepth: number) => recoverFrom(replica, db, address, { minDepth, pinned: PINNED });
 
 let now = 0;
 const served: { answers: Answers; tip: number } = { answers: cap.answers, tip: cap.to };
