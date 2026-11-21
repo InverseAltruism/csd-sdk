@@ -213,8 +213,9 @@ export function createStore(opts: StoreOptions = {}) {
   /** Expires what the plain sweep at `height` would (offers and bids past their effective expiry, reservations and
    *  recaptures past finalizeBy), each item at the first height it is due: one batch at each height below `height` at
    *  which a queue's head falls due, ascending, then the batch at `height`. Within a batch offers, bids, reservations,
-   *  recaptures, each in the walk's order. The effect sequence is thus the same whatever heights the sweeps are asked
-   *  at; it equals the walk's single batch because expiry effects commute (CONVENTION section 5, "Expiry in the state"). */
+   *  recaptures, each in the walk's order. The effect sequence is thus the same whatever rising heights the sweeps are
+   *  asked at; it equals the walk's single batch because expiry effects commute (CONVENTION section 5, "Expiry in the
+   *  state"). A falling height takes the walk, as before. */
   const sweep = (height: number, expireOffer: (o: OfferRec) => void) => {
     if (!(height >= maxSweep)) { walkSweep(height, expireOffer); return; }
     for (let d = nextDue(); d < height; d = nextDue()) {
