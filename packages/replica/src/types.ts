@@ -80,11 +80,12 @@ export interface Pin {
 }
 
 /** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. `rule`,
- *  when present, is the rule of the records a source carries (a pin's); open() refuses another. It has
+ *  when present, is the rule of the records a source carries (a pin's); open() refuses another. `pin`, a pinned
+ *  source's, is what the loop checks a store filled under an older pin against (keepsStore). It has
  *  no way yet to hand a commit a self-verified root's window, `work` and `workRoot`, or to take them back at open
  *  (README, "What a store must keep"). */
 export interface Source {
-  readonly basis: Basis; readonly floor: Cursor | null; readonly rule?: EventRule;
+  readonly basis: Basis; readonly floor: Cursor | null; readonly rule?: EventRule; readonly pin?: Pin;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
 }
 

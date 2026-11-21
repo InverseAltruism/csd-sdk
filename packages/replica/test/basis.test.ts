@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   NOTE_CODES, NOT_VERIFIED_CODES, ReplicaConfigError, basisKey, checkBasis, levelOf, proofOf, type Basis, type RecordProof,
 } from "../src/index.js";
+import { keepsStore } from "../src/basis.js";
 import { done, ok, thrown } from "./check.js";
 
 const h = (c: string) => `0x${c.repeat(64)}`;
@@ -85,6 +86,33 @@ const PAIRS: [string, unknown, unknown, boolean][] = [
   ["another display origin", display, { kind: "display", origin: "https://other.example" }, false],
 ];
 for (const [name, a, b, same] of PAIRS) ok(`${name}: ${same ? "same" : "another"} store`, (K(a) === K(b)) === same);
+
+console.log("the store kept across a newer pin (keepsStore), each condition broken alone:");
+// The rows a store holds up to `top`, giving at `height` (default PIN2's) the values `at` names; the readers do not stop
+// at the cursor, so the cursor condition is the predicate's own.
+const EV2 = h("7"), honestAt = { hash: PIN2.hash, eventsHash: EV2, log: LOG2 };
+const rowsTo = (top: number, at: Partial<typeof honestAt> = {}, height = PIN2.height) => {
+  const v = { ...honestAt, ...at }, here = (x: number) => x === height;
+  return { cursor: { height: top, hash: h("9") }, hashAt: (x: number) => (here(x) ? v.hash : null), eventsHashAt: (x: number) => (here(x) ? v.eventsHash : null),
+    logSha256At: (x: number) => (here(x) ? v.log : null) };
+};
+const keeps = (stored: unknown, wanted: unknown, rows = rowsTo(PIN2.height + 10), ev: string | null = EV2) => keepsStore(stored as Basis, wanted as Basis, ev, rows);
+const P1 = pinned(blocks(node)), P2 = pinned(blocks(node), PIN2, LOG2);
+ok("the honest case: one key, a higher pin, the cursor above it, the rows giving its block hash, events hash and log digest: kept", keeps(P1, P2));
+ok("the cursor at the new pin itself: kept", keeps(P1, P2, rowsTo(PIN2.height)));
+const BROKEN: [string, boolean][] = [
+  ["another body origin under the newer pin (another key)", keeps(P1, pinned(blocks(node, "https://other.example"), PIN2, LOG2))],
+  ["an own-node store, then a newer pin over an anchor root (another key)", keeps(P1, pinned(blocks(anchor(PIN2)), PIN2, LOG2))],
+  ["blocks without a pin, then a pin (another key)", keeps(blocks(node), P2)],
+  ["the same height with another log, the rows giving it", keeps(P1, pinned(blocks(node), PIN, LOG2), rowsTo(PIN.height + 10, { hash: PIN.hash }, PIN.height))],
+  ["an older pin, the rows giving it", keeps(P2, P1, rowsTo(PIN2.height + 10, { hash: PIN.hash, log: LOG }, PIN.height))],
+  ["the cursor below the new pin", keeps(P1, P2, rowsTo(PIN2.height - 1))],
+  ["another block hash at the new pin", keeps(P1, P2, rowsTo(PIN2.height + 10, { hash: h("8") }))],
+  ["another events hash at the new pin", keeps(P1, P2, rowsTo(PIN2.height + 10, { eventsHash: h("8") }))],
+  ["a source that names no pin's events hash", keeps(P1, P2, rowsTo(PIN2.height + 10), null)],
+  ["another log digest at the new pin", keeps(P1, P2, rowsTo(PIN2.height + 10, { log: h("8") }))],
+];
+for (const [name, kept] of BROKEN) ok(`${name}: not kept`, kept === false);
 
 console.log("code tables:");
 const upper = (codes: readonly string[]) => codes.every((c) => /^[A-Z]+(?:_[A-Z]+)*$/.test(c)) && new Set(codes).size === codes.length;

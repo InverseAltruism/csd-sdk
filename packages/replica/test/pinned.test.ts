@@ -142,13 +142,14 @@ const belowF = nf.log.filter((l) => /^\/block\/height\/([0-9]+)$/.test(l.path) &
 ok("a store a feed filled, opened under a pin: reset, refilled from the log and blocks (the feed's basis no longer opens it)",
   af.verified && af.vouch.kind === "pinned" && belowF === 0 && !(await fstore.open({ format: 1, rule: CAIRNX_EVENT_RULE, basis: feedBasis })).ok);
 await overFeed.close();
-const dB = await derivePin(upTo(30_090)), pinB: Pin = { ...dB.pin, log: async () => dB.log }, nB = node({ answers: cap.answers }), storeAB = memoryStore();
+let logBReads = 0;
+const dB = await derivePin(upTo(30_090)), pinB: Pin = { ...dB.pin, log: async () => { logBReads++; return dB.log; } }, nB = node({ answers: cap.answers }), storeAB = memoryStore();
 const rA = await open({ ...local({ node: NODE, pin: pinOf(), fetch: n0.f }), store: storeAB, clock });
 await rA.advance(); await rA.close();
 const rB = await open({ ...local({ node: NODE, pin: pinB, fetch: nB.f }), store: storeAB, clock }), aB = await rB.advance();
 const belowB = nB.log.filter((l) => /^\/block\/height\/([0-9]+)$/.test(l.path) && Number(l.path.split("/")[3]) <= 30_090).length;
-ok("a newer pin over a pinned memory store: reset and refilled from the newer log (the keep rule is the disk store's)",
-  aB.verified && belowB === 0 && aB.cursor?.height === TIP && (aB.vouch as { pin: { height: number } }).pin.height === 30_090);
+ok("a newer pin over a pinned memory store: kept by the loop's rule (whatever the store), the newer log not read, verified under it",
+  aB.verified && belowB === 0 && logBReads === 0 && aB.cursor?.height === TIP && (aB.vouch as { pin: { height: number } }).pin.height === 30_090);
 await rB.close();
 await bl.close();
 
