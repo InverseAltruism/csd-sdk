@@ -8,7 +8,7 @@ export type Fixture = Pick<BlockFixture, "from" | "to" | "toHash" | "blocks"> & 
 const load = async <T>(path: string): Promise<T> => (await import(String(new URL(path, import.meta.url)))) as T;
 
 export const shipped = await load<{
-  PIN_FILE: string; DELTAS: string; baseFixture(): BlockFixture; readDeltas(dir?: string): Fixture[];
+  PIN_FILE: string; DELTAS: string; baseFile(): string; baseFixture(): BlockFixture; readDeltas(dir?: string): Fixture[];
   derive(base?: BlockFixture, deltas?: Fixture[]): Promise<{ pin: Descriptor; log: Uint8Array }>; differing(got: Descriptor, want: Descriptor): string[];
 }>("../scripts/shipped.mjs");
 export const gen = await load<{

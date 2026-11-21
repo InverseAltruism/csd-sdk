@@ -20,8 +20,8 @@ const base = shipped.baseFixture(), deltas = shipped.readDeltas(), d = await shi
 const events = JSON.parse(new TextDecoder().decode(d.log)) as ChainEvent[];
 
 console.log("the log, regenerated:");
-ok(`cairnx-core's fixture is the committed one (sha256 ${sha(readFileSync(new URL("../../cairnx/test/fixtures/events-blocks.json", import.meta.url))).slice(0, 8)})`,
-  sha(readFileSync(new URL("../../cairnx/test/fixtures/events-blocks.json", import.meta.url))) === "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c" && base.to === 117_000);
+ok("cairnx-core's fixture is the committed one (sha256 46f02644...)",
+  sha(readFileSync(shipped.baseFile())) === "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c" && base.to === 117_000);
 ok(`the fixture and the ${deltas.length} delta(s) give the shipped log byte for byte (${d.log.length} bytes)`,
   d.log.length === shippedLog.length && d.log.every((x, i) => x === shippedLog[i]));
 ok("the derived pin repeats pin.json in every field but core, and its logSha256, eventsHash and stateHash are the log's own",

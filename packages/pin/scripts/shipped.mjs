@@ -12,11 +12,10 @@ export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const PIN_FILE = join(ROOT, "pin.json"), DELTAS = join(ROOT, "fixtures");
 const DELTA = /^delta-([0-9]+)-([0-9]+)\.json$/;
 
-/** cairnx-core's committed block fixture, found through its resolved entry in the workspace. */
-export function baseFixture() {
-  const core = join(dirname(createRequire(import.meta.url).resolve("@inversealtruism/cairnx-core")), "..");
-  return JSON.parse(readFileSync(join(core, "test/fixtures/events-blocks.json"), "utf8"));
-}
+/** The path of cairnx-core's committed block fixture, found through its resolved entry in the workspace. */
+export const baseFile = () => join(dirname(createRequire(import.meta.url).resolve("@inversealtruism/cairnx-core")), "..", "test/fixtures/events-blocks.json");
+/** cairnx-core's committed block fixture. */
+export const baseFixture = () => JSON.parse(readFileSync(baseFile(), "utf8"));
 
 /** The deltas in `dir`, ascending, each named for the range it holds; throws on a name that does not match its range. */
 export function readDeltas(dir = DELTAS) {
