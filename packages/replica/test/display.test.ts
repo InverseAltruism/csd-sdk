@@ -67,6 +67,7 @@ const BEHAVIOURS: Record<string, (p: string) => Response | Promise<Response>> = 
   },
   "a 500": () => json(500, { ok: false }), "a 503": () => json(503, { ok: false }),
   "a 404 page that is not JSON": () => new Response("<html>not found</html>", { status: 404 }),
+  "a 404 in JSON from another API (a wrong origin)": () => json(404, { error: "Not Found" }),
   "a 200 that is not JSON": () => new Response("ok", { status: 200 }),
   "a fetch that throws": () => { throw new TypeError("network down"); },
   "an owner out of form": async (p) => json(200, { ...((await good(p).json()) as object), owner: 5, holders: { [HOLDER]: { available: "-1", locked: "0" } } }),
