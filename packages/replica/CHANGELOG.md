@@ -10,6 +10,10 @@
 - `ownNode({ node, dir, pin?, witness?, fetch?, paceMs?, timeoutMs? })` in `./server`: `local`'s source, `diskStore`,
   the witness only when one is named, and a step budget of 512 blocks and 600 requests (internal: `OpenOptions.step`).
   A day above a pin on disk went from 81 commits to 2.
+- `STORE_UNAVAILABLE` carries in its `detail` the message of what the store threw at its last load, so a refusal of
+  the store's directory met after a start that found it held (which rejects only `advance()`) reaches a caller that
+  only reads (internal: `LoopStatus.storeError`). README: give the store a directory of its own; two processes of
+  different configuration on one directory reset each other's store.
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash

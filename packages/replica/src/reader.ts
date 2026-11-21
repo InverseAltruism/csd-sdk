@@ -112,13 +112,16 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
-    const notes: NoteCode[] = [...(core.two ? ["TWO_CORES" as const] : []), ...(s.store === "unavailable" ? ["STORE_UNAVAILABLE" as const] : []),
-      ...(board.disagree() ? ["SOURCES_DISAGREE" as const] : []), ...(board.malformed() ? ["WITNESS_MALFORMED" as const] : [])];
+    // A store refused inside a later load (a reader that started while another process held it) throws only into
+    // advance(), so its reason travels in the note's detail to a caller that only reads.
+    const unavailable = s.storeError === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: s.storeError };
+    const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
+      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
     const why = codes.map((code) => (code === "NOT_SYNCED" && busy ? { code, detail: "a step's commit is in flight" } : { code }));
-    return { codes, why, notes: notes.map((code) => ({ code })), at };
+    return { codes, why, notes, at };
   }
 
   function status(): ReplicaStatus {

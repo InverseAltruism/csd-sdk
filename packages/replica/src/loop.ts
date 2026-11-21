@@ -31,9 +31,11 @@ export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
   readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number; readonly resetRefused?: boolean;
 }
-/** Internal. `store` is null before the first open; `retryAt` is when a backed-off loop next calls its source. */
+/** Internal. `store` is null before the first open; `storeError` is the message of what the last load of the store
+ *  threw (a refusal of its directory included), null when it threw nothing; `retryAt` is when a backed-off loop next
+ *  calls its source. */
 export interface LoopStatus {
-  readonly store: "open" | Reset | null; readonly cursor: Cursor | null; readonly eventsHash: string; readonly eventCount: number;
+  readonly store: "open" | Reset | null; readonly storeError: string | null; readonly cursor: Cursor | null; readonly eventsHash: string; readonly eventCount: number;
   readonly tip: TipView | null; readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;
   readonly lastError: { readonly code: SourceCode | "STORE_FAILED"; readonly reason: string; readonly at: number } | null;
   readonly retryAt: number | null; readonly replayMs: number | null;
@@ -97,7 +99,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
-  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve();
+  let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), storeError: string | null = null;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -146,6 +148,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     const first = await read();
     if (first.ok || first.reset === "unavailable" || o.resetRefused !== true) return first;
     try { await store.reset(); } catch (e) {
+      storeError = messageOf(e);
       if (e instanceof ReplicaConfigError) throw e;
       change("replace", 0, 0, () => { opened = "unavailable"; });
       return { ok: false, reset: "unavailable" };
@@ -172,7 +175,9 @@ export function replicaLoop(o: LoopOptions): Loop {
           if (!keepsStore(m0.basis, source.basis, source.pin?.eventsHash ?? null, at)) r = { ok: false, reset: "basis" };
         }
       }
+      storeError = null;   // set only once the load ends, so a read while it runs sees the last load's
     } catch (e) {
+      storeError = messageOf(e);
       if (e instanceof ReplicaConfigError) throw e;
       r = { ok: false, reset: "unavailable" };
     }
@@ -292,7 +297,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   const status = (): LoopStatus => ({
-    store: opened, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
+    store: opened, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
     tip, lastReorg, lastError, retryAt, replayMs: m.replayMs,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };

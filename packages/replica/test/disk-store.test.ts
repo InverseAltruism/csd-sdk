@@ -209,6 +209,26 @@ await lateStart("a gate table that differs at or below the cursor", (dir) => {
   writeFileSync(join(dir, "meta.json"), JSON.stringify({ ...m, meta: { ...m.meta, gates: { ...LOADED_GATES, V99_HEIGHT: 30_010 } } }) + "\n");
 }, pinOf());
 
+// A directory refused once the lease is had (another program's meta.json) throws into advance() alone; a caller that
+// only reads gets the reason in the note's detail. Removed, the next advance opens and fills the store.
+{
+  const dir = fresh(), t0 = clock() - 10_000, holder = diskStoreWith({ dir }, { clock: () => t0 });
+  await holder.open(key(FEED));
+  writeFileSync(join(dir, "meta.json"), JSON.stringify({ name: "another program" }));
+  const now = { t: t0 + 1_000 };
+  const r = await open({ source: pinned({ pin: pinOf(), then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) }), store: diskStoreWith({ dir }, { clock: () => now.t }), clock });
+  const held = await r.advance(), heldNote = held.notes.find((x) => x.code === "STORE_UNAVAILABLE");
+  now.t = t0 + STALE_MS + 5_000;
+  const thrownBy = await r.advance().then(() => null, (e: unknown) => e), st = await r.state(), note = st.notes.find((x) => x.code === "STORE_UNAVAILABLE");
+  ok("a foreign meta.json met once a held lease goes stale: advance() rejects with ReplicaConfigError, and a read answers NOT_SYNCED with the reason in STORE_UNAVAILABLE's detail",
+    heldNote !== undefined && heldNote.detail === undefined && thrownBy instanceof ReplicaConfigError && !st.verified && codes(st).includes("NOT_SYNCED") &&
+    note?.detail?.includes(join(dir, "meta.json")) === true, `${JSON.stringify(heldNote)} ${JSON.stringify(st.notes)}`);
+  unlinkSync(join(dir, "meta.json"));
+  const healed = await r.advance();
+  ok("the foreign file moved away, the next advance opens and fills the store: verified, no STORE_UNAVAILABLE", healed.verified && healed.notes.length === 0, codes(healed));
+  await r.close(); holder.close();
+}
+
 console.log("missing files, out-of-form fields, short writes:");
 const M = await filled();
 unlinkSync(join(M, "rows.jsonl"));

@@ -217,7 +217,9 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it; what the store threw, such as a
+refusal of its directory met after a start that found it held, which rejects only `advance()`, is in the note's
+`detail`). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -406,7 +408,10 @@ the witness's to confirm.
 committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
 `bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
 writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
-`open` throw `ReplicaConfigError` naming it, with nothing removed. A commit appends at the committed lengths, syncs
+`open` throw `ReplicaConfigError` naming it, with nothing removed. Give the store a directory of its own all the same:
+a file named `lock` is taken for a lease (and moved aside once it has gone 20 s untouched), and a `meta.json` that is not JSON for
+the store's own damaged meta, replaced at the next reset. Two processes of different configuration (another node,
+pin or rule) on one directory can reset each other's store whenever the lease changes hands. A commit appends at the committed lengths, syncs
 each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
 directory; a rollback is that rename alone. While one holder's directory syncs return, nothing is written below the
 lengths of a meta that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
