@@ -54,6 +54,12 @@ for (const c of forward.cases) {
     if (!right) wrong.push(`${q.query}: ${codes(a)} ${canonicalJson(a.verified ? a.value : a.shown)}`);
   }
   ok(`${c.name} at ${c.tipHeight}: ${c.asks.length} asked, each the case's nameView, verified (or INPUT_INVALID where the case gives null)`, wrong.length === 0, wrong.join("; "));
+  if (c.name === "held-nset") {
+    // nset at 100,011: at depth 2 the deep view (100,010) is held and pays the owner, the tip view pays the nset address.
+    const a2 = await r.name("alice", { minDepth: 2 }), q = c.asks[0]!.nameView as NameValue;
+    ok("held-nset at depth 2: the same class, another address at the tip: SHALLOW alone, the tip's address in shown",
+      codes(a2) === "SHALLOW" && !a2.verified && a2.shown?.state === "held" && a2.shown.addr === q.addr && q.addr !== q.owner);
+  }
   if (c.name === "pending" || c.name === "lapsed") {
     const a12 = await r.name(c.asks[0]!.query);
     ok(`${c.name}: at the default depth the deep view is not yet ${c.name}: SHALLOW alone, ${c.name} in shown`,
