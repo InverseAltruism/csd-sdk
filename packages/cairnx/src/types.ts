@@ -541,12 +541,18 @@ export interface BidState {
   /** offers anchored in response (tagged with this bid's id), in apply order */
   offers: string[];
 }
+/** One token movement of an applied record (CONVENTION §41): `amount` base units of `ticker` from `from` (null for a mint)
+ *  to `to`, written by the line that applies it. `amount` is a positive decimal string, the form of the state's balances. */
+export interface TokenMove { leg: "xfer" | "mint" | "fill" | "sale" | "fee"; ticker: string; from: string | null; to: string; amount: string }
 export interface AppliedEvent {
   height: number; pos: number; id: string; kind: string; ok: boolean;
   /** The rule that decided the record (CONVENTION §40); every entry resolve() writes carries one. Optional in the type:
    *  a log built by hand or by a core before 0.2.6 has none. */
   code?: ReasonCode;
   note?: string;
+  /** The token moves of an applied record that moved tokens, in the order applied (CONVENTION §41); absent on every other
+   *  entry and in a log from a core before 0.2.8. Outside canonical state, like the rest of the log. */
+  moves?: TokenMove[];
 }
 export interface CairnXState {
   tipHeight: number;

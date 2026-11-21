@@ -4,7 +4,9 @@
 // PROVES: the tree's cairnx-core dist resolves every input below as the baseline release does (default
 // cairnx-core-0.2.4): canonicalState byte for byte, and the whole resolve() result (the applied log with its order, ids,
 // kinds, ok and notes, recaptures, fclaims, feesPaid, key order) identical once each log entry's `code` is left out;
-// with a code baseline (a ref that already writes codes), the whole result identical to it including `code`;
+// with a code baseline (a ref that already writes codes), the whole result identical to it including `code`; against
+// a baseline that writes no token moves (CONVENTION §41, before cairnx-core 0.2.8) each entry's `moves` is left out
+// too, and every input's moves pass conformance/moves-check.mjs against the state they produced;
 // parseRecord accepts exactly what the baseline accepts; the client helpers give the baseline's verdicts for equal
 // arguments. If this script does not exit 0, NOTHING PUBLISHES.
 //
@@ -20,13 +22,17 @@
 //   4. resolve differential, old vs new, over (a) the case files, (b) a seeded generated corpus with coverage floors
 //      read back from the BASELINE outputs, (c) the replay corpus at every pinned height and every event height,
 //      (d) the sequences of conformance/fuzz-resolve.mjs --emit, (e) the resolve cases of test/vectors/codes.json when
-//      present, (f) the streams of conformance/growth-streams.mjs at full size (16,000 registrations; 20,000 open bids,
-//      offers with holds, live reservations, live recaptures; 2,000 bulk cancels and 2,000 displacements over 20,000
-//      offers; the V21 crossing; the edges), each with the expectations it was built to meet read from the new log,
-//      (g) when the tree has the replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of
-//      (a), (c), (d), (e) and (f) replayed with it: each indexed read compared with the plain walk, the index invariants
-//      asserted after every event (every 64th on a stream of more than 1,000 events);
+//      present, and the cases of forward.json and moves.json, (f) the streams of conformance/growth-streams.mjs at full
+//      size (16,000 registrations; 20,000 open bids, offers with holds, live reservations, live recaptures; 2,000 bulk
+//      cancels and 2,000 displacements over 20,000 offers; the V21 crossing; the edges), each with the expectations it
+//      was built to meet read from the new log, (g) when the tree has the replay's check mode
+//      (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d), the codes.json cases of (e) and
+//      (f) replayed with it: each indexed read compared with the plain walk, the index invariants asserted after every
+//      event (every 64th on a stream of more than 1,000 events);
 //      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
+//      (h) the token moves of every input of (a) to (f) checked by conformance/moves-check.mjs (the identity of §41,
+//      the mint total, each fill's moves from its fill record, no moves on a refused entry), with a floor on the moves
+//      of each leg so a thin run fails;
 //   5. parse differential: parseRecord null-ness old vs new over every Propose of step 4 and a seeded mutation corpus
 //      (and the record cases of codes.json); where the new build has explainRecord it must agree with parseRecord;
 //   6. client-surface differential: bindOfferTerms, provenOfferTerms, previewFill / requiredFillOutputs / fillIsSafe /
@@ -84,9 +90,9 @@ step(`vector-file non-movement vs ${BASELINE_REF} (working tree)`);
 
 // ── 2b. content pins ───────────────────────────────────────────────────────────────────────────────
 // replay-corpus.json + replay-hashes.json: sha256 + floors, so a narrowed corpus cannot self-certify (vectors.test.ts
-// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule, hash, convention and
-// forward-resolution vectors and the recorded block fixture) are pinned by sha256 here, since a diff against the
-// baseline cannot see them move.
+// recomputes hashes FROM the corpus). The files added after cairnx-core-0.2.4 (the event-rule, hash, convention,
+// forward-resolution and token-move vectors and the recorded block fixture) are pinned by sha256 here, since a diff
+// against the baseline cannot see them move.
 //
 // UPDATE POINT: REPLAY_CORPUS_PIN and ADDED_SINCE_BASELINE are the ONE place a sanctioned vector change touches, in the
 // SAME commit as the change. Floors only ever RISE (minEvents, minFclaim and minPinnedHeights up, heightSpan wider or
@@ -108,6 +114,7 @@ const ADDED_SINCE_BASELINE = {
   [`${VEC}/hashes.json`]: "affc644f6608eeb0ddf4de7f679b55aa6160f910f47a3199e3e31dde397f6b6d",
   [`${VEC}/cases-convention.json`]: "9cb61caf0ea391cc3cd370207d7623b99ac91485d34c051e763f671bb3ca76be",
   [`${VEC}/forward.json`]: "bc56213e507fa6f6ba7c6f2da1f4180215cb8e3ea07c95c33177c1b688aa2b2c",
+  [`${VEC}/moves.json`]: "5ad6b3ed11b0ceb4addf4ea1586246e67f76aa0ff0eb05ab9c59558efcc9fbe8",
   "packages/cairnx/test/fixtures/events-blocks.json": "46f02644c048078d0da2f3623f251e3e6acd6d3d39b5ce38f40672369ed7c58c",
 };
 step("content pins (replay corpus sha256 + floors; files added after the baseline)");
@@ -197,6 +204,21 @@ const codeWt = CODE_BASELINE_REF ? buildAt(CODE_BASELINE_REF) : null;
 if (codeWt) await bindToNpm(CODE_BASELINE_REF, codeWt);
 const CODE = codeWt ? await import(pathToFileURL(join(codeWt, "packages", "cairnx", "dist", "index.js")).href) : null;
 const NEW = await import(pathToFileURL(join(ROOT, "packages", "cairnx", "dist", "index.js")).href);
+const { checkMoves } = await import(pathToFileURL(join(ROOT, "conformance", "moves-check.mjs")).href);
+// Whether a build writes token moves (CONVENTION §41): the log of one issuer deploy and one mint. A baseline that writes
+// none is compared with each new entry's `moves` left out; one that writes them is compared with them.
+const writesMoves = (lib) => {
+  const A = "0x" + "a1".repeat(20);
+  const d = NEW.deploy({ ticker: "MOV", decimals: 0, supply: "10", mint: "issuer" }), m = NEW.mint({ ticker: "MOV", amount: "10" });
+  const ev = [
+    { kind: "propose", id: "0x" + "01".repeat(32), proposer: A, uri: d.uri, payloadHash: d.payloadHash, expiresEpoch: 9e9, height: 29_900, pos: 0, paidTo: { [NEW.TREASURY_ADDR]: String(NEW.DEPLOY_FEE) } },
+    { kind: "propose", id: "0x" + "02".repeat(32), proposer: A, uri: m.uri, payloadHash: m.payloadHash, expiresEpoch: 9e9, height: 29_901, pos: 0, paidTo: {} },
+  ];
+  return lib.resolve(ev, 29_901).events.some((e) => Object.hasOwn(e, "moves"));
+};
+const OLD_MOVES = writesMoves(OLD), CODE_MOVES = CODE ? writesMoves(CODE) : false;
+if (!writesMoves(NEW)) die("the tree's build writes no token moves (CONVENTION §41)");
+console.log(`  token moves written: ${BASELINE_REF} ${OLD_MOVES ? "yes" : "no"}${CODE ? `, ${CODE_BASELINE_REF} ${CODE_MOVES ? "yes" : "no"}` : ""}, the tree yes`);
 
 // ── 4. resolve differential ────────────────────────────────────────────────────────────────────────
 let diverged = 0;
@@ -208,6 +230,9 @@ const codeCount = new Map();                 // code -> entries of the new build
 const uncoded = new Map();                   // kind -> entries of the new build's log without a code
 const OUTCOME = NEW.REASON_CODE_OUTCOME;     // absent before the code table exists
 const stripCodes = (s) => ({ ...s, events: s.events.map(({ code: _code, ...e }) => e) });
+const stripMoves = (s) => ({ ...s, events: s.events.map(({ moves: _moves, ...e }) => e) });
+const moveLegs = { xfer: 0, mint: 0, fill: 0, sale: 0, fee: 0 };
+const movesSeen = { inputs: 0, pairs: 0, entries: 0 };
 const firstDiff = (a, b) => { let k = 0; while (k < a.length && k < b.length && a[k] === b[k]) k++; return k; };
 const divergedBy = new Map();                // what differed -> how many checks
 const bump = (what) => { diverged++; divergedBy.set(what, (divergedBy.get(what) ?? 0) + 1); };
@@ -231,11 +256,19 @@ const diffCase = (name, events, tip) => {
   lastMs.new = performance.now() - t0;
   const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
   if (a !== b) report(name, "canonicalState", events, a, b);
-  const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(ns));
-  if (fa !== fb) report(name, "full state without code", events, fa, fb);
+  const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
+  if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
   if (CODE) {
-    const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(ns);
-    if (fc !== fn) report(name, `full state with code vs ${CODE_BASELINE_REF}`, events, fc, fn);
+    const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(CODE_MOVES ? ns : stripMoves(ns));
+    if (fc !== fn) report(name, `full state with code${CODE_MOVES ? "" : ", without moves,"} vs ${CODE_BASELINE_REF}`, events, fc, fn);
+  }
+  const mv = checkMoves(ns, NEW.TREASURY_ADDR, events);
+  movesSeen.inputs++; movesSeen.pairs += mv.pairs; movesSeen.entries += mv.entries;
+  for (const l of Object.keys(moveLegs)) moveLegs[l] += mv.legs[l];
+  if (mv.problems.length) {
+    bump("token moves");
+    if (!smallest || events.length < smallest.n) smallest = { name, what: "token moves", n: events.length };
+    if (diverged <= 20) console.error(`  MOVES ${name}: ${mv.problems.slice(0, 3).join("; ")}${mv.problems.length > 3 ? ` (and ${mv.problems.length - 3} more)` : ""}`);
   }
   for (const e of ns.events) {
     if (!("code" in e)) {
@@ -266,7 +299,7 @@ step("resolve differential (a): the case files, old vs new and vs their frozen e
       n++;
     }
   }
-  console.log(`  ${n} cases diffed (canonicalState, full state without code, frozen expectedState)`);
+  console.log(`  ${n} cases diffed (canonicalState, full state without code${OLD_MOVES ? "" : " and moves"}, frozen expectedState)`);
 }
 
 step("resolve differential (b): seeded generated corpus with baseline-read coverage floors");
@@ -366,10 +399,15 @@ step(`resolve differential (d): conformance/fuzz-resolve.mjs --emit, ${FUZZ_N} s
 
 const CODES_FILE = `${VEC}/codes.json`;
 const codesVectors = existsSync(join(ROOT, ...CODES_FILE.split("/"))) ? readJson(CODES_FILE) : null;
-step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors ? "" : " (absent)"}`);
+step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors ? "" : " (absent)"}, and the cases of forward.json and moves.json`);
 if (codesVectors) {
   for (const c of codesVectors.resolve) diffCase(`codes.json:${c.name}`, c.events, c.tipHeight);
   console.log(`  ${codesVectors.resolve.length} cases diffed`);
+}
+for (const f of ["forward.json", "moves.json"]) {
+  const { cases } = readJson(`${VEC}/${f}`);
+  for (const c of cases) diffCase(`${f}:${c.name}`, c.events, c.tipHeight);
+  console.log(`  ${cases.length} ${f} cases diffed`);
 }
 
 step("resolve differential (f): conformance/growth-streams.mjs at full size, with each stream's expectations");
@@ -391,10 +429,20 @@ step("resolve differential (f): conformance/growth-streams.mjs at full size, wit
 
 const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
 const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
-step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), the codes.json cases of (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
 if (hasCheck) {
   const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json")], { stdio: "inherit" });
   if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
+}
+
+// The floors sit below what the inputs of (a) to (f) give (the per-leg counts this step prints); an input set that
+// thins below one fails the seal. Floors only ever RISE.
+const MOVE_FLOORS = { inputs: 22_000, xfer: 8_000, mint: 50_000, fill: 43_000, sale: 1_300, fee: 1_300 };
+step("resolve differential (h): token moves (CONVENTION §41) over every input of (a) to (f), conformance/moves-check.mjs");
+{
+  console.log(`  ${movesSeen.inputs} inputs, ${movesSeen.entries} entries with moves, identity on ${movesSeen.pairs} (ticker, address) pairs; moves per leg: ${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")}; ${divergedBy.get("token moves") ?? 0} input(s) failed`);
+  if (movesSeen.inputs < MOVE_FLOORS.inputs) problems.push(`token moves checked on ${movesSeen.inputs} inputs < floor ${MOVE_FLOORS.inputs}`);
+  for (const l of Object.keys(moveLegs)) if (moveLegs[l] < MOVE_FLOORS[l]) problems.push(`token moves too thin: ${l} ${moveLegs[l]} < floor ${MOVE_FLOORS[l]} (a thin run proves nothing)`);
 }
 
 // ── 5. parse differential ──────────────────────────────────────────────────────────────────────────
@@ -586,7 +634,7 @@ if (diverged || problems.length) {
   if (smallestUri) console.error(`  shortest uri parseRecord disagrees on: ${smallestUri}`);
   die(`${diverged} divergence(s) between the ${BASELINE_REF} baseline and the tree${problems.length ? `, ${problems.length} other failure(s)` : ""}`);
 }
-console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once \`code\` is left out)${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`` : ""}`);
+console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once ${OLD_MOVES ? "`code` is" : "`code` and `moves` are"} left out)${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`${CODE_MOVES ? "" : ", once `moves` is left out"}` : ""}; token moves pass the identity on ${movesSeen.inputs} inputs (${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")})`);
 
 // ── 8. the real fork gate ──────────────────────────────────────────────────────────────────────────
 if (process.env.SEAL_SKIP_CROSSLANG === "1") {

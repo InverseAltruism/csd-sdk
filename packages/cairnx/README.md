@@ -335,6 +335,13 @@ Why a record was applied or refused: each entry of `resolve(...).events` carries
 `REASON_CODES`), and `explainRecord(uri, payloadHash)` names the rule a record breaks before it reaches the resolver.
 Match the code, never the `note` text, which may change; a code your release does not know reads by the entry's `ok`.
 
+Who received which tokens in which record: an applied entry that moved tokens carries `moves` (`CONVENTION.md` §41,
+`TokenMove`), each `{ leg, ticker, from, to, amount }` with the leg `mint`, `xfer`, `sale`, `fee` or `fill`, written
+where the resolver moves the balance. A deposit credit is a move whose `to` is the receiving address; read the amount
+from the move, not from the record, since a mint is capped and a partial fill delivers by its floor. A server that
+credits a listed token by ticker also pins `tokens[ticker].deployId`, since a replay of another chain can bind the
+ticker to another deploy. Moves are outside canonical state, so they change no hash.
+
 ### Write a conformant resolver in another language
 
 1. Implement `CONVENTION.md` §1–§34 (the events of a block, apply order, every record type, the `V*_HEIGHT`
@@ -345,6 +352,7 @@ Match the code, never the `note` text, which may change; a code your release doe
 3. Replay the live chain and compare the state hash (§34.1) against `test/vectors/replay-hashes.json`, and reproduce
    `test/vectors/hashes.json` (§34.4).
 4. Only if you publish reason codes (§40): reproduce `test/vectors/codes.json`.
+5. Only if you publish token moves (§41): reproduce `test/vectors/moves.json`.
 
 ---
 
