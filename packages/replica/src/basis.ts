@@ -1,8 +1,8 @@
 // A basis, its level and proof, and the name of the store kept under it. Every function here checks its basis first,
 // so a value that bypassed the types (a pin over a feed) is refused at run time instead of answering level 3.
-import { HASH_RE, canonicalJson, type EventRule } from "@inversealtruism/cairnx-core";
+import { EPOCH_LEN, HASH_RE, canonicalJson, type EventRule } from "@inversealtruism/cairnx-core";
 import { ReplicaConfigError } from "./errors.js";
-import type { Basis, BlocksBasis, Cursor, HeaderRoot, RecordProof } from "./types.js";
+import type { Basis, BlocksBasis, Cursor, HeaderRoot, Pin, RecordProof } from "./types.js";
 
 const refuse = (what: string): never => { throw new ReplicaConfigError(`basis: ${what}`); };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -63,17 +63,34 @@ export function basisKey(b: Basis): string {
   return canonicalJson({ kind: "pinned", above: { kind: "blocks", root: root.kind === "anchor" ? { kind: "anchor" } : root, bodies } });
 }
 
-/** Why headers from `root` cannot give every event from the rule's activation height, or null (design section 2): an
- *  anchor must lie at or below the activation height less one, and so must a caller's floor, or at or below the pin
- *  under one. Under a pin an anchor root is the pin itself. One's own node is read from the activation height. */
-export function floorBreak(root: HeaderRoot, pin: Cursor | null, rule: EventRule): string | null {
-  const limit = pin?.height ?? rule.activationHeight - 1;
-  if (root.kind === "anchor" && pin === null && root.anchor.height > limit) return `the anchor ${root.anchor.height} lies above the activation height less one`;
-  if (root.kind === "caller" && root.floor > limit) {
-    return `the caller's headers start at ${root.floor}, above ${pin === null ? "the activation height less one" : `the pin ${limit}`}`;
-  }
+/** Why headers from `root` cannot give every event above `floor`, the pin or the activation height less one, or null
+ *  (design section 2): an anchor must lie at or below it (under a pin an anchor root is the pin itself), and so must
+ *  a caller's floor. One's own node is read from the activation height. */
+export function floorBreak(root: HeaderRoot, floor: number, rule: EventRule): string | null {
+  const what = floor === rule.activationHeight - 1 ? "the activation height less one" : `the pin ${floor}`;
+  if (root.kind === "anchor" && root.anchor.height > floor) return `the anchor ${root.anchor.height} lies above ${what}`;
+  if (root.kind === "caller" && root.floor > floor) return `the caller's headers start at ${root.floor}, above ${what}`;
   return null;
 }
 
 /** Whether two bases are the same value, the pin included. */
 export const sameBasis = (a: Basis, b: Basis): boolean => canonicalJson(checkBasis(a)) === canonicalJson(checkBasis(b));
+
+/** `v` as a pin holding only its own fields, or a ReplicaConfigError naming the rule it breaks: format 1, a rule, a
+ *  height at an epoch boundary at or above the rule's activation, four hashes in form, a gate table, a core version
+ *  and a log function. It checks the form only; pinned() checks the log against it. */
+export function checkPin(v: unknown): Pin {
+  if (!isObject(v) || v.format !== 1) return refuse("the pin's format is not 1");
+  const r = isObject(v.rule) ? v.rule : refuse("pin.rule is not an object");
+  const rule = { domain: text(r.domain, "pin.rule.domain"), activationHeight: height(r.activationHeight, "pin.rule.activationHeight") };
+  const h = height(v.height, "pin.height");
+  if (h % EPOCH_LEN !== 0 || h < rule.activationHeight) refuse(`pin.height ${h} is not an epoch boundary at or above the activation height`);
+  const g = isObject(v.gates) ? v.gates : refuse("pin.gates is not an object"), gates: Record<string, number> = {};
+  for (const [k, x] of Object.entries(g)) gates[k] = height(x, `pin.gates.${k}`);
+  const log = typeof v.log === "function" ? (v.log as Pin["log"]) : refuse("pin.log is not a function");
+  return Object.freeze({
+    format: 1, rule: Object.freeze(rule), height: h, blockHash: hash(v.blockHash, "pin.blockHash"), logSha256: hash(v.logSha256, "pin.logSha256"),
+    eventsHash: hash(v.eventsHash, "pin.eventsHash"), stateHash: hash(v.stateHash, "pin.stateHash"), gates: Object.freeze(gates),
+    core: text(v.core, "pin.core"), log,
+  });
+}

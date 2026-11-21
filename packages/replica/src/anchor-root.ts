@@ -10,12 +10,13 @@
 // adopted at the highest held block on its chain, where the store rolls back. A store whose cursor this source's
 // window holds no header for (a store filled before the source started) is walked the same way to the cursor with no
 // work to beat, since the store keeps none (README, "What a store must keep"). Each fork block adopted, clamped to
-// the activation height less one, is remembered until the store's cursor is back on the window: until then the
+// the loop's floor (the pin, else the activation height less one), is remembered until the store's cursor is back on the window: until then the
 // rollback to it is owed (`owed`, returned before the server is read), the tip reported is that block, and nothing
 // is repaired by a walk without a work bar. A walk whose headers fail verification is dropped and starts afresh;
 // after a transport error it resumes.
 import { LWMA_WINDOW } from "@inversealtruism/csd-codec";
 import { floorBreak } from "./basis.js";
+import { floorOf } from "./contract.js";
 import { headerOf } from "./block-read.js";
 import { SourceError } from "./errors.js";
 import type { Head } from "./fork.js";
@@ -49,7 +50,7 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   };
   const reorg = (to: Cursor): Step => ({ kind: "reorg", to, tip: tipView()! });
   // The window never drops the store's cursor, or a fork block still to be rolled back to, below `low`.
-  const keepOf = (ctx: StepContext) => Math.min(ctx.cursor?.height ?? ctx.rule.activationHeight - 1, pending?.height ?? Number.POSITIVE_INFINITY);
+  const keepOf = (ctx: StepContext) => Math.min(ctx.cursor?.height ?? floorOf(ctx), pending?.height ?? Number.POSITIVE_INFINITY);
   const seedOf = (s: Session) => twice(s, `/api/headers/${anchor.height - LWMA_WINDOW + 1}/${LWMA_WINDOW}`, (v) => {
     const rows = rowsOf(anchor.height - LWMA_WINDOW + 1, LWMA_WINDOW)(v);
     HeaderWindow.seed(rows, anchor, depth);
@@ -57,7 +58,7 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   });
 
   async function walkOn(s: Session, ctx: StepContext, server: Head, r: Walk): Promise<Step | null> {
-    const floor = ctx.rule.activationHeight - 1, f = r.fresh;
+    const floor = floorOf(ctx), f = r.fresh;
     for (let batches = 0; f.tip.height < r.need || (r.bar !== null && !f.outworks(r.bar) && f.tip.height < server.height); batches++) {
       if (f.tip.height >= server.height) throw new SourceError("SOURCE_UNAVAILABLE", `the server's tip ${server.height} is below the cursor ${r.need}`);
       if (batches > 0 && (s.requests() >= ctx.budget.maxRequests || ctx.now() >= ctx.budget.deadlineAt)) {
@@ -88,7 +89,7 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
     try { return await walkOn(s, ctx, server, r); } catch (e) { if (!resumable(e)) walk = null; throw e; }
   }
   const walkFrom = (s: Session, ctx: StepContext, server: Head, bar: bigint | null, need: number) => {
-    const matched = anchor.height === ctx.rule.activationHeight - 1 ? { at: anchor, work: 0n } : null;
+    const matched = anchor.height === floorOf(ctx) ? { at: anchor, work: 0n } : null;
     return walking(s, ctx, server, (walk = { fresh: HeaderWindow.seed(seed!, anchor, depth), bar, need, matched, diverged: false, refusedAt: null }));
   };
 
@@ -96,7 +97,7 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
   // answer that fails verification is read once more past caches. The fork block, clamped to the loop's floor, is
   // remembered; a reorg is returned only below the store's cursor, and blocks a step bound above it are dropped.
   async function fork(s: Session, ctx: StepContext, server: Head, win: HeaderWindow): Promise<Step | null> {
-    const floor = ctx.rule.activationHeight - 1, top = Math.min(server.height, win.tip.height + 256);
+    const floor = floorOf(ctx), top = Math.min(server.height, win.tip.height + 256);
     const look = async (fresh: boolean): Promise<Cursor | "below" | null> => {
       const rows: HeaderRow[] = [];
       for (let p = win.low; p <= top; p += BATCH) { const n = Math.min(BATCH, top - p + 1); rows.push(...rowsOf(p, n)(await s.json(`/api/headers/${p}/${n}`, fresh))); }
@@ -127,8 +128,8 @@ export function anchorRoot(anchor: Cursor, depth: number, batch = BATCH): Root {
     },
     hashAt: async (height) => w?.hashAt(height) ?? null,
     async begin(s, ctx, server) {
-      const floor = ctx.rule.activationHeight - 1, at = ctx.cursor, h = at?.height ?? floor;
-      const low = floorBreak({ kind: "anchor", anchor }, null, ctx.rule);
+      const floor = floorOf(ctx), at = ctx.cursor, h = at?.height ?? floor;
+      const low = floorBreak({ kind: "anchor", anchor }, floor, ctx.rule);
       if (low !== null) throw new SourceError("BELOW_FLOOR", low);
       seed ??= await seedOf(s);
       const win = (w ??= HeaderWindow.seed(seed, anchor, depth));

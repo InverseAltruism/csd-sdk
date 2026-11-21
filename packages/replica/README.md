@@ -16,7 +16,7 @@ throw `ReplicaConfigError` for one at run time. `basisKey` names a store without
 root and bodies names the same store.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
-  and the reader, `open` and `openLog` ("Reading" below).
+  the reader, `open` and `openLog` ("Reading" below), and `checkPin` and `pinned` ("Pins" below).
 - `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
   `resolve()` or the block machinery.
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
@@ -140,7 +140,10 @@ replayed on demand.
   `work`, `workRoot` and the window with a commit (`StoreMeta.work`, `workRoot`, `windowSha256` and
   `Commit.headerWindow` exist, but the `Source` interface cannot hand them over) and to give them back at open, and
   the design's rule then applies: a confirmed store keeps its work, and only an unconfirmed one reads its window
-  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again.
+  again from the root under `STORE_UNCONFIRMED`, earning `witnessed` again. Nothing checks a stored boundary's state
+  hash at open, and a pinned source's bind compares the one kept on the pin's boundary: a store that could hold a
+  wrong one there (a disk store, written under another core) must recheck it at open, which is the disk store's
+  slice to do. A memory store holds only what the loop computed.
 
   `readBlocks({ source, from, to, authors, rule?, signal? })`, in `.` with `SourceError`, yields each block from
   `from` to `to` bound and linked to the one before, as a `BoundBlock` with the authors of `authors` bound: `"none"`,
@@ -196,7 +199,8 @@ An answer is verified only when every condition holds. Each failed one adds its 
 |---|---|
 | `INPUT_INVALID` | the read's input is well formed (a name matching `NAME_RE`, an address, a ticker in upper case, a cursor, `limit`, `minDepth` from 0 to the tip's height); this code comes alone, with nothing shown |
 | `LEVEL_DISPLAY`, `LEVEL_FEED` | the basis gives level 3 |
-| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports |
+| `RULES_DIFFER` | the gate tables agree at or below the tip: the one this package was built against, the loaded cairnx-core's, a caller's `core` whose `resolve` is another function, and any table a witness reports; under a pin, also the pin's table at or below its height |
+| `PIN_MISMATCH`, `PIN_OFF_CHAIN` | under a pinned basis: the source has not refused its pin ("Pins" below). The source keeps the refusal, so the code stays for the life of the source |
 | `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
 | `BEHIND` | the cursor is not below the tip |
 | `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
@@ -210,7 +214,7 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` cursor above
 the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
-`UNSUPPORTED`, `PIN_MISMATCH`, `PIN_OFF_CHAIN`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
+`UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
 
@@ -249,14 +253,60 @@ rows is reset and filled again; the newer-pin exception of the design is the dis
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
 whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
-domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, fetch? })`, in
-`./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
-address rule and `memoryStore()`.
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. `local({ node, pin?, fetch? })`,
+in `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
+address rule, above `pin` when one is given ("Pins" below), and `memoryStore()`.
 
 What the reader does not answer yet: `transfers` waits for cairnx-core to export the token movements of an address (a
 whole fill's delivered amount and a mint's amount are not fields of the state today, and deriving them here would
 restate the core's settlement). What it does not persist: the witness's confirmation and the source's header window
 live in memory.
+
+## Pins
+
+A pin is a release's log of one rule's events at or below an epoch boundary, so a new replica reads only the blocks
+above it. Below the pin the trust is the release. A `Pin` carries `format` 1, the `rule`, the `height` (a multiple of
+`EPOCH_LEN`), the `blockHash` there, the log's `logSha256`, the `eventsHash` and `stateHash` at the height, the gate
+table cut at the height (`gates`), the cairnx-core version that cut it (`core`, information only) and `log()`, the
+log's bytes: the UTF-8 canonical JSON of the event list in the order of CONVENTION section 33.3. `checkPin` checks the
+form; `derivePin(fixture)` in `./server` derives a pin and its log from a recorded block fixture (cairnx-core's
+`test/fixtures/events-blocks.json` format) through `fixtureSource` and the loop, reading nothing else.
+
+`pinned({ pin, then })`, in `.`, is a source of the log and then of `then`, a block source, above the pin; its basis is
+`pinned` over `then`'s, level 3, proof `pinned`. `open` and `openLog` throw `ReplicaConfigError` with code
+`PIN_MISMATCH` for a pin of another rule than the store's. The first step checks, before anything is committed and in
+this order: the log's sha256 (`PIN_MISMATCH`); that it is the canonical JSON of an event list keeping the loop's
+contract at or below the pin (`PIN_MISMATCH`); its events hash (`PIN_MISMATCH`); the gate table against the loaded
+core's at or below the pin (`RULES_DIFFER`); its state hash, replayed with `resolve` (`PIN_MISMATCH`). It then takes
+`then`'s step from the pin, whose root checks the pin's block hash: one's own node must link the block above to it,
+an anchor root's seed must end at it, a caller's headers must hold it. A reorg, or a chain that does not hold the
+pin's block, is `PIN_OFF_CHAIN`; a root whose tip is below the pin is `SOURCE_UNAVAILABLE`, nothing committed. Under
+an anchor root a header above the pin that names another parent is `HEADER_INVALID` while the window still starts at
+the pin, and `PIN_OFF_CHAIN` once the window has moved up. The log's rows and that step are committed together, so the log loads in one step:
+at the newest boundary on 2026-11-21 (143,340) that is 1,486 events, 711,379 bytes, and in Node a sha256 of 5.8 ms,
+a parse of 2.4 ms, a canonical re-encode of 10.2 ms, an events hash of 13.5 ms and a replay with the state hash of
+43.5 ms (medians of five runs), before the loop's own replay. No size is refused. Later steps go to `then`; a reorg
+below the pin, or to its height with another hash, is `PIN_OFF_CHAIN`. A node that moves to a branch forking below the
+pin whose tip is still below the pin's height reads as behind the cursor (`SOURCE_UNAVAILABLE`), so the answer stays
+as it was until `TIP_STALE`, and is `PIN_OFF_CHAIN` once that tip reaches the pin's height. A refusal of the pin is
+the answer to every later step of that source, so a later step cannot clear it, and the answers carry its code in
+`why`. A store reopened under the same basis (the pin's height and block hash and the log's `logSha256`) is bound to
+the descriptor once per source without reading the log: the block hash, the events hash and the state hash at the pin
+must be the descriptor's (`PIN_MISMATCH`), and its gate table the loaded core's at or below the pin (`RULES_DIFFER`).
+The state hash is the one the store keeps on the pin's boundary when it keeps one, compared without a replay; else it
+is replayed from the stored rows. Under `openLog`, which holds no state, no state hash is compared. The log's bytes and its contract are not checked again then: the stored rows were
+checked against the contract and their own running hashes when they were read back. A store reopened under another
+basis is reset.
+
+What the checks prove: they tie the log to its descriptor and the descriptor's block to the header chain, not the
+log's content to the chain. A descriptor recomputed for another log (an event removed, changed or added) is accepted,
+by design: below the pin the trust is the release, and a second derivation on another host is the check on it.
+
+`hosted({ pin, origin, witness?, fetch?, paceMs?, timeoutMs?, window? })`, in `./browser` and `./server`, is what
+`open` takes for a page reading our hosted blocks: `pinned` over `hostedBlocks` at `origin` (required) with the pin
+as its anchor, `memoryStore()`, and the witness, without which no answer is verified (`NOT_WITNESSED`). Under an
+anchor root the seed proves only that the server's headers pass through the pin; that the branch is the heaviest is
+the witness's to confirm.
 
 ## Display
 

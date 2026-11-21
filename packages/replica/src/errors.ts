@@ -1,10 +1,11 @@
 import type { SourceCode, Step } from "./types.js";
 
 /** A source, store or basis the replica refuses to run with: an error of the caller's code or configuration, never a
- *  fact about the chain. `code` is `BELOW_FLOOR` for a basis that cannot produce every event from activation. */
+ *  fact about the chain. `code` is `BELOW_FLOOR` for a basis that cannot produce every event from activation, and
+ *  `PIN_MISMATCH` for a pin of another rule than the store's. */
 export class ReplicaConfigError extends Error {
   override readonly name = "ReplicaConfigError";
-  constructor(message: string, readonly code: "BELOW_FLOOR" | null = null) { super(message); }
+  constructor(message: string, readonly code: "BELOW_FLOOR" | "PIN_MISMATCH" | null = null) { super(message); }
 }
 
 /** What a source refuses, with the code a step reports and the wait a Retry-After asked for. `readBlocks` throws it. */

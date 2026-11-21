@@ -1,11 +1,12 @@
 // @inversealtruism/cairnx-replica: a CairnX replica over cairnx-core's resolve(). This entry does no I/O.
 export type {
   AuthorScope, Basis, BlockEvents, BlockRow, BlocksBasis, BlocksSource, Boundary, BoundBlock, Commit, Cursor, HeaderRoot, Materializer, RecordProof, Source, SourceCode,
-  Step, StepContext, Store, StoreMeta, TipView, VerifiedHeaders,
+  Pin, Step, StepContext, Store, StoreMeta, TipView, VerifiedHeaders,
 } from "./types.js";
 export { NOT_VERIFIED_CODES, NOTE_CODES, type NoteCode, type NotVerifiedCode } from "./codes.js";
 export { ReplicaConfigError, SourceError } from "./errors.js";
-export { basisKey, checkBasis, levelOf, proofOf } from "./basis.js";
+export { basisKey, checkBasis, checkPin, levelOf, proofOf } from "./basis.js";
+export { pinned } from "./pinned.js";
 export { memoryStore } from "./memory-store.js";
 export { readBlocks } from "./read-blocks.js";
 export { fullReplay } from "./replay.js";

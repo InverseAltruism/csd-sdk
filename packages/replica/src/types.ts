@@ -40,17 +40,21 @@ export interface TipView { readonly height: number; readonly hash: string; reado
  *  from a feed. */
 export interface BlockEvents { readonly height: number; readonly hash: string | null; readonly events: ChainEvent[] }
 
-/** Internal. What the loop gives a source for one step; `sofar` holds the events below the cursor. */
+/** Internal. What the loop gives a source for one step; `sofar` holds the events below the cursor. `floor` is the lowest
+ *  height a step may roll back to: the source's pin, or, when absent, the rule's activation height less one (floorOf). */
 export interface StepContext {
-  readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar;
+  readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar; readonly floor?: number;
   hashAt(height: number): string | null; eventsHashAt(height: number): string | null;
+  /** The state hash at `height` from the rows held, replayed when no boundary there keeps one; null above the cursor or
+   *  when the loop holds no state. Absent in a context built outside the loop. */
+  stateHashAt?(height: number): string | null;
   readonly budget: { readonly deadlineAt: number; readonly maxRequests: number; readonly maxBlocks: number };
   readonly signal: AbortSignal; now(): number;
 }
 
 /** Internal. Why a source could not take a step. */
 export type SourceCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "SOURCE_MALFORMED" | "BODY_MISMATCH" | "AUTHOR_UNBOUND"
-  | "HEADER_INVALID" | "LESS_WORK" | "BRANCH_MOVED" | "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "BELOW_FLOOR";
+  | "HEADER_INVALID" | "LESS_WORK" | "BRANCH_MOVED" | "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "BELOW_FLOOR" | "RULES_DIFFER";
 
 /** Internal. One step of a source. A `blocks` cursor hash is null only at or below a pin. `reach`, when present, is how
  *  far the source expects to read on a server's unverified word: the loop may take more steps toward it, and it
@@ -62,11 +66,22 @@ export type Step =
   | { readonly kind: "reorg"; readonly to: Cursor; readonly tip: TipView }
   | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null };
 
-/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. It has
+/** A release's pin (design section 2): the log of `rule`'s events at or below `height`, an epoch boundary, as the UTF-8
+ *  canonical JSON of the event list in the order of CONVENTION section 33.3, whose sha256 is `logSha256`, with the
+ *  block hash, events hash and state hash at `height`, the gate table cut at `height` and the cairnx-core version
+ *  that cut it (information only). `log` gives the log's bytes. */
+export interface Pin {
+  readonly format: 1; readonly rule: EventRule; readonly height: number; readonly blockHash: string; readonly logSha256: string;
+  readonly eventsHash: string; readonly stateHash: string; readonly gates: Readonly<Record<string, number>>; readonly core: string;
+  log(): Promise<Uint8Array>;
+}
+
+/** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. `rule`,
+ *  when present, is the rule of the records a source carries (a pin's); open() refuses another. It has
  *  no way yet to hand a commit a self-verified root's window, `work` and `workRoot`, or to take them back at open
  *  (README, "What a store must keep"). */
 export interface Source {
-  readonly basis: Basis; readonly floor: Cursor | null;
+  readonly basis: Basis; readonly floor: Cursor | null; readonly rule?: EventRule;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
 }
 

@@ -1,12 +1,12 @@
 // A Store held in memory for as long as its object lives. A commit is checked whole before any part of it is written,
 // so a refused commit leaves every part as it was; what goes in and comes out is copied, never shared with the caller.
-import { EVENTS_HASH_START, type EventRule } from "@inversealtruism/cairnx-core";
+import { EVENTS_HASH_START } from "@inversealtruism/cairnx-core";
 import { checkBasis, sameBasis } from "./basis.js";
+import { sameRule } from "./contract.js";
 import { ROWS_HASH_START } from "./rowshash.js";
 import type { BlockRow, Boundary, Commit, Cursor, Store, StoreMeta } from "./types.js";
 
 type Key = Parameters<Store["open"]>[0];
-const sameRule = (a: EventRule, b: EventRule): boolean => a.domain === b.domain && a.activationHeight === b.activationHeight;
 const sameCursor = (a: Cursor | null, b: Cursor | null): boolean =>
   a === b || (a !== null && b !== null && a.height === b.height && a.hash === b.hash);
 const heightOf = (c: Cursor | null): number => c?.height ?? -1;
