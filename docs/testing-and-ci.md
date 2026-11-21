@@ -27,8 +27,12 @@ differential is described in `conformance/README.md` and the audit method in `co
   rule against csd-indexer's chain-order feeds, to a tip at least 48 deep by default) and
   `conformance/scan-repeated-txids.mjs` (transaction ids mined at more than one height or position), and
   `packages/pin/scripts/generate-pin.mjs` (the next pin and delta from a node and a released anchor; its package
-  test runs its refusals against the replica's recorded node, offline).
-  `conformance/README.md` describes the first three, `packages/pin/README.md` the generator.
+  test runs its refusals against the replica's recorded node, offline) and
+  `packages/anchors/scripts/generate-anchors.mjs` (the next anchors table from cairn's three-source input and a
+  headers source, and `--check`, which re-walks the committed table against a headers source and a second RPC; its
+  package test runs every refusal against stub sources, offline).
+  `conformance/README.md` describes the first three, `packages/pin/README.md` the pin generator and
+  `packages/anchors/README.md` the anchors generator.
 - Cross-language differential (`pnpm test:crosslang`, the CI fork gate, needs python3): crosscheck.mjs,
   crosscheck-regex.mjs (raw regex differential, the C1 class), crosscheck-resolve.mjs, replay-corpus-crosslang.mjs
   (the committed on-chain corpus at every pinned height), crosscheck-siwc.mjs, nprofile-crosslang.mjs,
@@ -65,6 +69,11 @@ money-safety corpus and the race harness.
 - The `secrets` job runs gitleaks over the full history (release binary, sha256 checked).
 - Every `uses:` is pinned to a full commit SHA with its tag in a trailing comment; the workflow token is read-only and
   no checkout keeps credentials (`test/ci-workflow.test.ts` pins this shape).
+- `.github/workflows/anchors-check.yml` runs the anchors generator's `--check` against a headers source and a second
+  RPC given as inputs. It starts on `workflow_dispatch` alone, by hand, and a release of the anchors package requires
+  it green on the commit to be published; `ci.yml` has no network step. `test/ci-workflow.test.ts` pins that it is
+  dispatch-only, names no host, takes its inputs through the environment and has the same SHA pins and read-only
+  token, and that no CI step or package script runs the generator.
 - Every job runs on `ubuntu-24.04`, not a moving `-latest` image, as in the other Cairn repos: GitHub moved
   `ubuntu-latest` to 26.04, where playwright-core 1.60.0 cannot install its Chromium, and a moving image changes the
   toolchain under a job without a commit (`test/ci-runner-image.test.ts` refuses a `-latest` runner).

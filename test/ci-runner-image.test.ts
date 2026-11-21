@@ -15,10 +15,12 @@ const images = (t: string) => [...t.matchAll(/^[ \t]*runs-on:[ \t]*(\S*)/gm)].ma
 const fixed = (t: string) => images(t).every((img) => img !== "" && !/latest/.test(img));
 
 console.log("ci runner image:");
-ok("the workflows under .github/workflows are exactly ci.yml", files.join(",") === "ci.yml", files.join(","));
+ok("the workflows under .github/workflows are exactly ci.yml and anchors-check.yml", files.join(",") === "anchors-check.yml,ci.yml", files.join(","));
 const ci = text("ci.yml");
 ok("ci.yml has its three jobs' runners", images(ci).length === 3, `${images(ci).length} runs-on lines`);
 ok("every ci.yml job names a fixed image", fixed(ci), images(ci).join(", "));
+const anchors = text("anchors-check.yml");
+ok("anchors-check.yml names its one job's runner, a fixed image", images(anchors).length === 1 && fixed(anchors), images(anchors).join(", "));
 const mutated = ci.replace(/^( {4}runs-on: *)\S+/m, "$1ubuntu-latest");
 ok("the rule refuses a job on ubuntu-latest", mutated !== ci && !fixed(mutated));
 
