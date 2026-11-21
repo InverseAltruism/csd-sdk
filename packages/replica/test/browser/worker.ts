@@ -109,7 +109,14 @@ const cmds: Record<string, (a: Args) => Promise<unknown>> = {
     let commits = 0;
     const got = new Promise<string>((res) => { reached = res; });
     const store = idbStoreWith({ name: a.name!, slot: sessionSlot(slotKey(a.name!)) }, {
-      point(p) { if (commits !== a.nth || p !== a.point) return undefined; reached?.(p); return p === "issued" ? undefined : never; },
+      // "issued" is not awaited (the transaction would commit), so that commit is held at its next point instead: the
+      // fill stops there and the worker is stopped with the transaction in flight or just landed, never a later commit.
+      point(p) {
+        if (commits === a.nth && a.point === "issued" && p === "slot new") return never;
+        if (commits !== a.nth || p !== a.point) return undefined;
+        reached?.(p);
+        return p === "issued" ? undefined : never;
+      },
     });
     const counted: Store = { ...store, rows: (h) => store.rows(h), commit(c) { commits++; return store.commit(c); } };
     const loop = replicaLoop({ source: source(TOP), store: counted, resetRefused: true });
