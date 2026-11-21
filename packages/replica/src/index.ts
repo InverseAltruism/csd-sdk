@@ -1,6 +1,6 @@
 // @inversealtruism/cairnx-replica: a CairnX replica over cairnx-core's resolve(). This entry does no I/O.
 export type {
-  AuthorScope, Basis, BlockEvents, BlockRow, BlocksBasis, BlocksSource, Boundary, BoundBlock, Commit, Cursor, HeaderRoot, Materializer, RecordProof, Source, SourceCode,
+  AuthorScope, Basis, BlockEvents, BlockRow, BlocksBasis, BlocksSource, Boundary, BoundBlock, Commit, Cursor, HeaderRoot, HeldWindow, Materializer, RecordProof, Source, SourceCode,
   KeptView, Pin, Step, StepContext, Store, StoreMeta, TipView, TrustedSlot, VerifiedHeaders,
 } from "./types.js";
 export { NOT_VERIFIED_CODES, NOTE_CODES, type NoteCode, type NotVerifiedCode } from "./codes.js";

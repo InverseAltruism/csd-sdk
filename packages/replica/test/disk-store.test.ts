@@ -157,11 +157,26 @@ const first = `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).w
 const r2 = row(30_020, r1);
 await w2.commit(commit(at(30_010), [r2], at(30_020), { headerWindow: new Uint8Array([9]) }));
 ok("a new window replaces the old file", !exists(join(W, first)) && [...((await w2.headerWindow()) ?? [])].join() === "9");
+const named = join(W, `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).window.slice(2)}.bin`);
+writeFileSync(named, new Uint8Array([8]));
+const swappedRead = await w2.headerWindow();
+unlinkSync(named);
+const goneRead = await w2.headerWindow();
+writeFileSync(named, new Uint8Array([9]));
+ok("under an open store, a window file overwritten with other bytes, or removed: headerWindow() gives none; put back, the window",
+  swappedRead === null && goneRead === null && [...((await w2.headerWindow()) ?? [])].join() === "9");
 w2.close();
 unlinkSync(join(W, `window-${JSON.parse(readFileSync(join(W, "meta.json"), "utf8")).window.slice(2)}.bin`));
-const w3 = diskStore({ dir: W });
-ok("a window file that is gone: corrupt", (await w3.open(key(FEED)).then((o) => (o.ok ? "opened" : o.reset))) === "corrupt");
+const w3 = diskStore({ dir: W }), o3 = await w3.open(key(FEED)), rows3: BlockRow[] = [];
+for await (const x of w3.rows(0)) rows3.push(x);
+ok("a window file that is gone: the store opens with its rows and boundaries, and headerWindow() gives none",
+  o3.ok && o3.meta?.cursor?.height === 30_020 && rows3.length === 2 && (await w3.boundaries()).length === 0 && (await w3.headerWindow()) === null);
 w3.close();
+const stray = join(W, `window-${"ab".repeat(32)}.bin`);
+writeFileSync(stray, new Uint8Array([5]));
+const w4 = diskStore({ dir: W }), strayOpen = await w4.open(key(FEED));
+ok("a window file the record does not name (a kill before the meta's rename): removed at the next open", strayOpen.ok && !exists(stray));
+w4.close();
 function exists(path: string): boolean { try { statSync(path); return true; } catch { return false; } }
 
 console.log("files in the directory that are not the store's:");
@@ -282,8 +297,8 @@ const M2 = await filled();
 unlinkSync(join(M2, "bounds.jsonl"));
 ok("bounds.jsonl missing likewise: corrupt; the reader resets and refills it, verified", (await loopOpen(M2)) === "corrupt" && (await verifiedAt(M2)).ok);
 const N = await filled(), mn = JSON.parse(readFileSync(join(N, "meta.json"), "utf8"));
-writeFileSync(join(N, "meta.json"), JSON.stringify({ ...mn, meta: { ...mn.meta, windowSha256: 5 } }) + "\n");
-ok("a meta field out of form that no later check reads (windowSha256 a number): corrupt", (await loopOpen(N)) === "corrupt");
+writeFileSync(join(N, "meta.json"), JSON.stringify({ ...mn, meta: { ...mn.meta, work: 5 } }) + "\n");
+ok("a meta field out of form that no later check reads (work a number in a store without a window): corrupt", (await loopOpen(N)) === "corrupt");
 const probe = await openFile(join(root, "probe"), "w"), proto = Object.getPrototypeOf(probe) as { write: (...a: unknown[]) => Promise<{ bytesWritten: number }> };
 await probe.close();
 const realWrite = proto.write;

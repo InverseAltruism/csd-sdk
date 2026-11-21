@@ -17,7 +17,7 @@ import { LOADED_GATES, gatesDiffer } from "./gates.js";
 import { Held, verifyRows } from "./held.js";
 import { fullReplay } from "./replay.js";
 import { keptHeight } from "./store-rules.js";
-import type { BlockRow, Boundary, Commit, Cursor, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
+import type { BlockRow, Boundary, Commit, Cursor, HeldWindow, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
 type Reset = Extract<Awaited<ReturnType<Store["open"]>>, { ok: false }>["reset"];
 /** Internal. Why the last load left the store unavailable, from a fixed list: another process or context holds it
@@ -148,11 +148,12 @@ export function replicaLoop(o: LoopOptions): Loop {
   };
   const logSha256At = (h: number): string | null => logSha256In(held, cursor(), h);
   // The source's basis, also over a store kept from an older pin, so its next commit records the pin it is now under.
-  // A kept store carries the old meta's `windowSha256`, `work` and `workRoot`; no source sets them yet (types.ts,
-  // Source), and keepsStore is revisited when one does, since under an anchor root they are the old pin's.
-  const metaAt = (c: Cursor): StoreMeta => ({
-    ...(meta ?? { format: 1, rule, witnessed: null, windowSha256: null, work: null, workRoot: null }),
+  // `work` and `workRoot` are the window's the commit carries, else the stored window's, carried over: a store kept
+  // from an older pin keeps that pin's workRoot, so its window is not taken under the new one (anchor-root.ts).
+  const metaAt = (c: Cursor, win: HeldWindow | null = null): StoreMeta => ({
+    ...(meta ?? { format: 1, rule, witnessed: null, work: null, workRoot: null }),
     basis: source.basis, gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
+    ...(win === null ? {} : { work: win.work, workRoot: win.workRoot }),
   });
 
   // The one reset path: a refusal other than `unavailable` resets the store and reads it again, once per load.
@@ -170,7 +171,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   // A store that throws while it is read is unavailable; a basis it refuses is the caller's error and is thrown.
   async function read(): Promise<LoopOpen> {
-    let r: Awaited<ReturnType<Store["open"]>>, h: Held | null = null, b: Boundary[] = [];
+    let r: Awaited<ReturnType<Store["open"]>>, h: Held | null = null, b: Boundary[] = [], win: Uint8Array | null = null;
     const rows: BlockRow[] = [];
     try {
       r = await store.open({ format: 1, rule, basis: source.basis });
@@ -186,6 +187,8 @@ export function replicaLoop(o: LoopOptions): Loop {
             logSha256At: (x: number) => logSha256In(held0, c, x) };
           if (!keepsStore(m0.basis, source.basis, source.pin?.eventsHash ?? null, at)) r = { ok: false, reset: "basis" };
         }
+        // A window that cannot be read is no window: the source walks from its root, and the rows stay open.
+        if (r.ok && held0 !== null && m0 !== null && m0.work !== null && source.restoreWindow !== undefined) win = await store.headerWindow().catch(() => null);
       }
       // Set only once the load ends, so a read while it runs sees the last load's.
       storeError = null; storeReason = r.ok ? (h === null ? "corrupt" : null) : r.reset === "unavailable" ? "held" : r.reset;
@@ -201,6 +204,8 @@ export function replicaLoop(o: LoopOptions): Loop {
     }
     change("replace", 0, 0, () => { opened = "open"; meta = r.meta; held = h!; bounds = b; filled.clear(); });
     m.load(rows, r.meta?.cursor?.height ?? null);
+    const wm = r.meta;
+    source.restoreWindow?.(win === null || wm === null || wm.work === null || wm.workRoot === null ? null : { bytes: win, work: wm.work, workRoot: wm.workRoot });
     return { ok: true };
   }
 
@@ -263,7 +268,8 @@ export function replicaLoop(o: LoopOptions): Loop {
     const { rows, cursor: next } = c, r = await commit(() => {
       change("extend", after, next.height, () => { held.add(rows); remember(s.blocks, next); });
       m.apply(rows, next.height);
-      return { expect: at, rows, boundaries: deepBoundaries(after, next.height, s.tip.height), meta: metaAt(next) };
+      const win = source.windowAt?.(next) ?? null;
+      return { expect: at, rows, boundaries: deepBoundaries(after, next.height, s.tip.height), meta: metaAt(next, win), ...(win === null ? {} : { headerWindow: win.bytes }) };
     });
     if (r !== "ok") return r;
     settled(s.tip);

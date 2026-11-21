@@ -81,13 +81,20 @@ export interface Pin {
 
 /** Internal. The loop's contract with a source; `floor` is the pin, or null for the rule's activation height. `rule`,
  *  when present, is the rule of the records a source carries (a pin's); open() refuses another. `pin`, a pinned
- *  source's, is what the loop checks a store filled under an older pin against (keepsStore). It has
- *  no way yet to hand a commit a self-verified root's window, `work` and `workRoot`, or to take them back at open
- *  (README, "What a store must keep"). */
+ *  source's, is what the loop checks a store filled under an older pin against (keepsStore). A source over a
+ *  self-verified root (the anchor root) has `windowAt`, the window to commit with the step it just returned, which ends
+ *  at `cursor` (null: it holds none there, and the store keeps the one it has), and `restoreWindow`, the window a load
+ *  found (null: none); it takes the latter only while it holds no window of its own (README, "What a store must keep"). */
 export interface Source {
   readonly basis: Basis; readonly floor: Cursor | null; readonly rule?: EventRule; readonly pin?: Pin;
   next(ctx: StepContext): Promise<Step>; tip(signal: AbortSignal): Promise<TipView | null>;
+  windowAt?(cursor: Cursor): HeldWindow | null;
+  restoreWindow?(w: HeldWindow | null): void;
 }
+
+/** Internal. A self-verified root's header window as a store keeps it: the bytes (window.ts, encode), the work above
+ *  `workRoot` at its top as a decimal integer, and `workRoot`. */
+export interface HeldWindow { readonly bytes: Uint8Array; readonly work: string; readonly workRoot: Cursor }
 
 /** A complete block bound to its header: every txid recomputed from its body and the set hashing to the header's
  *  merkle root; `authors` holds, by txid, the author bound to each transaction the read asked for. */
@@ -121,11 +128,13 @@ export interface BlocksSource extends Source {
 }
 
 /** Internal. A store's meta. No resolved state is persisted. `eventsHash` and `rowsHash` are the last row's (rowshash.ts);
- *  `gates` is the gate table of the cairnx-core that wrote the rows and boundary state hashes (loop.ts checks it at open). */
+ *  `gates` is the gate table of the cairnx-core that wrote the rows and boundary state hashes (loop.ts checks it at open).
+ *  `work` and `workRoot` are the stored header window's (HeldWindow), set by each commit that carries one and carried
+ *  over by every other, null while none was committed. Each store binds the window by its own record's digest. */
 export interface StoreMeta {
   readonly format: 1; readonly rule: EventRule; readonly basis: Basis; readonly cursor: Cursor | null; readonly eventsHash: string;
   readonly rowsHash: string; readonly eventCount: number; readonly witnessed: { readonly height: number; readonly hash: string; readonly by: string; readonly at: number } | null;
-  readonly windowSha256: string | null; readonly work: string | null; readonly workRoot: Cursor | null; readonly gates: Readonly<Record<string, number>>;
+  readonly work: string | null; readonly workRoot: Cursor | null; readonly gates: Readonly<Record<string, number>>;
 }
 
 /** Internal. One block's events with the events hash and the rows hash after it. */
@@ -164,7 +173,10 @@ export interface Materializer {
 export interface Store {
   open(expect: { readonly format: 1; readonly rule: EventRule; readonly basis: Basis }):
     Promise<{ ok: true; meta: StoreMeta | null } | { ok: false; reset: "format" | "rule" | "basis" | "corrupt" | "unconfirmed" | "unavailable" }>;
-  rows(fromHeight: number): AsyncIterable<BlockRow>; boundaries(): Promise<Boundary[]>; headerWindow(): Promise<Uint8Array | null>;
+  rows(fromHeight: number): AsyncIterable<BlockRow>; boundaries(): Promise<Boundary[]>;
+  /** The header window of the last commit that carried one; null when none, or when the bytes read are not the ones
+   *  the record names. */
+  headerWindow(): Promise<Uint8Array | null>;
   commit(c: Commit): Promise<{ ok: true } | { ok: false; code: "CURSOR_MOVED" | "STORE_FAILED" }>; reset(): Promise<void>; close(): void;
   /** Optional: a store that keeps a reader's settled view across a restart of its context, bound to the record it was
    *  kept with (idb-store.ts); null clears it. `kept` gives it after an open that confirmed that record, else null. */
