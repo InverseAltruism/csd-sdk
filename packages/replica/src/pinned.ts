@@ -7,7 +7,7 @@
 // log's rows and that step are one step, so one commit. A reorg below the pin or to its height with another hash, and
 // a chain that does not hold the pin's block, are PIN_OFF_CHAIN. A store that already holds the pin's rows is bound to
 // the descriptor once per source instead, without reading the log: the block hash, events hash and state hash its rows
-// give at the pin, and the gate table. A refusal of the pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer
+// give at the pin (no state hash where the loop holds no state), and the gate table. A refusal of the pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer
 // to every later step of this source: none clears it.
 import * as loaded from "@inversealtruism/cairnx-core";
 import { EVENTS_HASH_START, canonicalJson, resolve, stateHash, type ChainEvent, type EventRule, type EventsSoFar } from "@inversealtruism/cairnx-core";
@@ -85,8 +85,10 @@ export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): S
       if (ctx.cursor !== null) {
         if (ctx.cursor.height < at.height) return cannot("SOURCE_MALFORMED", `the store's cursor ${ctx.cursor.height} lies below the pin ${at.height}`);
         if (!bound) {
+          // A loop that holds no state (openLog) answers null: the events hash and the gate table bind its store alone.
+          const state = ctx.stateHashAt?.(at.height);
           const wrong = [ctx.hashAt(at.height) === at.hash ? "" : "block hash", ctx.eventsHashAt(at.height) === pin.eventsHash ? "" : "events hash",
-            ctx.stateHashAt?.(at.height) === pin.stateHash ? "" : "state hash"].filter((x) => x !== "");
+            state === null || state === pin.stateHash ? "" : "state hash"].filter((x) => x !== "");
           if (wrong.length > 0) return refuse("PIN_MISMATCH", `the store's rows at the pin give another ${wrong.join(", ")} than the pin`);
           if (gatesDiffer(pin.gates, gatesOf(loaded), at.height)) return refuse("RULES_DIFFER", `the pin's gate table differs from the loaded core's at or below ${at.height}`);
           bound = true;

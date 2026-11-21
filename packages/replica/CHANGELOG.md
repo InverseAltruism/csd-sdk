@@ -15,6 +15,8 @@
   `SOURCE_UNAVAILABLE` with nothing committed; a store that holds the pin's rows is bound to the descriptor once per
   source (block hash, events hash, state hash at the pin, gate table) without reading the log; `derivePin` refuses a
   fixture that starts above the activation height. Internal: `StepContext.stateHashAt`.
+- The reopen bind compares no state hash where the loop holds none, so `openLog` over a pin of its own rule is
+  verified again (it was refused `PIN_MISMATCH` from its second step).
 
 - The basis of a store (`display`, `feed`, `blocks` on an own-node, anchor or caller root, `pinned` over blocks only),
   `checkBasis`, `levelOf`, `proofOf` and `basisKey`; the source, step and store types; `NOT_VERIFIED_CODES` and

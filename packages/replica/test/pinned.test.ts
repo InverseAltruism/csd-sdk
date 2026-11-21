@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { CAIRNX_EVENT_RULE, FINAL_DEPTH, applyOrder, canonicalJson, resolve, stateHash } from "@inversealtruism/cairnx-core";
 import { hosted, hostedBlocks, local, nodeBlocks } from "../src/browser.js";
 import { derivePin } from "../src/server.js";
-import { checkPin, memoryStore, open, openLog, pinned, ReplicaConfigError, replicaLoop, type Basis, type Commit, type Pin, type Store } from "../src/index.js";
+import { checkPin, memoryStore, open, openLog, pinned, ReplicaConfigError, replicaLoop, type Basis, type BlocksSource, type Commit, type Pin, type Store } from "../src/index.js";
 import { fixtureSource, type BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus, fx, pinned as hashes } from "./core-files.js";
@@ -238,4 +238,37 @@ await f990.close();
 const form = (o: Record<string, unknown>) => { try { checkPin({ ...pinOf(), ...o }); return null; } catch (e) { return e; } };
 ok("checkPin refuses a height off an epoch boundary, one below the activation height, and a format other than 1",
   [{ height: P + 1 }, { height: 29_850 }, { format: 2 }].every((o) => form(o) instanceof ReplicaConfigError) && form({}) === null);
+
+console.log("the second read's fixes:");
+// The reopen bind under openLog: the loop holds no state, so no state hash is compared; the events hash binds the store.
+const logStore = memoryStore(), logPin = () => pinned({ pin: pinOf(), then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) });
+const lg1 = await openLog({ source: logPin(), store: logStore, rule: CAIRNX_EVENT_RULE, clock });
+for (let i = 0; i < 3; i++) await lg1.advance();
+const lgs1 = lg1.status();
+await lg1.close();
+const lg2 = await openLog({ source: logPin(), store: logStore, rule: CAIRNX_EVENT_RULE, clock }), lgs2 = await lg2.advance(), lgEv = await lg2.events(null, { limit: 1000 });
+ok("openLog over a pin of its own rule: verified at 30,300, and again through a reopen, its events read verified",
+  lgs1.verified && lgs1.cursor?.height === TIP && lgs2.verified && lgEv.verified && lgEv.value.items.length === corpus.events.filter((e) => e.height <= DEEP).length,
+  `${codes(lgs1)} / ${codes(lgs2)} ${lgs2.lastError?.reason ?? ""}`);
+await lg2.close();
+// A log() that rejects is SOURCE_UNAVAILABLE with nothing committed, and is read again at the next step.
+let tries = 0;
+const flaky: Pin = { ...pinOf(), log: async () => { if (++tries < 3) throw new Error("not yet"); return d.log; } };
+const fl = replicaLoop({ source: pinned({ pin: flaky, then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) }), store: memoryStore(), clock: () => now });
+const fl1 = await fl.advance();
+now += 10 * MIN; await fl.advance(); now += 10 * MIN;
+const fl3 = await fl.advance();
+ok("a log() that rejects twice: SOURCE_UNAVAILABLE with no cursor, then loaded on the third step", fl1.lastError?.code === "SOURCE_UNAVAILABLE" && fl1.cursor === null &&
+  fl3.cursor?.height === TIP && tries === 3, `${fl1.lastError?.code} ${fl3.cursor?.height} tries=${tries}`);
+await fl.close();
+// An event at the pin's own height (30,330): its row keeps the pin's block hash.
+const top330 = fx.blocks.find((b) => b.height === 30_330)!, d330 = await derivePin({ ...fx, to: 30_330, toHash: top330.hash, blocks: fx.blocks.filter((b) => b.height <= 30_330) });
+const tip330 = { height: 30_330, hash: top330.hash, time: 0 };
+const idleThen: BlocksSource = { basis: { kind: "blocks", root: { kind: "own-node", node: NODE }, bodies: NODE }, floor: null, tip: async () => tip330,
+  next: async () => ({ kind: "idle", tip: tip330 }), block: async () => { throw new Error("no block is read"); } };
+const l330 = replicaLoop({ source: pinned({ pin: { ...d330.pin, log: async () => d330.log }, then: idleThen }), store: memoryStore() });
+await l330.advance();
+const row330 = l330.rows(30_330)[0];
+ok("a pin at 30,330, where an event lies: the pin's row holds that event and the pin's block hash", row330?.height === 30_330 && row330.events.length > 0 && row330.hash === top330.hash);
+await l330.close();
 done("cairnx-replica pinned");
