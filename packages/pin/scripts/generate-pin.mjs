@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The pin generator, run by hand on a host with a node of its own, in no CI step and no package script:
-//   node packages/pin/scripts/generate-pin.mjs --rpc <node url> --anchor <height>:<hash> [--check]
+//   node packages/pin/scripts/generate-pin.mjs [--rpc <node url>, else CSD_RPC] --anchor <height>:<hash> [--check]
 // The anchor is the newest entry of a released header anchor table. The pin is the highest epoch boundary at or
 // below it. Refusals, each before anything is written: an anchor less than FINAL_DEPTH below the node's tip; an anchor
 // the node's chain does not hold; a previous pin (the newest delta's end, else the base fixture's) that is not the
@@ -76,14 +76,14 @@ export async function generate({ rpc, anchor, check = false, fetch = boundedFetc
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2), flag = (n) => { const i = argv.indexOf(n); return i < 0 ? undefined : argv[i + 1]; };
-  const [h, hash] = String(flag("--anchor") ?? "").split(":"), rpc = flag("--rpc"), check = argv.includes("--check");
+  const [h, hash] = String(flag("--anchor") ?? "").split(":"), rpc = flag("--rpc") ?? process.env.CSD_RPC, check = argv.includes("--check");
   if (!rpc || !/^[0-9]+$/.test(h ?? "") || !HASH.test(hash ?? "")) {
-    console.error("usage: generate-pin.mjs --rpc <node url> --anchor <height>:<0x hash> [--check]");
+    console.error("generate-pin: no node, or no anchor <height>:<0x hash>, named\nusage: generate-pin.mjs [--rpc <node url>, else CSD_RPC] --anchor <height>:<0x hash> [--check]");
     process.exit(2);
   }
   const pin = existsSync(PIN_FILE) ? JSON.parse(readFileSync(PIN_FILE, "utf8")) : null;
   generate({ rpc: rpc.replace(/\/+$/, ""), anchor: { height: Number(h), hash }, check, pin }).then((r) => {
     if (!check) { writeFileSync(join(DELTAS, r.file), r.text); writeFileSync(PIN_FILE, `${JSON.stringify(r.pin, null, 2)}\n`); }
     console.log(`generate-pin: ${check ? "check passed, nothing written" : `wrote pin.json and fixtures/${r.file}`}: the pin at ${r.pin.height}, ${r.delta.blocks.length} delta blocks, log sha256 ${r.pin.logSha256}`);
-  }, (e) => { console.error(`generate-pin: ${e instanceof Error ? e.message : String(e)}`); process.exit(1); });
+  }, (e) => { console.error(`generate-pin: FAIL: ${e instanceof Error ? e.message : String(e)}`); process.exit(1); });
 }
