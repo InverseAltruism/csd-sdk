@@ -5,7 +5,8 @@
 // for a container restarted on the same volume. Times come from `clock`, written into the file's mtime, so a test
 // moves time without sleeping.
 import { randomBytes } from "node:crypto";
-import { closeSync, constants, linkSync, openSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, linkSync, openSync, readFileSync, renameSync, unlinkSync, utimesSync, writeSync } from "node:fs";
+import { codeOf } from "./errors.js";
 
 /** How often a holder touches its lock, and how long an untouched lock stays live. */
 export const TOUCH_MS = 5_000, STALE_MS = 20_000;
@@ -17,7 +18,6 @@ export interface Lease {
   release(): void;
 }
 
-const codeOf = (e: unknown): unknown => (e as { code?: unknown } | null)?.code;
 const touch = (path: string, ms: number): void => utimesSync(path, ms / 1000, ms / 1000);
 function tokenAt(path: string): string | null {
   try { return readFileSync(path, "utf8"); } catch (e) { if (codeOf(e) === "ENOENT") return null; throw e; }
@@ -35,10 +35,12 @@ function create(path: string, token: string, ms: number): boolean {
 export function takeLease(path: string, clock: () => number = Date.now, judged?: () => void): Lease | null {
   const token = randomBytes(16).toString("hex");
   if (!create(path, token, clock())) {
-    let mtime: number;
-    try { mtime = statSync(path).mtimeMs; } catch (e) { if (codeOf(e) === "ENOENT") return create(path, token, clock()) ? lease(path, token, clock) : null; throw e; }
+    // The lock's time and token through one descriptor, so both are of one file whatever another taker does meanwhile.
+    let fd: number, mtime: number, stale: string;
+    try { fd = openSync(path, "r"); } catch (e) { if (codeOf(e) === "ENOENT") return create(path, token, clock()) ? lease(path, token, clock) : null; throw e; }
+    try { mtime = fstatSync(fd).mtimeMs; stale = readFileSync(fd, "utf8"); } finally { closeSync(fd); }
     if (clock() - mtime <= STALE_MS) return null;
-    const stale = tokenAt(path), aside = `${path}.stale-${token}`;
+    const aside = `${path}.stale-${token}`;
     judged?.();
     try { renameSync(path, aside); } catch (e) { if (codeOf(e) === "ENOENT") return null; throw e; }
     if (tokenAt(aside) !== stale) {

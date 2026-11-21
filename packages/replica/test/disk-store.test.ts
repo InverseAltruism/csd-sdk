@@ -2,7 +2,8 @@
 // with the pin at 30,000 and the recorded node, reopened from disk; and what a store read back can be (cut short, a
 // tail past its committed length, a row or boundary changed, a consistent edit, another format or gate table, a lost
 // window), each with the honest reopen beside it. Then the lease, the sync order, and the refusals of a directory.
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINAL_DEPTH, resolve, stateHash } from "@inversealtruism/cairnx-core";
@@ -22,6 +23,8 @@ import { hashAt, timeAt } from "./reader-harness.js";
 import { FEED, at, commit, key, meta, rollback, row, storeSuite } from "./store-suite.js";
 
 const root = mkdtempSync(join(tmpdir(), "cairnx-replica-disk-"));
+// Removed however the process ends: done() exits the process, and a throw ends it too.
+process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 let n = 0;
 const fresh = () => join(root, `s${n++}`);
 const P = 30_000, TIP = cap.to, DEEP = TIP - FINAL_DEPTH, clock = () => timeAt(TIP) * 1000 + 60_000;
@@ -155,6 +158,93 @@ ok("a window file that is gone: corrupt", (await w3.open(key(FEED)).then((o) => 
 w3.close();
 function exists(path: string): boolean { try { statSync(path); return true; } catch { return false; } }
 
+console.log("files in the directory that are not the store's:");
+const X = fresh();
+mkdirSync(join(X, "sub"), { recursive: true });
+writeFileSync(join(X, "notes.txt"), "mine"); writeFileSync(join(X, "app.db"), "db"); writeFileSync(join(X, "sub", "inner"), "in");
+const x0 = await verifiedAt(X);
+ok("a directory holding notes.txt, app.db and a subdirectory opens and fills: verified", x0.ok, x0.why);
+truncateSync(join(X, "rows.jsonl"), 5);
+const x1 = await verifiedAt(X);
+const kept = ["notes.txt", "app.db", "sub"].every((f) => readdirSync(X).includes(f)) && readFileSync(join(X, "notes.txt"), "utf8") === "mine" &&
+  readFileSync(join(X, "app.db"), "utf8") === "db" && readFileSync(join(X, "sub", "inner"), "utf8") === "in";
+ok("the store found corrupt is reset and refilled, verified, and the three are kept as they were", x1.ok && kept, `${x1.why} ${readdirSync(X).join(",")}`);
+const Y = fresh();
+mkdirSync(Y, { recursive: true });
+const foreign = JSON.stringify({ name: "another program", version: 3 });
+writeFileSync(join(Y, "meta.json"), foreign); writeFileSync(join(Y, "data.bin"), "data");
+const y0 = await diskStore({ dir: Y }).open(key(FEED)).catch((e: unknown) => e);
+const y1 = await reader(Y).catch((e: unknown) => e);
+ok("a meta.json another program wrote: open throws ReplicaConfigError naming it, and so does the reader's open",
+  y0 instanceof ReplicaConfigError && y0.message.includes(join(Y, "meta.json")) && y1 instanceof ReplicaConfigError, String(y0));
+ok("that meta.json and the file beside it are unchanged on disk", readFileSync(join(Y, "meta.json"), "utf8") === foreign && readFileSync(join(Y, "data.bin"), "utf8") === "data");
+const Z = fresh();
+mkdirSync(Z, { recursive: true });
+const z0 = await verifiedAt(Z);
+ok("an empty directory that exists opens and fills: verified", z0.ok, z0.why);
+
+console.log("a store found by a reader that started while the old lease was live:");
+// The old process fills the store under a lease touched at t0 and is never closed, as after a kill; the store is then
+// left as it was, or damaged; the new process starts inside the lease, and its lease clock is then moved past it.
+async function lateStart(name: string, damage: (dir: string) => void, pin: Pin | null) {
+  const dir = fresh(), t0 = clock() - 10_000;
+  const old = await reader(dir, { store: diskStoreWith({ dir }, { clock: () => t0 }) });
+  await old.advance();
+  damage(dir);
+  const now = { t: t0 + 1_000 };
+  const src = pin === null ? nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) : pinned({ pin, then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers }).f }) });
+  const r = await open({ source: src, store: diskStoreWith({ dir }, { clock: () => now.t }), clock });
+  const held = await r.advance();
+  now.t = t0 + STALE_MS + 5_000;
+  const after = await r.advance(), st = await r.state();
+  ok(`${name}: unavailable while the old lease is live (NOT_SYNCED, STORE_UNAVAILABLE), then reset, refilled and verified with the honest state`,
+    !held.verified && held.notes.some((x) => x.code === "STORE_UNAVAILABLE") && after.verified && st.verified && stateHash(st.value) === truth, `${codes(held)} then ${codes(after)}`);
+  await r.close(); await old.close();
+}
+await lateStart("the same basis, as left", () => undefined, pinOf());
+await lateStart("another basis (no pin)", () => undefined, null);
+await lateStart("a corrupt rows file", (dir) => truncateSync(join(dir, "rows.jsonl"), statSync(join(dir, "rows.jsonl")).size - 10), pinOf());
+await lateStart("a gate table that differs at or below the cursor", (dir) => {
+  const m = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+  writeFileSync(join(dir, "meta.json"), JSON.stringify({ ...m, meta: { ...m.meta, gates: { ...LOADED_GATES, V99_HEIGHT: 30_010 } } }) + "\n");
+}, pinOf());
+
+console.log("missing files, out-of-form fields, short writes:");
+const M = await filled();
+unlinkSync(join(M, "rows.jsonl"));
+ok("rows.jsonl missing while the meta commits bytes of it: corrupt", (await loopOpen(M)) === "corrupt");
+const M2 = await filled();
+unlinkSync(join(M2, "bounds.jsonl"));
+ok("bounds.jsonl missing likewise: corrupt; the reader resets and refills it, verified", (await loopOpen(M2)) === "corrupt" && (await verifiedAt(M2)).ok);
+const N = await filled(), mn = JSON.parse(readFileSync(join(N, "meta.json"), "utf8"));
+writeFileSync(join(N, "meta.json"), JSON.stringify({ ...mn, meta: { ...mn.meta, windowSha256: 5 } }) + "\n");
+ok("a meta field out of form that no later check reads (windowSha256 a number): corrupt", (await loopOpen(N)) === "corrupt");
+const probe = await openFile(join(root, "probe"), "w"), proto = Object.getPrototypeOf(probe) as { write: (...a: unknown[]) => Promise<{ bytesWritten: number }> };
+await probe.close();
+const realWrite = proto.write;
+const SW = fresh(), sw = diskStore({ dir: SW });
+await sw.open(key(FEED));
+let cut = true;
+proto.write = function (this: unknown, ...a: unknown[]) {
+  // The first write of the commit lands half its bytes and says so; the rest go through.
+  if (cut && a[0] instanceof Uint8Array && typeof a[2] === "number" && a[2] > 1) { cut = false; return realWrite.call(this, a[0], a[1], Math.floor(a[2] / 2), a[3]); }
+  return realWrite.apply(this, a);
+};
+const swOk = await sw.commit(commit(null, [r1, r2], at(30_020))).finally(() => { proto.write = realWrite; });
+sw.close();
+const sw2 = diskStore({ dir: SW }), swo = await sw2.open(key(FEED)), swRows: BlockRow[] = [];
+for await (const x of sw2.rows(0)) swRows.push(x);
+sw2.close();
+ok("a write that lands short is completed: the commit answers ok and reopens with both rows", swOk.ok && swo.ok && swRows.length === 2 && !cut);
+const SZ = fresh(), sz = diskStore({ dir: SZ });
+await sz.open(key(FEED));
+await sz.commit(commit(null, [r1], at(30_010)));
+const szBefore = readFileSync(join(SZ, "meta.json"));
+proto.write = async function () { return { bytesWritten: 0, buffer: new Uint8Array() }; };
+const szR = await sz.commit(commit(at(30_010), [r2], at(30_020))).then((r) => r.ok, () => false).finally(() => { proto.write = realWrite; });
+sz.close();
+ok("a write that makes no progress fails the commit, and meta.json is as before", szR === false && readFileSync(join(SZ, "meta.json")).equals(szBefore));
+
 console.log("the lease:");
 const L = fresh(), t0 = 1_000_000_000_000;
 const sa = diskStoreWith({ dir: L }, { clock: () => t0 }), oa = await sa.open(key(FEED));
@@ -180,6 +270,11 @@ ok("the old holder's next commit fails closed and writes nothing", !lost.ok && l
 ok("the taker commits", (await taker.commit(commit(at(30_010), [r2], at(30_020)))).ok);
 taker.close();
 ok("close() removes the lock", !exists(join(L2, "lock")));
+const L4 = fresh(), h4 = diskStoreWith({ dir: L4 }, { clock: () => t0 });
+await h4.open(key(FEED)); await h4.commit(commit(null, [r1], at(30_010)));
+const o4 = diskStoreWith({ dir: L4 }, { clock: () => t0 + 1 }), u4 = await o4.open(key(FEED)), e4 = await o4.reset().then(() => null, (e: unknown) => e);
+ok("reset() by a store that does not hold the lease throws and removes nothing", !u4.ok && e4 instanceof Error && exists(join(L4, "meta.json")) && exists(join(L4, "rows.jsonl")));
+h4.close();
 const L3 = fresh(), stale = diskStoreWith({ dir: L3 }, { clock: () => t0 });
 await stale.open(key(FEED));
 const late = () => t0 + STALE_MS + 1;
@@ -217,5 +312,4 @@ const nested = diskStore({ dir: join(root, "made", "on", "open") });
 ok("an absolute dir that does not exist is created at open", (await nested.open(key(FEED))).ok && statSync(join(root, "made", "on", "open")).isDirectory());
 nested.close();
 
-rmSync(root, { recursive: true, force: true });
 done("cairnx-replica diskStore");

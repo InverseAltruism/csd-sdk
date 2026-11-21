@@ -23,10 +23,12 @@ type Reset = "format" | "rule" | "basis" | "corrupt" | "unavailable";
  *  meta and boundaries (held.ts), or `rule` when the gate table it was written under differs from the loaded core's at
  *  or below its cursor. */
 export type LoopOpen = { ok: true } | { ok: false; reset: Reset };
-/** Internal. `maxBlocks` and `maxRequests` are passed to the source as each step's budget. */
+/** Internal. `maxBlocks` and `maxRequests` are passed to the source as each step's budget. With `resetRefused`, every
+ *  load the store refuses for a reason other than `unavailable` resets the store and loads once more (the reader's
+ *  rule), whether at the first open or at a later reload. */
 export interface LoopOptions {
   readonly source: Source; readonly store: Store; readonly rule?: EventRule; readonly materializer?: Materializer;
-  readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number;
+  readonly clock?: () => number; readonly maxBlocks?: number; readonly maxRequests?: number; readonly resetRefused?: boolean;
 }
 /** Internal. `store` is null before the first open; `retryAt` is when a backed-off loop next calls its source. */
 export interface LoopStatus {
@@ -133,8 +135,20 @@ export function replicaLoop(o: LoopOptions): Loop {
     gates: LOADED_GATES, cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
   });
 
-  // A store that throws while it is read is unavailable; a basis it refuses is the caller's error and is thrown.
+  // The one reset path: a refusal other than `unavailable` resets the store and reads it again, once per load.
   async function load(): Promise<LoopOpen> {
+    const first = await read();
+    if (first.ok || first.reset === "unavailable" || o.resetRefused !== true) return first;
+    try { await store.reset(); } catch (e) {
+      if (e instanceof ReplicaConfigError) throw e;
+      change("replace", 0, 0, () => { opened = "unavailable"; });
+      return { ok: false, reset: "unavailable" };
+    }
+    return read();
+  }
+
+  // A store that throws while it is read is unavailable; a basis it refuses is the caller's error and is thrown.
+  async function read(): Promise<LoopOpen> {
     let r: Awaited<ReturnType<Store["open"]>>, h: Held | null = null, b: Boundary[] = [];
     const rows: BlockRow[] = [];
     try {

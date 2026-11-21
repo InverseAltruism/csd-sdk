@@ -16,6 +16,8 @@ import { runSequence } from "./disk-kill-sequence.js";
 const TSX = fileURLToPath(new URL("../../../node_modules/.bin/tsx", import.meta.url));
 const CHILD = fileURLToPath(new URL("./disk-kill-child.ts", import.meta.url));
 const root = mkdtempSync(join(tmpdir(), "cairnx-replica-kill-"));
+// Removed however the process ends: done() exits the process, and a throw ends it too.
+process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 const child = (dir: string, at?: string) => new Promise<{ status: number | null; signal: NodeJS.Signals | null; out: string }>((go) => {
   const c = spawn(TSX, [CHILD, dir, ...(at ? [at] : [])], { stdio: ["ignore", "pipe", "inherit"] });
   let out = "";
@@ -61,5 +63,4 @@ ok(`every one of the ${points.length} children was killed at its point`, killed 
 ok("every killed store opens, not corrupt", opened === points.length, String(opened));
 ok("each opens at the cursor before or after the commit that was cut", between === points.length, String(between));
 ok("each, run on, ends at the uninterrupted run's cursor and events hash", ended === points.length, bad.slice(0, 5).join(" "));
-rmSync(root, { recursive: true, force: true });
 done("cairnx-replica disk kill");

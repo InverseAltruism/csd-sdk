@@ -213,7 +213,7 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -393,24 +393,32 @@ the witness's to confirm.
 700 at open; a relative path, or one that is a file or cannot be created, throws `ReplicaConfigError`). Pass it as
 `store` to `open` or `openLog`. Files: `meta.json` (the store's tag and format, the meta without `witnessed`, the
 committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
-`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. A commit appends at the
-committed lengths, syncs each file, then writes the new meta to a temporary file, syncs it, renames it over
-`meta.json` and syncs the directory; a rollback is that rename alone. Nothing is written below the lengths of a meta
-that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
+`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
+writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
+`open` throw `ReplicaConfigError` naming it, with nothing removed. A commit appends at the committed lengths, syncs
+each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
+directory; a rollback is that rename alone. While one holder's directory syncs return, nothing is written below the
+lengths of a meta that can be on disk, so a kill at any point leaves a whole commit, the one before or the one after
 (`test/disk-kill.test.ts` kills a process at every point of a 20-commit sequence with a rollback, 209 times); the
-order of the syncs, which a kill cannot show, is what carries this past a power loss (`test/disk-store.test.ts`).
+order of the syncs, which a kill cannot show, is what carries this past a power loss (`test/disk-store.test.ts`). An
+extend after a rollback whose directory sync did not land, or a refill after a reset cut short, can leave files that
+open `corrupt`; the store is then refilled, as for any file that fails its checks.
 
 At open, in order: the format, the rule, the basis and the gate table the rows were written under (another table at or
 below the cursor resets the store, reason `rule`); then the files (a file shorter than its committed length, a line
 out of form, a boundary chain or window digest other than the meta's: `corrupt`, and the reader resets and refills);
 then the loop's checks of every row against the contract and both running hashes, and under a pin the bind above. A
-store is trusted no further than its writer: rows above a pin are not compared with the chain at open, so a consistent
-edit of them passes. Do not use a store someone else wrote.
+store refused for any reason but `unavailable` is reset and refilled whenever the reader loads it, also when it first
+found the store held by another process. The checks prove that the files agree with each other, not where they came
+from: rows above a pin, and every row without one, are not compared with the chain at open, so a consistent edit of
+them passes. For a server that credits deposits from the replica, the directory is as sensitive as its table of
+credits. Do not use a store someone else wrote.
 
 One process writes a directory at a time, by a lease on `lock`: the holder touches it every 5 s, and one not touched
 for 20 s is stale and taken over. While another process holds it, `open` is `unavailable` (the answers carry
-`NOT_SYNCED` and the note `STORE_UNAVAILABLE`) and the next advance tries again; a holder whose lease was taken over
-fails its next commit and writes nothing. The package installs no signal handler: a server calls `close()` at
+`NOT_SYNCED` and the note `STORE_UNAVAILABLE`) and the next advance tries again. A holder whose lease was taken
+over while it waited between commits fails its next commit and writes nothing; one stopped after that commit's check
+of its lease finishes the commit over the taker's files, and the store then opens `corrupt` and is refilled. The package installs no signal handler: a server calls `close()` at
 shutdown, which releases the lease; after a crash the next start waits until the lease is stale.
 
 ## Display

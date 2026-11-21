@@ -8,6 +8,11 @@
   rather than reading the one a boundary stores, and compares the stored events at or below the pin with
   `logSha256`. Internal: `Commit` is an extend or a rollback that carries the meta only; `StoreMeta.gates`;
   `Boundary.rowsHash`; the commit checks of both stores in one module.
+- `diskStore`, after review: it writes and removes only its own names (other files and directories in `dir` are left
+  alone; another program's `meta.json` makes `open` throw `ReplicaConfigError`); a missing row file under a meta that
+  commits bytes of it is `corrupt`; a write that lands short is completed or fails the commit; the lease's takeover
+  reads the lock's time and token through one descriptor. The reader resets a refused store at whichever load finds
+  it, also after a start that found the store held (internal: `LoopOptions.resetRefused`).
 - `Pin`, `checkPin` and `pinned({ pin, then })`: a release's log below a pin, then a block source above it. The first
   step checks the log's sha256, its canonical form and contract, its events hash, the gate table and its state hash,
   then the pin's block hash against `then`'s root, and commits the log with `then`'s first step; `PIN_MISMATCH`,
