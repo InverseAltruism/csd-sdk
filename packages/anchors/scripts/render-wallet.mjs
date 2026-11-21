@@ -2,8 +2,7 @@
 // The wallet's two generated source files, rendered from anchors.json byte for byte: src/core/spvanchors.ts (the
 // floor, the chunk and the entries) and src/core/spvnewest.ts (the newest entry's height alone).
 //   node render-wallet.mjs anchors|newest [<anchors.json>, else the package's own]     prints the file to stdout
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { TABLE, firstChunk, parseTable, validateTable } from "./table.mjs";
 
@@ -31,7 +30,7 @@ export function renderSpvNewest(t) {
   ].join("\n");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [which, file = TABLE, ...rest] = process.argv.slice(2);
   const render = { anchors: renderSpvAnchors, newest: renderSpvNewest }[which ?? ""];
   if (!render || rest.length > 0) {

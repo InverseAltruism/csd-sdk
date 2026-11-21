@@ -3,8 +3,10 @@
 // that are two stub hosts, and a table on a 64-block grid so the range holds several entries (the grid is a
 // parameter, the shipped 4,096 is pinned by anchors.test.ts). The honest runs come first, then each refusal alone.
 // No request leaves the process: the global fetch is replaced by one that fails the test.
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { headerHash } from "@inversealtruism/csd-codec";
@@ -22,7 +24,7 @@ type Row = { height: number; hash: string; header: Block["header"] };
 const rowAt = (h: number): Row => ({ height: h, hash: hashAt(h), header: block(h)!.header });
 
 const HEADERS = "https://headers.example", RPC = "https://rpc.example";
-type Served = { rows?: (from: number, rows: Row[]) => Row[]; rpcHash?: (h: number) => string; rpcHeight?: (h: number) => number; rpcOk?: (h: number) => boolean; tip?: number | null; status?: (path: string) => number | undefined };
+type Served = { rows?: (from: number, rows: Row[]) => Row[]; rpcHash?: (h: number) => string; rpcHeight?: (h: number) => number | undefined; rpcOk?: (h: number) => boolean; tip?: number | null; status?: (path: string) => number | undefined };
 function stub(o: Served = {}) {
   const log: { url: string; redirect: RequestRedirect | undefined }[] = [];
   const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
@@ -145,6 +147,7 @@ ok("a second RPC that disagrees about the floor", refusedWith(await checkRun({ s
 ok("a second RPC that disagrees about the activation root: the root is checked though the walk starts above it", refusedWith(await checkRun({ served: { rpcHash: (h) => (h === 29_859 ? hashAt(29_860) : hashAt(h)) } }), /answers "no" for the activation root at height 29859/));
 ok("a second RPC that does not answer for an entry", refusedWith(await checkRun({ served: { status: (p) => (p === "/block/height/30143" ? 404 : undefined) } }), /answers "unreachable" for entry 2 at height 30143/));
 ok("a second RPC that answers for another height than the one asked", refusedWith(await checkRun({ served: { rpcHeight: (h) => (h === 30_143 ? 30_144 : h) } }), /answers "no" for entry 2 at height 30143/));
+ok("a second RPC whose answer has no height field", refusedWith(await checkRun({ served: { rpcHeight: (h) => (h === 30_143 ? undefined : h) } }), /answers "no" for entry 2 at height 30143/));
 ok("a second RPC whose answer carries the right hash but says ok false", refusedWith(await checkRun({ served: { rpcOk: (h) => h !== 30_143 } }), /answers "unreachable" for entry 2 at height 30143/));
 ok("a second RPC whose answer is a 200 with no hash", refusedWith(await checkRun({ served: { status: (p) => (p === "/block/height/30143" ? 200 : undefined) } }), /answers "unreachable" for entry 2 at height 30143/));
 ok("a newest entry 999 below the second RPC's tip", refusedWith(await checkRun({ served: { tip: 31_270 } }), /less than 1000 below the tip 31270/));
@@ -193,6 +196,24 @@ const script = new URL("../scripts/generate-anchors.mjs", import.meta.url).pathn
 const spawned = (argv: string[]) => { const env = { ...process.env }; delete env.ANCHORS_HEADERS_BASE; return spawnSync(process.execPath, [script, ...argv], { encoding: "utf8", env }); };
 const s1 = spawned(["--chek"]), s2 = spawned([c1File]);
 ok("the script run as a file: a mistyped option and a missing headers source each exit 2 before any read", s1.status === 2 && /unknown or incomplete option --chek/.test(s1.stderr) && s2.status === 2 && /there is no default host/.test(s2.stderr), `${s1.stderr}${s2.stderr}`);
+
+console.log("run through a symlinked path:");
+// A source that answers 404 to everything, on a loopback port the OS picks. The script runs as a child, so the server
+// answers while the test awaits it.
+const server = createServer((_, res) => { res.statusCode = 404; res.end("{}"); });
+await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+symlinkSync(new URL("..", import.meta.url).pathname.replace(/\/$/, ""), join(dir, "pkg"));
+const viaLink = await new Promise<{ status: number | null; stdout: string; stderr: string }>((done2) => {
+  const child = spawn(process.execPath, [join(dir, "pkg/scripts/generate-anchors.mjs"), "--check", "--headers", base, "--rpc", base]);
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (d: Buffer) => { stdout += d; });
+  child.stderr.on("data", (d: Buffer) => { stderr += d; });
+  child.on("close", (status) => done2({ status, stdout, stderr }));
+});
+server.close();
+ok("--check through a symlinked package directory against a source that refuses: exit 1 with the refusal printed, not a silent exit 0",
+  viaLink.status === 1 && viaLink.stdout === "" && /FAIL: http:\/\/127\.0\.0\.1:\d+\/api\/headers\/\d+\/512 -> 404/.test(viaLink.stderr), `exit ${viaLink.status}: ${viaLink.stdout}${viaLink.stderr}`);
 
 rmSync(dir, { recursive: true, force: true });
 done("csd-anchors generator");

@@ -5,7 +5,7 @@
 // RPC (generate.test.ts runs it against stubs).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { headerHash } from "@inversealtruism/csd-codec";
@@ -41,6 +41,27 @@ const cli = (which: string) => spawnSync(process.execPath, [new URL("../scripts/
 ok("the script as the wallet will call it prints both files byte for byte", cli("anchors").stdout === walletAnchors && cli("newest").stdout === walletNewest);
 ok("the script refuses an unknown file name, exit 2", cli("everything").status === 2);
 ok("the renderer refuses a table that fails the shape rules", /ascend/.test(why(() => wallet.renderSpvAnchors({ ...table, anchors: table.anchors.filter((_, i) => i !== 10) }))));
+
+console.log("run through a symlinked path (pnpm and npm link install a package so):");
+const linkDir = mkdtempSync(join(tmpdir(), "anchors-link-"));
+const pkgDir = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+symlinkSync(pkgDir, join(linkDir, "pkg"));
+const viaLink = (script: string, ...args: string[]) => spawnSync(process.execPath, [join(linkDir, "pkg/scripts", script), ...args], { encoding: "utf8" });
+const linked = viaLink("render-wallet.mjs", "anchors");
+ok("render-wallet.mjs through a symlinked package directory prints the wallet's spvanchors.ts (sha256 5b79a4a4...) and exits 0",
+  linked.status === 0 && sha(linked.stdout) === sha(walletAnchors), `exit ${linked.status}, ${linked.stdout.length} bytes`);
+const unknown = viaLink("render-wallet.mjs", "bogus");
+ok("render-wallet.mjs through the symlink refuses an unknown table name: exit 2 with its usage", unknown.status === 2 && /usage: render-wallet/.test(unknown.stderr), `exit ${unknown.status}`);
+const copy = join(linkDir, "copy");
+mkdirSync(copy);
+cpSync(here("../scripts/"), join(copy, "scripts"), { recursive: true });
+copyFileSync(here("../anchors.json"), join(copy, "anchors.json"));
+symlinkSync(copy, join(linkDir, "copy-link"));
+const builtVia = spawnSync(process.execPath, [join(linkDir, "copy-link/scripts/build.mjs")], { encoding: "utf8" });
+ok("build.mjs through a symlinked package directory builds: exit 0, its line printed, the module written byte for byte",
+  builtVia.status === 0 && /csd-anchors build: 28 entries/.test(builtVia.stdout) && existsSync(join(copy, "dist/index.js")) && readFileSync(join(copy, "dist/index.js"), "utf8") === read("../dist/index.js"),
+  `exit ${builtVia.status}: ${builtVia.stdout}${builtVia.stderr}`);
+rmSync(linkDir, { recursive: true, force: true });
 
 console.log("the floor and the activation root are blocks of the chain:");
 type Block = { height: number; hash: string; header: { version: number; prev: string; merkle: string; time: number; bits: number; nonce: number } };

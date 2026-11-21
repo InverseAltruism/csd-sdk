@@ -11,8 +11,7 @@
 // committed table, not derived from served data. --check re-walks the committed table from <headers> and requires the
 // floor, the activation root and every entry canonical at <rpc>, and the newest entry at least MIN_MARGIN below
 // <rpc>'s tip. Read-only GETs, no redirect followed, paced.
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { LightClient } from "@inversealtruism/csd-light";
 import { CHUNK, HASH_RE, TABLE, extensionFault, firstChunk, parseTable, renderJson, topOf } from "./table.mjs";
@@ -181,4 +180,4 @@ export async function main(argv, env = process.env, ctx = {}) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

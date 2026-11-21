@@ -2,8 +2,8 @@
 // The package's build: refuses unless anchors.json passes its shape rules and is its own canonical text (table.mjs),
 // then writes dist/index.js (ANCHORS, the table as a deep-frozen literal, so Node, bundlers and an extension worker
 // load it alike) and its types.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT, parseTable } from "./table.mjs";
 
@@ -34,7 +34,7 @@ export function build(root = ROOT) {
   return table;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const t = build();
     console.log(`csd-anchors build: ${t.anchors.length} entries, ${t.anchors[0].height} to ${t.anchors.at(-1).height}, floor ${t.floor.height}`);
