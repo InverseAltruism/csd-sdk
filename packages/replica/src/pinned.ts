@@ -3,9 +3,12 @@
 // that the log is the canonical JSON of an event list keeping the loop's contract (contract.ts) at or below the pin,
 // its events hash, the gate table cut at the pin, and its state hash. It then takes `then`'s step from the pin, whose
 // root checks the pin's block hash: one's own node links the block above to it, an anchor root's seed must end at it,
-// a caller's headers must hold it. The log's rows and that step are one step, so one commit. A reorg below the pin or
-// to its height with another hash, and a chain that does not hold the pin's block, are PIN_OFF_CHAIN. A refusal of the
-// pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer to every later step of this source: none clears it.
+// a caller's headers must hold it; a root whose tip is below the pin cannot, and the step is SOURCE_UNAVAILABLE. The
+// log's rows and that step are one step, so one commit. A reorg below the pin or to its height with another hash, and
+// a chain that does not hold the pin's block, are PIN_OFF_CHAIN. A store that already holds the pin's rows is bound to
+// the descriptor once per source instead, without reading the log: the block hash, events hash and state hash its rows
+// give at the pin, and the gate table. A refusal of the pin (PIN_MISMATCH, PIN_OFF_CHAIN, RULES_DIFFER) is the answer
+// to every later step of this source: none clears it.
 import * as loaded from "@inversealtruism/cairnx-core";
 import { EVENTS_HASH_START, canonicalJson, resolve, stateHash, type ChainEvent, type EventRule, type EventsSoFar } from "@inversealtruism/cairnx-core";
 import { verifyContentBytes } from "@inversealtruism/csd-codec";
@@ -38,7 +41,7 @@ function blocksOf(events: readonly ChainEvent[], pin: Cursor): BlockEvents[] {
 export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): Source {
   const pin = checkPin(o.pin), at: Cursor = { height: pin.height, hash: pin.blockHash }, then = o.then;
   const basis = checkBasis({ kind: "pinned", pin: at, logSha256: pin.logSha256, above: then.basis });
-  let refused: Step | null = null, logged: Promise<Logged | Step> | null = null;
+  let refused: Step | null = null, logged: Promise<Logged | Step> | null = null, bound = false;
   const refuse = (code: SourceCode, reason: string): Step => (refused = cannot(code, reason));
 
   async function load(rule: EventRule): Promise<Logged | Step> {
@@ -81,6 +84,13 @@ export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): S
       if (refused !== null) return refused;
       if (ctx.cursor !== null) {
         if (ctx.cursor.height < at.height) return cannot("SOURCE_MALFORMED", `the store's cursor ${ctx.cursor.height} lies below the pin ${at.height}`);
+        if (!bound) {
+          const wrong = [ctx.hashAt(at.height) === at.hash ? "" : "block hash", ctx.eventsHashAt(at.height) === pin.eventsHash ? "" : "events hash",
+            ctx.stateHashAt?.(at.height) === pin.stateHash ? "" : "state hash"].filter((x) => x !== "");
+          if (wrong.length > 0) return refuse("PIN_MISMATCH", `the store's rows at the pin give another ${wrong.join(", ")} than the pin`);
+          if (gatesDiffer(pin.gates, gatesOf(loaded), at.height)) return refuse("RULES_DIFFER", `the pin's gate table differs from the loaded core's at or below ${at.height}`);
+          bound = true;
+        }
         const s = await then.next(ctx);
         return offChain(s, ctx.cursor.height) ?? s;
       }
@@ -90,6 +100,7 @@ export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): S
         eventsHashAt: (h) => (h === at.height ? pin.eventsHash : null) });
       const off = offChain(s, at.height);
       if (off !== null || s.kind === "cannot" || s.kind === "reorg") return off ?? s;
+      if (s.kind === "idle" && s.tip.height < at.height) return cannot("SOURCE_UNAVAILABLE", `the root's tip ${s.tip.height} is below the pin ${at.height}`);
       return s.kind === "idle" ? { kind: "blocks", blocks: l.blocks, cursor: at, tip: s.tip } : { ...s, blocks: [...l.blocks, ...s.blocks] };
     },
   };

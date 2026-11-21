@@ -114,6 +114,13 @@ export function replicaLoop(o: LoopOptions): Loop {
   const cursor = (): Cursor | null => meta?.cursor ?? null;
   const hashAt = (h: number): string | null => held.hashAt(h) ?? (cursor()?.height === h ? cursor()!.hash : null);
   const eventsHashAt = (h: number): string | null => { const c = cursor(); return c === null || h > c.height ? null : held.eventsHashAt(h); };
+  const stateHashAt = (h: number): string | null => {
+    const c = cursor(), b = bounds.find((x) => x.height === h);
+    if (c === null || h > c.height) return null;
+    if (b?.stateHash) return b.stateHash;
+    const s = m.stateAt(h, 0);
+    return s === null ? null : stateHash(s);
+  };
   const metaAt = (c: Cursor): StoreMeta => ({
     ...(meta ?? { format: 1, rule, basis: source.basis, witnessed: null, windowSha256: null, work: null, workRoot: null }),
     cursor: c, eventsHash: held.eventsHash, rowsHash: held.rowsHash, eventCount: held.count,
@@ -225,7 +232,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   async function step(signal: AbortSignal, deadlineAt: number): Promise<"more" | "stop"> {
     let s: Step;
     try {
-      s = await source.next({ rule, cursor: cursor(), sofar: held, floor, hashAt, eventsHashAt, budget: { deadlineAt, ...limits }, signal, now: clock });
+      s = await source.next({ rule, cursor: cursor(), sofar: held, floor, hashAt, eventsHashAt, stateHashAt, budget: { deadlineAt, ...limits }, signal, now: clock });
     } catch (e) {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }

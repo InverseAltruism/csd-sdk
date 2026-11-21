@@ -45,6 +45,9 @@ export interface BlockEvents { readonly height: number; readonly hash: string | 
 export interface StepContext {
   readonly rule: EventRule; readonly cursor: Cursor | null; readonly sofar: EventsSoFar; readonly floor?: number;
   hashAt(height: number): string | null; eventsHashAt(height: number): string | null;
+  /** The state hash at `height` from the rows held, replayed when no boundary there keeps one; null above the cursor or
+   *  when the loop holds no state. Absent in a context built outside the loop. */
+  stateHashAt?(height: number): string | null;
   readonly budget: { readonly deadlineAt: number; readonly maxRequests: number; readonly maxBlocks: number };
   readonly signal: AbortSignal; now(): number;
 }

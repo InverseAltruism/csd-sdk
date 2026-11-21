@@ -11,9 +11,11 @@ import { memoryStore } from "./memory-store.js";
 import { fixtureSource, type BlockFixture } from "./testing.js";
 import type { Pin } from "./types.js";
 
-/** The pin at `fx.to`, an epoch boundary, and its log's bytes. Throws when the fixture does not reach `fx.to` whole. */
+/** The pin at `fx.to`, an epoch boundary, and its log's bytes. Throws when the fixture does not start at or below the
+ *  activation height or does not reach `fx.to` whole. */
 export async function derivePin(fx: BlockFixture, rule: EventRule = CAIRNX_EVENT_RULE): Promise<{ pin: Omit<Pin, "log">; log: Uint8Array }> {
   if (!Number.isSafeInteger(fx.to) || fx.to % EPOCH_LEN !== 0) throw new Error(`derivePin: ${fx.to} is not an epoch boundary`);
+  if (!(fx.from <= rule.activationHeight)) throw new Error(`derivePin: the fixture starts at ${fx.from}, above the activation height ${rule.activationHeight}`);
   const loop = replicaLoop({ source: fixtureSource(fx), store: memoryStore(), rule, maxBlocks: Number.MAX_SAFE_INTEGER });
   const s = await loop.advance();
   if (s.lastError !== null || s.cursor?.height !== fx.to) throw new Error(`derivePin: the fixture stops short of ${fx.to}: ${s.lastError?.reason ?? "no error"}`);

@@ -6,12 +6,12 @@ import { createHash } from "node:crypto";
 import { CAIRNX_EVENT_RULE, FINAL_DEPTH, applyOrder, canonicalJson, resolve, stateHash } from "@inversealtruism/cairnx-core";
 import { hosted, hostedBlocks, local, nodeBlocks } from "../src/browser.js";
 import { derivePin } from "../src/server.js";
-import { memoryStore, open, openLog, pinned, ReplicaConfigError, replicaLoop, type Basis, type Pin, type Store } from "../src/index.js";
+import { checkPin, memoryStore, open, openLog, pinned, ReplicaConfigError, replicaLoop, type Basis, type Commit, type Pin, type Store } from "../src/index.js";
 import { fixtureSource, type BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus, fx, pinned as hashes } from "./core-files.js";
-import { all, callerHeaders, front, ORIGIN } from "./hosted-harness.js";
-import { branchFrom, cap, NODE, node } from "./node-harness.js";
+import { all, ANCHOR, callerHeaders, front, ORIGIN } from "./hosted-harness.js";
+import { blockAt, branchFrom, cap, NODE, node, type Answers } from "./node-harness.js";
 import { hashAt, timeAt, witnessOn } from "./reader-harness.js";
 
 const P = 30_000, TIP = cap.to, DEEP = TIP - FINAL_DEPTH, MIN = 60_000;
@@ -40,6 +40,7 @@ ok("local with a pin: verified at level 3, proof pinned, the deep state equal to
   s0.verified && s0.level === 3 && s0.proof === "pinned" && s0.vouch.kind === "pinned" && s0.cursor?.height === TIP && st0.verified && stateHash(st0.value) === truth && below === 0,
   `${codes(s0)} below=${below}`);
 await r0.close();
+let fr = front({ answers: all });
 const live = witnessOn(all, TIP), hostedOf = (witness?: typeof live.witness) => hosted({ pin: pinOf(), origin: ORIGIN, fetch: front({ answers: all }).f, ...(witness ? { witness } : {}) });
 const h0 = await open({ ...hostedOf(live.witness), clock }), hs0 = await h0.advance(), hst = await h0.state();
 ok("hosted with a witness: verified, the deep state equal to resolve() over the corpus", hs0.verified && hst.verified && stateHash(hst.value) === truth, codes(hs0));
@@ -144,4 +145,97 @@ ok("a newer pin over a pinned memory store: reset and refilled from the newer lo
   aB.verified && belowB === 0 && aB.cursor?.height === TIP && (aB.vouch as { pin: { height: number } }).pin.height === 30_090);
 await rB.close();
 await bl.close();
+
+console.log("the review's fixes:");
+/** A memory store counting the commits it accepted. */
+function counted(): { store: Store; commits: Commit[] } {
+  const inner = memoryStore(), commits: Commit[] = [];
+  return { store: { ...inner, async commit(c) { const r = await inner.commit(c); if (r.ok) commits.push(c); return r; } }, commits };
+}
+now = timeAt(TIP) * 1000 + MIN;
+// F1: an anchor root without a pin emits PIN_OFF_CHAIN for headers that do not link above its anchor; only a pinned
+// basis puts that code in why, so the answer stays as it was before pins (verified, the step refused).
+const shifted: Answers = { ...all };
+for (let h = ANCHOR.height + 1; h < TIP; h++) { const b = blockAt(all, h + 1); b.height = h; shifted[`/block/height/${h}`] = JSON.stringify(b); }
+const sv: { answers: Answers; tip?: number } = { answers: all }, np = await open({ source: hostedBlocks({ origin: ORIGIN, root: { kind: "anchor", anchor: ANCHOR, window: 8 }, fetch: front(sv).f }),
+  witnesses: [witnessOn(all, TIP).witness], clock }), np0 = await np.advance();
+sv.answers = shifted; sv.tip = TIP - 1; now += 2 * MIN;
+const np1 = await np.advance(), npState = await np.state();
+ok("no pin, an anchor root whose server stops linking: the step refused PIN_OFF_CHAIN, the answer verified as before pins",
+  np0.verified && np1.lastError?.code === "PIN_OFF_CHAIN" && np1.verified && codes(np1) === "" && npState.verified, `${codes(np1)} ${np1.lastError?.code}`);
+await np.close();
+now = timeAt(TIP) * 1000 + MIN;
+// F2: a root whose tip is below the pin: nothing is committed under any root.
+const forked = { ...all, ...branchFrom(29_940) }, cb = counted(), hc = { answers: forked, tip: 29_950 as number | null };
+const callerBelow = await open({ source: pinned({ pin: pinOf(), then: hostedBlocks({ origin: ORIGIN, root: { kind: "caller", headers: callerHeaders(hc).headers }, fetch: front({ answers: forked }).f }) }),
+  store: cb.store, witnesses: [witnessOn(forked, TIP).witness], clock }), cbs = await callerBelow.advance();
+ok("a caller root whose headers end at 29,950, below the pin: SOURCE_UNAVAILABLE, 0 commits", cbs.lastError?.code === "SOURCE_UNAVAILABLE" && cb.commits.length === 0 && cbs.cursor === null,
+  `${cbs.lastError?.code} commits=${cb.commits.length}`);
+hc.tip = TIP; now += 2 * MIN;
+const cbs2 = await callerBelow.advance();
+ok("the same caller's headers then pass the pin on a branch without it: PIN_OFF_CHAIN, still 0 commits", cbs2.lastError?.code === "PIN_OFF_CHAIN" && cb.commits.length === 0, `${cbs2.lastError?.code} commits=${cb.commits.length}`);
+await callerBelow.close();
+const ob = counted(), ownBelow = await open({ source: pinned({ pin: pinOf(), then: nodeBlocks({ node: NODE, fetch: node({ answers: cap.answers, tip: 29_990 }).f }) }), store: ob.store, clock });
+const obs = await ownBelow.advance(), hb = counted();
+const hostedBelow = await open({ source: pinned({ pin: pinOf(), then: hostedBlocks({ origin: ORIGIN, root: { kind: "anchor", anchor: { height: P, hash: d.pin.blockHash } }, fetch: front({ answers: all, tip: 29_990 }).f }) }),
+  store: hb.store, witnesses: [witnessOn(all, TIP).witness], clock }), hbs = await hostedBelow.advance();
+ok("one's own node and an anchor root with their tips at 29,990, below the pin: SOURCE_UNAVAILABLE, 0 commits each",
+  obs.lastError?.code === "SOURCE_UNAVAILABLE" && ob.commits.length === 0 && hbs.lastError?.code === "SOURCE_UNAVAILABLE" && hb.commits.length === 0, `${obs.lastError?.code} ${hbs.lastError?.code}`);
+await ownBelow.close(); await hostedBelow.close();
+const atPin = await open({ ...local({ node: NODE, pin: pinOf(), fetch: node({ answers: cap.answers, tip: P }).f }), clock: () => timeAt(P) * 1000 + MIN }), atPinS = await atPin.advance();
+ok("the honest node with its tip exactly at the pin: the log committed, the cursor the pin", atPinS.cursor?.height === P && atPinS.cursor.hash === d.pin.blockHash && atPinS.lastError === null);
+await atPin.close();
+// F3: a store that holds the pin's rows is bound to the descriptor at every reopen, without reading the log.
+let logReads = 0;
+const counting = (pin: Pin): Pin => ({ ...pin, log: async () => { logReads++; return pin.log(); } });
+const shared = memoryStore(), edits: [string, Partial<Omit<Pin, "log">>, string][] = [
+  ["eventsHash", { eventsHash: d117.pin.eventsHash }, "PIN_MISMATCH"], ["stateHash", { stateHash: d117.pin.stateHash }, "PIN_MISMATCH"],
+  ["gate table", { gates: { ...d.pin.gates, V11_HEIGHT: 29_961 } }, "RULES_DIFFER"]];
+const fill = await open({ ...local({ node: NODE, pin: pinOf(), fetch: node({ answers: cap.answers }).f }), store: shared, clock });
+const fs0 = await fill.advance();
+await fill.close();
+for (const [name, edit, code] of edits) {
+  logReads = 0;
+  const r = await open({ ...local({ node: NODE, pin: counting(pinOf(edit)), fetch: node({ answers: cap.answers }).f }), store: shared, clock }), a = await r.advance(), st = await r.state();
+  ok(`a store an honest reader filled, reopened under a descriptor with another ${name}: ${code}, not verified, the log not read`,
+    fs0.verified && !a.verified && !st.verified && codes(a).split(",").includes(code) && logReads === 0, `${codes(a)} reads=${logReads}`);
+  await r.close();
+}
+logReads = 0;
+const honestAgain = await open({ ...local({ node: NODE, pin: counting(pinOf()), fetch: node({ answers: cap.answers }).f }), store: shared, clock }), ha = await honestAgain.advance();
+ok("the same store reopened under the honest descriptor: verified, the log not read", ha.verified && logReads === 0, codes(ha));
+await honestAgain.close();
+// F4: the log's sets reach `then`: an Attest at 29,973 on a Propose at 29,969 is an event only with them.
+const d970 = await derivePin(upTo(29_970)), want970 = corpus.events.filter((e) => e.height <= TIP).length;
+const r970 = await open({ ...local({ node: NODE, pin: { ...d970.pin, log: async () => d970.log }, fetch: node({ answers: cap.answers }).f }), clock });
+const s970 = await r970.advance(), st970 = await r970.state(), ev970 = await r970.events(null, { limit: 1000, minDepth: 0 });
+ok(`a pin at 29,970: the ${want970} corpus events to 30,300 held and the deep state the corpus's`,
+  s970.verified && ev970.verified && ev970.value.items.length === want970 && st970.verified && stateHash(st970.value) === truth, `${ev970.verified ? ev970.value.items.length : "-"} events`);
+await r970.close();
+// derivePin over a fixture that does not start at the activation height.
+const late = await derivePin({ ...upTo(30_090), from: 30_001, blocks: fx.blocks.filter((b) => b.height > 30_000 && b.height <= 30_090) }).then(() => null, (e: unknown) => e);
+ok("derivePin refuses a fixture that starts above the activation height", late instanceof Error && /starts at 30001/.test(late.message));
+// The conditions the review found untested.
+const wrongHosted = await open({ ...hosted({ pin: pinOf({ blockHash: hashAt(P + 1) }), origin: ORIGIN, fetch: (fr = front({ answers: all })).f, witness: witnessOn(all, TIP).witness }), clock });
+const wh0 = await wrongHosted.advance(), whReads = fr.log.length;
+now += 10 * MIN;
+const wh1 = await wrongHosted.advance();
+ok("the hosted preset over a pin naming another block: PIN_OFF_CHAIN kept, the front door not read again 10 minutes later",
+  wh0.lastError?.code === "PIN_OFF_CHAIN" && wh1.lastError?.code === "PIN_OFF_CHAIN" && fr.log.length === whReads && !wh1.verified, `${fr.log.length - whReads} more reads`);
+await wrongHosted.close();
+now = timeAt(TIP) * 1000 + MIN;
+const mixed: Answers = { ...all, [`/block/height/30100`]: branchFrom(30_100)["/block/height/30100"]! };
+const mixedLoop = replicaLoop({ source: pinned({ pin: pinOf(), then: hostedBlocks({ origin: ORIGIN, root: { kind: "caller", headers: callerHeaders({ answers: mixed, tip: TIP }).headers }, fetch: front({ answers: mixed }).f }) }),
+  store: memoryStore(), clock: () => now });
+const mxs = await mixedLoop.advance();
+ok("caller headers that do not link at 30,101, above the pin: BRANCH_MOVED at 30,100, a step's refusal, not the pin's", mxs.lastError?.code === "BRANCH_MOVED" && mxs.cursor?.height === 30_100,
+  `${mxs.lastError?.code} ${mxs.cursor?.height}`);
+await mixedLoop.close();
+const callerAt = (floor: number) => pinned({ pin: pinOf(), then: hostedBlocks({ origin: ORIGIN, root: { kind: "caller", headers: { ...callerHeaders({ answers: all, tip: TIP }).headers, floor } }, fetch: front({ answers: all }).f }) });
+const f990 = await open({ source: callerAt(29_990), witnesses: [witnessOn(all, TIP).witness], clock }), f990s = await f990.advance(), f001 = await open({ source: callerAt(30_001), clock }).then(() => null, (e: unknown) => e);
+ok("a caller floor of 29,990 under the pin at 30,000: verified; 30,001: BELOW_FLOOR", f990s.verified && f001 instanceof ReplicaConfigError && f001.code === "BELOW_FLOOR", codes(f990s));
+await f990.close();
+const form = (o: Record<string, unknown>) => { try { checkPin({ ...pinOf(), ...o }); return null; } catch (e) { return e; } };
+ok("checkPin refuses a height off an epoch boundary, one below the activation height, and a format other than 1",
+  [{ height: P + 1 }, { height: 29_850 }, { format: 2 }].every((o) => form(o) instanceof ReplicaConfigError) && form({}) === null);
 done("cairnx-replica pinned");
