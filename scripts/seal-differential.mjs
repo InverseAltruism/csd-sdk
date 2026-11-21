@@ -25,9 +25,16 @@
 //      present, and the cases of forward.json and moves.json, (f) the streams of conformance/growth-streams.mjs at full
 //      size (16,000 registrations; 20,000 open bids, offers with holds, live reservations, live recaptures; 2,000 bulk
 //      cancels and 2,000 displacements over 20,000 offers; the V21 crossing; the edges), each with the expectations it
-//      was built to meet read from the new log, (g) when the tree has the replay's check mode
-//      (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d), the codes.json cases of (e) and
-//      (f) replayed with it: each indexed read compared with the plain walk, the index invariants asserted after every
+//      was built to meet read from the new log, and the streams of conformance/sweep-streams.mjs, (d2) the sequences of
+//      conformance/fuzz-resolve.mjs --expiry (offers, bids, reservations and recapture reservations that end between
+//      events), with a floor per kind of expiry read back from the baseline outputs and each sequence resolved again
+//      with events that write nothing (CONVENTION section 5), (w) a dense walk over the sequences of (d2) and the sweep
+//      streams: each at every tip from two below its first event to its tip (over a span of more than 2,000 blocks,
+//      every tip within three epochs above each event height and beside each expiry height and gate), against the
+//      code baseline's whole result when one is given, else the baseline's canonicalState, (g) when the tree has the
+//      replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d), (d2), the
+//      codes.json cases of (e), (f) and the sweep streams replayed with it: each indexed read compared with the plain
+//      walk, each expiry checked to land at the first height it is due, the index invariants asserted after every
 //      event (every 64th on a stream of more than 1,000 events);
 //      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //      (h) the token moves of every input of (a) to (f) checked by conformance/moves-check.mjs (the identity of §41,
@@ -397,6 +404,35 @@ step(`resolve differential (d): conformance/fuzz-resolve.mjs --emit, ${FUZZ_N} s
   console.log(`  ${seqs.length} sequences, ${events} events${threw ? `, ${threw} threw in both builds alike` : ""}`);
 }
 
+// The expiry sequences: the same generator's --expiry mode, so that sweeps between events have something to do.
+const SW = await import(pathToFileURL(join(ROOT, "conformance", "sweep-streams.mjs")).href);
+const EXPIRY_N = 3_000;
+const BASE = CODE ?? OLD;                     // the baseline the floors are read from and the dense walk compares with
+step(`resolve differential (d2): conformance/fuzz-resolve.mjs --expiry --emit, ${EXPIRY_N} sequences, seed ${FUZZ_SEED}, floors read from ${CODE ? CODE_BASELINE_REF : BASELINE_REF}`);
+const expirySeqs = [];
+{
+  const file = join(wt, "seal-fuzz-expiry.json");
+  const r = sh(process.execPath, [join(ROOT, "conformance", "fuzz-resolve.mjs"), String(EXPIRY_N), String(FUZZ_SEED), "--expiry", "--emit", file]);
+  if (r.status !== 0) die(`fuzz-resolve --expiry --emit failed: ${r.stderr || r.stdout}`);
+  expirySeqs.push(...JSON.parse(readFileSync(file, "utf8")));
+  if (expirySeqs.length !== EXPIRY_N) die(`fuzz-resolve --expiry emitted ${expirySeqs.length} sequences, not ${EXPIRY_N}`);
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, v21: 0 };
+  let events = 0, inert = 0, inertDiffs = 0;
+  expirySeqs.forEach((s, i) => {
+    events += s.events.length;
+    const ns = diffCase(`expiry#${i}`, s.events, s.tipHeight);
+    const k = SW.expiryKinds(BASE, s.events, BASE.resolve(s.events, s.tipHeight));
+    for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
+    const added = SW.inertEvents(SW.denseTips(s.events, s.tipHeight, NEW.EPOCH_LEN, SW.dueHeights(NEW, s.events), 300));
+    inert += added.length;
+    if (JSON.stringify(NEW.resolve([...added, ...s.events], s.tipHeight)) !== JSON.stringify(ns)) { inertDiffs++; bump("events that write nothing changed a result"); }
+  });
+  const floor = Math.floor(EXPIRY_N / 50);
+  console.log(`  ${EXPIRY_N} sequences, ${events} events; reach (sequences with that expiry and a later event, read from the baseline): ${JSON.stringify(reach)}, floor ${floor} each`);
+  console.log(`  events that write nothing: ${inert} added, ${inertDiffs} result(s) changed`);
+  for (const [k, n] of Object.entries(reach)) if (n < floor) problems.push(`expiry reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
+}
+
 const CODES_FILE = `${VEC}/codes.json`;
 const codesVectors = existsSync(join(ROOT, ...CODES_FILE.split("/"))) ? readJson(CODES_FILE) : null;
 step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors ? "" : " (absent)"}, and the cases of forward.json and moves.json`);
@@ -424,14 +460,39 @@ step("resolve differential (f): conformance/growth-streams.mjs at full size, wit
     for (const m of missed) problems.push(`${s.key} ${s.label}: expected ${m}`);
     console.log(`  ${s.key} ${s.label}: ${s.events.length} events, ${1 + s.tips.length} tip(s), ${diverged - before} divergence(s), ${missed.length ? `${missed.length} expectation(s) MISSED` : "expectations met"}; one run: baseline ${Math.round(oldMs)} ms, tree ${Math.round(newMs)} ms`);
   }
-  console.log(`  ${inputs} stream inputs diffed`);
+  for (const s of SW.sweepStreams(NEW)) {
+    diffCase(`sweep ${s.key}@${s.tipHeight}`, s.events, s.tipHeight);
+    inputs++;
+    const missed = s.expect(G.resolverAt(NEW.resolve, s));
+    for (const m of missed) problems.push(`sweep ${s.key} ${s.label}: expected ${m}`);
+  }
+  console.log(`  ${inputs} stream inputs diffed (growth streams and the ${SW.sweepStreams(NEW).length} sweep streams)`);
+}
+
+step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (d2) and the sweep streams, against ${CODE ? `${CODE_BASELINE_REF}'s whole result` : `${BASELINE_REF}'s canonicalState`}`);
+{
+  let walks = 0, tips = 0, walkDiffs = 0;
+  const walk = (name, events, tip) => {
+    walks++;
+    for (const t of SW.denseTips(events, tip, NEW.EPOCH_LEN, [...SW.dueHeights(NEW, events), ...Object.values(NEW.GATE_HEIGHTS)])) {
+      const upto = events.filter((e) => e.height <= t);
+      const ns = NEW.resolve(upto, t), bs = BASE.resolve(upto, t);
+      const a = CODE ? JSON.stringify(bs) : OLD.canonicalState(bs);
+      const b = CODE ? JSON.stringify(CODE_MOVES ? ns : stripMoves(ns)) : NEW.canonicalState(ns);
+      tips++;
+      if (a !== b) { walkDiffs++; report(`${name}@${t}`, "dense walk", upto, a, b); }
+    }
+  };
+  expirySeqs.forEach((s, i) => walk(`expiry#${i}`, s.events, s.tipHeight));
+  for (const s of SW.sweepStreams(NEW)) walk(`sweep ${s.key}`, s.events, s.tipHeight);
+  console.log(`  ${walks} walks, ${tips} tips, ${walkDiffs} tip(s) differ`);
 }
 
 const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
 const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
-step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), the codes.json cases of (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (d2), the codes.json cases of (e), (f) and the sweep streams${hasCheck ? "" : " (absent in this tree)"}`);
 if (hasCheck) {
-  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json")], { stdio: "inherit" });
+  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json"), join(wt, "seal-fuzz-expiry.json")], { stdio: "inherit" });
   if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
 }
 
