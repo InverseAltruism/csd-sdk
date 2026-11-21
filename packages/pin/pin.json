@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "rule": {
+    "domain": "cairnx:v1",
+    "activationHeight": 29860
+  },
+  "height": 143340,
+  "blockHash": "0x0000000000001ad1e19e3a6d2a07502a15f2a8134728262943f075dace763c42",
+  "logSha256": "0xf8c16d80f2a350db3d05b74d5b6798a96b1bff1ac21ce9329bcfb3c4530ee2d2",
+  "eventsHash": "0xeff5f3ce5452fcadf8e5afe88641ef01ef2acb49d8d382880f27e79dcfb094c8",
+  "stateHash": "0x5ee62e46bd4a912b9a92375c461be540eff3add82e11b19792ccc050cf032915",
+  "gates": {
+    "ACTIVATION_HEIGHT": 29860,
+    "V11_HEIGHT": 29960,
+    "V12_HEIGHT": 30300,
+    "V13_HEIGHT": 31100,
+    "V14_HEIGHT": 31400,
+    "V15_HEIGHT": 32000,
+    "V16_HEIGHT": 33600,
+    "V17_HEIGHT": 34000,
+    "V18_HEIGHT": 40000,
+    "V19_HEIGHT": 36700,
+    "V20_HEIGHT": 38400,
+    "V21_HEIGHT": 40100,
+    "V22_HEIGHT": 41300,
+    "V23_HEIGHT": 52000,
+    "V24_HEIGHT": 46400,
+    "V25_HEIGHT": 46440,
+    "V26_HEIGHT": 46480,
+    "V27_HEIGHT": 46520,
+    "V28_HEIGHT": 60000,
+    "V29_HEIGHT": 88000
+  },
+  "core": "0.2.8"
+}

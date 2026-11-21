@@ -12,8 +12,8 @@
 //   (--rpc defaults to CSD_RPC; the node is meant to be a local one, e.g. http://127.0.0.1:8795)
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { ACTIVATION_HEIGHT, canonicalJson } from "../packages/cairnx/dist/index.js";
-import { boundAuthor, checkRange, fixtureTx, heightArg, nodeClient, parseArgs, verifiedBlocks } from "./chain-read.mjs";
+import { ACTIVATION_HEIGHT } from "../packages/cairnx/dist/index.js";
+import { captureBlocks, checkRange, heightArg, nodeClient, parseArgs, renderFixture } from "./chain-read.mjs";
 
 const USAGE = "usage: node conformance/capture-events-fixture.mjs --rpc <node url> --to <height> [--from 29860] [--out FILE]";
 let opts;
@@ -29,20 +29,8 @@ try {
   const t0 = Date.now();
   const client = nodeClient(opts.rpc);
   await checkRange(client, opts.from, opts.to);
-  const kept = [];
-  let read = 0, toHash = "";
-  for await (const b of verifiedBlocks(client, opts.from, opts.to)) {
-    read++;
-    toHash = b.hash.toLowerCase();
-    const payload = b.txs.filter((t) => t.tx.app.type !== "None");
-    if (payload.length === 0) continue;
-    const txs = [];
-    for (const t of payload) txs.push(fixtureTx(t, await boundAuthor(client, t)));
-    kept.push({ height: b.height, hash: b.hash.toLowerCase(), txs });
-  }
-  // One block per line, each in canonicalJson form.
-  const text = `{"format":1,"from":${opts.from},"to":${opts.to},"toHash":${JSON.stringify(toHash)},"blocks":[\n` +
-    kept.map((b) => canonicalJson(b)).join(",\n") + "\n]}\n";
+  const { blocks: kept, toHash, read } = await captureBlocks(client, opts.from, opts.to);
+  const text = renderFixture({ from: opts.from, to: opts.to, toHash, blocks: kept });
   const bytes = Buffer.byteLength(text, "utf8");
   const sha256 = createHash("sha256").update(text, "utf8").digest("hex");
   if (opts.out) writeFileSync(opts.out, text);
