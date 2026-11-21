@@ -32,7 +32,8 @@
 //      --malformed (offers, bids, reservations, recapture reservations and tips carrying heights, expiries or tips no
 //      chain produces: numbers that are not safe integers, strings, null, undefined, booleans, arrays, objects,
 //      BigInts; on both sides of V21 and of an epoch edge), with a floor per kind read back from the baseline outputs
-//      and per type, a throw required to carry the baseline's message, (w) a dense walk over the sequences of (d2) and
+//      and per type, a throw required to carry the baseline's message, compared with the code baseline alone when one
+//      is given (outside the domain the two baselines can differ; the count is printed), (w) a dense walk over the sequences of (d2) and
 //      (d3) and the sweep streams: each at every tip from two below its first event to its tip (over a span of more
 //      than 2,000 blocks, every tip within three epochs above each event height and beside each expiry height and
 //      gate; an event whose height is not above the tip, a NaN or a string such as "x9" included, is in the prefix),
@@ -259,7 +260,8 @@ const report = (name, what, events, a, b) => {
   console.error(`    new: ${b.slice(Math.max(0, k - 60), k + 100)}`);
 };
 const lastMs = { old: 0, new: 0 };            // the last diffCase's resolve times (one run each, informational)
-const diffCase = (name, events, tip) => {
+// vsOld false: compared with the code baseline only (step (d3) when one is given).
+const diffCase = (name, events, tip, vsOld = true) => {
   for (const e of events) if (e.kind === "propose") proposes.set(`${e.uri}\u0000${e.payloadHash}`, { uri: e.uri, payloadHash: e.payloadHash });
   let t0 = performance.now();
   const os = OLD.resolve(events, tip);
@@ -267,10 +269,12 @@ const diffCase = (name, events, tip) => {
   t0 = performance.now();
   const ns = NEW.resolve(events, tip);
   lastMs.new = performance.now() - t0;
-  const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
-  if (a !== b) report(name, "canonicalState", events, a, b);
-  const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
-  if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
+  if (vsOld) {
+    const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
+    if (a !== b) report(name, "canonicalState", events, a, b);
+    const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
+    if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
+  }
   if (CODE) {
     const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(CODE_MOVES ? ns : stripMoves(ns));
     if (fc !== fn) report(name, `full state with code${CODE_MOVES ? "" : ", without moves,"} vs ${CODE_BASELINE_REF}`, events, fc, fn);
@@ -452,7 +456,10 @@ const malformedSeqs = [];
   if (malformedSeqs.length !== MALFORMED_N) die(`fuzz-resolve --malformed emitted ${malformedSeqs.length} sequences, not ${MALFORMED_N}`);
   const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, tipOnly: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
   const types = Object.fromEntries(SW.MALFORMED_TYPES.map((t) => [t, 0]));
-  let events = 0, threw = 0;
+  // Outside the domain the baselines need not agree with each other: 0.2.7's indexes read a string deadline other
+  // than 0.2.6's walk did (CONSENSUS_CHANGES, cairnx-core 0.2.9). With a code baseline (d3) is compared with it alone,
+  // and the inputs on which the two baselines differ are counted.
+  let events = 0, threw = 0, baselinesDiffer = 0;
   malformedSeqs.forEach((s, i) => {
     events += s.events.length;
     let bs = null, oldThrow = null, newThrow = null;
@@ -466,10 +473,15 @@ const malformedSeqs = [];
       if (oldThrow !== newThrow) report(`malformed#${i}`, "throw", s.events, String(oldThrow), String(newThrow));
       return;
     }
-    diffCase(`malformed#${i}`, s.events, s.tipHeight);
+    if (CODE) {
+      let oc;
+      try { oc = OLD.canonicalState(OLD.resolve(s.events, s.tipHeight)); } catch (e) { oc = `THROW ${e?.message ?? e}`; }
+      if (oc !== CODE.canonicalState(bs)) baselinesDiffer++;
+    }
+    diffCase(`malformed#${i}`, s.events, s.tipHeight, !CODE);
   });
   const floor = Math.floor(MALFORMED_N / 50);
-  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw (the same message in both builds, or a divergence above)` : ""}; reach (sequences in which the baseline met a malformed field of that kind; tip: a tip that is not a safe integer; tipOnly: such a tip with every height a safe integer; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it; textDeadline: a reservation from a commit at a string height): ${JSON.stringify(reach)}; types (sequences carrying each on a height, an expiry or the tip): ${JSON.stringify(types)}; floor ${floor} each`);
+  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw (the same message in both builds, or a divergence above)` : ""}${CODE ? `; compared with ${CODE_BASELINE_REF} (${baselinesDiffer} on which ${BASELINE_REF} and ${CODE_BASELINE_REF} already differ)` : ""}; reach (sequences in which the baseline met a malformed field of that kind; tip: a tip that is not a safe integer; tipOnly: such a tip with every height a safe integer; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it; textDeadline: a reservation from a commit at a string height): ${JSON.stringify(reach)}; types (sequences carrying each on a height, an expiry or the tip): ${JSON.stringify(types)}; floor ${floor} each`);
   for (const [k, n] of [...Object.entries(reach), ...Object.entries(types)]) if (n < floor) problems.push(`malformed reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
 }
 
@@ -737,7 +749,7 @@ if (diverged || problems.length) {
   if (smallestUri) console.error(`  shortest uri parseRecord disagrees on: ${smallestUri}`);
   die(`${diverged} divergence(s) between the ${BASELINE_REF} baseline and the tree${problems.length ? `, ${problems.length} other failure(s)` : ""}`);
 }
-console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once ${OLD_MOVES ? "`code` is" : "`code` and `moves` are"} left out)${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`${CODE_MOVES ? "" : ", once `moves` is left out"}` : ""}; token moves pass the identity on ${movesSeen.inputs} inputs (${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")})`);
+console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once ${OLD_MOVES ? "`code` is" : "`code` and `moves` are"} left out${CODE ? `; the malformed inputs of (d3) against ${CODE_BASELINE_REF} alone` : ""})${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`${CODE_MOVES ? "" : ", once `moves` is left out"}` : ""}; token moves pass the identity on ${movesSeen.inputs} inputs (${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")})`);
 
 // ── 8. the real fork gate ──────────────────────────────────────────────────────────────────────────
 if (process.env.SEAL_SKIP_CROSSLANG === "1") {
