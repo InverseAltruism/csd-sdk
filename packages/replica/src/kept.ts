@@ -1,5 +1,5 @@
-// The events a Scanner keeps from its accepted scans (M3-B1-03), so that its next scan reads only the rows after them
-// from csd-indexer's chain-order feeds: the data and its pure helpers. src/scan.ts decides when they are kept, read on
+// The events a Scanner keeps from its accepted scans, so that its next scan reads only the rows after them
+// from csd-indexer's chain-order feeds: the data and its pure helpers. src/scanner.ts decides when they are kept, read on
 // from, rolled back or dropped.
 import type { AttestEvent, ChainEvent, ProposeEvent } from "@inversealtruism/cairnx-core";
 
@@ -37,10 +37,9 @@ export const MAX_KEPT_EVENTS = 200_000;
 /** Once kept events have served this many accepted scans, the next scan pulls in full and its events replace them. The
  *  feed reads after the kept rows never revisit them; that full pull re-reads the proposal list and each open window's
  *  attestation list. So a proposal, or an attestation in an open window, that the chain does not have (read from
- *  another branch inside an accepted scan) is served for at most this many accepted scans: about 10 minutes at the
- *  resolver's default 15 s poll (src/config.ts DEFAULT_POLL_MS). A closed window's attestation list (the Scanner's
- *  attCache) and the tx cache are not re-read, so a row the chain does not have there outlives it
- *  (test/scan-kept-refresh.test.ts). */
+ *  another branch inside an accepted scan) is served for at most this many accepted scans: 10 minutes at a 15 s poll. A
+ *  closed window's attestation list (the Scanner's attCache) and the tx cache are not re-read, so a row the chain does
+ *  not have there outlives it. */
 export const KEPT_REFRESH_SCANS = 40;
 
 /** The kept events of `events` (a full pull's, or kept ones rolled back, which keep their `scans`) at or below `upTo`,

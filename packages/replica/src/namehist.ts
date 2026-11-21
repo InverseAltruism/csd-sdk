@@ -1,4 +1,4 @@
-// CairnX name-history HINTS — the service half of the trustless name verifier (XREPO-1 / Phase 5).
+// CairnX name-history hints: the service half of the trustless name verifier.
 //
 // Given the full scanned event stream and a name, return the name-scoped set of chain txids a client must verify and
 // replay. This module selects txids and checks nothing itself; everything it returns is an UNTRUSTED HINT. The checks
@@ -13,7 +13,7 @@
 //
 // SUFFICIENCY INVARIANT (the property that makes the verify sound), proven by the equivalence fuzz in
 // test/namehist.test.ts: for every name, replaying ONLY these events reproduces the SAME name record
-// as replaying the full chain —
+// as replaying the full chain:
 //     resolve(pick(events, nameHistory(events, name))).names[name]  ===  resolve(events).names[name]
 // Erring toward INCLUDING a borderline event is safe (extra non-name events never change names[name]);
 // OMITTING a relevant one is the only hazard, which the fuzz is built to surface. With `check`, a candidate that
@@ -21,58 +21,50 @@
 // unchanged (keepPruned). A bare ocancel is logged applied whether or not it cancels anything, so of a seller's
 // ocancels only the first one after each of its kept offers, while that offer is open, stays. What can still grow the
 // hints is applied records: a holder's own records while it holds the name (they stay after a transfer), and the
-// third-party renewals a live lease accepts (CHANGELOG 0.4.34; test/namehist-prune.test.ts).
+// third-party renewals a live lease accepts (test/namehist-prune.test.ts).
 //
-// ★ EXCEPTION — AUDIT M1 (SX-NSPV-CLAIMCAP-1): the sufficiency invariant DOES NOT HOLD for a name whose
-// ownership was set by a name-offer fill whose validity depends on state OUTSIDE the name's own events.
-// Two classes: (1) a V17 OPEN-lane (non-taker) CSD claim-to-fill — valid only if the filler held a LIVE
-// claim, and a claim's validity depends on the filler's GLOBAL live-claim count across OTHER offers
-// (`liveN < MAX_ACTIVE_CLAIMS`); (2) a name-for-TOKEN offer fill — valid only if the buyer held enough of
-// the want-token (their GLOBAL token balance). Both need events no name-scoped subset can contain, so a
-// scoped replay can reach a DIFFERENT owner than the chain (accept a fill it rejected, or reject one it
-// accepted). For both, nameHistory returns `scopedReplaySufficient:false` and the wallet MUST fail closed
-// (never `verified`; a second source runs this same selector → the same subset, so it can't help). Only the
-// common taker-bound CSD name sale is sound (taker in the offer record, payment in the fill tx) — that is
-// what the fuzz below exercises; directed regression cases for BOTH unsound classes are in namehist.test.ts.
-// The open lane is on (cairn `public/trade/helpers.js` `V17_OPEN_LANE_READY = true` since 2026-06-21) because the
-// wallet refuses `verified` whenever this flag is false (cairn-wallet `src/core/namespv.ts`); from V28 its claim is `fclaim`.
+// EXCEPTION: the sufficiency invariant DOES NOT HOLD for a name whose ownership was set by a name-offer fill whose
+// validity depends on state OUTSIDE the name's own events. Two classes: (1) a V17 OPEN-lane (non-taker) CSD
+// claim-to-fill, valid only if the filler held a LIVE claim, and a claim's validity depends on the filler's GLOBAL
+// live-claim count across OTHER offers (`liveN < MAX_ACTIVE_CLAIMS`); (2) a name-for-TOKEN offer fill, valid only if
+// the buyer held enough of the want-token (their GLOBAL token balance). Both need events no name-scoped subset can
+// contain, so a scoped replay can reach a DIFFERENT owner than the chain (accept a fill it rejected, or reject one it
+// accepted). For both, nameHistory returns `scopedReplaySufficient:false` and the wallet MUST fail closed (never
+// `verified`; a second source runs this same selector → the same subset, so it can't help). Only the common
+// taker-bound CSD name sale is sound (taker in the offer record, payment in the fill tx): that is what the fuzz
+// exercises; directed regression cases for BOTH unsound classes are in namehist.test.ts. The wallet refuses
+// `verified` whenever this flag is false (cairn-wallet `src/core/namespv.ts`); from V28 the open lane's claim is
+// `fclaim`.
 //
-// This is NOT a resolver mirror — it computes no ledger state. It is a pure selector that REUSES the
+// This is NOT a resolver mirror: it computes no ledger state. It is a pure selector that REUSES the
 // canonical record parser to decide which txids matter for one name.
 import { isName, nameCommit, parseRecord } from "@inversealtruism/cairnx-core";
 import { resolve } from "@inversealtruism/cairnx-core";
 import { EPOCH_LEN, isNameGive, isTokenWant, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL, type AppliedEvent, type CairnXState, type ChainEvent, type NameState, type ProposeEvent } from "@inversealtruism/cairnx-core";
 
-export type NameEventKind = "name" | "nfinalize" | "ncommit" | "nxfer" | "nset" | "nrenew" | "nprofile" | "offer" | "fill" | "cancel" | "claim" | "fclaim" | "ocancel" | "attest"; // "attest" = an attest with a non-fill/cancel/claim score (labeled honestly, never defaulted to "fill"). "fclaim" = the V28+ open-lane reserve Propose (Plan 69 §31), the fclaim-lane successor to "claim"; label vocabulary only here (this selector does not yet route the fill-attest-on-the-fclaim-txid, so a fclaim-lane name sale surfaces scopedReplaySufficient:false = fail-closed until the B4/B6 fclaim name-history SPV lands).
+export type NameEventKind = "name" | "nfinalize" | "ncommit" | "nxfer" | "nset" | "nrenew" | "nprofile" | "offer" | "fill" | "cancel" | "claim" | "fclaim" | "ocancel" | "attest"; // "attest" = an attest with a non-fill/cancel/claim score (labeled honestly, never defaulted to "fill"). "fclaim" = the V28+ open-lane reserve Propose, the fclaim-lane successor to "claim"; label vocabulary only here (this selector does not route the fill-attest-on-the-fclaim-txid, so a fclaim-lane name sale surfaces scopedReplaySufficient:false, failing closed).
 
 export interface NameHistEntry {
   txid: string;     // the consensus txid the wallet must fetch + merkle-verify
   height: number;
   pos: number;
-  kind: NameEventKind; // diagnostic only — the wallet re-derives meaning from the verified record itself
+  kind: NameEventKind; // diagnostic only: the wallet re-derives meaning from the verified record itself
 }
 
 export interface NameHistory {
   name: string;
   events: NameHistEntry[];
-  /** AUDIT M1 (SX-NSPV-CLAIMCAP-1): `false` when this name's ownership was decided by a name-offer fill
-   *  whose on-chain validity depends on state OUTSIDE the name's own events — so a name-scoped replay can
-   *  reach a DIFFERENT owner than the real chain (it can accept a fill the chain rejected, or reject one it
-   *  accepted). Two such classes exist: (1) an OPEN-lane (non-taker) CSD claim-to-fill (V17+) — valid only
-   *  if the filler held a live claim, and a claim's validity depends on the filler's GLOBAL live-claim count
-   *  (`liveN < MAX_ACTIVE_CLAIMS`) across OTHER offers; (2) a name-for-TOKEN offer fill (`want:{ticker,…}`)
-   *  — valid only if the filler held enough of the want-token, i.e. the buyer's GLOBAL token balance. Both
-   *  are events no name-scoped txid subset can contain. A wallet MUST NOT treat a scoped-replay match as
-   *  `verified:true` when this is false — fail closed to a loud caution (a second source does not help: it
-   *  runs the same selector → the same subset). The wallet's refusal of verified for this class shipped
-   *  (cairn-wallet 0.2.28) before cairn turned the open lane on with `V17_OPEN_LANE_READY`.
-   *  (Only the common taker-bound CSD name sale is scoped-sufficient — taker is in the offer record, payment
-   *  is in the fill tx; that path is what the namehist fuzz exercises.) */
+  /** `false` when this name's ownership was decided by a name-offer fill whose on-chain validity depends on state
+   *  OUTSIDE the name's own events, so a name-scoped replay can reach a DIFFERENT owner than the real chain (it can
+   *  accept a fill the chain rejected, or reject one it accepted): the two classes of the header's EXCEPTION, and any
+   *  difference the `check` compare finds. A wallet MUST NOT treat a scoped-replay match as `verified:true` when this
+   *  is false: fail closed to a loud caution (a second source does not help: it runs the same selector → the same
+   *  subset). */
   scopedReplaySufficient: boolean;
   caveat?: string;
 }
 
-/** ★ H1 (deep-review 2026-07-03): opt-in EXACT sufficiency check. When provided, nameHistory replays its
+/** Opt-in EXACT sufficiency check. When provided, nameHistory replays its
  *  own scoped subset through the real pinned `resolve()`, keeps only the records that replay or the full chain
  *  applied, and compares the resulting `names[name]` against the full chain's: any divergence flags
  *  `scopedReplaySufficient:false`. */
@@ -155,7 +147,7 @@ function selectCandidates(events: readonly ChainEvent[], name: string): Candidat
       add(ev, rec.t);
       if ((rec.t === "name" || rec.t === "nfinalize") && typeof rec.salt === "string") reveals.push({ id: eventId(ev), salt: rec.salt, proposer: ev.proposer.toLowerCase() });
     } else if (rec.t === "offer" && isNameGive(rec.give) && rec.give.name === name) {
-      // M1: a fill is scoped-unsound if the offer is non-taker (claim-cap state) OR token-want (buyer balance).
+      // A fill is scoped-unsound if the offer is non-taker (claim-cap state) OR token-want (buyer balance).
       add(ev, "offer", {
         seller: ev.proposer.toLowerCase(), unsound: rec.taker === undefined || isTokenWant(rec.want),
         openUntil: (ev.expiresEpoch + 1) * EPOCH_LEN,
@@ -255,7 +247,7 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
   const all = new Set(picked.keys());
   let ids: ReadonlySet<string> = all;
   let scopedInsufficient: boolean;
-  // ★ H1 (deep-review 2026-07-03): the EXACT sufficiency compare, generalizing the M1 class flags. The class flags
+  // The EXACT sufficiency compare, generalizing the class flags. The class flags
   // enumerate KNOWN out-of-scope dependencies (open-lane claim cap, buyer token balance); V25 added a third (the
   // proposer's global MAX_PENDING_REG pending-reservation cap, the forged-green `verified:true` shape), and any future
   // gate could add more. So the scoped subset is replayed through the real pinned resolve() and its names[name]

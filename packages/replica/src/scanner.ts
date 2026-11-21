@@ -4,29 +4,16 @@
 // the same posture as every indexer consumer; anyone can run their own and must converge
 // (the resolver re-verifies payload_hash ↔ uri internally either way).
 //
-// AUDIT F4 / doc-13 C1 (resolver-trusts-indexer-sums). The ENFORCEMENT MECHANISM is now implemented
-// at the hook point (Scanner.tx(), below) and gated behind ScanOptions.verifyInclusion:
-//   • OFF (default), outputs are read from the indexer (the same posture as every indexer consumer).
-//     Bounded TODAY because the indexer is localhost-bound + operator-run (no remote attacker can BE the
-//     indexer), CairnX tokens/names are a pure resolver OVERLAY with no on-chain CSD backing, and the only
-//     native-CSD payer (the swap buyer) is independently SPV-gated client-side by swapguard BEFORE paying.
-//     ⚠ AUDIT M5/L9, accuracy: this does NOT make a lying feed harmless. swapguard is a cairn-repo UI
-//     mitigation (bypassed by any non-browser fill builder, CLI/mm/3rd-party), it does not cover the
-//     name-registration/deploy TREASURY fee outputs that ride the SAME paidTo path (scan(), below), and a
-//     forged paidTo causes a FALSE-POSITIVE fill/mint → a resolver-divergent canonicalState (a cross-
-//     resolver FORK in the lying view), not merely an "inconsistent no-op". This is why F4 MUST be ON
-//     before any spendable-CSD lane (and a 2nd-indexer canonical-hash comparator is the interim backstop).
-//   • ON, every payment/fee-feeding tx is MERKLE-VERIFIED: its `/tx/:id/merkle-proof` (already
-//     served) is folded against the header merkle from ScanOptions.headerMerkleAt + a conf-depth gate
-//     (confDepth, doc-13 C2). A forged output the indexer can't merkle-prove is REJECTED → the indexer is
-//     demoted to a data source. The Scanner checks no proof of work: headers, tip and raw bodies are as
-//     trusted as their source. The maker (src/mm/chainview.ts makerScanOptions) wires the operator's own
-//     loopback node, with no PoW check and no UTXO set; a genesis-synced csd-light client would add PoW.
+// Output binding, gated behind ScanOptions.verifyInclusion (the hook point is Scanner.tx(), below):
+//   • OFF (default), outputs are read from the indexer. A lying feed is not harmless then: a forged paidTo,
+//     on a fill or on a deploy or name-registration fee output, makes a fill or mint apply that the chain's
+//     data does not support, a canonicalState that diverges from an honest replica's.
+//   • ON, every payment/fee-feeding tx is MERKLE-VERIFIED: its `/tx/:id/merkle-proof` is folded against the
+//     header merkle from ScanOptions.headerMerkleAt + a conf-depth gate (confDepth). A forged output the
+//     indexer can't merkle-prove is REJECTED → the indexer is demoted to a data source. The Scanner checks no
+//     proof of work: headers, tip and raw bodies are as trusted as their source.
 //     Honest data verifies identically (replay-identical); only a lying indexer's forgeries differ.
-// TURN THIS ON BEFORE any consumer treats received CSD as spendable (maker-spendable-CSD / wCSD /
-// AMM). Remaining infra to make it the cheap default: an efficient full-history PoW header source
-// (a genesis-synced LightClient over an indexer headers-batch endpoint) + the C5/R2 second-indexer
-// canonical-hash comparator at finalized depth. The verification path itself is built + tested here.
+// Turn it on before any consumer treats received CSD as spendable.
 // With verifyInclusion on, two further rules hold (scan() and eventHeight(), below):
 //   (1) Final height cutoff. Only records at height <= depthTip - confDepth (the heights verifyTx's depth
 //       gate accepts) are emitted; every proposal and attestation above it is left for a later pass. The
@@ -40,14 +27,14 @@
 //       owner's signature over the tx's sighash. A body with no author fails the scan, and a row field that
 //       disagrees fails the scan, apart from the uri of a body whose uri holds U+0000 (boundPropose).
 // None of these rules applies with the flag off.
-import { verifyMerkleProof, txid as codecTxid, type App, type Tx } from "@inversealtruism/csd-codec";
+import { MAX_TX_OUTPUTS, verifyMerkleProof, txid as codecTxid, type App, type Tx } from "@inversealtruism/csd-codec";
 import { authorOf } from "@inversealtruism/csd-crypto";
 import { ADDR_RE, DOMAIN, EPOCH_LEN, FINAL_DEPTH, paidToFromOutputs, type AttestEvent, type ChainEvent, type ProposeEvent } from "@inversealtruism/cairnx-core";
 import { KEPT_REFRESH_SCANS, MAX_KEPT_EVENTS, eventsOf, fullPullOrder, keptFrom, type Block, type ChainPos, type Kept } from "./kept.js";
 
 // A consensus-order scalar (block height / tx pos) from an indexer row MUST be a real non-negative safe
 // integer: it feeds the resolver's ordinal SORT (height, then pos), so a NaN would make event ORDER
-// implementation-defined = silently nondeterministic state. Fail loud like the tipHeight L3 guard (wrong
+// implementation-defined = silently nondeterministic state. Fail loud like the tipHeight guard in pull() (wrong
 // state is worse than no state); the honest indexer returns JSON integers so no real feed is affected.
 const reqOrd = (v: unknown, what: string): number => {
   // Accept only a real number or a plain decimal STRING; reject null/array/bool/hex that Number() would
@@ -60,8 +47,8 @@ const reqOrd = (v: unknown, what: string): number => {
 };
 
 // An expiry EPOCH from an indexer row. Deliberately NOT reqOrd: the indexer CLAMPS attacker-chosen u64
-// epochs to a 2^53 sentinel (csd-indexer GRX-WIRE-CLAMP-1) that the resolver then rejects PER-RECORD
-// ("expiresEpoch out of safe-integer range", resolve.ts:460/516), so an isSafeInteger throw here would
+// epochs to a 2^53 sentinel that the resolver then rejects PER-RECORD
+// ("expiresEpoch out of safe-integer range"), so an isSafeInteger throw here would
 // let any proposer freeze the WHOLE resolver for one 0.25-CSD anchor (the scan aborts → state stale
 // forever). So: accept a number or a plain decimal string, throw only on NaN/negative/absent/wrong-type
 // (absence never occurs in an honest feed), and PASS unsafe ints (≥ 2^53) through UNCHANGED so the
@@ -84,7 +71,7 @@ const addrOfScriptPubkey = (spk: unknown): string | null => {
 // reqEpoch), which the resolver rejects per record exactly as it rejects the real value.
 const epochOfBody = (v: number | bigint): number => (BigInt(v) > BigInt(Number.MAX_SAFE_INTEGER) ? 2 ** 53 : Number(v));
 
-// Bound a cache without the "full .clear() → refetch EVERYTHING next pass" cliff (Plan 57 C3): when it
+// Bound a cache without the "full .clear() → refetch EVERYTHING next pass" cliff: when it
 // crosses `cap`, evict the OLDEST insertion-order entries down to 90% of cap (Map preserves insertion
 // order). So a poll refetches at most the evicted 10% sliver instead of the whole cache. Pure perf; the
 // cache is (txid,height)-immutable derived data, so eviction never changes resolved state.
@@ -141,12 +128,11 @@ export interface ScanOptions {
   feedPageSize?: number;         // chain-order feed page (default 1 000 = csd-indexer FEED_LIMIT_MAX); tests shrink it
   keptMax?: number;              // most events kept across scans (default MAX_KEPT_EVENTS); tests shrink it
   keptRefresh?: number;          // accepted scans kept events serve before a full pull replaces them (default KEPT_REFRESH_SCANS); tests shrink it
-  // AUDIT F4: when true, every payment/fee-feeding tx is merkle-verified against the header merkle
-  // from headerMerkleAt + a conf-depth gate before its outputs are trusted. Default OFF
-  // (current behaviour). MUST be ON before any pooled / maker-spendable-CSD lane ships.
+  // When true, every payment/fee-feeding tx is merkle-verified against the header merkle
+  // from headerMerkleAt + a conf-depth gate before its outputs are trusted. Default OFF.
   verifyInclusion?: boolean;
   // Header merkle at a height, the trust anchor for verifyInclusion: the Scanner checks no PoW, so this is
-  // as trusted as its source (the maker: its own node; PoW would need e.g. a genesis-synced csd-light client).
+  // as trusted as its source (PoW would need e.g. a genesis-synced csd-light client).
   // THROWS if it has no header at that height. Required when verifyInclusion is true.
   headerMerkleAt?: (height: number) => Promise<string>;
   // RAW tx fetch by txid, returns the FULL consensus tx so its txid can be RECOMPUTED (binding the
@@ -157,12 +143,12 @@ export interface ScanOptions {
   // Merkle proof fetch by txid: { block_height, pos, merkle[], merkle_root }. Defaults to the
   // indexer's /tx/:id/merkle-proof. Override for tests / a second source.
   merkleProofAt?: (txid: string) => Promise<{ block_height: number; pos: number; merkle: string[]; merkle_root: string }>;
-  // Tip height, the depth reference for the conf-depth gate. Under F4's threat model the indexer-fed tip
+  // Tip height, the depth reference for the conf-depth gate. When the indexer may lie, its tip
   // (/blocks/tip/height) is attacker-supplied, so a lying indexer could inflate it to make a shallow tx look
-  // deep. Wire this to the SAME source as headerMerkleAt (the maker: its node's tip), so neither operand of the
+  // deep. Wire this to the SAME source as headerMerkleAt (e.g. one's own node's tip), so neither operand of the
   // depth gate comes from the indexer. Required when verifyInclusion is true; resolved once per scan.
   verifiedTipHeight?: () => Promise<number>;
-  // Min confirmations a tx needs before its outputs feed a payment/fee check (doc-13 C2). Default 12.
+  // Min confirmations a tx needs before its outputs feed a payment/fee check. Default 12.
   confDepth?: number;
 }
 
@@ -180,20 +166,20 @@ export class Scanner {
   private timeoutMs: number;
   /** Keyed per (txid, height). A re-mined block can move a tx's position, so invalidateCacheOnReorg drops it when a
    *  block the cached rows sit in changes. Only txs at or below the scan's sampled tip are cached: a block that lands
-   *  during the pull sits above the anchor that check samples (test/scan-cache-band.test.ts). */
+   *  during the pull sits above the anchor that check samples (test/scan/scan-cache-band.test.ts). */
   private txCache = new Map<string, TxInfo>();
-  /** attestation lists of CLOSED-window proposals are consensus-immutable (C5: attests are
+  /** attestation lists of CLOSED-window proposals are consensus-immutable (attests are
    *  rejected after expires_epoch), so once the window ended ≥FINALITY blocks below the tip
    *  they can never change, cache them forever. The full pull refetches live-window lists per pass;
    *  a scan that has kept events reads neither (`kept`). */
   private attCache = new Map<string, AttestEvent[]>();
-  /** The events the last accepted scan kept (M3-B1-03), checked against the chain by invalidateCacheOnReorg. */
+  /** The events the last accepted scan kept, checked against the chain by invalidateCacheOnReorg. */
   private kept: Kept | null = null;
   /** What the scan in progress keeps if it is accepted (scan()). */
   private nextKept: Kept | null = null;
   /** The cache keys the scan in progress wrote: what an unsuccessful scan takes back out (scan()). */
   private written: { tx: string[]; att: string[] } | null = null;
-  /** META-4: the attCache freeze horizon's block hash, re-sampled each scan. A closed window is
+  /** The attCache freeze horizon's block hash, re-sampled each scan. A closed window is
    *  cached forever on the assumption that history ≥FINALITY below the tip can't change, but a
    *  reorg DEEPER than FINALITY violates it, leaving a long-running scanner serving a stale
    *  `filled`/attestation set a fresh scanner would not. Any reorg that could poison a frozen
@@ -202,7 +188,7 @@ export class Scanner {
    *  is height-keyed and self-refreshes). Without an indexer answer we keep the prior anchor and
    *  never false-clear. */
   private reorgAnchor: { h: number; hash: string } | null = null;
-  /** CX-SCAN-REORG-POS-1: the PREVIOUS scan's tip {height,hash}. A reorg that can move any cached tx
+  /** The PREVIOUS scan's tip {height,hash}. A reorg that can move any cached tx
    *  (all cached at height ≤ this) replaces the block at this height, so a hash change here catches
    *  shallow reorgs the tip−FINALITY deep anchor misses. Re-sampled each scan. */
   private prevTip: { h: number; hash: string } | null = null;
@@ -218,7 +204,7 @@ export class Scanner {
   private verifiedTipHeight?: () => Promise<number>;
   private confDepth: number;
   private tipHeight = 0;          // set per scan (indexer-fed): attCache freeze horizon + fallback tip
-  private depthTip = 0;           // set per scan (verifiedTipHeight when F4 is on, else the indexer tip): the conf-depth reference
+  private depthTip = 0;           // set per scan (verifiedTipHeight with verifyInclusion on, else the indexer tip): the conf-depth reference
   private lastFinal: number | null = null;
   /** The last scan's final height (verified tip less confDepth) with verifyInclusion on, else null: every event that
    *  scan returned is at or below it, and nothing above it was considered. */
@@ -266,19 +252,20 @@ export class Scanner {
     // would create a phantom "" payment bucket). A malformed output is SKIPPED, never throws,
     // dropping outputs is CONSERVATIVE (it can only make a payment look smaller → a fill/fee that
     // truly wasn't covered gets rejected), and one weird tx can't DoS the whole scan.
-    const raw = Array.isArray(t.outputs) ? t.outputs.slice(0, 1024) : [];
+    // consensus admits at most MAX_TX_OUTPUTS outputs, so a listed output past them is in no transaction
+    const raw = Array.isArray(t.outputs) ? t.outputs.slice(0, MAX_TX_OUTPUTS) : [];
     const outputs: { addr: string; value: number }[] = [];
     for (const o of raw) {
       if (typeof o.value !== "number" || !Number.isSafeInteger(o.value) || o.value < 0) continue;
       const addr = String(o.addr ?? "").toLowerCase();
-      if (!ADDR_RE.test(addr)) continue; // canonical cairnx-core addr regex (SX-SVC-3 single-sourcing)
+      if (!ADDR_RE.test(addr)) continue; // cairnx-core's address regex
       outputs.push({ addr, value: o.value });
     }
     // height via reqOrd (fail loud): the old `Number(t.height) || height` row-fallback could only mask
     // garbage, the indexer serves /tx/:id for MINED txs only (mempool 404s), so an honest feed always
     // carries a real height and the fallback never fired.
     let info: TxInfo = { pos: reqOrd(t.pos, "tx pos"), height: reqOrd(t.height, "tx height"), outputs };
-    // AUDIT F4: when enabled, DON'T trust the indexer's decoded outputs, bind them to consensus.
+    // When enabled, DON'T trust the indexer's decoded outputs, bind them to consensus.
     if (this.verifyInclusion) info = await this.verifyTx(txid, info.height, outputs);
     if (info.height <= this.tipHeight) {
       this.txCache.set(key, info);
@@ -288,9 +275,9 @@ export class Scanner {
     return info;
   }
 
-  // AUDIT F4 enforcement (the complete cure, gated by verifyInclusion). Demotes the indexer to a
+  // Output binding, gated by verifyInclusion. Demotes the indexer to a
   // data source for payments by binding every output to consensus, fail-CLOSED on any gap:
-  //   (1) conf-depth gate (doc-13 C2): the tx must be ≥ confDepth below the tip, too-shallow txs
+  //   (1) conf-depth gate: the tx must be ≥ confDepth below the tip, too-shallow txs
   //       (reorg-exposed) don't feed a payment/fee check.
   //   (2) txid-recompute BIND: fetch the RAW tx, recompute its txid with the consensus codec, and
   //       require it == the expected txid. This binds the OUTPUTS to the txid (the indexer's decoded
@@ -333,11 +320,10 @@ export class Scanner {
       throw new Error(`F4: tx ${txid} merkle root != header merkle at ${proof.block_height}`);
     if (!verifyMerkleProof(txid, proof.pos, proof.merkle, proof.merkle_root))
       throw new Error(`F4: tx ${txid} does not merkle-prove into block ${proof.block_height}`);
-    // (1) conf-depth gate, AUTHORITATIVE, AFTER verification, on TRUST-MINIMIZED operands (audit F4-DEPTH-1).
-    // The old gate ran FIRST on the INDEXER-CLAIMED `height` against the INDEXER-fed tip: a lying indexer
-    // could claim a deep height (passing the gate) then serve a valid proof for a NEAR-TIP block (a real,
-    // shallow, reorg-exposed tx), and a NaN claimed height slipped through entirely (NaN < confDepth is
-    // false). Now neither operand comes from the indexer: depth = verifiedTip - proof.block_height (the merkle-proven
+    // (1) conf-depth gate, AFTER verification, on operands the indexer does not supply. A gate on the
+    // indexer-claimed height against the indexer-fed tip would pass a lying indexer that claims a deep height
+    // and proves a near-tip block, and a NaN claimed height (NaN < confDepth is false). Neither operand comes
+    // from the indexer: depth = verifiedTip - proof.block_height (the merkle-proven
     // height, trusted by the checks just above), and the indexer's own claimed height MUST equal the proven
     // one (else it is lying about where the tx sits). isSafeInteger guards NaN/Infinity on every operand.
     if (!Number.isSafeInteger(proof.block_height) || proof.block_height < 0)
@@ -347,8 +333,7 @@ export class Scanner {
     const depth = this.depthTip - proof.block_height;
     if (!Number.isSafeInteger(depth) || depth < this.confDepth)
       throw new Error(`F4: tx ${txid} verified at ${proof.block_height} is shallower than confDepth ${this.confDepth} (verified tip ${this.depthTip})`);
-    // AUDIT QX-L1/M5: actually EMIT the divergence signal (was an empty no-op whose comment claimed it
-    // "surfaces a lying indexer in logs"). On the F4-ON path this is the exact tell that the indexer fed
+    // The divergence signal: with verifyInclusion on this is the exact tell that the indexer fed
     // outputs the consensus-bound recompute rejected. Compare the full {addr,value} multiset, not just the
     // count, so a same-count value/addr substitution is also caught. The verified `outputs` win regardless.
     const fp = (os: { addr: string; value: number }[]) => os.map((o) => `${o.addr}:${o.value}`).sort().join(",");
@@ -380,7 +365,7 @@ export class Scanner {
     const body = { proposer: signer, uri: app.uri, payloadHash: String(app.payloadHash).toLowerCase(), expiresEpoch: epochOfBody(app.expiresEpoch) };
     // A uri holding U+0000 is no JSON, so resolve() logs the event invalid as it does any uri that is no record. An
     // indexer store that holds no U+0000 serves another uri for it, so that one field is not compared
-    // (test/scan-nul-body.test.ts).
+    // (test/scan/scan-nul-body.test.ts).
     return sameAsRow("proposal", pid, body.uri.includes("\u0000") ? { ...fromRow, uri: body.uri } : fromRow, body);
   }
 
@@ -446,14 +431,14 @@ export class Scanner {
     return null;
   }
 
-  /** The incremental pull (M3-B1-03): the kept events plus the feed rows after them, at or below `upTo`, in the full
+  /** The incremental pull: the kept events plus the feed rows after them, at or below `upTo`, in the full
    *  pull's order. Kept rows are at or below `k.upTo` and every row of the chain there is kept, so each new row lies
    *  after them in chain order, and an attestation after its proposal (the node rejects an Attest of a proposal it has
    *  not applied, and one in an epoch past the proposal's expiry, compute-substrate src/state/app_state.rs). Null when
    *  the feed cannot serve the read or serves a row that breaks that (one at or below `k.upTo`, an id kept already, an
    *  unknown proposal, one whose transaction is not at the row's height and position): the scan then pulls in full.
    *  A row's feed coordinates page the feed and set where the next read starts; its transaction's place is its event's.
-   *  When the two disagree a page can skip rows (test/scan-incremental-fallback.test.ts). */
+   *  When the two disagree a page can skip rows (test/scan/scan-incremental-fallback.test.ts). */
   private async pullNew(k: Kept, tip: Block, deep: Block | null, upTo: number): Promise<Kept | null> {
     const props = await this.feedRows<RawProposal>("proposals", tip, k.last.p);
     if (!props) return null;
@@ -505,18 +490,17 @@ export class Scanner {
   private async allAttestations(txid: string): Promise<RawAttest[]> {
     const PAGE = this.attPageSize;
     const out: RawAttest[] = [];
-    const seen = new Set<string>();   // AUDIT M4 (REBIND B7f, service half): txid de-dup, see the push loop below
+    const seen = new Set<string>();   // txid de-dup, see the push loop below
     let afterH: number | undefined, afterT: string | undefined, done = false;
     for (let guard = 0; guard < 1_000; guard++) {
       const cursor = afterH !== undefined ? `&after_height=${afterH}&after_txid=${afterT}` : "";
       const page = await this.getJson<RawAttest[]>(`/proposal/${txid}/attestations?limit=${PAGE}${cursor}`);
-      // AUDIT L2 / QX-M5: a non-array HTTP-200 body would throw TypeError on the spread and abort the whole
+      // A non-array HTTP-200 body would throw TypeError on the spread and abort the whole
       // scan (→ stale-state-forever). Fail loud with a clear message, like the saturation guard below.
       if (!Array.isArray(page)) throw new Error(`indexer returned a non-array attestations page for ${txid}; refusing to resolve from a malformed feed`);
-      // AUDIT M4 (REBIND B7f, the cairnx SERVICE half; the resolve() half is V29-gated in cairnx-core):
-      // the feed pushes pages VERBATIM, so a duplicated attestation (a buggy/hostile indexer, or overlapping
+      // The feed pushes pages VERBATIM, so a duplicated attestation (a buggy/hostile indexer, or overlapping
       // pages) would ride into resolve() TWICE and double-apply, double-crediting o.paid/o.delivered on a
-      // partial fill (resolve.ts:727). txid is unique per attest tx, so de-dup by it before pushing: the first
+      // partial fill (resolve() de-dups only from V29). txid is unique per attest tx, so de-dup by it before pushing: the first
       // occurrence wins, any repeat is dropped. The cursor + short-page test still key on the RAW `page` (the
       // indexer's real pagination), so this never masks a truncated feed; it only drops exact-txid repeats.
       for (const a of page) {
@@ -536,9 +520,7 @@ export class Scanner {
     if (!done) throw new Error(`attestation feed for ${txid} exceeded the pagination guard (>5M attests); refusing to resolve from a truncated list`);
     return out;
   }
-  // (Scanner.paidTo was retired in favour of cairnx-core's exported paidToFromOutputs, the same
-  // DET-PAIDTO-1 aggregation, now single-sourced so the scanner and the resolver's fee detection cannot
-  // drift. It is byte-identical for every 0x-hex addr the scanner emits.)
+  // paidTo comes from cairnx-core's paidToFromOutputs, the resolver's own fee aggregation, so the two cannot drift.
 
   /** Pull the COMPLETE domain proposal history via the height cursor (?from=, ascending,
    *  page until a short page; de-dup by txid at the boundary). Against a pre-cursor indexer
@@ -551,7 +533,7 @@ export class Scanner {
     for (let guard = 0; guard < 1_000; guard++) {           // 10M proposals ≫ any plausible domain
       const rows = await this.getJson<RawProposal[]>(
         `/domain/${encodeURIComponent(DOMAIN)}/proposals?limit=${PAGE}&from=${from}`);
-      if (!Array.isArray(rows)) throw new Error("indexer returned a non-array proposals page; refusing to resolve from a malformed feed"); // AUDIT L2/QX-M5
+      if (!Array.isArray(rows)) throw new Error("indexer returned a non-array proposals page; refusing to resolve from a malformed feed");
       let fresh = 0;
       let maxH = from;
       for (const r of rows) {
@@ -566,7 +548,7 @@ export class Scanner {
         // first clamp window, the domain has outgrown it and the feed is TRUNCATED.
         throw new Error("indexer proposal feed saturated at the 10k clamp without cursor support: upgrade csd-indexer (?from= pagination) before trusting resolved state");
       }
-      // AUDIT L1 (SX-SCAN-2): a FULL page whose max height didn't advance past the cursor means every row
+      // A FULL page whose max height didn't advance past the cursor means every row
       // sits at/below `from`, i.e. 10k proposals in (or below) a single block, which is impossible for a
       // real domain. This is a stuck / rotating-decoy / lying feed that the fresh===0 guard alone misses
       // (it keeps emitting NEW decoy txids at a fixed height). Fail loud rather than silently truncate.
@@ -584,29 +566,29 @@ export class Scanner {
   /** Drop the order-sensitive caches (txCache positions, attCache closed-window sets) whenever the
    *  canonical chain the cached rows live in changed under us. Two independent triggers:
    *
-   *  (1) SHALLOW-reorg positions (AUDIT CX-SCAN-REORG-POS-1): a reorg entirely ABOVE the tip−FINALITY
+   *  (1) SHALLOW-reorg positions: a reorg entirely ABOVE the tip−FINALITY
    *      anchor leaves that anchor unchanged, so (2) alone misses it, yet it can still swap the block
    *      positions of already-cached txs (an offer and its ocancel reordered in one block flips the offer
    *      back to "open", and the stale-open resolver then lets a payment-bearing fill burn). Any reorg
    *      that could move a cached tx (all cached at height ≤ the PREVIOUS scan's tip) must replace the
    *      block at that previous tip height, so a hash change there is a sound, cheap detector. On any
    *      change, or an indexer that can't confirm the prior tip hash, clear and force a refetch; the
-   *      position-bearing events then re-derive and flip the resolve fingerprint (memo.ts folds pos).
+   *      position-bearing events then re-derive and change the events a replay reads.
    *
-   *  (2) DEEP-reorg frozen windows (META-4, retained): a reorg deeper than FINALITY can poison a frozen
+   *  (2) DEEP-reorg frozen windows: a reorg deeper than FINALITY can poison a frozen
    *      closed-window attCache; detected at the tip−FINALITY boundary. Largely subsumed by (1), kept as a
    *      tested belt-and-suspenders line (and it keeps-on-error, protecting the long-lived closed cache).
    *
-   *  (3) The kept events (M3-B1-03) stay while the block they are anchored to is still on the chain; after a reorg
+   *  (3) The kept events stay while the block they are anchored to is still on the chain; after a reorg
    *      above their deep block they roll back to it (the rows above it are read again), after any other change
-   *      they are dropped and the scan pulls in full (test/scan-incremental.test.ts).
+   *      they are dropped and the scan pulls in full.
    *
    *  Conservative throughout: an unconfirmable prior hash clears (a harmless refetch), never false-keeps. Returns this
    *  scan's tip block and its tip less FINALITY, as read here (null for a read that failed): what its kept events
    *  are anchored to. */
   private async invalidateCacheOnReorg(tipHeight: number): Promise<{ tip: Block | null; deep: Block | null }> {
     // This scan's own anchor is sampled first, so the hash read after the pull brackets this cache check as well as
-    // the pull: a branch switch after this read shows in the check or as a moved tip (test/scan-anchor-bracket.test.ts).
+    // the pull: a branch switch after this read shows in the check or as a moved tip (test/scan/scan-anchor-bracket.test.ts).
     let anchor: string;
     try { anchor = await this.getJson<string>(`/block-height/${tipHeight}`); } catch { anchor = "!unconfirmed-tip"; }
     // every hash read here, so check (3) reads none of them twice
@@ -644,7 +626,7 @@ export class Scanner {
     }
     // Record the shallow anchor for the next scan. On a failed sample the prior (lower) anchor is not kept: this
     // scan caches txs up to the current tip, so a lagging anchor would leave (prevTip.h, tip] unguarded. The
-    // sentinel is not a block hash, so the next scan clears (test/scan-reorg-pos.test.ts, fault paths).
+    // sentinel is not a block hash, so the next scan clears (test/scan/scan-reorg-pos.test.ts, fault paths).
     this.prevTip = { h: tipHeight, hash: anchor };
     const h = Math.max(0, tipHeight - Scanner.FINALITY);
     let deep: Block | null = null;
@@ -656,7 +638,7 @@ export class Scanner {
   /** One scan: all CairnX events + the indexer tip. A scan that ends off one branch, or throws, may have cached
    *  rows of a branch the chain later leaves, and the next scan's reorg check compares against the hash sampled before
    *  this pull, so it would keep them: such a scan takes back out every row it cached and nothing an accepted scan
-   *  cached (test/scan-refused-cache.test.ts), and keeps no events of its own. The original error is rethrown. */
+   *  cached (test/scan/scan-refused-cache.test.ts), and keeps no events of its own. The original error is rethrown. */
   async scan(): Promise<{ events: ChainEvent[]; tipHeight: number; anchor: ScanAnchor }> {
     this.written = { tx: [], att: [] };
     this.nextKept = null;
@@ -683,19 +665,19 @@ export class Scanner {
   }
 
   private async pull(): Promise<{ events: ChainEvent[]; tipHeight: number; anchor: ScanAnchor }> {
-    // AUDIT L3 / QX-M4: validate the single most load-bearing scalar (every OTHER numeric field is already
-    // defensively wrapped). tipHeight drives the F4 conf-depth gate AND the attCache freeze horizon
+    // Validate the single most load-bearing scalar (every OTHER numeric field is already
+    // defensively wrapped). tipHeight drives the conf-depth gate AND the attCache freeze horizon
     // (closedBelowEpoch); a string/NaN/negative tip would NaN the gate and collapse the freeze to 0
     // (refetch-everything regression). Fail loud, like the pullProposals saturation guard, rather than
     // resolve from a garbage tip. Honest data is unchanged (the indexer returns a JSON integer).
     const rawTip = await this.getJson<unknown>("/blocks/tip/height");
-    // Number() reads null, "", [] and false as 0 and [7] as 7 (test/scan-tip-guard.test.ts)
+    // Number() reads null, "", [] and false as 0 and [7] as 7 (test/scan/scan-tip-guard.test.ts)
     const tipHeight = typeof rawTip === "number" || (typeof rawTip === "string" && /^[0-9]+$/.test(rawTip)) ? Number(rawTip) : NaN;
     if (!Number.isSafeInteger(tipHeight) || tipHeight < 0)
       throw new Error("indexer returned a non-numeric/negative tip height");
     this.tipHeight = tipHeight;   // indexer-fed: attCache freeze horizon
-    // Depth reference for the F4 conf-depth gate: verifiedTipHeight when F4 is on (the indexer tip is
-    // attacker-supplied under F4's threat model), else the indexer tip (F4 off -> gate unused anyway).
+    // Depth reference for the conf-depth gate: verifiedTipHeight with verifyInclusion on (the indexer tip is
+    // attacker-supplied in the threat that flag answers), else the indexer tip (the gate is unused then).
     if (this.verifyInclusion) {
       const vt = Number(await this.verifiedTipHeight!());
       if (!Number.isSafeInteger(vt) || vt < 0) throw new Error("F4: verifiedTipHeight returned a non-numeric/negative tip");
@@ -704,7 +686,7 @@ export class Scanner {
       this.depthTip = tipHeight;
     }
     const blocks = await this.invalidateCacheOnReorg(tipHeight);
-    // F4 on: verifyTx accepts a tx iff depthTip - height >= confDepth, so the highest final height is
+    // verifyInclusion on: verifyTx accepts a tx iff depthTip - height >= confDepth, so the highest final height is
     // depthTip - confDepth. A record above it is checked against the cutoff BEFORE tx() (whose verifyTx
     // would throw on it). A row that lies low is caught by eventHeight(); one that lies high only defers
     // its record, which an indexer can already do by omitting the row.
@@ -715,7 +697,7 @@ export class Scanner {
     // that landed during the pull, part read.
     const upTo = this.verifyInclusion ? Math.min(tipHeight, finalHeight) : tipHeight;
     // Kept events that have served keptRefresh accepted scans are not read on from: this scan pulls in full, and if it
-    // is accepted its events replace them; if not, they stay and the next scan tries again (test/scan-kept-refresh.test.ts).
+    // is accepted its events replace them; if not, they stay and the next scan tries again.
     const k = this.kept;
     // a feed read the scan does not take keeps nothing it cached: the full pull reads those transactions again
     const mark = { tx: this.written?.tx.length ?? 0, att: this.written?.att.length ?? 0 };
@@ -729,7 +711,7 @@ export class Scanner {
       events = await this.pullAll(tipHeight, finalHeight);
       this.nextKept = blocks.tip ? keptFrom(events, upTo, blocks.tip, blocks.deep, this.keptMax) : null;
     }
-    // Plan 80 C1 (CX-13): the block hash at the declared tip, read BEFORE the pull (recorded by
+    // The block hash at the declared tip, read BEFORE the pull (recorded by
     // invalidateCacheOnReorg above) and again AFTER it. Equal non-null hashes mean the block at that height was the
     // same at both reads; a newer tip above it is normal and does not change this hash. A switch away and back
     // entirely inside one pull is not seen here: a residual the clients' own fill replays bound.
@@ -775,14 +757,14 @@ export class Scanner {
         }
       }
       // a cached list can sit above a lower cutoff (the verified tip moved back); keep the prefix. One push per event:
-      // spread into push() as call arguments, a list of about 125,000 or more throws (test/scan-long-list.test.ts).
+      // spread into push() as call arguments, a list of about 125,000 or more throws (test/scan/scan-long-list.test.ts).
       for (const a of aes) if (!this.verifyInclusion || a.height <= finalHeight) events.push(a);
     }
     return events;
   }
 }
 
-/** Which branch one scan read, sampled before and after the pull (Plan 80 C1). `branch` is the one-branch-per-scan
+/** Which branch one scan read, sampled before and after the pull. `branch` is the one-branch-per-scan
  *  rule every caller reads: "one" when both hashes were read and are equal, "moved" when the block at the declared
  *  tip changed during the pull (the events may mix two branches), "unread" when either hash could not be read. */
 export interface ScanAnchor { height: number; hashBefore: string | null; hashAfter: string | null; branch: "one" | "moved" | "unread" }
