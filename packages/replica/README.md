@@ -36,7 +36,8 @@ Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its
 is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
-- `./server` also has `diskStore({ dir })` ("The disk store" below).
+- `./server` also has `diskStore({ dir })` ("The disk store" below); `./browser` has `idbStore({ name, slot })` and
+  `sessionSlot(key)` ("The browser store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
   accepts only `localhost`, `127.0.0.1` or `[::1]`; `./server` also the private literals 10/8, 172.16/12, 192.168/16,
@@ -216,7 +217,8 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
 answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
-`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
+`transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or
+context holds it). Exported and not emitted yet: `STORE_UNCONFIRMED`,
 `UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
 `TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
@@ -396,8 +398,8 @@ the witness's to confirm.
 `diskStore({ dir })`, in `./server`, keeps a store in `dir`, an absolute path on a local filesystem (created with mode
 700 at open; a relative path, or one that is a file or cannot be created, throws `ReplicaConfigError`). Pass it as
 `store` to `open` or `openLog`. Files: `meta.json` (the store's tag and format, the meta without `witnessed`, the
-committed lengths of the two row files, the chain of the boundary lines and the window's digest), `rows.jsonl` and
-`bounds.jsonl` (one row or boundary a line, appended), `window-<sha256>.bin` and `lock`. These are the only names it
+committed lengths of the two row files, the chain over the boundaries and the window's digest), `rows.jsonl` and
+`bounds.jsonl` (one row or boundary a line, appended), `window-<digest>.bin` and `lock`. These are the only names it
 writes or removes: other files and directories in `dir` are left alone, and a `meta.json` another program wrote makes
 `open` throw `ReplicaConfigError` naming it, with nothing removed. A commit appends at the committed lengths, syncs
 each file, then writes the new meta to a temporary file, syncs it, renames it over `meta.json` and syncs the
@@ -424,6 +426,36 @@ for 20 s is stale and taken over. While another process holds it, `open` is `una
 over while it waited between commits fails its next commit and writes nothing; one stopped after that commit's check
 of its lease finishes the commit over the taker's files, and the store then opens `corrupt` and is refilled. The package installs no signal handler: a server calls `close()` at
 shutdown, which releases the lease; after a crash the next start waits until the lease is stale.
+
+## The browser store
+
+`idbStore({ name, slot })`, in `./browser`, keeps a store in the IndexedDB database `cairnx-replica:<name>` (`name`: 1
+to 64 of a-z, 0-9 and -) of an extension's own contexts, its service worker above all; pass it as `store` to `open` or
+`openLog`. `slot` is `sessionSlot(key)`, the key `key` of `chrome.storage.session`, which only the extension's own
+contexts reach by default, which lives in memory and which a browser start, an extension update or reload clears;
+`sessionSlot` throws `ReplicaConfigError` where that area does not exist (a page: pages use `memoryStore()`), and so
+does `idbStore` for another name or without a slot. The database holds four object stores, the only names the store
+writes or removes: `meta` (the record: the store's tag and format, the meta without `witnessed`, the chain over the
+boundaries and the header window's digest, the same record checks as the disk store's), `rows` and `bounds` (by height)
+and `window`. A commit is one transaction, `relaxed` (a power loss can drop the last commits, and it also clears the
+slot, so the store is refilled anyway), that first compares the stored cursor with the one the commit expects and
+aborts on another. The slot holds the hash of the record: before the transaction the pair of the stored record's and
+the new record's hashes, after it the new one alone, so a worker stopped at any point leaves a record the slot names
+(`test/browser/idb-store.test.ts` stops it before, between and after the writes, with the transaction issued, and at
+random times).
+
+At open, in order: the record's tag, format and form, the rule, basis and gate table as for the disk store; then the
+slot: a record whose hash it does not name is `unconfirmed`, and the reader resets the store and refills it; then the
+chain, the window's digest and the loop's checks of every row (`corrupt`), and under a pin the bind. The slot is what
+tells this package's commits from a profile written by another program: an edit of the database, however consistent,
+or an older copy put back, is not named by the slot, and after every browser start the slot is empty, so the store is
+refilled: rows at or below a pin from the release's log, every block above it from the source again. A database of a
+later layout is `format`, deleted and made again by the reset.
+
+One context writes a store at a time, by the Web Lock `cairnx-replica:<name>` taken at `open` and held until `close()`
+or the end of the context that holds it (a stopped worker, a closed page). While another context holds it, `open` is
+`unavailable` (`NOT_SYNCED`, the note `STORE_UNAVAILABLE`) and the next advance tries again. A store deleted under an
+open one (another context deleting the database) gives the next commit `CURSOR_MOVED`, and the reader refills it.
 
 ## Display
 

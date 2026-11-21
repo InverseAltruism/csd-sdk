@@ -2,6 +2,14 @@
 
 ## 0.1.0 (unreleased)
 
+- `idbStore({ name, slot })` and `sessionSlot(key)` in `./browser`: a store in IndexedDB for an extension's own
+  contexts, one transaction a commit that compares the stored cursor first, confirmed by the hash of its record in
+  `chrome.storage.session` (written as a pair before the transaction and alone after it); a record the slot does not
+  name opens `unconfirmed` and is reset and refilled; one writer by a Web Lock. The record checks and the boundary
+  chain are one module both stores import, every digest in it `payloadHash`. A disk store written before this change
+  that holds a boundary or a header window (its chain and window name were sha256 over raw bytes) opens `corrupt` and
+  is refilled. Internal:
+  `Store.open`'s reason `unconfirmed`, `TrustedSlot`.
 - `diskStore({ dir })` in `./server`: a store in one directory, appended rows and boundaries with a meta swapped by
   rename, one writer by a lease (5 s touches, stale at 20 s), and checks at open (format, rule, basis, the gate table,
   the files' lengths, chain and digest, then the loop's row checks). The pin's reopen bind replays the state hash
