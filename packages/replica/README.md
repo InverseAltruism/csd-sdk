@@ -530,11 +530,14 @@ with `verifyInclusion`) is a stable prefix: the resolver serves these messages a
 
 Each epoch boundary the loop holds `FINAL_DEPTH` deep is a tuple of CONVENTION section 34: `{ height, blockHash,
 eventsHash, stateHash }`. A boundary is added once it is 12 deep, dropped by a rollback below it and kept by the store;
-a refused step commits none. `status().tuple` is the newest boundary whose state hash is known (the loop replays a
-boundary's state when it becomes deep within 24 epochs of the tip; an older one is replayed on demand), read from memory.
+a refused step commits none. A rollback to a shorter branch that leaves a kept boundary fewer than 12 blocks under the
+cursor withholds it (no tuple, not compared) until the chain held is 12 above it again, as the resolver withdraws it.
+`status().tuple` is the newest boundary whose state hash is known (the loop replays a boundary's state when it becomes
+deep within 24 epochs of the tip; an older one is replayed on demand), read from memory.
 `test/tuple-differential.test.ts` feeds one feed through this book and through the resolver's own (a test-only copy of
 its `src/tuple.ts` at cairnx `c89ab86`, unchanged since `a0d3f27`) and finds the same tuple at every boundary both hold:
-the 2,905 of the recorded capture to 117,000, and across a reorg below and above kept boundaries and a refused scan.
+the 2,905 of the recorded capture to 117,000, and across a reorg below and above kept boundaries, a refused scan and
+rollbacks that leave a boundary 1 to 11 blocks under the cursor; after each accepted scan both serve the same boundaries.
 While scans are refused the resolver withholds every tuple and this book serves the tuples it committed. If the chain
 reorganises below them meanwhile, those tuples name a block the chain no longer holds at that height until the next
 accepted step rolls them back: a comparer reading one then sees `branch`, another block hash, not a difference.
