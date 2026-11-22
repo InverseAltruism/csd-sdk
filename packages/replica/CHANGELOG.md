@@ -2,6 +2,10 @@
 
 ## 0.1.0 (unreleased)
 
+- The command `cairnx-replica check` (`bin`, `src/cli.ts`): a replica in memory on one source (`--node`, `--hosted`
+  with `--anchor` or `--pin`, `--feed`), read to its tip, printing the level, the verdict, the tuple at the newest
+  final boundary and the comparison with `--reference` or `--expect`; exit 0 only for `equal` (or `held` with neither),
+  2 for a usage or configuration error.
 - `replicaReads(reader)` in `./server`: the resolver's five state reads from `reader.snapshot()`, with the resolver's
   statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
   `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the

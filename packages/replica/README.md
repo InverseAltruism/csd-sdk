@@ -638,6 +638,32 @@ store is kept, `STORE_UNCONFIRMED` holds and the note `SOURCES_DISAGREE` names t
 equal (which also clears the count) or a recount equals the store's tuple. Replace that source. The same object may be both `source` and `recount`: the recount then
 reads the store's own source again, which still finds a store damaged since it was filled.
 
+## Checking an installation
+
+`cairnx-replica check`, the package's command (`npx cairnx-replica check ...` after an install), opens a replica in
+memory on the one source it is given, reads it until its cursor reaches the source's tip, and prints the level, the
+proof, the verdict's codes, the tuple at the newest final boundary and, when asked, its comparison:
+
+```bash
+npx cairnx-replica check --node http://127.0.0.1:8789 --pin --reference https://cairn-substrate.com/trade/api
+npx cairnx-replica check --hosted https://cairn-substrate.com --pin
+npx cairnx-replica check --hosted https://cairn-substrate.com --anchor 29859:<hash> --expect <height>:<blockHash>:<eventsHash>:<stateHash>
+npx cairnx-replica check --feed https://cairn-substrate.com/explorer/api --json
+```
+
+The source is one of `--node <url>` (one's own node, under `./server`'s address rule), `--hosted <origin>` (complete
+blocks from a front door, its headers verified from `--anchor <height>:<hash>`, at or below the activation height less
+one, or from the pin) and `--feed <base>` (a csd-indexer, level 1). `--pin` starts from `@inversealtruism/cairnx-pin`,
+which must be installed beside this package; a feed takes no pin. `--reference <base>` compares with a host's tuples
+as `open`'s `reference` does ("Tuples and a reference" above); `--expect` compares with a tuple written out. Either
+gives one result of `equal`, `branch`, `records`, `rules`, `missing` (the reference holds no such boundary, or the
+expected tuple is at another height than the newest final boundary held) or `unavailable`. With neither, the result is
+`held` once a tuple is held. `--json` prints the report as one JSON object; `--timeout-ms` bounds the run (default two
+hours). The exit
+code is 0 for `equal` and `held`, 1 for any other result (`no-tuple` when no final boundary was reached), and 2 for a
+usage or configuration error. A refusal the next step would repeat (`PIN_MISMATCH`, `PIN_OFF_CHAIN`, `BELOW_FLOOR`)
+ends the run at once. The command asks no host it was not given and holds nothing on disk (`test/cli.test.ts`).
+
 ## The browser store
 
 `idbStore({ name, slot })`, in `./browser`, keeps a store in the IndexedDB database `cairnx-replica:<name>` (`name`: 1

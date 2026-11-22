@@ -248,7 +248,7 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   ok("a package is ordered after the workspace package it names as a peer (cairnx-core before cairnx-api, against the name order)",
     peerFirst.map((p) => p.name).join() === "@inversealtruism/cairnx-core,@inversealtruism/cairnx-api", peerFirst.map((p) => p.name).join());
   // the window's order over this repo's own manifests: each package after every workspace package it depends on or peers on
-  const real = publishOrder(workspacePackagesAtHead(root)).map((p) => String(p.name).replace("@inversealtruism/", ""));
+  const real = publishOrder(workspacePackagesAtHead(root).map((p) => ({ ...p, name: String(p.name) }))).map((p) => String(p.name).replace("@inversealtruism/", ""));
   const after = (a: string, ...before: string[]) => before.every((b) => real.indexOf(b) >= 0 && real.indexOf(b) < real.indexOf(a));
   ok("the order over this repo's manifests puts cairnx-replica after cairnx-core, csd-codec, csd-crypto, csd-client and csd-light, cairnx-pin after cairnx-replica, and lists csd-anchors",
     after("cairnx-replica", "cairnx-core", "csd-codec", "csd-crypto", "csd-client", "csd-light") && after("cairnx-pin", "cairnx-replica") && real.includes("csd-anchors"), real.join());
