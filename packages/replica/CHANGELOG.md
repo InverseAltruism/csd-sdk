@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- A read starts an advance only when none runs and the last ended at least `READ_ADVANCE_MS` (15 s) before, so a burst
+  of requests to a replica's server polls its source at most once in that time; `advance()` is unchanged.
 - `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a
   witness's valid tip more than 12 above) and the new `TIP_STALE_LONG` (the tip older than `STALE_MAX_MS`, 6 hours); a
   `TIP_STALE` tip alone and a peer up to 12 ahead stay served. The notes reach a client in `x-cairnx-notes`, exposed

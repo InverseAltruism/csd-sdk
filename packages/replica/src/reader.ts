@@ -33,6 +33,9 @@ export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
   readonly reference?: TupleReference; readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
+/** The least time between the end of an advance and one a read starts, as the hosted resolver polls by default: a burst
+ *  of reads polls the source at most once in it. advance() itself starts one whenever none runs. */
+export const READ_ADVANCE_MS = 15_000;
 /** How long a recount from blocks may run before it gives no answer: it reads its source from the floor to the source's
  *  tip, 10 minutes at most. The advance's signal and close() end it sooner, and an ended recount settles nothing. */
 export const RECOUNT_MS = 600_000;
@@ -136,7 +139,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   const finalOnly = basis.kind === "feed" && basis.inclusion;
   // `running` is a whole advance; `stepping` the part a read waits for (the step and the witnesses), so a read is not
   // held by a reference, which the advance compares after it. close() aborts the comparison and a recount.
-  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null;
+  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null, endedAt = Number.NEGATIVE_INFINITY;
   const closing = new AbortController();
   const ref = compares ? o.reference : undefined;
   const cmp = ref === undefined ? null : comparer({
@@ -243,7 +246,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
       return s;
     })();
     running = run; stepping = stepped;
-    const clear = () => { if (running === run) { running = null; stepping = null; } };
+    const clear = () => { endedAt = clock(); if (running === run) { running = null; stepping = null; } };
     run.then(clear, clear);
     return run;
   }
@@ -264,15 +267,16 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     const minDepth = o.minDepth ?? FINAL_DEPTH, invalid = (): Answer<T> =>
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
-    // A read starts an advance unless one runs, then waits for its step (not the comparison that follows it) and for a
-    // commit in flight, together at most
+    // A read starts an advance unless one runs or the last ended less than READ_ADVANCE_MS ago, then waits for the step
+    // of the advance running (not the comparison that follows it) and for a commit in flight, together at most
     // `waitMs` (default 0) from now. From the last check of committing() on nothing is awaited, so a read either
     // answers from the state the last whole commit left or, with a commit still in flight, NOT_SYNCED with nothing shown.
-    if (running === null) void advance().catch(() => undefined);
-    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping!;
-    let ran = false;
-    void step.then(() => { ran = true; }, () => { ran = true; });
-    await within(o, deadline, () => ran, () => step);
+    const since = clock() - endedAt;   // a clock set back counts as the interval passed
+    if (running === null && !(since >= 0 && since < READ_ADVANCE_MS)) void advance().catch(() => undefined);
+    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping;
+    let ran = step === null;
+    void step?.then(() => { ran = true; }, () => { ran = true; });
+    await within(o, deadline, () => ran, () => step ?? Promise.resolve());
     await within(o, deadline, () => !loop.committing(), () => loop.quiet());
     const j = judge(minDepth), s = loop.status(), busy = loop.committing();
     if (s.tip !== null && minDepth > s.tip.height) return invalid();

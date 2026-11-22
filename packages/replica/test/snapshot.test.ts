@@ -4,6 +4,7 @@
 // `at` is the cursor it was tried above, whatever the tip. A snapshot during a commit is commit.test.ts's.
 import { applyOrder, buildRecord, nameRegFee, resolve, stateHash, TREASURY_ADDR } from "@inversealtruism/cairnx-core";
 import { open, type Answer, type DryRunTx, type Snapshot, type Source, type Step } from "../src/index.js";
+import { READ_ADVANCE_MS } from "../src/reader.js";
 import { fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus } from "./core-files.js";
@@ -78,6 +79,37 @@ console.log("events held above the view:");
   const a = await r.snapshot(), v = view(a);
   ok("the view at 30,295 holds the registration and not the record at 30,298", codes(a) === "BRANCH_UNRESOLVED" && v?.height === 30_295 &&
     v.events.length === 1 && v.events[0]!.height === 30_010 && v.state.names.alice?.addr === undefined, JSON.stringify(v?.events.map((e) => e.height)));
+  await r.close();
+}
+
+console.log("reads start advances at most once per READ_ADVANCE_MS:");
+{
+  let t = now, steps = 0;
+  const inner = nodeSource(), source: Source = { ...inner, next: (ctx) => { steps++; return inner.next(ctx); } };
+  const r = await open({ source, clock: () => t });
+  let advances = 0;
+  r.subscribe(() => { advances++; });
+  await Promise.all(Array.from({ length: 20 }, () => r.snapshot()));
+  await r.advance();
+  ok("20 reads before any advance: one advance, which they join", advances === 1, `${advances}`);
+  const ticks = async (n: number) => { for (let i = 0; i < n; i++) await new Promise((go) => setImmediate(go)); };
+  for (let i = 0; i < 20; i++) { t += 500; await r.snapshot(); }
+  await ticks(5);
+  ok(`20 reads over the next ${(20 * 500) / 1000} s: no advance`, advances === 1, `${advances}`);
+  t = now + READ_ADVANCE_MS + 1;
+  await Promise.all(Array.from({ length: 20 }, () => r.snapshot()));
+  await r.advance();
+  const after = advances, stepsAfter = steps;
+  for (let i = 0; i < 20; i++) { t += 100; await r.snapshot(); }
+  await ticks(5);
+  ok(`past ${READ_ADVANCE_MS} ms: one more advance for 20 reads, none for the 20 after it`, after === 2 && advances === 2 && steps === stepsAfter, `${after} ${advances}`);
+  t = now - 60_000;
+  await r.snapshot();
+  await r.advance();
+  ok("a clock set back counts as the interval passed: the read starts an advance", advances === 3, `${advances}`);
+  const own = advances;
+  await r.advance();
+  ok("paired: advance() starts one whenever none runs", advances === own + 1);
   await r.close();
 }
 

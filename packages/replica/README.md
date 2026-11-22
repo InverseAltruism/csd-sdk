@@ -182,7 +182,9 @@ replayed on demand.
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
-when none is running and waits for it at most `waitMs` (default 0: it answers from what is held); a call of
+when none is running and the last ended at least `READ_ADVANCE_MS` (15 seconds, the hosted resolver's default poll)
+before by `clock()`, a clock set back counting as that time passed, so a burst of reads polls the source at most once
+in it; it waits for the advance running at most `waitMs` (default 0: it answers from what is held); a call of
 `advance()` while a run is in flight joins that run, and the status it returns can then come from a round begun before
 the call. A read waits for the advance it started and for a step's commit in flight together at most `waitMs`
 (counted from the read, or until its signal aborts). It answers from the state the last whole commit left, or, while a
