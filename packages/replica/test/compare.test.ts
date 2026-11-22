@@ -193,15 +193,17 @@ console.log("a hostile reference:");
   await r.close();
 }
 for (const [what, reply] of [
-  ["an extra key", (p: string) => (p.includes(":") ? Response.json({ ok: true, height: 0, blockHash: "", eventsHash: "", stateHash: "", extra: 1 }) : null)],
+  ["an extra key", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? Response.json({ ok: true, ...t, extra: 1 }) : null; }],
   ["another height", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? Response.json({ ok: true, ...t, height: h + 30 }) : null; }],
   ["a 404 that is not the resolver's", () => new Response("<html>not found</html>", { status: 404 })],
   ["a refusal by hash of the block it then gives by height", (p: string) => (p.includes(":") ? Response.json({ ok: false, error: "not this host's block at that height", height: Number(/tuple\/([0-9]+)/.exec(p)?.[1]) }, { status: 404 }) : null)],
   ["an answer over 4,096 bytes", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? new Response(JSON.stringify({ ok: true, ...t }) + " ".repeat(5_000), { status: 200 }) : null; }],
 ] as const) {
-  const r = await openAt({ now: TOP }, (h) => truth.get(h) ?? null, { reply });
-  const s = await r.advance();
-  ok(`an answer with ${what}: unavailable, no difference`, s.compare?.kind === "unavailable" && notes(s).length === 0, s.compare?.detail ?? "");
+  const log: string[] = [], r = await openAt({ now: TOP }, (h) => truth.get(h) ?? null, { reply, log });
+  const s = await r.advance(), n = log.length;
+  for (let i = 0; i < 20; i++) r.status();
+  ok(`an answer with ${what}: unavailable, no difference, and status() reads nothing to retry it`, s.compare?.kind === "unavailable" && notes(s).length === 0 &&
+    log.length === n, s.compare?.detail ?? "");
   await r.close();
 }
 {

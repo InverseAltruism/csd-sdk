@@ -71,4 +71,20 @@ console.log("a boundary whose block hash cannot be read:");
   await loop.close();
 }
 
+console.log("a boundary deep far below the step's tip:");
+{
+  // Steps that report a tip 2,000 above their blocks: a boundary is then more than STATE_WINDOW below the tip as it
+  // becomes deep, so its state hash is not replayed at the commit.
+  const base = growing(fx, { now: 30_300 });
+  const far: Source = { ...base, async next(ctx) { const s = await base.next(ctx); return s.kind === "blocks" ? { ...s, tip: { ...s.tip, height: s.tip.height + 2_000 } } : s; } };
+  const loop = replicaLoop({ source: far, store: memoryStore(), ...WIDE });
+  await loop.open();
+  await loop.advance();
+  const newest = loop.boundaryHeights().at(-1)!;
+  ok("its state hash is not known yet: no newest tuple, nothing replayed for it", loop.newestBoundary() === null && newest === 30_270);
+  const replayed = tupleOf(loop.boundary(newest));
+  ok("once replayed (a read of that boundary), it is the newest tuple", replayed !== null && JSON.stringify(tupleOf(loop.newestBoundary())) === JSON.stringify(replayed));
+  await loop.close();
+}
+
 done("cairnx-replica tuple book");
