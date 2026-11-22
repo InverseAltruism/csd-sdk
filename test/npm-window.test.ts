@@ -262,8 +262,13 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
     JSON.stringify(apiPeers) === JSON.stringify({ "@inversealtruism/cairnx-core": versions.get("@inversealtruism/cairnx-core") }), JSON.stringify(apiPeers));
   const REPLICA = "@inversealtruism/cairnx-replica";
   const replica = await window({ unpublished: REPLICA });
-  ok("a private package (cairnx-replica) is never planned, even when its version is not on npm",
-    replica.fails.length === 0 && replica.order.length === 0 && replica.tarballs.length === 0, `${replica.order.map((p) => p.name).join()} ${replica.fails.join("; ")}`);
+  const replicaTgz = replica.tarballs[0]?.path ?? "";
+  const replicaManifest = existsSync(replicaTgz) ? JSON.parse(execFileSync("tar", ["xzfO", replicaTgz, "package/package.json"], { encoding: "utf8" })) : null;
+  ok("honest: cairnx-replica, no longer private, is the one package to publish when it alone is unpublished, and its real pack passes every check",
+    replica.fails.length === 0 && replica.order.map((p) => p.name).join() === REPLICA && replica.tarballs.every((t) => t.sha1 !== undefined), `${replica.order.map((p) => p.name).join()} ${replica.fails.join("; ")}`);
+  ok("its packed manifest pins cairnx-core as a peer at the version HEAD names and carries the cairnx-replica command",
+    JSON.stringify(replicaManifest?.peerDependencies) === JSON.stringify({ "@inversealtruism/cairnx-core": versions.get("@inversealtruism/cairnx-core") })
+      && replicaManifest?.bin?.["cairnx-replica"] === "./dist/cli.js" && replicaManifest?.private === undefined, JSON.stringify(replicaManifest?.peerDependencies));
   checked = { honest, verifyFailed: verify };
 }
 

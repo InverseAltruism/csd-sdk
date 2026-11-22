@@ -2,7 +2,7 @@
 
 A CairnX pin: the log of the chain's `cairnx:v1` records at or below an epoch boundary, with the block hash, events
 hash and state hash there, for `pinned()` of `@inversealtruism/cairnx-replica`. A replica opened over it reads only the
-blocks above the pin. Below the pin the trust is this release. Not yet released.
+blocks above the pin. Below the pin the trust is this release.
 
 ```bash
 npm install @inversealtruism/cairnx-pin @inversealtruism/cairnx-replica@<version> @inversealtruism/cairnx-core@<version>

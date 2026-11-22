@@ -1,7 +1,7 @@
 # @inversealtruism/cairnx-replica
 
 A CairnX replica: the chain's records, read from a source, kept in a store and replayed by
-`@inversealtruism/cairnx-core`. Not yet released. Each store is filled from one basis, fixed when it is created, and the
+`@inversealtruism/cairnx-core`. Each store is filled from one basis, fixed when it is created, and the
 level of every answer (CairnX `CONVENTION.md` section 37) is a function of that basis alone:
 
 | Basis | Level | Proof of each record |

@@ -3,7 +3,7 @@
 The block-hash anchors of the CSD chain as data: one table of block hashes on a 4,096-block grid, the floor every header
 walk starts from, and the block at the CairnX activation root (height 29,859). The package has no runtime dependency and
 no dependent inside this repository, so a refresh is one publish of this package alone and each consumer takes it in
-its own release. Not yet released (private).
+its own release.
 
 ```bash
 npm install @inversealtruism/csd-anchors
