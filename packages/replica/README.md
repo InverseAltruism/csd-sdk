@@ -550,9 +550,12 @@ With `verifyInclusion` the chain is the caller's verified headers: every hash he
 final height (the verified tip less `confDepth`) with `headerAt`'s hash and time, and the indexer's `/block` is not read;
 the cursor ends at the highest height at or below the lower of the indexer's tip and the final height where the
 indexer gives the verified hash (that height, else the last boundary where it does). So an indexer that lags reads as
-`BEHIND` by its distance from the final height, and one on another branch than the verified headers is served only up
-to where the two agree, rolled back to there when the cursor is above it, and reads as `BEHIND` from there (withheld
-by a server from 12). A `headerAt` answer whose hash is out of form or whose time is not whole seconds is
+`BEHIND` by its distance from the final height. One on another branch than the verified headers, while that branch
+carries no record of its own, is served only up to where the two agree, rolled back to there when the cursor is above
+it, and reads as `BEHIND` from there (withheld by a server from 12); when that branch carries a record of its own, the
+scan fails before the two are compared, every step fails as `SOURCE_UNAVAILABLE`, and the last state stays served,
+ageing, until the 6-hour cap (`TIP_STALE_LONG`). A `headerAt` answer whose hash is out of form, or whose time is not whole seconds or is more than
+`MAX_FUTURE_DRIFT_SECS` (2 hours, the chain's own bound) after the step's clock, as a time in milliseconds is, is
 `SOURCE_MALFORMED`; one that throws is `SOURCE_UNAVAILABLE`. Every answer under `verifyInclusion` carries the note
 `FINAL_VIEW`. A step whose request or block budget (the `headerAt` reads count with the indexer's requests) runs out
 ends at the last boundary it read, with the scan's top as its reach. With `verifyInclusion` and the final height under
@@ -604,7 +607,10 @@ is more than 12 above the replica's, more than 24 under `FINAL_VIEW`; a peer up 
 between blocks would otherwise make every replica refuse at once). Every other code and note is served and named:
 the codes in `x-cairnx-why`, the notes in `x-cairnx-notes`, both exposed. Under `FINAL_VIEW` a served answer is at
 most 23 blocks behind the chain tip its source read: 12 by design and fewer than 12 of `BEHIND`. The hosted resolver
-imports the five reads and keeps its own dispatch: only a replica's own server withholds.
+imports the five reads and keeps its own dispatch: only a replica's own server withholds. The host drives
+`advance()` itself, a poller calling it every `READ_ADVANCE_MS` or so: a server that only answers reads serves its
+last state until a read starts the next step, and that read and the ones before the step ends answer from the old
+state with no code saying so.
 
 ## Tuples and a reference
 

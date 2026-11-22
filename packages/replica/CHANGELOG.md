@@ -4,10 +4,13 @@
 
 - `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
   through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
-  without it): the tip is the final height with the verified hash and time, the indexer's `/block` is not read, and
-  the cursor ends where the indexer still gives the verified hash. An indexer that lags reads as `BEHIND` (it read as
-  synced at its own tip, so a server answered 200 for a state 20 blocks behind), and one on another branch than the
-  verified headers is served only up to where they agree. Without inclusion nothing changes.
+  without it; an answer timed more than `MAX_FUTURE_DRIFT_SECS` after the clock, as one in milliseconds is, is
+  `SOURCE_MALFORMED`): the tip is the final height with the verified hash and time, the indexer's `/block` is not
+  read, and the cursor ends where the indexer still gives the verified hash. An indexer that lags reads as `BEHIND`
+  (it read as synced at its own tip, so a server answered 200 for a state 20 blocks behind). One on another branch
+  than the verified headers is served only up to where they agree while that branch carries no record of its own;
+  when it does, every step fails as `SOURCE_UNAVAILABLE` and the last state stays served until the 6-hour cap
+  (`TIP_STALE_LONG`). Without inclusion nothing changes.
 - A read starts an advance only when none runs and the last ended at least `READ_ADVANCE_MS` (15 s) before, so a burst
   of requests to a replica's server polls its source at most once in that time; `advance()` is unchanged.
 - `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a

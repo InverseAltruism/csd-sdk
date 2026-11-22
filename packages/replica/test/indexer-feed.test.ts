@@ -5,6 +5,7 @@
 // below the activation height is left out, and so is an Attest on it; a verified tip that moves back rolls nothing
 // back; a block hash the store holds that the indexer no longer gives rolls back to the last one it does.
 import { ACTIVATION_HEIGHT, CAIRNX_EVENT_RULE, FINAL_DEPTH, canonicalJson, mint, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { MAX_FUTURE_DRIFT_SECS } from "@inversealtruism/csd-codec";
 import { ReplicaConfigError, levelOf, memoryStore, open, replicaLoop, type Cursor, type Loop, type Step } from "../src/index.js";
 import { applyOrder } from "../src/order.js";
 import { Scanner, indexerFeed, replicaReads } from "../src/server.js";
@@ -21,9 +22,11 @@ const real = (f: typeof fetch): typeof fetch => (async (input: string | URL | Re
 }) as typeof fetch;
 const canon = (events: readonly ChainEvent[]) => canonicalJson([...events].sort(applyOrder));
 const held = (loop: Loop) => loop.rows(0).flatMap((r) => r.events);
-const next = (src: ReturnType<typeof indexerFeed>, cursor: Cursor | null, maxRequests: number): Promise<Step> => src.next({
+// A step's clock: a day after the test chain's block at H0 + 1000, above every header time the tests read.
+const STEP_NOW = (timeAt(H0 + 1000) + 86_400) * 1000;
+const next = (src: ReturnType<typeof indexerFeed>, cursor: Cursor | null, maxRequests: number, now = STEP_NOW): Promise<Step> => src.next({
   rule: CAIRNX_EVENT_RULE, cursor, sofar: { eventIds: new Set(), proposeIds: new Set() }, hashAt: () => null, eventsHashAt: () => null,
-  budget: { deadlineAt: Number.POSITIVE_INFINITY, maxRequests, maxBlocks: 10_000 }, signal: new AbortController().signal, now: () => 0,
+  budget: { deadlineAt: Number.POSITIVE_INFINITY, maxRequests, maxBlocks: 10_000 }, signal: new AbortController().signal, now: () => now,
 });
 const WIDE = { maxBlocks: 100_000, maxRequests: 100_000 };
 
@@ -474,6 +477,22 @@ console.log("with inclusion the verified headers name the tip:");
     const st = await next(indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), pageSize: 3, ...signed.verified({ verifiedTip: T }),
       headerAt: answer as never }), null, 100);
     ok(`headerAt ${what}: ${code}`, st.kind === "cannot" && st.code === code, JSON.stringify(st));
+  }
+  // A header time later than the chain admits (MAX_FUTURE_DRIFT_SECS after the clock), as a time in milliseconds is.
+  {
+    const nowS = timeAt(T - FINAL_DEPTH) + 60, base = signed.verified({ verifiedTip: T });
+    const timed = (time: (h: number) => number) => indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), pageSize: 3, ...base,
+      headerAt: async (h: number) => ({ hash: (await base.headerAt(h)).hash, time: time(h) }) });
+    const brief = (x: Step) => JSON.stringify(x.kind === "cannot" ? x : { kind: x.kind, tip: x.tip });
+    const ms = await next(timed((h) => timeAt(h) * 1000), null, 100, nowS * 1000);
+    ok("headerAt answering milliseconds: SOURCE_MALFORMED", ms.kind === "cannot" && ms.code === "SOURCE_MALFORMED", brief(ms));
+    const over = await next(timed(() => nowS + MAX_FUTURE_DRIFT_SECS + 1), null, 100, nowS * 1000);
+    const edge = await next(timed(() => nowS + MAX_FUTURE_DRIFT_SECS), null, 100, nowS * 1000);
+    ok(`a header time ${MAX_FUTURE_DRIFT_SECS} s after the clock: taken; one second more: SOURCE_MALFORMED`,
+      edge.kind === "blocks" && edge.tip.time === nowS + MAX_FUTURE_DRIFT_SECS && over.kind === "cannot" && over.code === "SOURCE_MALFORMED", `${brief(edge)} | ${brief(over)}`);
+    const honest = await next(indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), pageSize: 3, ...base }), null, 100, nowS * 1000);
+    ok("paired: the verified headers' own times a minute before the clock: the step reads to the final height", honest.kind === "blocks" && honest.tip.height === T - FINAL_DEPTH &&
+      honest.tip.time === timeAt(T - FINAL_DEPTH), brief(honest));
   }
   // The verified final block 7 hours old while the indexer's /block answers name the time now: the verified time counts.
   const nowS = timeAt(T - FINAL_DEPTH) + 7 * 3600;

@@ -10,6 +10,7 @@
 // cursor is the last block the scan answered for whole: the highest the indexer serves on the chain, or the last
 // boundary the request budget reached, the scan's top then being the step's reach.
 import { DOMAIN, EPOCH_LEN, EVENTS_HASH_START, HASH_RE, eventsHashStep, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { MAX_FUTURE_DRIFT_SECS } from "@inversealtruism/csd-codec";
 import { floorOf } from "./contract.js";
 import { ReplicaConfigError, SourceError, cannotOf } from "./errors.js";
 import { httpSessions, type Session } from "./http.js";
@@ -103,9 +104,10 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
   const hashIn = (s: Session, tip: { height: number; hash: string }) => (h: number) => (h === tip.height ? Promise.resolve(tip.hash) : hashOf(s, h));
   let last: TipView | null = null;
 
-  /** The verified header at `h`, read once a step: a hash in a form blockHash takes and a whole number of seconds, else
+  /** The verified header at `h`, read once a step: a hash in a form blockHash takes and a whole number of seconds at
+   *  most MAX_FUTURE_DRIFT_SECS after the clock, the chain's own bound (a time in milliseconds is far above it), else
    *  SOURCE_MALFORMED. */
-  function verifiedHeaders() {
+  function verifiedHeaders(now: () => number) {
     const seen = new Map<number, Promise<{ hash: string; time: number }>>();
     const at = (h: number) => {
       let p = seen.get(h);
@@ -113,6 +115,7 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
         p = headerAt!(h).then((v: unknown) => {
           const x = (typeof v === "object" && v !== null ? v : {}) as { hash?: unknown; time?: unknown };
           if (!Number.isSafeInteger(x.time) || (x.time as number) < 0) throw new SourceError("SOURCE_MALFORMED", `the verified header at ${h} has no time in whole seconds`);
+          if ((x.time as number) > Math.floor(now() / 1000) + MAX_FUTURE_DRIFT_SECS) throw new SourceError("SOURCE_MALFORMED", `the verified header at ${h} is timed more than ${MAX_FUTURE_DRIFT_SECS} s after this clock`);
           return { hash: blockHash(x.hash, h), time: x.time as number };
         });
         seen.set(h, p);
@@ -128,7 +131,7 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
     const moved = branchRefusal(r.anchor);
     if (moved !== null) throw new SourceError("BRANCH_MOVED", moved);
     const floor = floorOf(ctx), blocks = byHeight(ruleEvents(r.events, ctx.rule.activationHeight));
-    const indexer = hashIn(s, { height: r.tipHeight, hash: blockHash(r.anchor.hashAfter, r.tipHeight) }), v = verifiedHeaders();
+    const indexer = hashIn(s, { height: r.tipHeight, hash: blockHash(r.anchor.hashAfter, r.tipHeight) }), v = verifiedHeaders(ctx.now);
     const final = inclusion ? scanner.finalHeight! : r.tipHeight;
     // `chain`: the block hash at a height on the chain this feed follows. `serve`: the highest height the indexer gives on
     // it, at most the final height. `top`: the highest the step reads, the same.
