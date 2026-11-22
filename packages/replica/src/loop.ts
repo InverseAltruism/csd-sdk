@@ -48,8 +48,8 @@ export interface LoopStatus {
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
-  /** The held boundary at `height`, its state hash replayed once and memoized when it was stored without one; null when
-   *  no boundary is held there or the store is not open. */
+  /** The held boundary at `height`: its state hash as stored, or replayed once and memoized when it was stored without
+   *  one; null when no boundary is held there or the store is not open. */
   boundary(height: number): Boundary | null;
   /** The heights of the held boundaries, ascending; none while the store is not open. */
   boundaryHeights(): number[];
@@ -146,7 +146,10 @@ export function replicaLoop(o: LoopOptions): Loop {
   const cursor = (): Cursor | null => meta?.cursor ?? null;
   const hashAt = (h: number): string | null => hashIn(held, cursor(), h);
   const eventsHashAt = (h: number): string | null => eventsHashIn(held, cursor(), h);
-  // Replayed from the rows held: a boundary's stored state hash is never read here, since a store can hold a wrong one.
+  // Replayed from the rows held, not read from a stored boundary: a source checks a pin against the store with it
+  // (pinned.ts), so it must not take the store's own record of the value it checks. boundary() and newestBoundary() do
+  // serve a stored state hash as recorded: in the disk and browser stores the boundary chain their record names covers
+  // it, checked at open (store-format.ts); a memory store lives in the process.
   const stateHashAt = (h: number): string | null => {
     const c = cursor();
     if (c === null || h > c.height) return null;

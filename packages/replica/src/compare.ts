@@ -52,16 +52,18 @@ function parseAnswer(status: number, body: unknown, height: number, hash: string
  *  height, and the newest boundary with a known tuple (`newest`, no replay). */
 export interface CompareView {
   heights(): number[]; tupleAt(height: number): Tuple | null; hashAt(height: number): string | null; newest(): Tuple | null;
-  readonly pin: { readonly height: number; readonly blockHash: string; readonly eventsHash: string } | null;
+  readonly pin: { readonly height: number; readonly blockHash: string; readonly eventsHash: string; readonly stateHash: string } | null;
 }
 
-/** The state of the comparison: `run` after each advance, `report` and `pinDisputed` for status(), which reads no
- *  reference. `recount(height)` gives the recount's tuple at a boundary, or null when it cannot; `rebuild` resets the
- *  store. Without `recount` a difference is reported and never acted on. */
-export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: Gates; recount?: (height: number) => Promise<Tuple | null>; rebuild: () => Promise<void> }) {
+/** The state of the comparison: `run` after each advance, `report`, `pinDisputed` and `owed` for status(), which reads
+ *  no reference. `recount(height, signal)` gives the recount's tuple at a boundary, or null when it cannot; `rebuild`
+ *  resets the store. Without `recount` a difference is reported and never acted on. A run reads the reference once for
+ *  each new newest boundary: the pin while no answer at it has been equal, then the boundary. `owed` holds while the
+ *  recount found the store wrong and its reset failed: the reset is tried again at the next new boundary. */
+export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: Gates; recount?: (height: number, signal: AbortSignal) => Promise<Tuple | null>; rebuild: () => Promise<void> }) {
   const f = o.ref.fetch ?? globalThis.fetch.bind(globalThis), base = o.ref.base.replace(/\/+$/, "");
   const timeoutMs = o.ref.timeoutMs ?? 5_000, maxRequests = o.ref.maxRequests ?? 16;
-  let report: CompareReport | null = null, pinDisputed = false, pinRead = false, compared: string | null = null;
+  let report: CompareReport | null = null, pinDisputed = false, pinAgreed = false, owed = false, compared: string | null = null;
   // The first differing boundary and the reference's tuple there, kept so the next run probes it alone.
   let first: { height: number; hash: string; theirs: Tuple; recounted: boolean } | null = null, agreed: { height: number; hash: string } | null = null;
 
@@ -84,15 +86,21 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
     const set = (r: Omit<CompareReport, "sameOrigin">) => { report = { ...r, sameOrigin: o.sameOrigin }; };
     const equal = (a: Tuple, b: Tuple) => a.blockHash === b.blockHash && a.eventsHash === b.eventsHash && a.stateHash === b.stateHash;
     try {
-      if (view.pin !== null && !pinRead) {
-        const r = await read(view.pin.height, view.pin.blockHash);
-        if (r.kind === "tuple") { pinRead = true; pinDisputed = r.tuple.eventsHash !== view.pin.eventsHash; }
-      }
       const top = view.newest();
       if (top === null) return;
       const key = `${top.height}:${top.blockHash}`;
       if (key === compared) return;
       compared = key;
+      if (owed) { await rebuild(); return; }
+      // Only an equal answer at the pin is kept for good: one that differs is read again at the next new boundary, so a
+      // reference that corrects itself lifts PIN_DISPUTED; a 404 there leaves the last answer's verdict.
+      if (view.pin !== null && !pinAgreed) {
+        const r = await read(view.pin.height, view.pin.blockHash);
+        if (r.kind === "tuple") {
+          pinDisputed = r.tuple.eventsHash !== view.pin.eventsHash;
+          pinAgreed = !pinDisputed && r.tuple.stateHash === view.pin.stateHash;
+        }
+      }
       // A held boundary still on the chain the replica holds: one a rollback replaced is forgotten.
       const held = (x: { height: number; hash: string } | null) => (x !== null && view.hashAt(x.height) === x.hash ? x : null);
       agreed = held(agreed);
@@ -104,7 +112,7 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
           const streak = (report?.streak ?? 0) + 1;
           set({ kind: r.tuple.eventsHash !== ours.eventsHash ? "records" : "rules", height: first.height, lastAgreeing: agreed?.height ?? null, streak,
             detail: null, gates: r.tuple.eventsHash !== ours.eventsHash ? null : o.gates, recount: report?.recount ?? null });
-          await act(view);
+          await act(view, signal);
           return;
         }
         first = null;
@@ -137,27 +145,39 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
       first = { height, hash: ours.blockHash, theirs, recounted: false };
       set({ kind: theirs.eventsHash !== ours.eventsHash ? "records" : "rules", height, lastAgreeing: agreed?.height ?? null, streak: 1, detail: why,
         gates: theirs.eventsHash !== ours.eventsHash ? null : o.gates, recount: null });
-      await act(view);
+      await act(view, signal);
     } catch (e) {
-      if (!(e instanceof RefusedAnswer) && !(e instanceof Error)) throw e;
       compared = null;   // compared again at the next run
-      set({ kind: "unavailable", height: report?.height ?? -1, lastAgreeing: agreed?.height ?? null, streak: report?.streak ?? 0, detail: (e as Error).message,
-        gates: null, recount: report?.recount ?? null });
+      // The caller's abort concludes nothing; anything else thrown is a reference that did not answer as documented.
+      if (signal.aborted) return;
+      set({ kind: "unavailable", height: report?.height ?? -1, lastAgreeing: agreed?.height ?? null, streak: report?.streak ?? 0,
+        detail: e instanceof Error ? e.message : String(e), gates: null, recount: report?.recount ?? null });
     }
+  }
+
+  // The store found wrong is reset; a reset that throws stays owed, and STORE_UNCONFIRMED holds until it succeeds.
+  async function rebuild(): Promise<void> {
+    try { await o.rebuild(); } catch (e) {
+      owed = true;
+      if (report !== null) report = { ...report, detail: `the store's reset failed (${e instanceof Error ? e.message : String(e)}); tried again at the next boundary` };
+      return;
+    }
+    owed = false; first = null; agreed = null; compared = null;
   }
 
   // Only a difference whose first boundary held for STREAK runs, recounted once from blocks. Equal to the replica's
   // own tuple, the difference is confirmed and the replica keeps answering; equal to the reference's, the store is
   // rebuilt; neither, nothing changes.
-  async function act(view: CompareView): Promise<void> {
+  async function act(view: CompareView, signal: AbortSignal): Promise<void> {
     if (o.recount === undefined || first === null || first.recounted || report === null || report.streak < STREAK) return;
     first.recounted = true;
-    const at = first, ours = view.tupleAt(at.height), theirs = at.theirs, got = await o.recount(at.height);
+    const at = first, ours = view.tupleAt(at.height), theirs = at.theirs, got = await o.recount(at.height, signal);
+    if (signal.aborted) { at.recounted = false; return; }   // an aborted recount settles nothing
     const same = (a: Tuple | null, b: Tuple | null) => a !== null && b !== null && a.blockHash === b.blockHash && a.eventsHash === b.eventsHash && a.stateHash === b.stateHash;
     const recount = same(got, ours) ? "ours" : same(got, theirs) ? "reference" : "neither";
     report = { ...report, recount };
-    if (recount === "reference") { await o.rebuild(); first = null; agreed = null; compared = null; }
+    if (recount === "reference") await rebuild();
   }
 
-  return { run, report: () => report, pinDisputed: () => pinDisputed };
+  return { run, report: () => report, pinDisputed: () => pinDisputed, owed: () => owed };
 }

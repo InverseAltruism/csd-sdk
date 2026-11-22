@@ -5,7 +5,7 @@
 // throughout: an honest equal reference adds no note, no request in status() and no recount, and a reference on the
 // store's own origin is labelled so and changes no level and no verdict.
 import { FINAL_DEPTH } from "@inversealtruism/cairnx-core";
-import { memoryStore, open, replicaLoop, type BlocksSource, type ReplicaStatus, type Source, type Tuple } from "../src/index.js";
+import { memoryStore, open, ReplicaConfigError, replicaLoop, type BlocksSource, type ReplicaStatus, type Source, type Store, type Tuple } from "../src/index.js";
 import { open as serverOpen } from "../src/server.js";
 import { local } from "../src/browser.js";
 import { derivePin } from "../src/server.js";
@@ -46,8 +46,10 @@ const truthOf = async (f: BlockFixture, top: number): Promise<Map<number, Tuple>
   return m;
 };
 const truth = await truthOf(fx, TOP + 300);
-// The recount reads blocks in production; here a fixture source over the same records stands in for it.
-const asBlocks = (s: Source): BlocksSource => s as unknown as BlocksSource;
+// The recount reads blocks in production, and open() refuses one whose basis is not blocks; here a fixture source over
+// the same records, under a blocks basis, stands in for one.
+const asBlocks = (s: Source): BlocksSource =>
+  ({ ...s, basis: { kind: "blocks", root: { kind: "own-node", node: "http://127.0.0.1:8789" }, bodies: "http://127.0.0.1:8789" } }) as unknown as BlocksSource;
 const heights = [...truth.keys()];
 const X = heights[Math.floor(heights.length / 2)]!;   // a boundary well inside the range
 const openAt = (top: { now: number }, table: Table, extra: { log?: string[]; reply?: (p: string) => Response | Promise<Response> | null; feed?: string; base?: string; maxRequests?: number; timeoutMs?: number } = {}) =>
@@ -223,6 +225,104 @@ console.log("a reference on the store's own origin:");
   const other = await openAt({ now: TOP }, table), o = await other.advance();
   ok("paired: another origin is not labelled same-origin", o.compare?.sameOrigin === false);
   await same.close(); await plain.close(); await other.close();
+}
+
+console.log("the pin read again until an equal answer:");
+{
+  const P = 30_000, served = { answers: cap.answers, tip: 30_150 }, clock = () => timeAt(served.tip) * 1000 + 60_000;
+  const upTo: BlockFixture = { ...fx, to: P, toHash: capHash(P), blocks: fx.blocks.filter((b) => b.height <= P) };
+  const d = await derivePin(upTo), pin = { ...d.pin, log: async () => d.log };
+  const pinT: Tuple = { height: P, blockHash: d.pin.blockHash, eventsHash: d.pin.eventsHash, stateHash: d.pin.stateHash };
+  let wrong = true;
+  const log: string[] = [], pinReads = () => log.filter((x) => x.includes(`/${P}:`)).length;
+  const r = await open({ ...local({ node: NODE, pin, fetch: node(served).f }), clock, reference: { base: REF, fetch: reference((h) => (h === P ? (wrong ? { ...pinT, eventsHash: flip(pinT.eventsHash) } : pinT) : null), { log }) } });
+  const first = await r.advance();
+  wrong = false;
+  const after: ReplicaStatus[] = [];
+  for (let i = 0; i < 5; i++) { served.tip += 30; after.push(await r.advance()); }
+  ok("wrong at the pin once: PIN_DISPUTED, then right at the next new boundary: verified again", first.why.some((w) => w.code === "PIN_DISPUTED") &&
+    !first.verified && after.every((x) => x.verified && !x.why.some((w) => w.code === "PIN_DISPUTED")), after.map((x) => whys(x)).join(" | "));
+  ok("an equal answer is kept: two pin reads in six advances", pinReads() === 2, String(pinReads()));
+  await r.close();
+  const log2: string[] = [], at = { answers: cap.answers, tip: cap.to };
+  const r2 = await open({ ...local({ node: NODE, pin, fetch: node(at).f }), clock: () => timeAt(cap.to) * 1000 + 60_000, reference: { base: REF, fetch: reference(() => null, { log: log2 }) } });
+  for (let i = 0; i < 10; i++) await r2.advance();
+  ok("a reference that answers 404 at the pin: one read in ten advances at one tip, verified unchanged", log2.filter((x) => x.includes(`/${P}:`)).length === 1 &&
+    r2.status().verified, String(log2.length));
+  await r2.close();
+}
+
+console.log("the streak counts new boundaries:");
+{
+  const top = { now: TOP }, r = await open({ source: growing(fx, top), reference: { base: REF, fetch: reference(differs) } }), st: number[] = [];
+  for (let i = 0; i < 5; i++) st.push((await r.advance()).compare!.streak);
+  top.now += 30; st.push((await r.advance()).compare!.streak);
+  ok("five advances at one tip leave it at 1; the next boundary makes it 2", st.join() === "1,1,1,1,1,2", st.join());
+  await r.close();
+}
+
+console.log("reads do not wait on a reference:");
+{
+  const r = await openAt({ now: TOP }, () => null, { reply: () => new Promise<Response>(() => undefined) as unknown as Response });
+  const t0 = Date.now(), a = await r.name("alice", { waitMs: 3_000 }), ms = Date.now() - t0;
+  ok("a read with waitMs 3,000 against a reference that never answers returns once the step is committed", ms < 500 && a.at !== null, `${ms} ms`);
+  await r.close();
+}
+
+console.log("the recount: a block source, ended by an abort or close():");
+{
+  let thrown: unknown = null;
+  await serverOpen({ source: growing(fx, { now: TOP }), reference: { base: REF, fetch: reference(differs) }, recount: growing(fx, { now: TOP }) as unknown as BlocksSource }).catch((e: unknown) => { thrown = e; });
+  ok("a feed given as recount is refused at open", thrown instanceof ReplicaConfigError && /block source/.test((thrown as Error).message));
+  // A recount source whose every step waits for its signal or two seconds.
+  const top = { now: TOP }, base = growing(fx, top);
+  const slow = asBlocks({ ...base, next: (c) => new Promise((go, no) => { const t = setTimeout(() => go(base.next(c)), 2_000); c.signal.addEventListener("abort", () => { clearTimeout(t); no(c.signal.reason); }, { once: true }); }) });
+  const r = await serverOpen({ source: growing(fx, top), reference: { base: REF, fetch: reference(differs) }, recount: slow });
+  await r.advance(); top.now += 30; await r.advance(); top.now += 30;
+  const c = new AbortController(), third = r.advance({ signal: c.signal });
+  await new Promise((go) => setTimeout(go, 100));
+  c.abort("stop");
+  const t0 = Date.now(), s3 = await third, ms = Date.now() - t0;
+  ok("the advance's abort ends a recount at once and settles nothing", ms < 500 && s3.compare?.recount === null, `${ms} ms, recount ${s3.compare?.recount}`);
+  top.now += 30;
+  const again = r.advance();
+  await new Promise((go) => setTimeout(go, 100));
+  const t1 = Date.now();
+  await r.close();
+  ok("close() during a recount returns without waiting it out", Date.now() - t1 < 500, `${Date.now() - t1} ms`);
+  await again.catch(() => undefined);
+}
+
+console.log("the recount finds the store wrong and its reset throws:");
+{
+  const fxB: BlockFixture = { ...fx, blocks: fx.blocks.filter((b) => b.height <= X - 30 || b.txs.length === 0) };
+  const truthB = await truthOf(fxB, TOP + 300);
+  const mem = memoryStore();
+  let broken = true;
+  const store: Store = { ...mem, open: (k) => mem.open(k), rows: (h) => mem.rows(h), boundaries: () => mem.boundaries(), headerWindow: () => mem.headerWindow(),
+    commit: (c) => mem.commit(c), close: () => mem.close(), reset: async () => { if (broken) throw new Error("EIO"); return mem.reset(); } };
+  const top = { now: TOP }, r = await serverOpen({ source: growing(fx, top), store, reference: { base: REF, fetch: reference((h) => truthB.get(h) ?? null) }, recount: asBlocks(growing(fxB, top)) });
+  let s: ReplicaStatus | null = null;
+  for (let i = 0; i < 4; i++) { s = await r.advance(); top.now += 30; }
+  ok("STORE_UNCONFIRMED while the reset is owed, through later advances", s !== null && s.why.some((w) => w.code === "STORE_UNCONFIRMED") && s.cursor !== null &&
+    /reset failed/.test(s.compare?.detail ?? ""), JSON.stringify({ why: s && whys(s), d: s?.compare?.detail }));
+  broken = false;
+  const fixed = await r.advance(), refilled = await r.advance();
+  ok("tried again at the next boundary: the store is reset, then refilled and confirmed", fixed.cursor === null && fixed.why.some((w) => w.code === "STORE_UNCONFIRMED") &&
+    refilled.cursor?.height === top.now && !refilled.why.some((w) => w.code === "STORE_UNCONFIRMED"), JSON.stringify({ c: fixed.cursor?.height, w: whys(refilled) }));
+  await r.close();
+}
+
+console.log("an abort with a reason that is not an Error:");
+{
+  const hang = (_p: string) => new Promise<Response>(() => undefined) as unknown as Response;
+  const r = await openAt({ now: TOP }, () => null, { reply: hang }), plain = await open({ source: growing(fx, { now: TOP }) });
+  const c = new AbortController(), c2 = new AbortController();
+  setTimeout(() => { c.abort("stop"); c2.abort("stop"); }, 50);
+  const a = await r.advance({ signal: c.signal }).then(() => "resolves", (e: unknown) => `rejects ${String(e)}`);
+  const b = await plain.advance({ signal: c2.signal }).then(() => "resolves", (e: unknown) => `rejects ${String(e)}`);
+  ok("advance() resolves with a reference as without one", a === "resolves" && b === "resolves", `${a} / ${b}`);
+  await r.close(); await plain.close();
 }
 
 void FINAL_DEPTH;

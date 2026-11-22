@@ -13,6 +13,7 @@ import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError, messageOf } from "./errors.js";
 import { comparer, type TupleReference } from "./compare.js";
+import { either } from "./http.js";
 import { coreCheck, LOADED_GATES, type CoreModule } from "./gates.js";
 import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
@@ -32,7 +33,8 @@ export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
   readonly reference?: TupleReference; readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
-/** How long a recount from blocks may run before it gives no answer. */
+/** How long a recount from blocks may run before it gives no answer: it reads its source from the floor to the source's
+ *  tip, 10 minutes at most. The advance's signal and close() end it sooner, and an ended recount settles nothing. */
 export const RECOUNT_MS = 600_000;
 export interface EventLog {
   /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
@@ -122,21 +124,24 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   await loop.open();
   restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
-  let running: Promise<ReplicaStatus> | null = null;
+  // `running` is a whole advance; `stepping` the part a read waits for (the step and the witnesses), so a read is not
+  // held by a reference, which the advance compares after it. close() aborts the comparison and a recount.
+  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null;
+  const closing = new AbortController();
   const ref = compares ? o.reference : undefined;
   const cmp = ref === undefined ? null : comparer({
     ref, sameOrigin: originsOf(basis).includes(originOf(ref.base)), gates: LOADED_GATES, rebuild: () => loop.rebuild(),
-    ...(recount === null ? {} : { recount: (h: number) => recountAt(recount, h) }),
+    ...(recount === null ? {} : { recount: (h: number, sig: AbortSignal) => recountAt(recount, h, sig) }),
   });
   // A separate loop over the recount source in memory, read to `height` FINAL_DEPTH deep: its tuple there, or null.
-  async function recountAt(src: Source, height: number): Promise<Tuple | null> {
+  async function recountAt(src: Source, height: number, signal: AbortSignal): Promise<Tuple | null> {
     const l = replicaLoop({ source: src, store: memoryStore(), rule, clock, ...o.step });
-    try { await l.open(); await l.advance({ budgetMs: RECOUNT_MS }); return tupleOf(l.boundary(height)); } finally { await l.close(); }
+    try { await l.open(); await l.advance({ budgetMs: RECOUNT_MS, signal }); return signal.aborted ? null : tupleOf(l.boundary(height)); } finally { await l.close(); }
   }
   const pin = o.source.pin;
   const view = {
     heights: () => loop.boundaryHeights(), tupleAt: (h: number) => tupleOf(loop.boundary(h)), hashAt: (h: number) => loop.hashAt(h),
-    newest: () => tupleOf(loop.newestBoundary()), pin: basis.kind === "pinned" && pin !== undefined ? { height: pin.height, blockHash: pin.blockHash, eventsHash: pin.eventsHash } : null,
+    newest: () => tupleOf(loop.newestBoundary()), pin: basis.kind === "pinned" && pin !== undefined ? { height: pin.height, blockHash: pin.blockHash, eventsHash: pin.eventsHash, stateHash: pin.stateHash } : null,
   };
   const COMPARE_NOTES = { branch: "TUPLE_BRANCH", records: "TUPLE_RECORDS", rules: "TUPLE_RULES" } as const;
 
@@ -148,7 +153,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed,
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
@@ -211,17 +216,20 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   function advance(a: { budgetMs?: number; signal?: AbortSignal } = {}): Promise<ReplicaStatus> {
     if (running !== null) return running;
     const signal = a.signal ?? new AbortController().signal;
-    const run = (async () => {
+    const stepped = (async () => {
       await Promise.all([loop.advance(a), board.tips(signal)]);
       await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h), generation: () => loop.generation() }, signal);
-      await cmp?.run(view, signal);
+    })();
+    const run = (async () => {
+      await stepped;
+      await cmp?.run(view, either(signal, closing.signal));
       await keep();
       const s = status();
       for (const f of listeners) f(s);
       return s;
     })();
-    running = run;
-    const clear = () => { if (running === run) running = null; };
+    running = run; stepping = stepped;
+    const clear = () => { if (running === run) { running = null; stepping = null; } };
     run.then(clear, clear);
     return run;
   }
@@ -242,10 +250,12 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     const minDepth = o.minDepth ?? FINAL_DEPTH, invalid = (): Answer<T> =>
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
-    // A read starts an advance unless one runs, then waits for it and for a commit in flight, together at most
+    // A read starts an advance unless one runs, then waits for its step (not the comparison that follows it) and for a
+    // commit in flight, together at most
     // `waitMs` (default 0) from now. From the last check of committing() on nothing is awaited, so a read either
     // answers from the state the last whole commit left or, with a commit still in flight, NOT_SYNCED with nothing shown.
-    const deadline = Date.now() + (o.waitMs ?? 0), step = running ?? advance();
+    if (running === null) void advance().catch(() => undefined);
+    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping!;
     let ran = false;
     void step.then(() => { ran = true; }, () => { ran = true; });
     await within(o, deadline, () => ran, () => step);
@@ -302,7 +312,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     status,
     subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; },
     advance,
-    async close() { await running?.catch(() => undefined); await loop.close(); },
+    async close() { closing.abort(); await running?.catch(() => undefined); await loop.close(); },
   };
   return { log, read, loop, pagedChain };
 }

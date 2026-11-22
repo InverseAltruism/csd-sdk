@@ -6,7 +6,9 @@
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;
   the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED`; `./server`'s `open` takes `recount`,
-  which settles a difference held for `STREAK` advances (confirmed, or the store rebuilt). The resolver's `tuple.ts` is
+  which settles a difference held for `STREAK` new boundaries (confirmed, or the store rebuilt). After review: the pin
+  is read again at each new boundary until an equal answer; reads do not wait on the reference; a recount ends with the
+  advance's signal or `close()`; `recount` must be a block source; a failed reset keeps `STORE_UNCONFIRMED` and is retried. The resolver's `tuple.ts` is
   not moved: a differential against a test-only copy of it finds the same tuple at every boundary.
 - `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
   `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
