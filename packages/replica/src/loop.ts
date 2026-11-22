@@ -51,6 +51,13 @@ export interface Loop {
   /** The held boundary at `height`, its state hash replayed once and memoized when it was stored without one; null when
    *  no boundary is held there or the store is not open. */
   boundary(height: number): Boundary | null;
+  /** The heights of the held boundaries, ascending; none while the store is not open. */
+  boundaryHeights(): number[];
+  /** The newest held boundary whose state hash is stored or was replayed already: nothing is replayed for it. */
+  newestBoundary(): Boundary | null;
+  /** Resets the store and reads it again empty, so the next advance refills it; until a step reaches its tip the
+   *  status says `unconfirmed`. Queued with open, advance and close. */
+  rebuild(): Promise<void>;
   open(): Promise<LoopOpen>;
   /** Runs steps until caught up, backed off, aborted or past `budgetMs`, and resolves after the last commit. */
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
@@ -341,6 +348,19 @@ export function replicaLoop(o: LoopOptions): Loop {
     async quiet() { while (busy !== null) await busy; },
     rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),
+    boundaryHeights: () => (opened === "open" ? bounds.map((b) => b.height) : []),
+    newestBoundary() {
+      for (let i = opened === "open" ? bounds.length - 1 : -1; i >= 0; i--) {
+        const b = bounds[i]!, hash = b.stateHash ?? filled.get(b.height) ?? null;
+        if (hash !== null) return { ...b, stateHash: hash };
+      }
+      return null;
+    },
+    rebuild: () => queued(async () => {
+      try { await store.reset(); } catch (e) { storeError = messageOf(e); storeReason = "io"; throw e; }
+      unconfirmed = true; tip = null;
+      await read();
+    }),
     boundary(h) {
       const b = opened === "open" ? bounds.find((x) => x.height === h) : undefined;
       if (b === undefined || b.stateHash !== null) return b ?? null;

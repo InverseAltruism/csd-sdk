@@ -6,7 +6,7 @@ import { diskStore } from "./disk-store.js";
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
 import { localOf } from "./presets.js";
-import type { OpenOptions } from "./reader.js";
+import { openWith, type OpenOptions, type Reader } from "./reader.js";
 import type { BlocksSource, Pin } from "./types.js";
 
 export * from "./index.js";
@@ -55,4 +55,13 @@ const OWN_NODE_STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 export function ownNode(o: OwnNodeOptions): OpenOptions {
   const { dir, witness, ...rest } = o;
   return { source: local(rest).source, store: diskStore({ dir }), witnesses: witness === undefined ? [] : [witness], step: OWN_NODE_STEP };
+}
+
+/** open() with `recount`, a block source of the server's: when a reference's difference has started at one boundary
+ *  for STREAK advances, a separate loop over it in memory reads that boundary. Equal to the replica's own tuple, the
+ *  difference is confirmed (the note DIVERGENCE_CONFIRMED) and the replica keeps answering; equal to the reference's,
+ *  the store is rebuilt (STORE_UNCONFIRMED while it refills). Without `recount` a difference is only reported. */
+export function open(o: OpenOptions & { readonly recount?: BlocksSource }): Promise<Reader> {
+  const { recount, ...rest } = o;
+  return openWith(rest, recount ?? null);
 }
