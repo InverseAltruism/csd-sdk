@@ -223,7 +223,7 @@ An answer is verified only when every condition holds. Each failed one adds its 
 | `NOT_SYNCED` | the store is open and the loop holds a cursor and the tip of a step (the next four are read only then) |
 | `BEHIND` | the cursor is not below the tip |
 | `BRANCH_UNRESOLVED` | the cursor is not above the tip. It is while a rollback is owed under an anchor root, and while a caller's headers end below the store's cursor on the same chain: the caller root then reports the caller's tip, since its headers no longer vouch for the blocks above it |
-| `TIP_STALE` | the tip's header time is at most 30 minutes before the clock |
+| `TIP_STALE` | the tip's header time is at most 30 minutes before the clock; for a source that serves final blocks only (`FINAL_VIEW`), 30 minutes plus 12 target block times (24 minutes) |
 | `TIP_BEHIND_PEER` | no witness named a higher tip whose header hashes to the hash it named and meets its own bits (csd-light `tipHeaderPowOk`), however far ahead |
 | `NOT_WITNESSED`, `WITNESS_SILENT` | for an anchor or caller root: a witness confirmed the chain the replica holds within the last 30 minutes. A witness with tip W is compared at h, the lower of W and the replica's cursor, only when the higher of the two is at most 12 above h; it confirms when it gives the hash the replica holds at h, from its tip or by `hashAt`. The loop keeps the block hashes of its cursor and the 12 heights below it from the blocks its steps carried (13 entries at most, emptied whenever the chain held is replaced), so every h within the bound has a hash once the loop has stepped past it; until then (after a restart, a reload or a rollback) a witness that cannot be compared voids the confirmation. The confirmation is stamped with the time the witness answered. It is void when the chain held is replaced (a rollback, a reload from the store, a reset), when a witness answers another hash at h, and when the clock reads earlier than it read before. None, or void: `NOT_WITNESSED`; older than 30 minutes: `WITNESS_SILENT` |
 | `STORE_UNCONFIRMED` | the store was not reset as unconfirmed since the loop last reached a step's tip ("The browser store" below): it is set from that reset until the refill's step reaches the tip |
@@ -235,6 +235,8 @@ The tip is the one the loop's last step reported, a header the root vouches for,
 table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared; or, with its `detail` naming
 the boundary, the store's source disagrees with a recount and a reference that agree, "Tuples and a reference"),
 `WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
+`FINAL_VIEW` (the source serves final blocks only, so its tip is its final height, 12 below the chain tip it read,
+by design: a csd-indexer feed with `verifyInclusion`; `BEHIND` then counts from that tip),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
@@ -519,9 +521,12 @@ the same way, as the hosted resolver's published state drops with it. The events
 the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
 the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
 with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step
-whose request or block budget runs out ends at the last boundary it read, with the tip as its reach. The feed records
-no header time, so its tip's time is 0 and the reader adds `TIP_STALE` to its answers; with `verifyInclusion` the cursor
-sits below the tip, so they carry `BEHIND` as well. Neither changes the level, which a feed caps at 2. Each step's scan reads the
+whose request or block budget runs out ends at the last boundary it read, with the tip as its reach. A step's tip is
+the block at the scan's top with its header time from the indexer's `/block/<hash>` (an answer that does not name
+that block at that height with a whole number of seconds is `SOURCE_MALFORMED`): the indexer's tip, or with
+`verifyInclusion` the final height, the highest block the Scanner emits for, so every answer carries the note
+`FINAL_VIEW` and `BEHIND` means behind what the feed can serve. `Source.tip()` reads the indexer's tip, or with
+`verifyInclusion` gives the last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
 whole domain the first time and the indexer's chain-order feeds after it; the scan is not cut short by the step's
 signal.
 

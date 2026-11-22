@@ -2,6 +2,11 @@
 
 ## 0.1.0 (unreleased)
 
+- `indexerFeed`: a step's tip carries its header time, read from the indexer's `/block/<hash>` (it was 0, so every
+  answer said `TIP_STALE`); with `verifyInclusion` the tip is the final height, the highest block the Scanner emits
+  for (it was the indexer's tip, so every answer said `BEHIND`), and every answer carries the new note `FINAL_VIEW`;
+  such a tip is stale only 12 target block times (24 minutes) after the 30 minutes. `Source.tip()` with
+  `verifyInclusion` gives the last step's tip.
 - `indexerFeed`: a store cursor above the indexer's tip is a block the indexer's chain does not have, so a shorter
   branch that changes only block hashes rolls back to the last boundary whose hash agrees and ends on the indexer's
   tip (the cursor stayed above it, `BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was served). The

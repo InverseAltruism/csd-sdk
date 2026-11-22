@@ -2,14 +2,21 @@
 // condition that fails adds its code, in this order; an answer is verified only when none does. The tip is the one
 // the loop's last step reported (LoopStatus.tip), never Source.tip(), which under a caller root names the caller's
 // tip whatever the store holds.
+import { FINAL_DEPTH } from "@inversealtruism/cairnx-core";
+import { TARGET_BLOCK_SECS } from "@inversealtruism/csd-codec";
 import type { NotVerifiedCode } from "./codes.js";
 import type { Cursor, TipView } from "./types.js";
 
-/** How old a tip header or a witness's confirmation may be: 30 minutes. */
+/** How old a tip header or a witness's confirmation may be: 30 minutes. A source that serves final blocks only
+ *  (`finalOnly`) reports a tip FINAL_DEPTH blocks below the chain's, so its tip may be older by that many target block
+ *  times. */
 export const FRESH_MS = 30 * 60_000;
+const FINAL_AGE_S = FINAL_DEPTH * TARGET_BLOCK_SECS;
 
 export interface VerdictInput {
   readonly level: 1 | 2 | 3; readonly feed: boolean;
+  /** Whether the source's tip is its final height, FINAL_DEPTH below the chain tip it read (a feed with inclusion). */
+  readonly finalOnly?: boolean;
   /** The store open with a cursor and a step's tip, else null. */
   readonly synced: { readonly cursor: Cursor; readonly tip: TipView } | null;
   readonly now: number;
@@ -42,7 +49,7 @@ export function verdict(v: VerdictInput): NotVerifiedCode[] {
   else {
     if (s.cursor.height < s.tip.height) why.push("BEHIND");
     if (s.cursor.height > s.tip.height) why.push("BRANCH_UNRESOLVED");
-    if (v.now / 1000 - s.tip.time > FRESH_MS / 1000) why.push("TIP_STALE");
+    if (v.now / 1000 - s.tip.time > FRESH_MS / 1000 + (v.finalOnly === true ? FINAL_AGE_S : 0)) why.push("TIP_STALE");
     if (v.peerAhead(s.tip)) why.push("TIP_BEHIND_PEER");
   }
   if (v.unconfirmed) why.push("STORE_UNCONFIRMED");

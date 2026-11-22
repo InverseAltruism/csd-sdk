@@ -11,10 +11,16 @@ type Row = { tx: FixtureTx; height: number };
 const byHeightTxid = (a: Row, b: Row) => a.height - b.height || (a.tx.txid < b.tx.txid ? -1 : a.tx.txid > b.tx.txid ? 1 : 0);
 const epochRow = (v: unknown) => (BigInt(String(v)) > BigInt(Number.MAX_SAFE_INTEGER) ? 2 ** 53 : Number(v));
 
+/** The header time, in seconds, the capture gives its tip block. */
+export const CAPTURE_TIME = 1_700_000_000;
+
 /** The indexer at `tip` (default the fixture's last height): a fetch over the fixture. */
 export function captureIndexer(fx: BlockFixture, tip = fx.to): typeof fetch {
   const known = new Map<number, string>([[fx.to, fx.toHash], ...fx.blocks.map((b) => [b.height, b.hash] as [number, string])]);
   const hashAt = (h: number) => known.get(h) ?? "0x" + createHash("sha256").update(`capture:${h}`).digest("hex");
+  // The heights of the hashes this indexer named: /block/<hash> answers for those, as a feed only asks for one it read.
+  const heightOf = new Map<string, number>([...known].map(([h, x]) => [x, h]));
+  const named = (h: number) => { const x = hashAt(h); heightOf.set(x, h); return x; };
   const rows: Row[] = fx.blocks.filter((b) => b.height <= tip).flatMap((b) => b.txs.map((tx) => ({ tx, height: b.height })));
   const proposals = rows.filter((r) => r.tx.app.type === "Propose" && r.tx.app.domain === DOMAIN).sort(byHeightTxid);
   const byTxid = new Map(rows.map((r) => [r.tx.txid, r]));
@@ -25,7 +31,13 @@ export function captureIndexer(fx: BlockFixture, tip = fx.to): typeof fetch {
   }
   const answer = (path: string, q: URLSearchParams): unknown => {
     if (path === "/blocks/tip/height") return tip;
-    if (path.startsWith("/block-height/")) { const h = Number(path.slice(14)); return h <= tip ? hashAt(h) : undefined; }
+    if (path.startsWith("/block-height/")) { const h = Number(path.slice(14)); return h <= tip ? named(h) : undefined; }
+    // The fixture records no header time: a block's is a stand-in, 120 seconds a block before CAPTURE_TIME at the tip.
+    const blockOf = /^\/block\/(0x[0-9a-f]{64})$/.exec(path)?.[1];
+    if (blockOf !== undefined) {
+      const h = heightOf.get(blockOf);
+      return h !== undefined && h <= tip ? { height: h, hash: blockOf, time: CAPTURE_TIME - (tip - h) * 120 } : undefined;
+    }
     if (path === `/domain/${DOMAIN}/proposals`) {
       const from = Number(q.get("from") ?? 0), limit = Number(q.get("limit") ?? 10_000);
       return proposals.filter((r) => r.height >= from).slice(0, limit).map(({ tx, height }) => ({

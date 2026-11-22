@@ -124,6 +124,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   await loop.open();
   restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
+  // A feed with inclusion serves final blocks only: its tip is its final height (indexer-feed.ts), noted on every answer.
+  const finalOnly = basis.kind === "feed" && basis.inclusion;
   // `running` is a whole advance; `stepping` the part a read waits for (the step and the witnesses), so a read is not
   // held by a reference, which the advance compares after it. close() aborts the comparison and a recount.
   let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null;
@@ -153,14 +155,14 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
+      level, feed: basis.kind === "feed", finalOnly, synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
     // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
     // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
     const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
-    const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
+    const notes: { code: NoteCode; detail?: string }[] = [...(finalOnly ? [{ code: "FINAL_VIEW" as const }] : []), ...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
       ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes()];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
