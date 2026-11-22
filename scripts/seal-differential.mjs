@@ -48,7 +48,9 @@
 //      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //      (h) the token moves of every input of (a) to (f) checked by conformance/moves-check.mjs (the identity of §41,
 //      the mint total, each fill's moves from its fill record, no moves on a refused entry), with a floor on the moves
-//      of each leg so a thin run fails;
+//      of each leg so a thin run fails; (i) when the tree has a held context (newReplayContext), one walked through
+//      each input of (a), (d), (d2), (d3), (e), (f) and the sweep streams, each answer equal to the tree's resolve() over
+//      the same prefix or a refusal of the input's domain, no answer changing after it was returned;
 //   5. parse differential: parseRecord null-ness old vs new over every Propose of step 4 and a seeded mutation corpus
 //      (and the record cases of codes.json); where the new build has explainRecord it must agree with parseRecord;
 //   6. client-surface differential: bindOfferTerms, provenOfferTerms, previewFill / requiredFillOutputs / fillIsSafe /
@@ -554,6 +556,42 @@ step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (
   malformedSeqs.forEach((s, i) => walk(`malformed#${i}`, s.events, s.tipHeight));
   for (const s of SW.sweepStreams(NEW)) walk(`sweep ${s.key}`, s.events, s.tipHeight);
   console.log(`  ${walks} walks, ${tips} tips, ${walkDiffs} tip(s) differ`);
+}
+
+// A held context (newReplayContext), walked with conformance/sweep-streams.mjs's contextWalk: each answer must equal
+// the tree's resolve() over the same prefix at that tip, or the context must refuse ("domain" exactly when a height or
+// the tip is outside isChainHeight or an event's position or id is outside applyOrder's domain); a throw must be
+// resolve()'s; no answer may change after it was returned. Tips:
+// each event height and the tip for the case files, the fuzz of (d) and the cases of (e); the dense tips of (w) for
+// (d2), (d3) and the sweep streams; for the growth streams at full size (one holds 20,000 open bids) their tips and 20
+// event heights spread over each.
+const hasContext = typeof NEW.newReplayContext === "function";
+step(`resolve differential (i): a held context against the tree's resolve() over (a), (d), (d2), (d3), (e), (f) and the sweep streams${hasContext ? "" : " (absent in this tree)"}`);
+if (hasContext) {
+  const agg = { inputs: 0, answers: 0, refusals: 0, codes: {}, kept: 0, failed: 0 };
+  const heights = (events) => [...new Set(events.map((e) => e.height).filter(NEW.isChainHeight))].sort((a, b) => a - b);
+  const withTip = (hs, tip) => (NEW.isChainHeight(tip) ? [...new Set([...hs, tip])].sort((a, b) => a - b) : hs);
+  const walkIt = (name, events, tips, finalTip) => {
+    const w = SW.contextWalk(NEW, events, tips, { finalTip });
+    agg.inputs++; agg.answers += w.answers; agg.refusals += w.refusals; agg.kept += w.kept;
+    for (const [c, n] of Object.entries(w.refusalCodes)) agg.codes[c] = (agg.codes[c] ?? 0) + n;
+    const bad = [...w.diffs.map((t) => `differs at ${t}`), ...w.badRefusals.map((r) => `refusal ${r}`), ...w.threwDiff.map((t) => `throw at ${t}`), ...(w.changed ? [`${w.changed} answer(s) changed later`] : [])];
+    if (bad.length) { agg.failed++; bump("held context"); if (diverged <= 20) console.error(`  HELD CONTEXT ${name}: ${bad.slice(0, 3).join("; ")}`); }
+  };
+  for (const f of ["cases.json", "cases-rules.json", "cases-v29.json", "cases-convention.json"]) for (const c of readJson(`${VEC}/${f}`).cases) walkIt(`${f}:${c.name}`, c.events, withTip(heights(c.events), c.tipHeight), c.tipHeight);
+  JSON.parse(readFileSync(join(wt, "seal-fuzz.json"), "utf8")).forEach((x, i) => walkIt(`fuzz#${i}`, x.events, withTip(heights(x.events), x.tipHeight), x.tipHeight));
+  const dense = (events, tip) => SW.denseTips(events, tip, NEW.EPOCH_LEN, [...SW.dueHeights(NEW, events), ...Object.values(NEW.GATE_HEIGHTS)]);
+  expirySeqs.forEach((x, i) => walkIt(`expiry#${i}`, x.events, dense(x.events, x.tipHeight), x.tipHeight));
+  malformedSeqs.forEach((x, i) => walkIt(`malformed#${i}`, x.events, dense(x.events, x.tipHeight), x.tipHeight));
+  if (codesVectors) for (const c of codesVectors.resolve) walkIt(`codes.json:${c.name}`, c.events, withTip(heights(c.events), c.tipHeight), c.tipHeight);
+  for (const f of ["forward.json", "moves.json"]) for (const c of readJson(`${VEC}/${f}`).cases) walkIt(`${f}:${c.name}`, c.events, withTip(heights(c.events), c.tipHeight), c.tipHeight);
+  const G = await import(pathToFileURL(join(ROOT, "conformance", "growth-streams.mjs")).href);
+  for (const x of G.fullGrowthStreams(NEW)) {
+    const hs = heights(x.events), every = Math.max(1, Math.floor(hs.length / 20));
+    walkIt(`${x.key} ${x.label}`, x.events, withTip([...new Set([...hs.filter((_, i) => i % every === 0), ...x.tips.filter(NEW.isChainHeight)])].sort((a, b) => a - b), x.tipHeight), x.tipHeight);
+  }
+  for (const x of SW.sweepStreams(NEW)) walkIt(`sweep ${x.key}`, x.events, dense(x.events, x.tipHeight), x.tipHeight);
+  console.log(`  ${agg.inputs} inputs, ${agg.answers} answers equal to resolve(), ${agg.refusals} refusals ${JSON.stringify(agg.codes)}, ${agg.kept} answers re-read unchanged at the end; ${agg.failed} input(s) failed`);
 }
 
 const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";

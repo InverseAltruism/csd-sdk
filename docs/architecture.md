@@ -40,6 +40,12 @@ checks its table and writes one esm module with its types.
   sweep applies each expiry at the first height it is due, one batch per such height in ascending order, while every
   height and tip the fold has read is a safe integer, and one batch per sweep from the first that is not (the fold's
   `inDomain` in `resolve.ts`, CONVENTION section 5).
+- `replay-context.ts`: the held replay context (`newReplayContext`): `resolve.ts`'s fold kept between tips, fed whole
+  blocks in order, answering in place at the last height it was given, refusing (`ReplayContextRefusal`) a height or
+  tip outside `isChainHeight` (in `types.ts`, the rule the fold's `inDomain` reads too) and an event whose position
+  (`events.ts` `isIndex`) or id is outside `applyOrder`'s domain, keeping a one-level copy of each event it is given,
+  and copying in each answer what a later advance writes (open offers, every bid, the log) while freezing what it
+  shares.
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
   claimWindowOf.
 - `records.ts`: parseRecord, explainRecord (the record code of a refusal) and its per-record key allow-sets; the
