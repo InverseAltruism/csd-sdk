@@ -44,7 +44,7 @@ function equiv(full: ChainEvent[], name: string, tip: number): boolean {
 
 // the same property for what check mode serves (the pruned hints): when it says sufficient, replaying exactly its
 // hints gives the full chain's record, and no served nset or nprofile is superseded in that replay (so the prune
-// guard never had to fall back to the whole selection over one)
+// guard did not fall back to the whole selection over one)
 let servedPruned = 0;   // check-mode calls that dropped at least one candidate
 let servedSuperseded = 0;   // check-mode calls whose unpruned selection held a superseded nset or nprofile
 function equivServed(full: ChainEvent[], name: string, tip: number): boolean {

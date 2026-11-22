@@ -328,7 +328,7 @@ t("a record the full chain applied and the scoped replay refused supersedes noth
   const evs = [...corpus.events, { ...dep, paidTo: { [TREASURY_ADDR]: DEPLOY_FEE.toString() } } as ChainEvent, mint, set, stranger, offer, fill];
   const r = served(evs, h + 10, plain);
   assert.equal(r.record?.owner, Q, "setup: the full chain sold the name");
-  assert.equal(r.hist.scopedReplaySufficient, false, "setup: flagged, as every name-for-token sale is");
+  assert.equal(r.hist.scopedReplaySufficient, false, "setup: flagged, as a name-for-token sale is");
   assert.deepEqual(r.txids, inOrder(evs, [...plainWas.txids, idOf(set), idOf(offer), idOf(fill)]), "the nset stays and the stranger's does not enter");
 });
 
