@@ -140,6 +140,31 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   ok("a package directory outside a git checkout is refused", noGit.some((f) => /git cannot read/.test(f)), noGit.join("; "));
 }
 
+console.log("verify-tarball: the one range peer, and a package without its build:");
+{
+  // cairnx-pin as this tree packs it: its optional peer on cairnx-replica is workspace:^, packed as ^ the version
+  const pinDir = join(root, "packages", "pin"), out = mkdtempSync(join(work, "pin-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", out], { cwd: pinDir, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const pinTgz = new Uint8Array(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!)));
+  const pinPeer = JSON.parse(execFileSync("tar", ["xzfO", join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!), "package/package.json"], { encoding: "utf8" })).peerDependencies;
+  const pinOk = verifyTarball(pinTgz, pinDir, versions);
+  ok("a pack of cairnx-pin passes, its replica peer packed as ^ the version HEAD names",
+    pinOk.length === 0 && JSON.stringify(pinPeer) === JSON.stringify({ "@inversealtruism/cairnx-replica": `^${versions.get("@inversealtruism/cairnx-replica")}` }), `${pinOk.join("; ")} ${JSON.stringify(pinPeer)}`);
+  // the same package committed without its build: no dist on disk and none in the tarball, which diffDist cannot see
+  const repo = mkdtempSync(join(work, "nobuild-"));
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" });
+  const m = JSON.parse(readFileSync(join(pinDir, "package.json"), "utf8"));
+  delete m.peerDependencies; delete m.peerDependenciesMeta; delete m.devDependencies;
+  writeFileSync(join(repo, "package.json"), JSON.stringify(m, null, 2));
+  for (const f of ["pin.json", "README.md", "LICENSE", "CHANGELOG.md"]) cpSync(join(pinDir, f), join(repo, f));
+  git("init", "-q", "-b", "master"); git("add", "."); git("commit", "-q", "--no-verify", "-m", "pin without its build");
+  const nb = mkdtempSync(join(work, "nobuild-pack-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", nb], { cwd: repo, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const noBuild = verifyTarball(new Uint8Array(readFileSync(join(nb, readdirSync(nb).find((f) => f.endsWith(".tgz"))!))), repo, new Map());
+  ok("cairnx-pin packed without dist/ is refused: dist/index.js and dist/index.d.ts are named by its manifest and not in the tarball",
+    noBuild.some((f) => /package\/dist\/index\.js is named by the manifest/.test(f)) && noBuild.some((f) => /package\/dist\/index\.d\.ts is named by the manifest/.test(f)), noBuild.join("; "));
+}
+
 console.log("workspace versions from the HEAD commit (fixture workspace, real git and pnpm):");
 {
   const ws = mkdtempSync(join(work, "ws-"));
@@ -151,6 +176,9 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   put("packages/a/package.json", JSON.stringify({ name: "@x/a", version: "1.0.1", files: ["index.js"] }, null, 2));
   put("packages/b/package.json", JSON.stringify({ name: "@x/b", version: "1.0.0", files: ["index.js"], dependencies: { "@x/a": "workspace:*" } }, null, 2));
   put("packages/c/package.json", JSON.stringify({ name: "@x/c", version: "1.0.0", private: true, files: ["index.js"] }, null, 2));
+  // a peer as workspace:~, which pnpm packs as ~ the version and verify-tarball does not admit (only workspace:^ is)
+  put("packages/d/package.json", JSON.stringify({ name: "@x/d", version: "1.0.0", private: true, files: ["index.js"], peerDependencies: { "@x/a": "workspace:~" } }, null, 2));
+  put("packages/d/index.js", "export {};\n");
   put("packages/a/index.js", "export {};\n");
   put("packages/b/index.js", "export {};\n");
   git("init", "-q", "-b", "master");
@@ -165,6 +193,10 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   };
   const honest = verifyTarball(packB(), b, workspaceVersions(ws));
   ok("b packed pinning a at the version HEAD names passes", honest.length === 0, honest.join("; "));
+  const dDir = join(ws, "packages", "d"), dOut = mkdtempSync(join(work, "pack-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", dOut], { cwd: dDir, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const tilde = verifyTarball(new Uint8Array(readFileSync(join(dOut, readdirSync(dOut).find((f) => f.endsWith(".tgz"))!))), dDir, workspaceVersions(ws));
+  ok("a peer given as workspace:~, packed as ~1.0.1, is refused", tilde.some((f) => /peerDependencies .*~1\.0\.1.*expected .*"1\.0\.1"/.test(f)), tilde.join("; "));
   // a's version rolled back on disk under skip-worktree: git status stays clean and pnpm pins the disk version
   const aManifest = join(ws, "packages", "a", "package.json");
   git("update-index", "--skip-worktree", "packages/a/package.json");

@@ -60,7 +60,7 @@ try {
   const unpublished = run({});
   ok("honest: nothing published, inter-deps workspace:*: lockstep OK", unpublished.code === 0 && /lockstep OK/.test(unpublished.out), unpublished.out);
   // the rule covers every dependency kind the script reads: dependencies, devDependencies and peerDependencies
-  for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+  for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
     put("packages/api/package.json", JSON.stringify({ name: "api", version: "0.1.0", [field]: { core: "1.1.0" } }));
     const exact = run({});
     put("packages/api/package.json", apiManifest);
@@ -71,6 +71,8 @@ try {
   console.log("check-lockstep published pins:");
   const honest = run(api("1.1.0")).out;   // the stand-in answers api@0.1.0 with no tarball: proof the registry was read
   ok("honest: a published exact peer equal to the workspace version is no pin error", !/published pinning/.test(honest) && /api@0\.1\.0: registry metadata names no tarball/.test(honest), honest);
+  const optional = run({ "/api/0.1.0": { optionalDependencies: { core: "1.0.0" } } }).out;
+  ok("a published optional dependency behind the workspace version fails like the other fields", /api@0\.1\.0 is published pinning core@1\.0\.0, workspace has 1\.1\.0 \(bump api\)/.test(optional), optional);
   const out = run(api("1.0.0")).out;
   ok("a published exact peer behind the workspace version fails, naming the bump", /api@0\.1\.0 is published pinning core@1\.0\.0 as a peer, workspace has 1\.1\.0 \(bump api\)/.test(out), out);
 

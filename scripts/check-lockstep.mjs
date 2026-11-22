@@ -69,7 +69,7 @@ function caretAllows(range, version) {
 
 const ours = new Set(pkgs.map((p) => p.name));
 for (const p of pkgs) {
-  for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+  for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
     for (const [dep, range] of Object.entries(p[field] ?? {})) {
       if (rangePeer(p.name, field, dep)) {
         if (range !== "workspace:^") errors.push(`${p.name} ${field}.${dep} = "${range}" (must be "workspace:^": it peers for a type alone, see RANGE_PEERS)`);
@@ -90,7 +90,7 @@ await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
   if (status === 404) return; // not published yet: pnpm pins the current workspace versions at publish
   if (status !== 200) { errors.push(`${p.name}@${p.version}: npm registry returned HTTP ${status}`); return; }
   // An exact peer on a workspace package (cairnx-core under cairnx-api and the replica) is a pin too.
-  for (const field of ["dependencies", "peerDependencies"]) {
+  for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
     for (const [dep, pinned] of Object.entries(meta[field] ?? {})) {
       const current = workspaceVersion.get(dep);
       if (current !== undefined && rangePeer(p.name, field, dep)) {
