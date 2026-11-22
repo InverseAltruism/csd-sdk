@@ -6,8 +6,8 @@
 // consumer repos, so this best-effort check asserts they agree. Run from the csd-sdk repo with the sibling
 // repos checked out under the same parent (the dev/host layout). Skips any repo that isn't present.
 //
-//   node scripts/check-consumer-pins.mjs        # exit 1 if a consumer pins a different cairnx-core, or a cairnx-api
-//                                               # published against another cairnx-core than the one it pins
+//   node scripts/check-consumer-pins.mjs        # exit 1 if a consumer pins a different cairnx-core, or a cairnx-api,
+//                                               # cairnx-replica or cairnx-pin published against another peer than it pins
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,25 +41,31 @@ function consensusDrift(ver) {
   } catch { return null; }
 }
 
-// One core per consumer: cairnx-api declares cairnx-core as an exact peer, packed from `workspace:*` as the core version
-// of the commit it was released from, which its `cairnx-api-<ver>` tag names (docs/release.md). A consumer that pins
-// cairnx-api, in any dependency section, must pin that core; any other pin installs a second core or runs the API on a
-// core it was not built against. A version with no tag, or a tag whose cairnx-api manifest names another version,
+// One copy per consumer: a package with an exact peer on another workspace package (cairnx-api and cairnx-replica on
+// cairnx-core, cairnx-pin on cairnx-replica) is packed from `workspace:*` with the peer's version of the commit it was
+// released from, which its `<name>-<ver>` tag names (docs/release.md). A consumer that pins such a package, in any
+// dependency section, must pin that peer version in its dependencies; any other pin installs a second copy or runs the
+// package on a peer it was not built against. A version with no tag, or a tag whose manifest names another version,
 // fails closed.
-const API = "@inversealtruism/cairnx-api";
+const SCOPE = "@inversealtruism/";
+const PEERED = [
+  ["cairnx-api", "packages/cairnx-api/package.json", "cairnx-core", "packages/cairnx/package.json", "TWO CORES"],
+  ["cairnx-replica", "packages/replica/package.json", "cairnx-core", "packages/cairnx/package.json", "TWO CORES"],
+  ["cairnx-pin", "packages/pin/package.json", "cairnx-replica", "packages/replica/package.json", "TWO REPLICAS"],
+];
 const SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
-/** The `version` of `path` at the cairnx-api-<ver> tag, or null. */
-const versionAtTag = (ver, path) => {
+/** The `version` of `path` at the tag, or null. */
+const versionAtTag = (tag, path) => {
   try {
-    const manifest = execFileSync("git", ["-C", SDK, "show", `cairnx-api-${ver}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const manifest = execFileSync("git", ["-C", SDK, "show", `${tag}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return String(JSON.parse(manifest).version);
   } catch { return null; }
 };
-/** The cairnx-core version cairnx-api `ver` was published against, or null when unknowable. */
-function coreOfApi(ver) {
+/** The version of the peer at `peerPath` that `pkg`@`ver` was published against, or null when unknowable. */
+function peerOf(pkg, path, peerPath, ver) {
   if (!/^\d+\.\d+\.\d+$/.test(String(ver))) return null;
-  if (versionAtTag(ver, "packages/cairnx-api/package.json") !== ver) return null;
-  return versionAtTag(ver, "packages/cairnx/package.json");
+  if (versionAtTag(`${pkg}-${ver}`, path) !== ver) return null;
+  return versionAtTag(`${pkg}-${ver}`, peerPath);
 }
 
 console.log(`cairnx-core canonical version: ${canonical}`);
@@ -79,12 +85,13 @@ function checkCorePin(name, dep, tier) {
   fail(name, `  ✗ ${name} pins cairnx-core ${dep} != canonical ${canonical}: re-pin + reinstall + (svc) restart`);
 }
 
-/** A consumer that pins cairnx-api, in `section`, pins the core that cairnx-api version was published against. */
-function checkOneCore(name, dep, api, section) {
-  const core = coreOfApi(api);
-  if (core === null) return fail(name, `  ✗ ${name} pins cairnx-api ${api} (${section}): UNKNOWN version (no cairnx-api-${api} tag naming that version to read its cairnx-core from), re-pin`);
-  if (core !== dep) return fail(name, `  ✗ ${name} pins cairnx-core ${dep} but cairnx-api ${api} (${section}) was published against cairnx-core ${core}: TWO CORES, pin cairnx-core ${core} or the cairnx-api built on ${dep}`);
-  console.log(`  ✓ ${name} pins cairnx-api ${api} (${section}) on its cairnx-core ${core}`);
+/** A consumer that pins `pkg`@`ver`, in `section`, pins in its dependencies the `peer` that version was published against. */
+function checkOnePeer(name, manifest, [pkg, path, peer, peerPath, two], ver, section) {
+  const dep = manifest.dependencies?.[SCOPE + peer];
+  const want = peerOf(pkg, path, peerPath, ver);
+  if (want === null) return fail(name, `  ✗ ${name} pins ${pkg} ${ver} (${section}): UNKNOWN version (no ${pkg}-${ver} tag naming that version to read its ${peer} from), re-pin`);
+  if (want !== dep) return fail(name, `  ✗ ${name} pins ${peer} ${dep} but ${pkg} ${ver} (${section}) was published against ${peer} ${want}: ${two}, pin ${peer} ${want} or the ${pkg} built on ${dep}`);
+  console.log(`  ✓ ${name} pins ${pkg} ${ver} (${section}) on its ${peer} ${want}`);
 }
 
 for (const [name, rel, tier] of CONSUMERS) {
@@ -94,7 +101,7 @@ for (const [name, rel, tier] of CONSUMERS) {
   const manifest = JSON.parse(readFileSync(p, "utf8"));
   const dep = manifest.dependencies?.["@inversealtruism/cairnx-core"];
   checkCorePin(name, dep, tier);
-  for (const section of SECTIONS) if (manifest[section]?.[API] !== undefined) checkOneCore(name, dep, manifest[section][API], section);
+  for (const p of PEERED) for (const section of SECTIONS) if (manifest[section]?.[SCOPE + p[0]] !== undefined) checkOnePeer(name, manifest, p, manifest[section][SCOPE + p[0]], section);
 }
 if (failed.size) { console.error(`\nconsumer-pin coherence FAILED (${failed.size}/${seen})`); process.exit(1); }
 console.log(`\nconsumer-pin coherence OK (${seen} npm-pinning consumers${advis ? `, ${advis} advisory helpers-only lag` : ""}). Bundled consumers (cairn UI, wallet) are guarded by their own vendor-freshness gates.`);
