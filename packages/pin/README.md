@@ -4,6 +4,13 @@ A CairnX pin: the log of the chain's `cairnx:v1` records at or below an epoch bo
 hash and state hash there, for `pinned()` of `@inversealtruism/cairnx-replica`. A replica opened over it reads only the
 blocks above the pin. Below the pin the trust is this release. Not yet released.
 
+```bash
+npm install @inversealtruism/cairnx-pin @inversealtruism/cairnx-replica@<version> @inversealtruism/cairnx-core@<version>
+```
+
+`@inversealtruism/cairnx-replica` is an exact peer: install the version this package's `peerDependencies` name, and
+the cairnx-core that replica names.
+
 ```ts
 import { PIN } from "@inversealtruism/cairnx-pin";
 import { local, open } from "@inversealtruism/cairnx-replica/server";

@@ -4,6 +4,7 @@
   "private": true,
   "engines": { "node": ">=18" },
   "description": "A CairnX pin: the log of the chain's cairnx:v1 records at an epoch boundary, with its block hash, events hash and state hash, for @inversealtruism/cairnx-replica's pinned().",
+  "author": "InverseAltruism",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

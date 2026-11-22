@@ -4,6 +4,7 @@
   "private": true,
   "engines": { "node": ">=18" },
   "description": "A CairnX replica: the chain's records replayed by cairnx-core, with the level of every answer derived from the one basis its store was filled from.",
+  "author": "InverseAltruism",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

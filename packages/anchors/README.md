@@ -5,6 +5,10 @@ walk starts from, and the block at the CairnX activation root (height 29,859). T
 no dependent inside this repository, so a refresh is one publish of this package alone and each consumer takes it in
 its own release. Not yet released (private).
 
+```bash
+npm install @inversealtruism/csd-anchors
+```
+
 ```ts
 import { ANCHORS } from "@inversealtruism/csd-anchors";
 ANCHORS.floor;            // { height: 29960, hash: "0x..." }

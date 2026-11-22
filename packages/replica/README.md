@@ -15,29 +15,40 @@ Only blocks sit above a pin: a pin over a feed does not compile, and `checkBasis
 throw `ReplicaConfigError` for one at run time. `basisKey` names a store without its pin, so a newer pin over the same
 root and bodies names the same store, which is kept only on the conditions of "Pins" below.
 
+## Install
+
+```bash
+npm install @inversealtruism/cairnx-replica @inversealtruism/cairnx-core@<version>
+npm install @inversealtruism/cairnx-pin        # for a replica that starts from the release's pin
+```
+
+`@inversealtruism/cairnx-core` is an exact peer dependency: install the version this package's `peerDependencies`
+name, so that a process runs one `resolve()`. Node 18 or later, or a browser. ESM only: a Node whose `require` loads
+ES modules loads every entry with it too, which the exit check runs on CI's Node 22.
+
+## One example per level
+
+| Example | Level, proof | What it shows |
+|---|---|---|
+| `examples/feed.mjs` | 1, `served` | a name from a csd-indexer's records, complete on the indexer's word |
+| `examples/own-node.mjs` | 3, `inclusion` | a token balance from one's own node's complete blocks |
+| `examples/pinned.mjs` | 3, `pinned` | a name from the pin and hosted blocks above it, and the site its `contenthash` names |
+| `examples/deposits.ts` | 3, `pinned` | a server crediting deposits from its own node, its store on disk ("Transfers" below) |
+
+The examples are in the repository, https://github.com/InverseAltruism/csd-sdk/tree/master/packages/replica/examples,
+and each takes its endpoints as arguments. CI installs this package, cairnx-pin and csd-anchors from their packed
+tarballs into an empty directory and runs the first three there against recorded answers, and type-checks the fourth
+against the installed types (`scripts/exit-check.ts`). `cairnx-replica check` ("Checking an installation" below) is
+the same read as one command.
+
+## Entries
+
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
   the reader, `open` and `openLog` ("Reading" below), `checkPin` and `pinned` ("Pins" below), `nameHistory` and
   `appliedIds` ("A csd-indexer feed" below), and the resolver's five state reads with `leaseInfo` and
   `nameDetailsOf` ("The resolver's reads" below).
 - `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
   `resolve()` or the block machinery.
-  The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
-  records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
-
-The loop takes one step of its source at a time. A step is refused whole, as `SOURCE_MALFORMED`, unless its blocks
-ascend above the cursor and lie at or above the activation height, each event sits at its block's height in the
-order of CONVENTION section 33.3, no event id is held already, every Attest is on a held Propose or one of its block,
-and the cursor is at or above the last block. A step that keeps the contract is committed whole with two running
-values after each row, kept in the row and the store's meta: the events hash (CONVENTION section 34.2), over each
-event's height, position, id and author, and the rows hash, sha256 over the canonical JSON of the row's height, block
-hash and events in stored order, chained from the value before it. No resolved state is stored: after a restart the
-rows are read back and checked against the contract and both values before any is replayed, so a row changed in any
-field, dropped, added or moved makes the store `corrupt`.
-
-Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its state hash costs a full replay, so it
-is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
-that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
-replayed on demand.
 - `./server` also has `diskStore({ dir })` ("The disk store" below), `ownNode({ node, dir, pin?, witness? })`
   ("One's own node on disk" below), `indexerFeed`, `Scanner` and `branchRefusal` ("A csd-indexer feed" below) and
   `replicaReads` with `WITHHELD`, `withheldBy` and `READ_HEADERS` ("The resolver's reads" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
@@ -173,6 +184,26 @@ replayed on demand.
   fragment is accepted. Neither reports a gate table.
 - `./testing`: `fixtureSource(fixture)`, a level 1 source over a recorded block fixture such as cairnx-core's
   `test/fixtures/events-blocks.json` in this repository, and the event factories `fixtures()`.
+
+The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
+records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
+
+## The loop
+
+The loop takes one step of its source at a time. A step is refused whole, as `SOURCE_MALFORMED`, unless its blocks
+ascend above the cursor and lie at or above the activation height, each event sits at its block's height in the
+order of CONVENTION section 33.3, no event id is held already, every Attest is on a held Propose or one of its block,
+and the cursor is at or above the last block. A step that keeps the contract is committed whole with two running
+values after each row, kept in the row and the store's meta: the events hash (CONVENTION section 34.2), over each
+event's height, position, id and author, and the rows hash, sha256 over the canonical JSON of the row's height, block
+hash and events in stored order, chained from the value before it. No resolved state is stored: after a restart the
+rows are read back and checked against the contract and both values before any is replayed, so a row changed in any
+field, dropped, added or moved makes the store `corrupt`.
+
+Each epoch boundary `FINAL_DEPTH` deep keeps its block hash and events hash. Its state hash costs a full replay, so it
+is computed only for a boundary at most 720 blocks (24 epochs) below the tip when it becomes deep: a catch-up to a tip
+that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
+replayed on demand.
 
 ## Reading
 
@@ -663,6 +694,22 @@ hours). The exit
 code is 0 for `equal` and `held`, 1 for any other result (`no-tuple` when no final boundary was reached), and 2 for a
 usage or configuration error. A refusal the next step would repeat (`PIN_MISMATCH`, `PIN_OFF_CHAIN`, `BELOW_FLOOR`)
 ends the run at once. The command asks no host it was not given and holds nothing on disk (`test/cli.test.ts`).
+
+## Known replicas
+
+Hosts that publish the tuples a replica compares with (`reference` in `open`, `--reference` in the command). An entry
+names the base, the routes under it, who operates it and the public page that states those routes; a host is listed
+only when such a page states its tuple route. A host's tuple is its claim, not a proof, and two entries run by one
+operator are one source.
+
+| Base | Routes | Operator | Stated in |
+|---|---|---|---|
+| `https://cairn-substrate.com/trade/api` | `/cairnx/tuple/<height>:<blockHash>`, `/cairnx/tuple/<height>`; the newest in `/cairnx/health` as `tuple` | the operator of cairn-substrate.com | https://cairn-substrate.com/docs, "The resolver's hash tuple" |
+
+That page says of the routes: "The proxy admits both reads and passes them to the resolver, which answers only for a
+kept epoch boundary (a height that is a multiple of 30) at least 12 below its tip; any other height, or another block
+hash, is a 404", and of the answer: "A tuple from our host is this host's claim, not a proof: compare it with the one
+your own replica computes." An entry is added by a pull request that names the base and the public page.
 
 ## The browser store
 

@@ -4,6 +4,7 @@
   "private": true,
   "engines": { "node": ">=18" },
   "description": "The shared block-hash anchors of the CSD chain as data: one table on a 4,096-block grid with its floor and the CairnX activation root, and the script that renders the wallet's generated files from it.",
+  "author": "InverseAltruism",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
