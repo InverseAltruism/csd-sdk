@@ -236,7 +236,7 @@ export class Scanner {
   }
 
   private async getJson<T>(path: string): Promise<T> {
-    const r = await this.f(`${this.base}${path}`, { signal: AbortSignal.timeout(this.timeoutMs) });
+    const r = await this.f(`${this.base}${path}`, { signal: AbortSignal.timeout(this.timeoutMs), redirect: "error" });
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
     return (await r.json()) as T;
   }
@@ -410,7 +410,7 @@ export class Scanner {
     let cur = after;
     for (let guard = 0; guard < 10_000; guard++) {
       const q = `/${kind}?domain=${encodeURIComponent(DOMAIN)}&at=${tip.h}:${tip.hash}&limit=${this.feedPageSize}${cur ? `&after=${cur.height}:${cur.pos}` : ""}`;
-      const r = await this.f(`${this.base}${q}`, { signal: AbortSignal.timeout(this.timeoutMs) });
+      const r = await this.f(`${this.base}${q}`, { signal: AbortSignal.timeout(this.timeoutMs), redirect: "error" });
       if (!r.ok) return null;
       let page: { at?: { height?: unknown; hash?: unknown }; rows?: unknown; next?: unknown } | null;
       try { page = (await r.json()) as typeof page; } catch { return null; }
