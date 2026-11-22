@@ -39,7 +39,8 @@ is computed only for a boundary at most 720 blocks (24 epochs) below the tip whe
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
 - `./server` also has `diskStore({ dir })` ("The disk store" below), `ownNode({ node, dir, pin?, witness? })`
-  ("One's own node on disk" below) and `indexerFeed`, `Scanner` and `branchRefusal` ("A csd-indexer feed" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
+  ("One's own node on disk" below), `indexerFeed`, `Scanner` and `branchRefusal` ("A csd-indexer feed" below) and
+  `replicaReads` with `WITHHELD`, `withheldBy` and `READ_HEADERS` ("The resolver's reads" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
   store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
@@ -542,6 +543,36 @@ applied, which the resolver passes to `nameHistory` as `fullApplied`. `scripts/m
 tokens, comments, whitespace and import paths aside, are the resolver's. The resolver's hash tuple book is not moved:
 the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
+
+Who runs the scan, by design: an outside replica's feed owns its Scanner and scans in each step, and a hosted resolver
+runs its own scan, publishes from it and writes a store after publication, off that path. A loop whose store cannot
+commit (held by another process, broken, or a full disk) backs off for up to 300 seconds and takes no step, so a
+service that published through its loop would stop publishing on a full disk; the feed therefore does not expose its
+scan for a host to publish from.
+
+## The resolver's reads
+
+`readState`, `readName`, `readResolve`, `readNameHistory` and `readProfile` (`.`) are the CairnX resolver's answers of
+`/cairnx/state`, `/cairnx/name/<name>`, `/cairnx/resolve/<name>`, `/cairnx/name-history/<name>` and
+`/cairnx/profile/<name>`: pure functions of a `ReadSnapshot` (a state, `canonical` and `history`, the derivations a
+host memoizes) to a status and the exact body text, taken from the resolver with their code unchanged (`leaseInfo` and
+`nameDetailsOf` with them). They load only cairnx-core: no file, process, network, clock or setting, and no import at
+run time (`test/handlers.test.ts`). A 404 is theirs alone: a name that is not registered.
+
+`replicaReads(reader, { waitMs? })` in `./server` answers those five paths from `reader.snapshot()`, the tip view: a
+function of a URL's pathname to `{ status, headers, body }`, or null for any other path. On the same state its
+statuses and bodies are the resolver's (on cairnx-core's recorded fixture to 117,000, every name's four routes and the
+state, 0 differ, `test/read-routes.test.ts`); the canonical state, the applied ids and each name's history (at most
+1,024) are kept while the snapshot's key holds. The headers are the resolver's (`content-type`
+`application/json; charset=utf-8`, `access-control-allow-origin: *`, `x-content-type-options: nosniff`) with the
+server's own verdict: `x-cairnx-at` (`<height>:<hash>` of the view's block) and `x-cairnx-why` (the verdict's codes,
+comma-separated, empty when verified), both named in `access-control-expose-headers` so a page on another origin can
+read them. The bodies carry no level: over HTTP every answer is level 1 to its reader. While the snapshot is not one to
+serve the answer is 503 `{ ok: false, error: "not ready: <codes>; retry shortly" }`, never a 404 (which a wallet takes
+as "not registered"): on `WITHHELD` (`NOT_SYNCED`, `STORE_UNCONFIRMED`, `PIN_DISPUTED`, `PIN_MISMATCH`,
+`PIN_OFF_CHAIN`, `RULES_DIFFER`, `BRANCH_UNRESOLVED`) and on `BEHIND` once the view is 12 or more below the tip (a
+catch-up; under that the resolver also answers between two polls). Every other code is served and named. The hosted
+resolver imports the five reads and keeps its own dispatch: only a replica's own server withholds.
 
 ## Tuples and a reference
 

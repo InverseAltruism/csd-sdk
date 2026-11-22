@@ -2,6 +2,10 @@
 
 ## 0.1.0 (unreleased)
 
+- `replicaReads(reader)` in `./server`: the resolver's five state reads from `reader.snapshot()`, with the resolver's
+  statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
+  `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
+  tip. The withhold rule is the server's, not the handlers'.
 - The resolver's five state reads, moved from the private CairnX resolver at 0c95ad2 with their code unchanged
   (`src/resolver/read.ts` as `src/handlers.ts`, and `src/nameview.ts`): `readState`, `readName`, `readResolve`,
   `readNameHistory`, `readProfile` over a `ReadSnapshot`, with `leaseInfo` and `nameDetailsOf`, exported from `.`;
