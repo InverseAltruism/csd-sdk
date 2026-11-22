@@ -16,7 +16,7 @@ export const WITHHELD: readonly NotVerifiedCode[] = Object.freeze([
   "NOT_SYNCED", "STORE_UNCONFIRMED", "PIN_DISPUTED", "PIN_MISMATCH", "PIN_OFF_CHAIN", "RULES_DIFFER", "BRANCH_UNRESOLVED",
 ] as const);
 /** The notes on which the server answers 503: a witness gave another block at a height the replica holds, a witness's
- *  valid tip is more than FINAL_DEPTH above the replica's, or the tip is older than STALE_MAX_MS. Every other note is
+ *  valid tip is far ahead of the replica's (verdict.ts farAhead), or the tip is older than STALE_MAX_MS. Every other note is
  *  served and named in `x-cairnx-notes`. */
 export const WITHHELD_NOTES: readonly NoteCode[] = Object.freeze(["SOURCES_DISAGREE", "PEER_FAR_AHEAD", "TIP_STALE_LONG"] as const);
 

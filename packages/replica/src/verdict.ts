@@ -19,6 +19,9 @@ const FINAL_AGE_S = FINAL_DEPTH * TARGET_BLOCK_SECS;
  *  allowance. */
 export const olderThan = (now: number, tipTime: number, ms: number, finalOnly: boolean): boolean =>
   now / 1000 - tipTime > ms / 1000 + (finalOnly ? FINAL_AGE_S : 0);
+/** Whether a witness's tip `lead` blocks above the replica's is far ahead (the note PEER_FAR_AHEAD): more than
+ *  FINAL_DEPTH, with a final-only source's allowance of FINAL_DEPTH more, the depth its tip sits under the chain tip. */
+export const farAhead = (lead: number, finalOnly: boolean): boolean => lead > FINAL_DEPTH + (finalOnly ? FINAL_DEPTH : 0);
 
 export interface VerdictInput {
   readonly level: 1 | 2 | 3; readonly feed: boolean;

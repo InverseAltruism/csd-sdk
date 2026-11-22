@@ -241,8 +241,8 @@ the boundary, the store's source disagrees with a recount and a reference that a
 `WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
 `FINAL_VIEW` (the source serves final blocks only, so its tip is its final height, 12 below the chain tip it read,
 by design: a csd-indexer feed with `verifyInclusion`; `BEHIND` then counts from that tip),
-`PEER_FAR_AHEAD` (a witness named a tip more than 12 above the replica's whose header meets its own bits; `TIP_BEHIND_PEER`
-is set with it), `TIP_STALE_LONG` (the tip's header time is more than `STALE_MAX_MS`, 6 hours, before the clock, plus
+`PEER_FAR_AHEAD` (a witness named a tip more than 12 above the replica's whose header meets its own bits, more than 24
+under a `FINAL_VIEW`, whose tip is 12 below the chain tip by design; `TIP_BEHIND_PEER` is set with it), `TIP_STALE_LONG` (the tip's header time is more than `STALE_MAX_MS`, 6 hours, before the clock, plus
 the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
@@ -599,7 +599,7 @@ as "not registered"): on `WITHHELD` (`NOT_SYNCED`, `STORE_UNCONFIRMED`, `PIN_DIS
 `PIN_OFF_CHAIN`, `RULES_DIFFER`, `BRANCH_UNRESOLVED`) and on `BEHIND` once the view is 12 or more below the tip (a
 catch-up; under that the resolver also answers between two polls), and on the notes `WITHHELD_NOTES`:
 `SOURCES_DISAGREE` (a witness gave another block at a height the replica holds), `PEER_FAR_AHEAD` (a witness's valid tip
-is more than 12 above the replica's; a peer up to 12 ahead is served with `TIP_BEHIND_PEER`) and `TIP_STALE_LONG`
+is more than 12 above the replica's, more than 24 under `FINAL_VIEW`; a peer up to that is served with `TIP_BEHIND_PEER`) and `TIP_STALE_LONG`
 (the tip is more than 6 hours old; a tip stale by the 30 minutes of `TIP_STALE` alone is served, since a drought
 between blocks would otherwise make every replica refuse at once). Every other code and note is served and named:
 the codes in `x-cairnx-why`, the notes in `x-cairnx-notes`, both exposed. Under `FINAL_VIEW` a served answer is at

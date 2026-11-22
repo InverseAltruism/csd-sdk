@@ -21,7 +21,7 @@ import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
 import { tupleOf, type Tuple } from "./tuple.js";
 import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
-import { FRESH_MS, STALE_MAX_MS, olderThan, verdict } from "./verdict.js";
+import { FRESH_MS, STALE_MAX_MS, farAhead, olderThan, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
@@ -176,7 +176,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     const lead = synced === null ? 0 : board.peerLead(synced.tip);
     const notes: { code: NoteCode; detail?: string }[] = [...(finalOnly ? [{ code: "FINAL_VIEW" as const }] : []), ...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
       ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes(),
-      ...(lead > FINAL_DEPTH ? [{ code: "PEER_FAR_AHEAD" as const, detail: `a witness's tip ${lead} blocks above` }] : []),
+      ...(farAhead(lead, finalOnly) ? [{ code: "PEER_FAR_AHEAD" as const, detail: `a witness's tip ${lead} blocks above` }] : []),
       ...(synced !== null && olderThan(now, synced.tip.time, STALE_MAX_MS, finalOnly) ? [{ code: "TIP_STALE_LONG" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null

@@ -135,6 +135,25 @@ console.log("a real indexerFeed with inclusion: FINAL_VIEW reaches the header:")
   ok("200, LEVEL_FEED in x-cairnx-why and FINAL_VIEW in x-cairnx-notes, at the final height", got.status === 200 && got.headers["x-cairnx-why"] === "LEVEL_FEED" &&
     got.headers["x-cairnx-notes"] === "FINAL_VIEW" && got.headers["x-cairnx-at"]?.startsWith(`${TT - FINAL_DEPTH}:`) === true, JSON.stringify(got.headers));
   await r.close();
+  // An honest witness of the same chain, its tip `n` above the verified tip the feed read: the view's tip is the final
+  // height, FINAL_DEPTH below that, so the witness leads by FINAL_DEPTH + n.
+  const withWitness = async (n: number) => {
+    const inner = witnessOn(all, cap.to, { id: `w${n}`, claim: (t) => ({ ...t, height: TT + n }) }).witness;
+    const witness = { ...inner, hashAt: async (h: number) => (h <= TT + n ? signed.hashAt(h) : null) };
+    const x = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: realOf(signed.indexer({ tip: TT })), pageSize: 3, ...signed.verified({ verifiedTip: TT }) }),
+      witnesses: [witness], clock: clockAt, step: { maxBlocks: 100_000, maxRequests: 100_000 } });
+    await x.advance();
+    const g = (await replicaReads(x)("/cairnx/state"))!;
+    await x.close();
+    return g;
+  };
+  const leads = [1, 2, FINAL_DEPTH, FINAL_DEPTH + 1];
+  const seen = await Promise.all(leads.map(async (n) => ({ n, g: await withWitness(n) })));
+  const shown = seen.map(({ n, g }) => `+${n} ${g.status} ${g.headers["x-cairnx-why"]} ${g.headers["x-cairnx-notes"]}`).join(" | ");
+  ok(`with inclusion, a witness 1, 2 and ${FINAL_DEPTH} above the verified tip (a lead of ${FINAL_DEPTH + 1} to ${2 * FINAL_DEPTH} over the final height): TIP_BEHIND_PEER served, 200`,
+    seen.slice(0, 3).every(({ g }) => g.status === 200 && g.headers["x-cairnx-why"] === "LEVEL_FEED,TIP_BEHIND_PEER" && g.headers["x-cairnx-notes"] === "FINAL_VIEW"), shown);
+  ok(`with inclusion, a witness ${FINAL_DEPTH + 1} above the verified tip (a lead of ${2 * FINAL_DEPTH + 1}): PEER_FAR_AHEAD, 503`,
+    seen[3]!.g.status === 503 && seen[3]!.g.headers["x-cairnx-notes"] === "FINAL_VIEW,PEER_FAR_AHEAD", shown);
 }
 
 console.log("byte for byte the hosted resolver's, on the recorded fixture to 117,000:");
