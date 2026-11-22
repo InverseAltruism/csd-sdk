@@ -88,7 +88,7 @@ export function parseQuery<R extends Route>(route: R, query: string | URLSearchP
 
   const atRaw = raw.get("at");
   const at = atRaw === undefined ? null : parseAt(atRaw);
-  if (atRaw !== undefined && at === null) return refuse("at", "must be <height>:<hash> or <height>:<hash>:<rev>, lowercase hex");
+  if (atRaw !== undefined && at === null) return refuse("at", "must be <height>:<hash> or <height>:<hash>:<rev>: a decimal height, a lowercase hex hash, a rev as the server sent it");
 
   const limitRaw = raw.get("limit");
   const limit = limitRaw === undefined ? LIMIT_DEFAULT : decimal(limitRaw);
