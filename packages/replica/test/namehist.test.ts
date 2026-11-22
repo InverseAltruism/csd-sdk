@@ -17,6 +17,7 @@ import {
   type CairnXRecord, type ChainEvent, type ProposeEvent,
 } from "@inversealtruism/cairnx-core";
 import { fixtures } from "../src/factories.js";
+import { supersededHints } from "./namehist-oracle.js";
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { cond ? pass++ : fail++; console.log(`  ${cond ? "✓" : "✗"} ${name}`); };
@@ -42,12 +43,18 @@ function equiv(full: ChainEvent[], name: string, tip: number): boolean {
 }
 
 // the same property for what check mode serves (the pruned hints): when it says sufficient, replaying exactly its
-// hints gives the full chain's record
+// hints gives the full chain's record, and no served nset or nprofile is superseded in that replay (so the prune
+// guard never had to fall back to the whole selection over one)
 let servedPruned = 0;   // check-mode calls that dropped at least one candidate
+let servedSuperseded = 0;   // check-mode calls whose unpruned selection held a superseded nset or nprofile
 function equivServed(full: ChainEvent[], name: string, tip: number): boolean {
   const h = nameHistory(full, name, { tipHeight: tip });
   if (!h.scopedReplaySufficient) return false;
-  if (h.events.length < nameHistory(full, name).events.length) servedPruned++;
+  const unpruned = nameHistory(full, name).events;
+  if (h.events.length < unpruned.length) servedPruned++;
+  if (supersededHints(full, tip, name, unpruned.map((e) => e.txid)).length) servedSuperseded++;
+  const left = supersededHints(full, tip, name, h.events.map((e) => e.txid));
+  if (left.length) { console.log(`    SERVED A SUPERSEDED RECORD on "${name}": ${left.join(", ")}`); return false; }
   const ids = new Set(h.events.map((e) => e.txid));
   const b = resolve(full.filter((e) => ids.has((e.kind === "propose" ? e.id : e.txid).toLowerCase())), tip).names[name];
   try { assert.deepEqual(b, resolve(full, tip).names[name]); return true; }
@@ -304,6 +311,7 @@ for (let trial = 0; trial < PTRIALS; trial++) {
   if (!allEq && pDiverge <= 3) console.log(`    ↑ v1.9 trial ${trial} diverged (${ev.length} events)`);
 }
 ok(`v1.9 fuzz: ${pPass}/${PTRIALS}: scoped == full and the served hints replay to it with nprofile interleaved (${sawProfile} live profiles seen, 0 diverged)`, pDiverge === 0 && sawProfile > 0);
+ok(`both fuzzes: ${servedSuperseded} served histories had a superseded nset or nprofile in the unpruned selection, and none was served`, servedSuperseded > 0);
 
 // ── The open-lane claim-fill exception the taker-bound fuzz can't reach ──
 console.log("\nOpen-lane claim-to-fill (the documented sufficiency EXCEPTION, scoped replay is insufficient):");

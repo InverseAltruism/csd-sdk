@@ -2,6 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
+- `nameHistory` with `check` no longer serves an address or profile record that a later one supersedes: of a name's
+  `nset` records the scoped replay applies only the last stays, and none when an applied `nxfer` or a fill of the
+  name's offer follows it (each writes the field whole or clears it); the same for `nprofile`, which replaces the
+  whole profile. Each hint costs a wallet two serial reads. On cairnx-core's replay corpus at 117,000, 8 of 114 names
+  lose a hint (388 hints in all, now 378). The prune guard is unchanged and still has the last word. The selector's
+  apply order puts a block's proposals before its attests, as resolve() does.
 - `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
   `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
   last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last
