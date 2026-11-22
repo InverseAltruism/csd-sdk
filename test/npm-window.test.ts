@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
 import { checkWindow, finishWindow, headOnOriginMaster, publishOrder, publishWindow } from "../scripts/npm-window.mjs";
+import { workspacePackagesAtHead } from "../scripts/workspace.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -149,6 +150,7 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   put(".gitignore", "node_modules/\npnpm-lock.yaml\n");
   put("packages/a/package.json", JSON.stringify({ name: "@x/a", version: "1.0.1", files: ["index.js"] }, null, 2));
   put("packages/b/package.json", JSON.stringify({ name: "@x/b", version: "1.0.0", files: ["index.js"], dependencies: { "@x/a": "workspace:*" } }, null, 2));
+  put("packages/c/package.json", JSON.stringify({ name: "@x/c", version: "1.0.0", private: true, files: ["index.js"] }, null, 2));
   put("packages/a/index.js", "export {};\n");
   put("packages/b/index.js", "export {};\n");
   git("init", "-q", "-b", "master");
@@ -182,6 +184,8 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
     registry: async (name: string, version: string) => ({ status: name === "@x/a" && version === "1.0.0" ? 200 : 404, meta: null }) });
   const planned = plan.order.map((p) => `${p.name}@${p.version}`).join();
   ok("the window plans the versions HEAD names (a@1.0.1 and b), not a@1.0.0 from disk", planned === "@x/a@1.0.1,@x/b@1.0.0", planned);
+  ok("a private package (@x/c, unpublished) is never planned, and the plan names it as private",
+    !planned.includes("@x/c") && lines.includes("  not published, marked private: @x/c@1.0.0"), lines.join("\n"));
   ok("its only failed checks are the stand-in pack and guard of the two planned packages (the tree and HEAD checks pass)",
     plan.fails.length === 4 && plan.fails.every((f) => /^@x\/[ab]: (pnpm pack|publish guard)/.test(f)), plan.fails.join("; "));
 }
@@ -243,6 +247,11 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   const peerFirst = publishOrder([{ name: "@inversealtruism/cairnx-api", peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }, { name: "@inversealtruism/cairnx-core" }]);
   ok("a package is ordered after the workspace package it names as a peer (cairnx-core before cairnx-api, against the name order)",
     peerFirst.map((p) => p.name).join() === "@inversealtruism/cairnx-core,@inversealtruism/cairnx-api", peerFirst.map((p) => p.name).join());
+  // the window's order over this repo's own manifests: each package after every workspace package it depends on or peers on
+  const real = publishOrder(workspacePackagesAtHead(root)).map((p) => String(p.name).replace("@inversealtruism/", ""));
+  const after = (a: string, ...before: string[]) => before.every((b) => real.indexOf(b) >= 0 && real.indexOf(b) < real.indexOf(a));
+  ok("the order over this repo's manifests puts cairnx-replica after cairnx-core, csd-codec, csd-crypto, csd-client and csd-light, cairnx-pin after cairnx-replica, and lists csd-anchors",
+    after("cairnx-replica", "cairnx-core", "csd-codec", "csd-crypto", "csd-client", "csd-light") && after("cairnx-pin", "cairnx-replica") && real.includes("csd-anchors"), real.join());
   const API = "@inversealtruism/cairnx-api";
   const api = await window({ unpublished: API });
   const apiTgz = api.tarballs[0]?.path ?? "";

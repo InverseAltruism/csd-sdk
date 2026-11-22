@@ -31,8 +31,9 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 
 Check mode (the default, `node scripts/npm-window.mjs [--out <dir>]`) publishes nothing. It:
 
-- lists every workspace version the HEAD commit's manifests name that is not yet on npm, dependencies first; a
-  package whose manifest is marked `private` is never listed;
+- lists every workspace version the HEAD commit's manifests name that is not yet on npm, each after the workspace
+  packages it depends on or peers on; a package whose manifest is marked `private` is never planned, and the plan
+  names it ("not published, marked private"), so a package left private by mistake shows there;
 - packs each with `pnpm pack` (prepack builds dist/);
 - runs the publish guard on each (`pnpm run prepublishOnly`: lockstep, the package suite, test:crosslang for
   cairnx-core);
