@@ -5,7 +5,7 @@
 // throughout: an honest equal reference adds no note, no request in status() and no recount, and a reference on the
 // store's own origin is labelled so and changes no level and no verdict.
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { FINAL_DEPTH } from "@inversealtruism/cairnx-core";
 import { memoryStore, open, ReplicaConfigError, replicaLoop, type BlocksSource, type ReplicaStatus, type Source, type Store, type Tuple } from "../src/index.js";
 import { open as serverOpen } from "../src/server.js";
@@ -263,23 +263,28 @@ for (const [what, reply] of [
 {
   // Over real HTTP on 127.0.0.1: an answer that declares a body over the cap is refused before its body is read, and
   // its connection is let go at once, not left open until a garbage collection. Paired: the same server answering the
-  // tuple is read equal.
-  let huge = true, sockets = 0;
+  // tuple is read equal. Counted are the connections that carried such an answer: Node 22's fetch also opens a spare
+  // connection after an aborted request, which carries no request and is its pool's to close when idle.
+  let huge = true, served = 0;
+  const held = new Set<Socket>();
   const server = createServer((q, res) => {
     const h = Number(/tuple\/([0-9]+)/.exec(q.url ?? "")?.[1]), t = truth.get(h);
-    if (huge) { res.writeHead(200, { "content-type": "application/json", "content-length": String(10 * 1024 * 1024) }); res.write("{"); return; }
+    if (huge) {
+      const c = q.socket;
+      served++; held.add(c); c.once("close", () => held.delete(c));
+      res.writeHead(200, { "content-type": "application/json", "content-length": String(10 * 1024 * 1024) }); res.write("{"); return;
+    }
     if (t === undefined) { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: false, error: "not a kept boundary", height: h })); return; }
     res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, ...t }));
   });
-  server.on("connection", (c) => { sockets++; c.on("close", () => { sockets--; }); });
   await new Promise<void>((go) => server.listen(0, "127.0.0.1", go));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/trade/api`;
   const r = await open({ source: growing(fx, { now: TOP }, { feed: "https://feed.example/x" }), reference: { base } });
   let s: ReplicaStatus | null = null;
   for (let i = 0; i < 10; i++) s = await r.advance();
   await new Promise((go) => setTimeout(go, 200));
-  ok(`ten answers over the cap by their Content-Length: unavailable each time, ${sockets} connections left open`, s?.compare?.kind === "unavailable" &&
-    /over 4096 bytes/.test(s.compare.detail ?? "") && sockets === 0, s?.compare?.detail ?? "");
+  ok(`${served} answers over the cap by their Content-Length: unavailable each time, ${held.size} of their connections left open`,
+    served === 10 && s?.compare?.kind === "unavailable" && /over 4096 bytes/.test(s.compare.detail ?? "") && held.size === 0, s?.compare?.detail ?? "");
   huge = false;
   const honest = await r.advance();
   ok("paired: the same server answering the tuple is read equal", honest.compare?.kind === "equal", JSON.stringify(honest.compare));
