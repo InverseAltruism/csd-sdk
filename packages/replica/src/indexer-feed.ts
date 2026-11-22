@@ -68,10 +68,10 @@ function ruleEvents(events: readonly ChainEvent[], activationHeight: number): Ch
 }
 
 /** The time, in seconds, of the block `hash` at `height` as csd-indexer's /block/<hash> answers it: an answer that does
- *  not name that block at that height with a whole number of seconds is SOURCE_MALFORMED. */
+ *  not name that block (in any form blockHash takes) at that height with a whole number of seconds is SOURCE_MALFORMED. */
 async function timeOf(s: Session, height: number, hash: string): Promise<number> {
   const b = await s.json(`/block/${hash}`, false) as { hash?: unknown; height?: unknown; time?: unknown } | null;
-  const named = typeof b === "object" && b !== null && b.height === height && typeof b.hash === "string" && b.hash.toLowerCase() === hash;
+  const named = typeof b === "object" && b !== null && b.height === height && blockHash(b.hash, height) === hash;
   if (!named || !Number.isSafeInteger(b.time) || (b.time as number) < 0) throw new SourceError("SOURCE_MALFORMED", `the indexer's block ${hash} is not the block at ${height} with a time`);
   return b.time as number;
 }

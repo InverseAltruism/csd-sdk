@@ -347,6 +347,16 @@ console.log("the tip a step reports:");
     const bad = await next(indexerFeed({ indexerUrl: "http://idx", fetch: lying, pageSize: 3 }), null, 100);
     ok(`a /block answer with ${what}: SOURCE_MALFORMED`, bad.kind === "cannot" && bad.code === "SOURCE_MALFORMED", JSON.stringify(bad));
   }
+  for (const [what, form] of [["without 0x", (h: string) => h.slice(2)], ["in upper case", (h: string) => `0x${h.slice(2).toUpperCase()}`]] as const) {
+    const other = (async (i: string | URL | Request, r?: RequestInit) => {
+      const got = await base(i, r);
+      if (!String(i).includes("/block/0x")) return got;
+      const b = (await got.json()) as Record<string, unknown>;
+      return Response.json({ ...b, hash: form(String(b.hash)) });
+    }) as typeof fetch;
+    const st2 = await next(indexerFeed({ indexerUrl: "http://idx", fetch: other, pageSize: 3 }), null, 100);
+    ok(`paired: a /block answer naming the hash ${what}, a form /block-height's reader takes, is the block`, st2.kind === "blocks" && st2.tip.time === timeAt(TIP), JSON.stringify(st2));
+  }
   const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: base, pageSize: 3 }), store: memoryStore(), ...WIDE });
   await loop.open();
   const s = await loop.advance();
