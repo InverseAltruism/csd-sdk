@@ -1,6 +1,7 @@
 // The command `cairnx-replica check` (src/cli.ts) over the recorded captures: each source the command names reaches the
 // tuple at the newest final boundary, equal to the one cairnx-core's corpus gives there; a reference or an expected
 // tuple that differs in each field exits 1 with its kind; usage errors exit 2; a sticky refusal ends the run at once.
+import { readFileSync } from "node:fs";
 import { applyOrder, eventsHash, resolve, stateHash, type ChainEvent } from "@inversealtruism/cairnx-core";
 import { derivePin } from "../src/server.js";
 import { runCheck } from "../src/cli.js";
@@ -56,6 +57,11 @@ console.log("each source reaches the corpus's tuple at its newest final boundary
   const f = await run(["--feed", "http://idx", "--expect", str(T117), "--json"], idx);
   ok("--feed over the recorded indexer to 117,000: level 1, the tuple at 116,970 equal to the corpus's, exit 0",
     f.code === 0 && f.report?.result === "equal" && f.report.level === 1 && same(f.report.tuple, T117), f.lines.join("\n"));
+  // The exit check's reference (scripts/exit-check.ts) is these tuples, and the shipped pin's own at 143,340.
+  const ref = JSON.parse(readFileSync(new URL("../scripts/exit-reference.json", import.meta.url), "utf8"));
+  const pin = JSON.parse(readFileSync(new URL("../../pin/pin.json", import.meta.url), "utf8"));
+  ok("scripts/exit-reference.json holds the corpus's tuples at 116,970 and 30,270 and the shipped pin's",
+    same(ref, { feed: T117, blocks: T30, pin: { height: pin.height, blockHash: pin.blockHash, eventsHash: pin.eventsHash, stateHash: pin.stateHash } }), JSON.stringify(ref));
   const held = await run(["--node", NODE], node({ answers: cap.answers }).f);
   ok("with no reference: the tuple printed, result held, exit 0",
     held.code === 0 && held.lines.includes(`tuple 30270 block ${T30.blockHash} events ${T30.eventsHash} state ${T30.stateHash}`) && held.lines.at(-1) === "result: held", held.lines.join("\n"));
