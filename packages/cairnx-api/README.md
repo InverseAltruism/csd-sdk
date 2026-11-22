@@ -6,16 +6,19 @@ built-in, so it runs in a browser. Its rows are `@inversealtruism/cairnx-core`'s
 exact peer dependency: install the cairnx-core version this package was published against; any other installs a
 second core or runs this package on a core it was not built against.
 
-## What 0.1.3 is
+## The 1.0 contract
 
-- The handlers and types the CairnX resolver, its first consumer, will mount to answer the six reads.
-- Not a live HTTP API: as of 0.1.3 no public route serves these reads.
-- Not the 1.0 contract: until 1.0.0, any release may change a route, a parameter, a row or envelope field, an error
-  code or a cursor grammar, and CHANGELOG.md names each change. What an answer of the public API promises, and the
-  notice before a field or route is retired, start on the day the API's documentation is published, not with a
-  package version.
+From 1.0.0 this package is the contract of version 1 of the read API that a host serves under `/api/cairnx/v1/`.
+Promised: the six routes; each parameter's name, grammar and meaning; each list's orders and cursor grammars; the
+envelope's fields; each row field's name and meaning; the error codes with their statuses; what an answer means and
+what `rev` promises. A route, an optional parameter, a field, a value of an open set or a higher `limit` maximum may be
+added in any release, and the `message` texts, the key order in the JSON, the default `limit`, the presence of
+`total` and the form of `rev` are not promised. A route or a field is removed only after it has been marked deprecated,
+with the date, in CHANGELOG.md and the documentation and served unchanged for six months; a change of meaning is a new
+API version, `/api/cairnx/v2/`. The documentation states the date the promise runs from, with the limits and
+availability of the hosted servers: <https://cairn-substrate.com/docs#cairnx-v1-notice>.
 
-The rest of this file describes 0.1.3 as built: 0.1.0's API with `order=length` on `names`, on cairnx-core 0.2.10.
+The rest of this file describes 1.0.0, on cairnx-core 0.2.10.
 
 ## What an answer means
 

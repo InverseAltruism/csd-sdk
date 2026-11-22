@@ -1,6 +1,6 @@
-// The error codes of a v1 refusal, each with its one HTTP status and the side that answers it. Before 1.0.0 the table
-// can change in any release; from 1.0.0 a code is never renamed, reused or removed. Codes may be added; a client treats
-// a code it does not know by its status.
+// The error codes of a v1 refusal, each with its one HTTP status and the side that answers it. From 1.0.0 the codes and
+// their statuses are part of the contract (test/errors.test.ts holds the table): within version 1 a code is not renamed,
+// reused or removed. Codes may be added; a client treats a code it does not know by its status.
 
 type Side = "service" | "proxy" | "both";
 const entry = <S extends number, F extends Side>(status: S, from: F) => Object.freeze({ status, from });

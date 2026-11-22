@@ -1,5 +1,5 @@
-// @inversealtruism/cairnx-api: the types, parser, cursors and pure handlers of the CairnX read API, version 1, before
-// 1.0. No I/O; browser-safe.
+// @inversealtruism/cairnx-api: the types, parser, cursors and pure handlers of the CairnX read API, version 1. No I/O;
+// browser-safe.
 export { CAIRNX_API_VERSION } from "./version.js";
 export { ERRORS, ERROR_CODES, statusOf, type ErrorCode } from "./errors.js";
 export type { At, Page, Refusal, RefusalError, Answer } from "./envelope.js";
