@@ -39,11 +39,12 @@ const CLIENT_TIMEOUT_MS = 2 ** 31 - 1;
 // A copy of csd-client's capped body read, which is private to its class (CHANGELOG, 2026-11-18), for a JSON answer
 // that is not a node path: refuse a declared or streamed body over the cap before parsing, read a body without a
 // stream reader as text and check its bytes, and parse u64 literals exactly. Unlike csd-client it throws
-// SourceError SOURCE_MALFORMED, so a step reports a code.
+// SourceError SOURCE_MALFORMED, so a step reports a code. A body refused unread is cancelled, which lets its
+// connection go; left unread, Node's fetch holds the connection until the response is garbage collected.
 const MAX_BYTES = 16 * 1024 * 1024;
 export async function cappedJson(r: Response, what: string, max = MAX_BYTES): Promise<unknown> {
   const over = () => new SourceError("SOURCE_MALFORMED", `${what}: the answer is over ${max} bytes`);
-  if (Number(r.headers.get("content-length") ?? 0) > max) throw over();
+  if (Number(r.headers.get("content-length") ?? 0) > max) { await r.body?.cancel(); throw over(); }
   const parse = (text: string) => { try { return parseJsonExact(text); } catch (e) { throw new SourceError("SOURCE_MALFORMED", `${what}: ${messageOf(e)}`); } };
   const body = r.body as ReadableStream<Uint8Array> | null | undefined;
   if (body === null || body === undefined || typeof body.getReader !== "function") {
