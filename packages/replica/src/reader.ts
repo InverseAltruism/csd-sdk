@@ -6,7 +6,7 @@
 import {
   CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Snapshot, Transfer, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
@@ -21,7 +21,7 @@ import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
 import { tupleOf, type Tuple } from "./tuple.js";
 import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
-import { FRESH_MS, verdict } from "./verdict.js";
+import { FRESH_MS, STALE_MAX_MS, farAhead, olderThan, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
@@ -33,6 +33,9 @@ export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
   readonly reference?: TupleReference; readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
+/** The least time between the end of an advance and one a read starts, as the hosted resolver polls by default: a burst
+ *  of reads polls the source at most once in it. advance() itself starts one whenever none runs. */
+export const READ_ADVANCE_MS = 15_000;
 /** How long a recount from blocks may run before it gives no answer: it reads its source from the floor to the source's
  *  tip, 10 minutes at most. The advance's signal and close() end it sooner, and an ended recount settles nothing. */
 export const RECOUNT_MS = 600_000;
@@ -59,8 +62,11 @@ export interface Reader extends EventLog {
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
   /** What cairnx-core's resolve() does with `tx`, a Propose or an Attest by `author`, in the block above the cursor
    *  after every event held: whether it applies, with the reason code and note of the applied log. It reads the tip
-   *  view, so its `at` is the tip at depth 0. */
+   *  view; its `at` is the cursor it was tried above, which is the tip at depth 0 when the replica is synced. */
   dryRun(tx: DryRunTx, author: string, o?: Omit<ReadOptions, "minDepth">): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
+  /** The tip view (depth 0, the lower of the cursor and the tip) and every event held up to it, from one commit, frozen:
+   *  what a server answers the CairnX resolver's reads from (handlers.ts, read-routes.ts). `at` names the view's block. */
+  snapshot(o?: Omit<ReadOptions, "minDepth">): Promise<Answer<Snapshot>>;
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
@@ -98,6 +104,11 @@ const deepFreeze = <T>(v: T): T => {
   return v;
 };
 const copy = <T>(v: T): T => (v === null ? v : structuredClone(v));
+// An answer whose value was read at `height` (the cursor, or a view below the tip) names that block in `at`.
+function atHeight<T>(a: Answer<T>, height: number, hash: string | null): Answer<T> {
+  if (a.at === null || a.at.height === height) return a;
+  return { ...a, at: { ...a.at, height, hash, deepHeight: height, depth: Math.max(0, a.at.tipHeight - height) } };
+}
 // name and primary: the deep view is the value; when the tip view differs, SHALLOW with the tip view in `shown`, since
 // a recent change of a name is the caution (design section 5).
 function bothViews<T>(v: Views, f: (s: CairnXState) => T): Out<T> {
@@ -124,9 +135,11 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   await loop.open();
   restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
+  // A feed with inclusion serves final blocks only: its tip is its final height (indexer-feed.ts), noted on every answer.
+  const finalOnly = basis.kind === "feed" && basis.inclusion;
   // `running` is a whole advance; `stepping` the part a read waits for (the step and the witnesses), so a read is not
   // held by a reference, which the advance compares after it. close() aborts the comparison and a recount.
-  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null;
+  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null, endedAt = Number.NEGATIVE_INFINITY;
   const closing = new AbortController();
   const ref = compares ? o.reference : undefined;
   const cmp = ref === undefined ? null : comparer({
@@ -153,15 +166,18 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
+      level, feed: basis.kind === "feed", finalOnly, synced, now, peerAhead: (t) => board.peerLead(t) > 0, refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
     // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
     // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
     const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
-    const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
-      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes()];
+    const lead = synced === null ? 0 : board.peerLead(synced.tip);
+    const notes: { code: NoteCode; detail?: string }[] = [...(finalOnly ? [{ code: "FINAL_VIEW" as const }] : []), ...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
+      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes(),
+      ...(farAhead(lead, finalOnly) ? [{ code: "PEER_FAR_AHEAD" as const, detail: `a witness's tip ${lead} blocks above` }] : []),
+      ...(synced !== null && olderThan(now, synced.tip.time, STALE_MAX_MS, finalOnly) ? [{ code: "TIP_STALE_LONG" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
@@ -230,7 +246,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
       return s;
     })();
     running = run; stepping = stepped;
-    const clear = () => { if (running === run) { running = null; stepping = null; } };
+    const clear = () => { endedAt = clock(); if (running === run) { running = null; stepping = null; } };
     run.then(clear, clear);
     return run;
   }
@@ -251,15 +267,16 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     const minDepth = o.minDepth ?? FINAL_DEPTH, invalid = (): Answer<T> =>
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
-    // A read starts an advance unless one runs, then waits for its step (not the comparison that follows it) and for a
-    // commit in flight, together at most
+    // A read starts an advance unless one runs or the last ended less than READ_ADVANCE_MS ago, then waits for the step
+    // of the advance running (not the comparison that follows it) and for a commit in flight, together at most
     // `waitMs` (default 0) from now. From the last check of committing() on nothing is awaited, so a read either
     // answers from the state the last whole commit left or, with a commit still in flight, NOT_SYNCED with nothing shown.
-    if (running === null) void advance().catch(() => undefined);
-    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping!;
-    let ran = false;
-    void step.then(() => { ran = true; }, () => { ran = true; });
-    await within(o, deadline, () => ran, () => step);
+    const since = clock() - endedAt;   // a clock set back counts as the interval passed
+    if (running === null && !(since >= 0 && since < READ_ADVANCE_MS)) void advance().catch(() => undefined);
+    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping;
+    let ran = step === null;
+    void step?.then(() => { ran = true; }, () => { ran = true; });
+    await within(o, deadline, () => ran, () => step ?? Promise.resolve());
     await within(o, deadline, () => !loop.committing(), () => loop.quiet());
     const j = judge(minDepth), s = loop.status(), busy = loop.committing();
     if (s.tip !== null && minDepth > s.tip.height) return invalid();
@@ -333,6 +350,8 @@ export function open(o: OpenOptions): Promise<Reader> {
 /** Internal: open() with a recount source, which ./server's open() takes. */
 export async function openWith(o: OpenOptions, recount: Source | null): Promise<Reader> {
   const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay(), recount, true);
+  // The last snapshot, kept while its key names the state the loop holds: one copy per commit, however many reads.
+  let snap: { key: string; value: Snapshot } | null = null;
   return {
     ...log,
     balance(ticker, address, ro) {
@@ -368,18 +387,36 @@ export async function openWith(o: OpenOptions, recount: Source | null): Promise<
     state(ro) {
       return read(ro, true, (v) => { const s = v.deep === null ? null : structuredClone(v.deep); return { value: s, shown: s }; });
     },
-    dryRun(tx, author, ro) {
+    async dryRun(tx, author, ro) {
       const a = addressOf(author);
       let ev: ChainEvent | null = null;
       try { ev = a === null ? null : eventOfTx({ pos: 1, txid: TRY_TXID, tx }, Number.MAX_SAFE_INTEGER - 1, a); } catch { ev = null; }   // refused by the rule
-      return read({ ...ro, minDepth: 0 }, ev !== null, () => {
+      const tried: { c: Cursor | null } = { c: null };
+      const answer = await read({ ...ro, minDepth: 0 }, ev !== null, () => {
         const c = log.status().cursor;
         if (c === null) return { value: null, shown: null };
+        tried.c = c;
         const h = c.height + 1, events = [...loop.rows(0).flatMap((r) => r.events), { ...ev!, height: h }];
         const entry = resolve(events, h).events.find((e) => e.id === TRY_TXID && e.height === h);
         const value = { applied: entry?.ok === true, code: entry?.code ?? null, note: entry?.note ?? null };
         return { value, shown: value };
       });
+      return tried.c === null ? answer : atHeight(answer, tried.c.height, tried.c.hash);
+    },
+    async snapshot(ro) {
+      const view: { height: number; hash: string | null } = { height: -1, hash: null };
+      const answer = await read<Snapshot>({ ...ro, minDepth: 0 }, true, (v) => {
+        const c = loop.status().cursor;
+        if (c === null || v.top === null) return { value: null, shown: null };
+        const height = Math.min(c.height, v.deepHeight), key = `${height}:${c.hash}:${loop.generation()}`;
+        view.height = height; view.hash = height === c.height ? c.hash : loop.hashAt(height);
+        if (snap?.key !== key) {
+          const events = loop.rows(0).filter((r) => r.height <= height).flatMap((r) => r.events);
+          snap = { key, value: deepFreeze({ key, height, state: structuredClone(v.top), events: structuredClone(events) }) };
+        }
+        return { value: snap.value, shown: snap.value };
+      });
+      return view.height < 0 ? answer : atHeight(answer, view.height, view.hash);
     },
   };
 }

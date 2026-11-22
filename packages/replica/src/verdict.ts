@@ -2,14 +2,31 @@
 // condition that fails adds its code, in this order; an answer is verified only when none does. The tip is the one
 // the loop's last step reported (LoopStatus.tip), never Source.tip(), which under a caller root names the caller's
 // tip whatever the store holds.
+import { FINAL_DEPTH } from "@inversealtruism/cairnx-core";
+import { TARGET_BLOCK_SECS } from "@inversealtruism/csd-codec";
 import type { NotVerifiedCode } from "./codes.js";
 import type { Cursor, TipView } from "./types.js";
 
-/** How old a tip header or a witness's confirmation may be: 30 minutes. */
+/** How old a tip header or a witness's confirmation may be: 30 minutes. A source that serves final blocks only
+ *  (`finalOnly`) reports a tip FINAL_DEPTH blocks below the chain's, so its tip may be older by that many target block
+ *  times. */
 export const FRESH_MS = 30 * 60_000;
+/** How old a tip header may be before a replica's server withholds its answers (the note TIP_STALE_LONG): 6 hours, 180
+ *  target block times, long against a drought between blocks and short against a source that is syncing or stopped. */
+export const STALE_MAX_MS = 6 * 60 * 60_000;
+const FINAL_AGE_S = FINAL_DEPTH * TARGET_BLOCK_SECS;
+/** Whether a tip of header time `tipTime` (seconds) is older than `ms` at `now` (ms), with a final-only source's
+ *  allowance. */
+export const olderThan = (now: number, tipTime: number, ms: number, finalOnly: boolean): boolean =>
+  now / 1000 - tipTime > ms / 1000 + (finalOnly ? FINAL_AGE_S : 0);
+/** Whether a witness's tip `lead` blocks above the replica's is far ahead (the note PEER_FAR_AHEAD): more than
+ *  FINAL_DEPTH, with a final-only source's allowance of FINAL_DEPTH more, the depth its tip sits under the chain tip. */
+export const farAhead = (lead: number, finalOnly: boolean): boolean => lead > FINAL_DEPTH + (finalOnly ? FINAL_DEPTH : 0);
 
 export interface VerdictInput {
   readonly level: 1 | 2 | 3; readonly feed: boolean;
+  /** Whether the source's tip is its final height, FINAL_DEPTH below the chain tip it read (a feed with inclusion). */
+  readonly finalOnly?: boolean;
   /** The store open with a cursor and a step's tip, else null. */
   readonly synced: { readonly cursor: Cursor; readonly tip: TipView } | null;
   readonly now: number;
@@ -42,7 +59,7 @@ export function verdict(v: VerdictInput): NotVerifiedCode[] {
   else {
     if (s.cursor.height < s.tip.height) why.push("BEHIND");
     if (s.cursor.height > s.tip.height) why.push("BRANCH_UNRESOLVED");
-    if (v.now / 1000 - s.tip.time > FRESH_MS / 1000) why.push("TIP_STALE");
+    if (olderThan(v.now, s.tip.time, FRESH_MS, v.finalOnly === true)) why.push("TIP_STALE");
     if (v.peerAhead(s.tip)) why.push("TIP_BEHIND_PEER");
   }
   if (v.unconfirmed) why.push("STORE_UNCONFIRMED");

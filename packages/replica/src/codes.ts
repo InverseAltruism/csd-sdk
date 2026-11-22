@@ -11,6 +11,6 @@ export type NotVerifiedCode = (typeof NOT_VERIFIED_CODES)[number];
 /** What an answer notes without changing whether it is verified. */
 export const NOTE_CODES = Object.freeze([
   "SOURCES_DISAGREE", "TUPLE_BRANCH", "TUPLE_RECORDS", "TUPLE_RULES", "DIVERGENCE_CONFIRMED", "STORE_UNAVAILABLE",
-  "REPLAY_SLOW", "CURSOR_ABOVE_TIP", "TWO_CORES", "WITNESS_MALFORMED",
+  "REPLAY_SLOW", "CURSOR_ABOVE_TIP", "TWO_CORES", "WITNESS_MALFORMED", "FINAL_VIEW", "PEER_FAR_AHEAD", "TIP_STALE_LONG",
 ] as const);
 export type NoteCode = (typeof NOTE_CODES)[number];
