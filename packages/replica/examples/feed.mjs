@@ -11,7 +11,7 @@ if (!indexerUrl || !name) { console.error("usage: node feed.mjs <indexer base> <
 const replica = await open({ source: indexerFeed({ indexerUrl }), step: { maxBlocks: 100_000, maxRequests: 100_000 } });
 await replica.advance();
 const a = await replica.name(name);
-// `value` only when verified, which a feed never is: what to show is in `shown`, with the reasons in `why`.
+// `value` only when verified, which needs level 3: a feed's answer is in `shown`, with the reasons in `why`.
 console.log(JSON.stringify({
   name, level: a.level, proof: a.proof, verified: a.verified, why: a.why.map((w) => w.code),
   at: a.at && { height: a.at.height, tipHeight: a.at.tipHeight }, record: a.verified ? a.value : a.shown,
