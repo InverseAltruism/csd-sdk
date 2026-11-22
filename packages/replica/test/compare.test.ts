@@ -240,6 +240,7 @@ console.log("a hostile reference:");
 }
 for (const [what, reply] of [
   ["an extra key", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? Response.json({ ok: true, ...t, extra: 1 }) : null; }],
+  ["another block hash than the one asked", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? Response.json({ ok: true, ...t, blockHash: flip(t.blockHash) }) : null; }],
   ["another height", (p: string) => { const h = Number(/tuple\/([0-9]+)/.exec(p)?.[1]), t = truth.get(h); return t ? Response.json({ ok: true, ...t, height: h + 30 }) : null; }],
   ["a 404 that is not the resolver's", () => new Response("<html>not found</html>", { status: 404 })],
   ["a refusal by hash of the block it then gives by height", (p: string) => (p.includes(":") ? Response.json({ ok: false, error: "not this host's block at that height", height: Number(/tuple\/([0-9]+)/.exec(p)?.[1]) }, { status: 404 }) : null)],
@@ -389,7 +390,8 @@ console.log("an abort with a reason that is not an Error:");
   setTimeout(() => { c.abort("stop"); c2.abort("stop"); }, 50);
   const a = await r.advance({ signal: c.signal }).then(() => "resolves", (e: unknown) => `rejects ${String(e)}`);
   const b = await plain.advance({ signal: c2.signal }).then(() => "resolves", (e: unknown) => `rejects ${String(e)}`);
-  ok("advance() resolves with a reference as without one", a === "resolves" && b === "resolves", `${a} / ${b}`);
+  ok("advance() resolves with a reference as without one, and the abort concludes no comparison", a === "resolves" && b === "resolves" && r.status().compare === null,
+    `${a} / ${b} / ${JSON.stringify(r.status().compare)}`);
   await r.close(); await plain.close();
 }
 
