@@ -19,12 +19,12 @@ const counts = <Row>(rows: readonly Row[], classes: Readonly<Record<string, (r: 
 
 const NAME_STATUS = { held: (r: NameRow) => !r.pending && !r.expired, pending: (r: NameRow) => r.pending === true, lapsed: (r: NameRow) => r.expired === true };
 
-const names: List<"names", ListView<NameRow, "name" | "newest">, NameRow> = {
+const names: List<"names", ListView<NameRow, "name" | "newest" | "length">, NameRow> = {
   build(state) {
     const rows = Object.values(state.names).map((n) => copyData(n));
     const byName = sorted(rows, CURSORS.name);
     return {
-      orders: { name: byName, newest: sorted(rows, CURSORS.newest) },
+      orders: { name: byName, newest: sorted(rows, CURSORS.newest), length: sorted(rows, CURSORS.length) },
       index: indexBy(byName, (r) => r.name),
       counts: counts(byName, Object.fromEntries(Object.entries(NAME_STATUS).map(([s, f]) => [`status=${s}`, f]))),
     };
@@ -35,8 +35,11 @@ const names: List<"names", ListView<NameRow, "name" | "newest">, NameRow> = {
     const match = owner === null && status === null ? null
       : (r: NameRow) => (owner === null || r.owner === owner) && (status === null || NAME_STATUS[status](r));
     const total = owner === null ? (v.counts[status === null ? "" : `status=${status}`] ?? null) : null;
-    return q.order === "newest" ? pageOf(v.orders.newest, CURSORS.newest, q.after, q.limit, match, total)
-      : pageOf(v.orders.name, CURSORS.name, q.after, q.limit, match, total);
+    switch (q.order) {
+      case "newest": return pageOf(v.orders.newest, CURSORS.newest, q.after, q.limit, match, total);
+      case "length": return pageOf(v.orders.length, CURSORS.length, q.after, q.limit, match, total);
+      default: return pageOf(v.orders.name, CURSORS.name, q.after, q.limit, match, total);
+    }
   },
 };
 

@@ -101,7 +101,8 @@ new context; no answer that differs. Check mode is clean on 24,357 inputs, the t
 `packages/cairnx/test/replay-context.test.ts` walks every height of the sweep streams (D at its dense tips), every
 event height of the replay corpus with the heights below them and the pinned heights, and the growth streams at 500,
 with answers at seeded random steps against one step per block, answers written over, a reorg, each refusal with the
-context unchanged, and the sloppy-mode refusal. cairnx-api 0.1.3 is a peer-only step onto this core.
+context unchanged, and the sloppy-mode refusal. cairnx-api 0.1.3 adds `order=length` on `names` and takes this core as
+its exact peer.
 
 ## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
 
