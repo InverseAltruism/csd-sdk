@@ -59,7 +59,7 @@ console.log("each kind of comparison:");
 {
   const log: string[] = [], r = await openAt({ now: TOP }, (h) => truth.get(h) ?? null, { log });
   const s = await r.advance(), before = log.length;
-  for (let i = 0; i < 50; i++) r.status();
+  for (let i = 0; i < 50; i++) { r.status(); await new Promise((go) => setTimeout(go, 0)); }
   const plain = await open({ source: growing(fx, { now: TOP }, { feed: "https://feed.example/x" }) }), p = await plain.advance();
   ok("an equal reference: kind equal, no note, the verdict of a reader without one", s.compare?.kind === "equal" && s.compare.height === s.tuple?.height &&
     notes(s).length === 0 && whys(s) === whys(p) && s.level === p.level && s.tuple !== null);
@@ -201,7 +201,7 @@ for (const [what, reply] of [
 ] as const) {
   const log: string[] = [], r = await openAt({ now: TOP }, (h) => truth.get(h) ?? null, { reply, log });
   const s = await r.advance(), n = log.length;
-  for (let i = 0; i < 20; i++) r.status();
+  for (let i = 0; i < 20; i++) { r.status(); await new Promise((go) => setTimeout(go, 0)); }
   ok(`an answer with ${what}: unavailable, no difference, and status() reads nothing to retry it`, s.compare?.kind === "unavailable" && notes(s).length === 0 &&
     log.length === n, s.compare?.detail ?? "");
   await r.close();
