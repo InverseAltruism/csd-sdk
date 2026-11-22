@@ -1,7 +1,7 @@
 // A replica's own server answering the CairnX resolver's five state reads (handlers.ts) from Reader.snapshot(): the
 // resolver's statuses, bodies and headers for the same state, the server's verdict in two headers, and a 503 while
 // the replica's state is not one to serve. The withhold rule lives here and not in the handlers: the hosted resolver
-// imports the handlers and answers as it always has. A 404 comes only from a handler's "not registered".
+// imports the handlers and answers as it does today. A 404 comes only from a handler's "not registered".
 import { FINAL_DEPTH, NAME_RE, canonicalState, type ChainEvent } from "@inversealtruism/cairnx-core";
 import type { Answer, Snapshot } from "./answer.js";
 import type { NotVerifiedCode } from "./codes.js";
