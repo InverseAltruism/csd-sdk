@@ -374,11 +374,17 @@ t("two nset records in one block and position: the higher id applies last and is
   }
 });
 
-t("an address record and a profile record do not supersede each other, in either order", () => {
-  for (const evs of [[nset(addr(1), TIP + 1), nprofile({ display: "p" }, TIP + 2)], [nprofile({ display: "p" }, TIP + 1), nset(addr(1), TIP + 2)]]) {
+t("an address record and a profile record do not supersede each other, in either order; each kind's own run still prunes", () => {
+  // The run of the later kind gives the prune something to drop, so a rule that let one kind supersede the other is
+  // seen in the exact hints and not only as a prune the guard rejected.
+  const cases = [
+    { evs: [nprofile({ display: "p" }, TIP + 1), nset(addr(1), TIP + 2), nset(addr(2), TIP + 3)], keep: [0, 2] },
+    { evs: [nset(addr(2), TIP + 1), nprofile({ display: "o" }, TIP + 2), nprofile({ display: "p" }, TIP + 3)], keep: [0, 2] },
+  ];
+  for (const { evs, keep } of cases) {
     const r = servePlain(evs, TIP + 10);
-    assert.deepEqual([r.record?.addr, r.record?.profile], [addr(1), { display: "p" }], "setup");
-    assert.deepEqual(r.txids, r.expect(evs));
+    assert.deepEqual([r.record?.addr, r.record?.profile], [addr(2), { display: "p" }], "setup");
+    assert.deepEqual(r.txids, r.expect(keep.map((k) => evs[k]!)));
   }
 });
 

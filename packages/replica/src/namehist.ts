@@ -300,7 +300,7 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     // the name. A record only one replay applies stays: it is how an out-of-scope dependency shows.
     const applied = (id: string) => fullApplied.has(id) || scopedApplied.has(id);
     // The superseded-record prune, else the applied-record prune alone, else the whole selection: a rejected
-    // superseded-record prune serves no more than the applied-record prune.
+    // superseded-record prune serves what the applied-record prune alone would.
     const appliedKept = keptIds(candidates, applied);
     const latest = dropSuperseded(picked, appliedKept, (id) => scopedApplied.has(id));
     ids = keepPruned(events, name, check.tipHeight, all, latest.size < appliedKept.size ? [latest, appliedKept] : [appliedKept], scoped.names[name]);
