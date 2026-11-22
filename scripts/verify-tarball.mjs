@@ -4,8 +4,8 @@
 // `pnpm pack` does not emit):
 //   - package/package.json names the committed manifest's package and version (the package directory's
 //     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at the version its
-//     package.json at HEAD names (workspaceVersions) and every other dependency as that manifest declares it, keeps
-//     its other fields, and keeps its scripts with the same text, less the ones pnpm drops when packing
+//     package.json at HEAD names (workspaceVersions; a `workspace:^` spec as `^` that version) and every other
+//     dependency as that manifest declares it, keeps its other fields, and keeps its scripts with the same text, less the ones pnpm drops when packing
 //     (PACK_DROPPED_SCRIPTS); the package.json on disk, whose scripts prepack and the publish guard run, has the
 //     commit's scripts exactly;
 //   - every other file outside dist/ is the HEAD commit's file at that path, byte for byte (`git ls-tree` and
@@ -24,6 +24,23 @@ import { diffDist, untar } from "./published-dist.mjs";
 import { versionMap, workspacePackagesAtHead } from "./workspace.mjs";
 
 const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+/** What pnpm packs a `workspace:` spec as: `workspace:^` as `^` the version (cairnx-pin's one range peer,
+ *  check-lockstep RANGE_PEERS), any other as the exact version, so a `workspace:~` pnpm packs as `~` is refused.
+ *  Undefined when the package is not in the workspace. */
+const packedSpec = (/** @type {string} */ spec, /** @type {string | undefined} */ v) => (v === undefined ? undefined : spec === "workspace:^" ? `^${v}` : v);
+/** Every path the manifest makes a consumer load: `main`, `module`, `types`, each `bin` and each `exports` target. */
+function entryPaths(/** @type {Record<string, any>} */ m) {
+  /** @type {string[]} */
+  const out = [];
+  const walk = (/** @type {unknown} */ v) => {
+    if (typeof v === "string") out.push(v);
+    else if (v && typeof v === "object") for (const x of Object.values(v)) walk(x);
+  };
+  for (const k of ["main", "module", "types"]) if (typeof m[k] === "string") out.push(m[k]);
+  walk(typeof m.bin === "string" ? [m.bin] : m.bin);
+  walk(m.exports);
+  return [...new Set(out.map((p) => p.replace(/^\.\//, "")))];
+}
 // The scripts pnpm drops from a packed manifest: PREPUBLISH_SCRIPTS of createExportableManifest in
 // @pnpm/exportable-manifest, as bundled in pnpm 10.32.1 (the packageManager this repo pins).
 const PACK_DROPPED_SCRIPTS = ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"];
@@ -62,7 +79,7 @@ export function verifyTarball(tgz, pkgDir, versions) {
     out.push(`package.json is ${packed.name}@${packed.version}, the commit's is ${tree.name}@${tree.version}`);
   for (const f of DEP_FIELDS) {
     const want = Object.fromEntries(Object.entries(tree[f] ?? {}).map(([d, spec]) =>
-      [d, String(spec).startsWith("workspace:") ? versions.get(d) ?? `(no workspace package ${d})` : spec]));
+      [d, String(spec).startsWith("workspace:") ? packedSpec(String(spec), versions.get(d)) ?? `(no workspace package ${d})` : spec]));
     if (canon(packed[f] ?? {}) !== canon(want)) out.push(`package.json ${f} ${canon(packed[f] ?? {})}, expected ${canon(want)}`);
   }
   for (const [k, v] of Object.entries(packed.scripts ?? {}))
@@ -83,6 +100,9 @@ export function verifyTarball(tgz, pkgDir, versions) {
     else if (Buffer.compare(Buffer.from(b), bytes) !== 0) out.push(`${p} differs from the commit's (HEAD)`);
   }
   out.push(...diffDist(files, join(pkgDir, "dist")));
+  // a package whose build is not in the tarball (no dist on disk either, which diffDist does not see) ships entries
+  // that load nothing
+  for (const p of entryPaths(packed)) if (!files.has(`package/${p}`)) out.push(`package/${p} is named by the manifest's main, module, types, bin or exports but is not in the tarball`);
   for (const entry of tree.files ?? []) {
     const f = String(entry).replace(/\/+$/, "");
     const under = committed ? [...committed.keys()].filter((r) => r === f || r.startsWith(`${f}/`)) : [];

@@ -1,10 +1,9 @@
 // The server example of the README ("Transfers"): a server credits the token moves to its deposit addresses from its
 // own node, with the replica's store on disk, so a restart reads on from the stored cursor instead of the pin's log.
 // test/deposits.test.ts runs it over the recorded node across a restart, a 20-block reorg while running and one while
-// closed, and a change of pin; test/transfers-reorg.test.ts runs creditDeposits and recover over a memory store. A
-// server imports these names from "@inversealtruism/cairnx-replica/server"; the example imports this package's source
-// so that the suite runs what this tree builds.
-import { open, ownNode, type Answer, type BoundCursor, type OwnNodeOptions, type Page, type Reader, type Transfer } from "../src/server.js";
+// closed, and a change of pin; test/transfers-reorg.test.ts runs creditDeposits and recover over a memory store. It
+// imports the package by its name, as a server does, so in this repository it runs on the built dist/.
+import { open, ownNode, type Answer, type BoundCursor, type OwnNodeOptions, type Page, type Reader, type Transfer } from "@inversealtruism/cairnx-replica/server";
 
 type Awaitable<T> = T | Promise<T>;
 /** One transaction of the server's database: a credit, refused when its key (txid, leg) is held; an address's cursor;

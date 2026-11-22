@@ -212,6 +212,8 @@ export async function checkWindow(o) {
   try { pkgs = workspacePackagesAtHead(root); } catch (e) { chk(`the workspace manifests at HEAD are readable (${e instanceof Error ? e.message : e})`, false); }
   /** @type {any[]} */
   const todo = [];
+  // named, so that a package left private by mistake shows in the plan instead of dropping out of the window unseen
+  for (const p of pkgs.filter((x) => x.private)) log(`  not published, marked private: ${p.name}@${p.version}`);
   for (const p of pkgs.filter((x) => !x.private)) {
     const { status } = await registry(p.name, p.version);
     if (status === 404) todo.push(p);

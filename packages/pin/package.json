@@ -1,9 +1,9 @@
 {
   "name": "@inversealtruism/cairnx-pin",
   "version": "0.1.0",
-  "private": true,
   "engines": { "node": ">=18" },
   "description": "A CairnX pin: the log of the chain's cairnx:v1 records at an epoch boundary, with its block hash, events hash and state hash, for @inversealtruism/cairnx-replica's pinned().",
+  "author": "InverseAltruism",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,7 +24,7 @@
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
-  "peerDependencies": { "@inversealtruism/cairnx-replica": "workspace:*" },
+  "peerDependencies": { "@inversealtruism/cairnx-replica": "workspace:^" },
   "peerDependenciesMeta": { "@inversealtruism/cairnx-replica": { "optional": true } },
   "devDependencies": {
     "@inversealtruism/cairnx-core": "workspace:*",

@@ -40,6 +40,9 @@ jobs:
         env:
           # The replica's browser store test (packages/replica/test/browser) runs in this Chrome and fails under CI without it.
           CHROME_PATH: /usr/bin/google-chrome
+      # cairnx-replica, cairnx-pin and csd-anchors installed from their packed tarballs into an empty directory: every
+      # entry imported, the packed files read, the worked examples and `cairnx-replica check` against recorded answers
+      - run: pnpm exec tsx packages/replica/scripts/exit-check.ts
       - run: pnpm exec tsx test/edge.test.ts
       - run: pnpm exec tsx test/security.test.ts
       - run: pnpm exec tsx test/live-opt-in.test.ts   # offline: live suites skip by name, and fail against a refused loopback port

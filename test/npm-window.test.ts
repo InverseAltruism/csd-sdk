@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyTarball, workspaceVersions } from "../scripts/verify-tarball.mjs";
 import { checkWindow, finishWindow, headOnOriginMaster, publishOrder, publishWindow } from "../scripts/npm-window.mjs";
+import { workspacePackagesAtHead } from "../scripts/workspace.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : ` (${detail})`}`); };
@@ -139,6 +140,31 @@ console.log("verify-tarball against the HEAD commit (real git and pnpm pack):");
   ok("a package directory outside a git checkout is refused", noGit.some((f) => /git cannot read/.test(f)), noGit.join("; "));
 }
 
+console.log("verify-tarball: the one range peer, and a package without its build:");
+{
+  // cairnx-pin as this tree packs it: its optional peer on cairnx-replica is workspace:^, packed as ^ the version
+  const pinDir = join(root, "packages", "pin"), out = mkdtempSync(join(work, "pin-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", out], { cwd: pinDir, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const pinTgz = new Uint8Array(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!)));
+  const pinPeer = JSON.parse(execFileSync("tar", ["xzfO", join(out, readdirSync(out).find((f) => f.endsWith(".tgz"))!), "package/package.json"], { encoding: "utf8" })).peerDependencies;
+  const pinOk = verifyTarball(pinTgz, pinDir, versions);
+  ok("a pack of cairnx-pin passes, its replica peer packed as ^ the version HEAD names",
+    pinOk.length === 0 && JSON.stringify(pinPeer) === JSON.stringify({ "@inversealtruism/cairnx-replica": `^${versions.get("@inversealtruism/cairnx-replica")}` }), `${pinOk.join("; ")} ${JSON.stringify(pinPeer)}`);
+  // the same package committed without its build: no dist on disk and none in the tarball, which diffDist cannot see
+  const repo = mkdtempSync(join(work, "nobuild-"));
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { cwd: repo, encoding: "utf8" });
+  const m = JSON.parse(readFileSync(join(pinDir, "package.json"), "utf8"));
+  delete m.peerDependencies; delete m.peerDependenciesMeta; delete m.devDependencies;
+  writeFileSync(join(repo, "package.json"), JSON.stringify(m, null, 2));
+  for (const f of ["pin.json", "README.md", "LICENSE", "CHANGELOG.md"]) cpSync(join(pinDir, f), join(repo, f));
+  git("init", "-q", "-b", "master"); git("add", "."); git("commit", "-q", "--no-verify", "-m", "pin without its build");
+  const nb = mkdtempSync(join(work, "nobuild-pack-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", nb], { cwd: repo, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const noBuild = verifyTarball(new Uint8Array(readFileSync(join(nb, readdirSync(nb).find((f) => f.endsWith(".tgz"))!))), repo, new Map());
+  ok("cairnx-pin packed without dist/ is refused: dist/index.js and dist/index.d.ts are named by its manifest and not in the tarball",
+    noBuild.some((f) => /package\/dist\/index\.js is named by the manifest/.test(f)) && noBuild.some((f) => /package\/dist\/index\.d\.ts is named by the manifest/.test(f)), noBuild.join("; "));
+}
+
 console.log("workspace versions from the HEAD commit (fixture workspace, real git and pnpm):");
 {
   const ws = mkdtempSync(join(work, "ws-"));
@@ -149,6 +175,10 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   put(".gitignore", "node_modules/\npnpm-lock.yaml\n");
   put("packages/a/package.json", JSON.stringify({ name: "@x/a", version: "1.0.1", files: ["index.js"] }, null, 2));
   put("packages/b/package.json", JSON.stringify({ name: "@x/b", version: "1.0.0", files: ["index.js"], dependencies: { "@x/a": "workspace:*" } }, null, 2));
+  put("packages/c/package.json", JSON.stringify({ name: "@x/c", version: "1.0.0", private: true, files: ["index.js"] }, null, 2));
+  // a peer as workspace:~, which pnpm packs as ~ the version and verify-tarball does not admit (only workspace:^ is)
+  put("packages/d/package.json", JSON.stringify({ name: "@x/d", version: "1.0.0", private: true, files: ["index.js"], peerDependencies: { "@x/a": "workspace:~" } }, null, 2));
+  put("packages/d/index.js", "export {};\n");
   put("packages/a/index.js", "export {};\n");
   put("packages/b/index.js", "export {};\n");
   git("init", "-q", "-b", "master");
@@ -163,6 +193,10 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
   };
   const honest = verifyTarball(packB(), b, workspaceVersions(ws));
   ok("b packed pinning a at the version HEAD names passes", honest.length === 0, honest.join("; "));
+  const dDir = join(ws, "packages", "d"), dOut = mkdtempSync(join(work, "pack-"));
+  execFileSync("pnpm", ["pack", "--pack-destination", dOut], { cwd: dDir, env: { ...process.env, npm_config_ignore_scripts: "true" }, stdio: "ignore" });
+  const tilde = verifyTarball(new Uint8Array(readFileSync(join(dOut, readdirSync(dOut).find((f) => f.endsWith(".tgz"))!))), dDir, workspaceVersions(ws));
+  ok("a peer given as workspace:~, packed as ~1.0.1, is refused", tilde.some((f) => /peerDependencies .*~1\.0\.1.*expected .*"1\.0\.1"/.test(f)), tilde.join("; "));
   // a's version rolled back on disk under skip-worktree: git status stays clean and pnpm pins the disk version
   const aManifest = join(ws, "packages", "a", "package.json");
   git("update-index", "--skip-worktree", "packages/a/package.json");
@@ -182,6 +216,8 @@ console.log("workspace versions from the HEAD commit (fixture workspace, real gi
     registry: async (name: string, version: string) => ({ status: name === "@x/a" && version === "1.0.0" ? 200 : 404, meta: null }) });
   const planned = plan.order.map((p) => `${p.name}@${p.version}`).join();
   ok("the window plans the versions HEAD names (a@1.0.1 and b), not a@1.0.0 from disk", planned === "@x/a@1.0.1,@x/b@1.0.0", planned);
+  ok("a private package (@x/c, unpublished) is never planned, and the plan names it as private",
+    !planned.includes("@x/c") && lines.includes("  not published, marked private: @x/c@1.0.0"), lines.join("\n"));
   ok("its only failed checks are the stand-in pack and guard of the two planned packages (the tree and HEAD checks pass)",
     plan.fails.length === 4 && plan.fails.every((f) => /^@x\/[ab]: (pnpm pack|publish guard)/.test(f)), plan.fails.join("; "));
 }
@@ -243,6 +279,11 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
   const peerFirst = publishOrder([{ name: "@inversealtruism/cairnx-api", peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }, { name: "@inversealtruism/cairnx-core" }]);
   ok("a package is ordered after the workspace package it names as a peer (cairnx-core before cairnx-api, against the name order)",
     peerFirst.map((p) => p.name).join() === "@inversealtruism/cairnx-core,@inversealtruism/cairnx-api", peerFirst.map((p) => p.name).join());
+  // the window's order over this repo's own manifests: each package after every workspace package it depends on or peers on
+  const real = publishOrder(workspacePackagesAtHead(root).map((p) => ({ ...p, name: String(p.name) }))).map((p) => String(p.name).replace("@inversealtruism/", ""));
+  const after = (a: string, ...before: string[]) => before.every((b) => real.indexOf(b) >= 0 && real.indexOf(b) < real.indexOf(a));
+  ok("the order over this repo's manifests puts cairnx-replica after cairnx-core, csd-codec, csd-crypto, csd-client and csd-light, cairnx-pin after cairnx-replica, and lists csd-anchors",
+    after("cairnx-replica", "cairnx-core", "csd-codec", "csd-crypto", "csd-client", "csd-light") && after("cairnx-pin", "cairnx-replica") && real.includes("csd-anchors"), real.join());
   const API = "@inversealtruism/cairnx-api";
   const api = await window({ unpublished: API });
   const apiTgz = api.tarballs[0]?.path ?? "";
@@ -253,8 +294,13 @@ console.log("window checks (stand-in git and publish guard; real pack and verify
     JSON.stringify(apiPeers) === JSON.stringify({ "@inversealtruism/cairnx-core": versions.get("@inversealtruism/cairnx-core") }), JSON.stringify(apiPeers));
   const REPLICA = "@inversealtruism/cairnx-replica";
   const replica = await window({ unpublished: REPLICA });
-  ok("a private package (cairnx-replica) is never planned, even when its version is not on npm",
-    replica.fails.length === 0 && replica.order.length === 0 && replica.tarballs.length === 0, `${replica.order.map((p) => p.name).join()} ${replica.fails.join("; ")}`);
+  const replicaTgz = replica.tarballs[0]?.path ?? "";
+  const replicaManifest = existsSync(replicaTgz) ? JSON.parse(execFileSync("tar", ["xzfO", replicaTgz, "package/package.json"], { encoding: "utf8" })) : null;
+  ok("honest: cairnx-replica, no longer private, is the one package to publish when it alone is unpublished, and its real pack passes every check",
+    replica.fails.length === 0 && replica.order.map((p) => p.name).join() === REPLICA && replica.tarballs.every((t) => t.sha1 !== undefined), `${replica.order.map((p) => p.name).join()} ${replica.fails.join("; ")}`);
+  ok("its packed manifest pins cairnx-core as a peer at the version HEAD names and carries the cairnx-replica command",
+    JSON.stringify(replicaManifest?.peerDependencies) === JSON.stringify({ "@inversealtruism/cairnx-core": versions.get("@inversealtruism/cairnx-core") })
+      && replicaManifest?.bin?.["cairnx-replica"] === "./dist/cli.js" && replicaManifest?.private === undefined, JSON.stringify(replicaManifest?.peerDependencies));
   checked = { honest, verifyFailed: verify };
 }
 

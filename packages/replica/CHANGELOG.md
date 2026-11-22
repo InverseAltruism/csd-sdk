@@ -2,6 +2,15 @@
 
 ## 0.1.0 (unreleased)
 
+- The command `cairnx-replica check` (`bin`, `src/cli.ts`): a replica in memory on one source (`--node`, `--hosted`
+  with `--anchor` or `--pin`, `--feed`), read to its tip, printing the level, the verdict, the tuple at the newest
+  final boundary and the comparison with `--reference` or `--expect`; exit 0 only for `equal` (or `held` with neither),
+  2 for a usage or configuration error. Progress, each source error and the deadline (result `timeout`, with what it
+  waited for) are printed to stderr. Before the first publish: the exit codes are fixed (0 passed, 1 differs, 2 usage,
+  3 could not check, `EXIT_OF`); every printed line shows control and bidi characters escaped and source text cut at
+  400 characters; the feed's reads refuse redirects; `--feed` and `--reference` take the URL rule of the other sources;
+  a repeated flag, a malformed height, `--timeout-ms` out of range and `--pin` without cairnx-pin are usage errors; the
+  command exits 5 s after its deadline at the latest; a pinned `RULES_DIFFER` ends the run at once.
 - `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
   through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
   without it; an answer timed more than `MAX_FUTURE_DRIFT_SECS` after the clock, as one in milliseconds is, is
@@ -21,7 +30,7 @@
   statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
   `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
   tip. The withhold rule is the server's, not the handlers'.
-- The resolver's five state reads, moved from the private CairnX resolver at 0c95ad2 with their code unchanged
+- The resolver's five state reads, moved from the private CairnX resolver with their code unchanged
   (`src/resolver/read.ts` as `src/handlers.ts`, and `src/nameview.ts`): `readState`, `readName`, `readResolve`,
   `readNameHistory`, `readProfile` over a `ReadSnapshot`, with `leaseInfo` and `nameDetailsOf`, exported from `.`;
   the resolver's purity guard moved with them (`test/handlers.test.ts`), and so did its nameview cases. `appliedIds` is
@@ -43,7 +52,7 @@
   to it, as the hosted resolver's published state already drops; the store refills from the next scans. An indexer
   whose tip is under the floor leaves the step idle at that tip, below the cursor. A final height that moves back with
   the cursor's block still the indexer's rolls nothing back.
-- The tuple book and the comparison (design section 6): `status().tuple`, the newest boundary's tuple from the loop's
+- The tuple book and the comparison: `status().tuple`, the newest boundary's tuple from the loop's
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;
   the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED`; `./server`'s `open` takes `recount`,
@@ -247,7 +256,7 @@
   and `verified: false` by type and construction, `why` led by `LEVEL_DISPLAY` from `levelCode`, the level condition
   now exported by `verdict.ts`; `SOURCE_UNAVAILABLE` for no answer or one out of form. It refuses every basis but a
   display. `http.ts` exports its capped JSON read and signal join for it. The minified bundle is pinned under 6 KB
-  gzip, not the design's 4 KB: any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
+  gzip, of which any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
 - `./display` after review: a 200 whose body is JSON `null` is out of form (no longer read as an absent record); an
   owner or address must be a lower-case address string; a 404 is an absent name or ticker only with the resolver's
   exact refusal for that read (`unregistered name`, `unknown ticker`), any other 404 `SOURCE_UNAVAILABLE`. The README

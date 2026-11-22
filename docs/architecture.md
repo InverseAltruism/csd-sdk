@@ -8,7 +8,8 @@ code map. Versions are not listed here: read `packages/*/package.json` (workspac
 ## Packages
 
 The workspace is `packages/*` (`pnpm-workspace.yaml`); the root `package.json` is private and names the pnpm version in
-`packageManager`. Every package builds with tsup to esm, cjs and dts, except cairnx-replica, which builds to esm and dts, cairnx-pin,
+`packageManager`. Every package builds with tsup to esm, cjs and dts, except cairnx-replica, which builds to esm and dts
+(with `dist/cli.js`, its `cairnx-replica` command), cairnx-pin,
 whose build derives its log from recorded blocks and writes one esm module with its types, and csd-anchors, whose build
 checks its table and writes one esm module with its types.
 

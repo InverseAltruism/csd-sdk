@@ -135,8 +135,8 @@ ok("ANCHORS is frozen at every level, and a write to it throws", frozen(ANCHORS)
 
 console.log("the package:");
 const field = (p: Record<string, unknown>, f: string) => Object.keys((p[f] as object | undefined) ?? {});
-ok("private, with no runtime dependency, and exports the module and the data file",
-  pkg.private === true && pkg.name === "@inversealtruism/csd-anchors" && ["dependencies", "peerDependencies", "optionalDependencies"].every((f) => field(pkg, f).length === 0) &&
+ok("publishable (not private), with no runtime dependency, and exports the module and the data file",
+  pkg.private === undefined && pkg.name === "@inversealtruism/csd-anchors" && ["dependencies", "peerDependencies", "optionalDependencies"].every((f) => field(pkg, f).length === 0) &&
   Object.keys(pkg.exports).join() === ".,./anchors.json");
 const manifests = ["../../../package.json", ...readdirSync(here("../../"), { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== "anchors").map((d) => `../../${d.name}/package.json`)];
 const dependents = manifests.filter((m) => ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some((f) => field(JSON.parse(read(m)) as Record<string, unknown>, f).includes(pkg.name)));
