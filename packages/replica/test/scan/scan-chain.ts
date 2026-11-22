@@ -13,6 +13,8 @@ export const A = "0x" + "aa".repeat(20);
 export const B = "0x" + "bb".repeat(20);
 export const C = "0x" + "cc".repeat(20);
 export const H0 = ACTIVATION_HEIGHT + 40;      // below V11: deploys are fee-free, outputs do not gate them
+/** The header time, in seconds, every chain here gives the block at `h`: 120 seconds apart. */
+export const timeAt = (h: number): number => 1_700_000_000 + h * 120;
 /** Key-derived actors for flag-on chains (a body's signer is recovered from a real signature). */
 const privOf = (n: number) => n.toString(16).padStart(64, "0");
 export const KA = addrFromPriv(privOf(0xa1)).toLowerCase(), KB = addrFromPriv(privOf(0xb1)).toLowerCase(), KC = addrFromPriv(privOf(0xc1)).toLowerCase();
@@ -133,6 +135,13 @@ export function buildChain(specs: Spec[], { keys = {} as Record<string, string>,
         const h = Number(p.slice("/block-height/".length));
         return h <= tip ? J(hashAt(h)) : miss;
       }
+      // csd-indexer's /block/<hash>: the block of that hash on this chain at or below the tip, with its time.
+      const blockOf = /^\/block\/(0x[0-9a-f]{64})$/.exec(p)?.[1];
+      if (blockOf !== undefined) {
+        let h = tip;
+        while (h >= 0 && hashAt(h) !== blockOf) h--;
+        return h >= 0 ? J({ height: h, hash: blockOf, time: timeAt(h) }) : miss;
+      }
       // csd-indexer proposalsByDomain: ORDER BY height ASC, txid ASC
       if (p === `/domain/${DOMAIN}/proposals`) {
         const from = Number(q.get("from") ?? 0), limit = Number(q.get("limit") ?? 10_000);
@@ -187,8 +196,13 @@ export function buildChain(specs: Spec[], { keys = {} as Record<string, string>,
   };
 
   /** Scanner options with verifyInclusion on: the node knows every block up to `verifiedTip`. Merkle proofs
-   *  come from the indexer endpoint (the Scanner default), as in production. */
-  const verified = ({ verifiedTip, confDepth }: { verifiedTip: number; confDepth?: number }): Partial<ScanOptions> => ({
+   *  come from the indexer endpoint (the Scanner default), as in production. `headerAt` is indexerFeed's: this
+   *  chain's hash and time at a height up to `verifiedTip`. */
+  const verified = ({ verifiedTip, confDepth }: { verifiedTip: number; confDepth?: number }): Partial<ScanOptions> & { headerAt: (h: number) => Promise<{ hash: string; time: number }> } => ({
+    headerAt: async (h) => {
+      if (h > verifiedTip || h < 0) throw new Error(`node has no header at ${h}`);
+      return { hash: hashAt(h), time: timeAt(h) };
+    },
     verifyInclusion: true,
     ...(confDepth === undefined ? {} : { confDepth }),
     headerMerkleAt: async (h) => {

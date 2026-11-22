@@ -49,7 +49,7 @@ function scramble(a: unknown): void {
 const xfer = (() => { const b = buildRecord({ v: 1, t: "transfer", ticker: "CAIRN", to: `0x${"b2".repeat(20)}`, amount: "1" }); return { type: "Propose", domain: "cairnx:v1", uri: b.uri, payloadHash: b.payloadHash, expiresEpoch: 10_000n }; })();
 const reads: [string, (x: Reader) => Promise<unknown> | unknown][] = [
   ["balance", (x) => x.balance("CAIRN", HOLDER, { minDepth: 0 })], ["primary", (x) => x.primary(HOLDER)], ["state", (x) => x.state()],
-  ["events", (x) => x.events(null, { limit: 1000 })], ["dryRun", (x) => x.dryRun({ app: xfer as DryRunTx["app"], outputs: [] }, HOLDER)], ["status", (x) => x.status()],
+  ["events", (x) => x.events(null, { limit: 1000 })], ["dryRun", (x) => x.dryRun({ app: xfer as DryRunTx["app"], outputs: [] }, HOLDER)], ["snapshot", (x) => x.snapshot()], ["status", (x) => x.status()],
 ];
 const w = witnessOn(all, TIP), cw = await callerReader(TIP, { witnesses: [w.witness], clock });
 await cw.r.advance();
