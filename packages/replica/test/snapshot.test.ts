@@ -2,12 +2,13 @@
 // state of the events held at the tip, named by its block, one frozen object while the state is the same; behind the
 // tip it is the cursor's view and `at` names the cursor; with the tip below the cursor it is the tip's view. dryRun's
 // `at` is the cursor it was tried above, whatever the tip. A snapshot during a commit is commit.test.ts's.
-import { applyOrder, buildRecord, resolve, stateHash } from "@inversealtruism/cairnx-core";
-import { open, type Answer, type DryRunTx, type Snapshot } from "../src/index.js";
+import { applyOrder, buildRecord, nameRegFee, resolve, stateHash, TREASURY_ADDR } from "@inversealtruism/cairnx-core";
+import { open, type Answer, type DryRunTx, type Snapshot, type Source, type Step } from "../src/index.js";
+import { fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus } from "./core-files.js";
 import { cap } from "./node-harness.js";
-import { hashAt, nodeSource, synth, timeAt } from "./reader-harness.js";
+import { OWN, hashAt, nodeSource, synth, timeAt } from "./reader-harness.js";
 
 const TIP = cap.to, now = timeAt(TIP) * 1000 + 60_000, clock = () => now;
 const codes = (a: { why: readonly { code: string }[] }) => a.why.map((w) => w.code).join(",");
@@ -57,6 +58,26 @@ console.log("the tip below the cursor (BRANCH_UNRESOLVED):");
   const c = r.status().cursor;
   ok("dryRun: at is the cursor it was tried above, above the tip, depth 0", codes(d) === "BRANCH_UNRESOLVED" && c !== null && c.height > TIP - 5 &&
     d.at?.height === c.height && d.at.hash === c.hash && d.at.depth === 0 && d.at.tipHeight === TIP - 5, JSON.stringify(d.at));
+  await r.close();
+}
+
+console.log("events held above the view:");
+{
+  // The step commits to 30,300 with a record at 30,298 and reports a tip of 30,295: the view is the tip's, and the
+  // record above it is in neither the view's state nor its events.
+  const AL = `0x${"a1".repeat(20)}`, f = fixtures({ lower: true });
+  const reg = f.prop({ v: 1, t: "name", name: "alice" }, { proposer: AL, height: 30_010, paidTo: { [TREASURY_ADDR]: String(nameRegFee("alice", 30_010)) } });
+  const set = f.prop({ v: 1, t: "nset", name: "alice", addr: AL }, { proposer: AL, height: 30_298 });
+  const tip = { height: 30_295, hash: synth(30_295), time: now / 1000 };
+  const source: Source = { basis: OWN, floor: null, tip: async () => tip, async next(ctx): Promise<Step> {
+    if (ctx.cursor !== null) return { kind: "idle", tip };
+    return { kind: "blocks", blocks: [{ height: 30_010, hash: synth(30_010), events: [reg] }, { height: 30_298, hash: synth(30_298), events: [set] }], cursor: { height: 30_300, hash: synth(30_300) }, tip };
+  } };
+  const r = await open({ source, clock });
+  await r.advance();
+  const a = await r.snapshot(), v = view(a);
+  ok("the view at 30,295 holds the registration and not the record at 30,298", codes(a) === "BRANCH_UNRESOLVED" && v?.height === 30_295 &&
+    v.events.length === 1 && v.events[0]!.height === 30_010 && v.state.names.alice?.addr === undefined, JSON.stringify(v?.events.map((e) => e.height)));
   await r.close();
 }
 

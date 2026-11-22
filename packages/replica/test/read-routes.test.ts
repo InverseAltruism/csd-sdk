@@ -48,7 +48,10 @@ console.log("the honest synced path, and the headers:");
 }
 
 console.log("each withheld code answers 503, never 404:");
-for (const code of WITHHELD) {
+// Written out here, not read from WITHHELD, so a code dropped from it fails below.
+const WITHHOLD: readonly NotVerifiedCode[] = ["NOT_SYNCED", "STORE_UNCONFIRMED", "PIN_DISPUTED", "PIN_MISMATCH", "PIN_OFF_CHAIN", "RULES_DIFFER", "BRANCH_UNRESOLVED"];
+ok("WITHHELD is these seven codes", JSON.stringify([...WITHHELD].sort()) === JSON.stringify([...WITHHOLD].sort()), WITHHELD.join(","));
+for (const code of WITHHOLD) {
   const reads = given(withCode(code)), got = await Promise.all([...PATHS, ...UNREGISTERED].map((p) => reads(p)));
   ok(`${code}: 503 on all nine paths, ok false, the code in x-cairnx-why and in the error`, got.every((r) => r?.status === 503 && JSON.parse(r.body).ok === false &&
     r.headers["x-cairnx-why"] === code && String(JSON.parse(r.body).error).includes(code)), got.map((r) => r?.status).join(","));
@@ -63,7 +66,7 @@ for (const code of WITHHELD) {
 
 console.log("every other code is served:");
 {
-  const served = NOT_VERIFIED_CODES.filter((c) => !WITHHELD.includes(c) && c !== "BEHIND");
+  const served = NOT_VERIFIED_CODES.filter((c) => !WITHHOLD.includes(c) && c !== "BEHIND");
   const bad: string[] = [];
   for (const code of served) {
     const r = await given(withCode(code))(`/cairnx/resolve/${held}`), honest = await given(base)(`/cairnx/resolve/${held}`);
