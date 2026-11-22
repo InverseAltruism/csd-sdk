@@ -52,14 +52,16 @@ for (const s of sweepStreams(R)) {
   const w = walkAll(`sweep ${s.key}`, s.events, Number.isSafeInteger(tip) && tip - hs[0]! <= 20_000 ? range(hs[0]! - 2, tip) : denseTips(s.events, s.tipHeight, R.EPOCH_LEN), s.tipHeight);
   ok(malformed.has(s.key) ? w.refusals === 1 && w.refusalCodes.domain === 1 : w.refusals === 0, `sweep ${s.key}: ${malformed.has(s.key) ? "refused once, for the domain" : "answered at every tip"}`);
 }
-// a block holding a position outside applyOrder's domain: answered below it, refused there ("domain")
+// a block holding a position or an id outside applyOrder's domain: answered below it, refused there ("domain")
 {
   const s = sweepStreams(R).find((x) => x.key === "A")!;
-  const hs = heightsOf(s.events), at = hs[Math.floor(hs.length / 2)]!, i = s.events.findIndex((e) => e.height === at);
-  const events = s.events.map((e, j) => (j === i ? { ...e, pos: Number.NaN } : e));
-  const w = contextWalk(R, events, [...hs, Number(s.tipHeight)]);
-  check("a NaN position", w);
-  ok(w.refusals === 1 && w.refusalCodes.domain === 1 && w.answers === hs.indexOf(at), "a block holding a NaN position: each block below it answered, refused there for the domain");
+  const hs = heightsOf(s.events), i = s.events.findIndex((e) => e.height >= hs[Math.floor(hs.length / 2)]! && e.kind === "propose"), at = s.events[i]!.height;
+  for (const [what, odd] of [["a NaN position", { pos: Number.NaN }], ["an object id", { id: {} }]] as const) {
+    const events = s.events.map((e, j) => (j === i ? ({ ...e, ...odd } as unknown as ChainEvent) : e));
+    const w = contextWalk(R, events, [...hs, Number(s.tipHeight)]);
+    check(what, w);
+    ok(w.refusals === 1 && w.refusalCodes.domain === 1 && w.answers === hs.indexOf(at), `a block holding ${what}: each block below it answered, refused there for the domain`);
+  }
 }
 const corpus = JSON.parse(readFileSync(new URL("./vectors/replay-corpus.json", import.meta.url), "utf8")) as { events: ChainEvent[] };
 const pins = Object.keys(JSON.parse(readFileSync(new URL("./vectors/replay-hashes.json", import.meta.url), "utf8")).hashes).map(Number);
