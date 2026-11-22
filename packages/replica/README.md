@@ -542,7 +542,10 @@ A feed reads every record, and every record's transaction, by itself, one reques
 activation height is thousands of requests. It is meant for one's own csd-indexer or a host without a request limit.
 Against a host that limits requests, such as our front door, a first sync does not finish today: a scan that meets a
 429 starts over. Against `https://cairn-substrate.com` a replica starts from the pin and reads the hosted blocks above
-it instead (`hosted({ pin, origin })` in "Pins" below, `cairnx-replica check --hosted <origin> --pin`).
+it instead (`hosted({ pin, origin })` in "Pins" below, `cairnx-replica check --hosted <origin> --pin`). On 2026-11-22
+at 16:58Z, `cairnx-replica check --hosted https://cairn-substrate.com --pin --reference
+https://cairn-substrate.com/trade/api`, run from an install on the maintainers' host, read from the pin at 143,340 to
+the tip at 147,403 in 12.65 s (`/usr/bin/time`) and found its tuple at 147,390 equal to the front door's.
 
 `indexerFeed(options)`, in `./server` only, is a source over the CairnX resolver's Scanner, which reads the cairnx:v1
 proposals and attestations a csd-indexer serves; `options` are the Scanner's (`ScanOptions`: `indexerUrl`, `fetch`,
