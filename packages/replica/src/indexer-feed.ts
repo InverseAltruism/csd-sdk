@@ -3,7 +3,8 @@
 // scan. The events of the rule are those at or above its activation, Attests only on a Propose among them (CONVENTION
 // section 33.1). Up to the lower of the cursor and the scan's top they are checked against the store, and so are the
 // block hashes it holds there (the cursor's and its boundary rows'): the step is a reorg to the lower of the last event
-// block whose events hash agrees (section 34.3) and the last held block hash the indexer still gives. Its events above
+// block whose events hash agrees (section 34.3) and the last held block hash the indexer still gives; a cursor above the
+// indexer's tip is a block it does not give. Its events above
 // the cursor are the step's blocks, grouped by height in the order of section 33.3, with a row and its hash at each
 // epoch boundary. The cursor is the last block the scan answered for whole: the tip, or with verifyInclusion the final
 // height (the Scanner emits nothing above it), or the last boundary the request budget reached, the tip then being the
@@ -48,12 +49,14 @@ function lastAgreeing(blocks: Map<number, ChainEvent[]>, at: number, floor: numb
 
 /** Of the cursor (when at or below `at`) and the boundary rows the store holds at or below `at`, walked down from the
  *  top, the first whose block hash the indexer still gives: null when that is the first one walked or none is held, so
- *  no held hash moved; `floor` when none agrees. A block hash commits its parent, so every block below one that agrees
- *  is the indexer's too, and the walk reads one hash while nothing moved. */
-async function lastHashAgreeing(ctx: StepContext, at: number, floor: number, now: (h: number) => Promise<string>): Promise<number | null> {
+ *  no held hash moved; `floor` when none agrees. A cursor above `indexerTip` is a block the indexer's chain does not
+ *  have, so it counts as moved and the first boundary that agrees is returned. A cursor above `at` but not above the
+ *  indexer's tip (a final height that moved back) moved nothing. A block hash commits its parent, so every block below
+ *  one that agrees is the indexer's too, and the walk reads one hash while nothing moved. */
+async function lastHashAgreeing(ctx: StepContext, at: number, floor: number, now: (h: number) => Promise<string>, indexerTip: number): Promise<number | null> {
   const c = ctx.cursor!, heights = c.height <= at ? [c.height] : [];
   for (let b = Math.floor(at / EPOCH_LEN) * EPOCH_LEN; b > floor; b -= EPOCH_LEN) if (b !== c.height) heights.push(b);
-  let first = true;
+  let first = c.height <= indexerTip;
   for (const h of heights) {
     const held = h === c.height ? c.hash : ctx.hashAt(h);
     if (held === null) continue;
@@ -92,7 +95,7 @@ export function indexerFeed(o: ScanOptions): Source {
     if (ctx.cursor !== null) {
       // Above the scan's top the Scanner emitted nothing, so the store is compared only up to it.
       const at = Math.min(ctx.cursor.height, top);
-      const to = Math.min(lastAgreeing(blocks, at, floor, ctx.eventsHashAt), (await lastHashAgreeing(ctx, at, floor, now)) ?? at);
+      const to = Math.min(lastAgreeing(blocks, at, floor, ctx.eventsHashAt), (await lastHashAgreeing(ctx, at, floor, now, r.tipHeight)) ?? at);
       if (to !== at) return { kind: "reorg", to: { height: to, hash: await now(to) }, tip };
     }
     const after = ctx.cursor?.height ?? floor;

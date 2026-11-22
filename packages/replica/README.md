@@ -512,7 +512,10 @@ scan's top they are compared with the store by their events hash, and the block 
 cursor's and its boundary rows', walked down until one agrees) with the indexer's; the step is a reorg to the lower of
 the last event block whose events hash agrees (section 34.3) and the last held hash the indexer still gives, and the
 next step reads the new branch above it. A verified tip that moves back below the cursor is no reorg: the step is idle
-until it passes the cursor again. The events above the cursor are
+until it passes the cursor again. A cursor above the indexer's own tip is a block the indexer's chain does not have:
+the step rolls back to the last held boundary whose hash the indexer gives and reads on to its tip, so a shorter branch
+that changes only block hashes is followed. An indexer whose tip drops on one chain (a rebuild) rolls the store back
+the same way, as the hosted resolver's published state drops with it. The events above the cursor are
 the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
 the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
 with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step

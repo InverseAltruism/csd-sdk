@@ -2,6 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
+- `indexerFeed`: a store cursor above the indexer's tip is a block the indexer's chain does not have, so a shorter
+  branch that changes only block hashes rolls back to the last boundary whose hash agrees and ends on the indexer's
+  tip (the cursor stayed above it, `BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was served). The
+  cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back to it, as the hosted resolver's
+  published state already drops; the store refills from the next scans. A final height that moves back under
+  `verifyInclusion`, the indexer's tip unchanged, still rolls nothing back.
 - The tuple book and the comparison (design section 6): `status().tuple`, the newest boundary's tuple from the loop's
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;

@@ -10,8 +10,9 @@
 // during it): the resolver withholds every tuple until an accepted scan, the replica commits nothing and keeps serving
 // what it committed before, which equals what the resolver served before and, with no reorg below it meanwhile (README,
 // "Tuples and a reference"), serves again after.
-// (3) Rollbacks to a shorter branch that leave a kept boundary 1 to 11 blocks under the new cursor: both withdraw it and
-// serve it again once a branch 12 or more above it is back. After every accepted scan, each side serves exactly the
+// (3) Rollbacks to a shorter branch that leave a kept boundary 1 to 11 blocks under the new cursor, with a record of the
+// branch's own and with only block hashes changed: both withdraw it and serve it again once a branch 12 or more above
+// it is back. After every accepted scan, each side serves exactly the
 // boundaries the other does.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -183,6 +184,18 @@ console.log("rollbacks that leave a kept boundary 1 to 11 blocks under the curso
     if (loop.status().cursor?.height !== B + d || servedB().ours || servedB().theirs) held.push(d);
   }
   ok("for each depth from 1 to 11 under the cursor, neither serves it", held.length === 0, held.join(", "));
+  // The same rollbacks with no record of their own: only the block hashes from the fork up change, and the indexer's
+  // tip is below the replica's cursor.
+  const quiet = (name: string, from: number, tip: number) => buildChain(specs, { forks: [{ name, from }] }).indexer({ tip });
+  const heldQuiet: number[] = [];
+  for (let d = 1; d <= 11; d++) {
+    now = a.indexer({ tip: B + 13 });
+    await step(); compare();
+    now = quiet(`q${d}`, B + d, B + d);
+    await step(); compare();
+    if (loop.status().cursor?.height !== B + d || servedB().ours || servedB().theirs) heldQuiet.push(d);
+  }
+  ok("the same with only block hashes changed: the cursor is the indexer's tip and neither serves it", heldQuiet.length === 0, heldQuiet.join(", "));
   now = a.indexer({ tip: B + 13 });
   await step(); compare();
   ok(`branch A at ${B + 13} again: both serve ${B}, the same tuple as before`, servedB().ours && servedB().theirs && JSON.stringify(tupleOf(loop.boundary(B))) === kept);

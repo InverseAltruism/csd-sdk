@@ -178,6 +178,21 @@ console.log("verifyInclusion: the verified tip moves back, then forward:");
   await loop.close();
 }
 
+{
+  // The verified tip moves back by ten blocks, the indexer's tip stays: the final height drops below the cursor, and
+  // the cursor's block is still the indexer's.
+  let verifiedTip = H0 + 40;
+  const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: H0 + 40 })), pageSize: 3,
+    ...signed.verified({ verifiedTip: Number.MAX_SAFE_INTEGER }), verifiedTipHeight: async () => verifiedTip }), store: memoryStore(), ...WIDE });
+  await loop.open();
+  const a = await loop.advance();
+  verifiedTip = H0 + 30;
+  const back = await loop.advance();
+  ok("a final height ten blocks below the cursor, the indexer's tip above it: no rollback, no event lost",
+    a.cursor?.height === H0 + 28 && back.lastReorg === null && back.cursor?.height === H0 + 28 && back.eventCount === a.eventCount, JSON.stringify(back.lastReorg));
+  await loop.close();
+}
+
 console.log("block hashes the indexer no longer gives:");
 {
   const TIP = H0 + 40;   // an epoch boundary
@@ -214,6 +229,22 @@ console.log("block hashes the indexer no longer gives:");
   ok("a record moved above a boundary whose block was replaced: the step rolls back below it and recovers",
     s.lastError === null && s.lastReorg?.to.height === TIP - 30 && s.cursor?.hash === b.hashAt(TIP + 5) && canon(held(loop)) === canon(want),
     JSON.stringify({ e: s.lastError, r: s.lastReorg }));
+  await loop.close();
+}
+{
+  // A shorter branch that changes no record: blocks from B + 6 replaced, the indexer's tip at B + 11, below the store's
+  // cursor B + 13. The boundary B held below agrees; the cursor's block is not on the indexer's chain.
+  const B = H0 + 40, a = buildChain(defaultSpecs()), b = buildChain(defaultSpecs(), { forks: [{ name: "b", from: B + 6 }] });
+  let fetchNow = real(a.indexer({ tip: B + 13 }));
+  const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => fetchNow(i, r)) as typeof fetch, pageSize: 3 }),
+    store: memoryStore(), ...WIDE });
+  await loop.open();
+  const a1 = await loop.advance();
+  fetchNow = real(b.indexer({ tip: B + 11 }));
+  const s = await loop.advance();
+  ok("a shorter branch with only block hashes changed: rolled back to the boundary that agrees, ended on the indexer's tip",
+    a1.cursor?.height === B + 13 && s.lastReorg?.from.height === B + 13 && s.lastReorg.to.height === B && s.cursor?.height === B + 11 &&
+    s.cursor.hash === b.hashAt(B + 11) && s.eventCount === a1.eventCount, JSON.stringify({ c: s.cursor, r: s.lastReorg }));
   await loop.close();
 }
 {
