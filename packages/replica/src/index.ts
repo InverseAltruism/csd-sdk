@@ -12,7 +12,7 @@ export { readBlocks } from "./read-blocks.js";
 export { fullReplay } from "./replay.js";
 export { replicaLoop, type Loop, type LoopOpen, type LoopOptions, type LoopStatus } from "./loop.js";
 export { open, openLog, type DryRunTx, type EventLog, type OpenOptions, type Reader } from "./reader.js";
-export { STREAK, type CompareKind, type CompareReport, type TupleReference } from "./compare.js";
+export { REBUILDS, STREAK, type CompareKind, type CompareReport, type TupleReference } from "./compare.js";
 export type { Tuple } from "./tuple.js";
 export { nameHistory, type NameEventKind, type NameHistEntry, type NameHistory, type NameHistoryCheck } from "./namehist.js";
 export type {

@@ -153,7 +153,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false),
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
@@ -202,7 +202,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     const c = cmp?.report() ?? null;
     if (c === null) return [];
     const kind = c.kind === "branch" || c.kind === "records" || c.kind === "rules" ? [{ code: COMPARE_NOTES[c.kind] as NoteCode, detail: `boundary ${c.height}` }] : [];
-    return [...kind, ...(c.recount === "ours" ? [{ code: "DIVERGENCE_CONFIRMED" as const, detail: `boundary ${c.height}` }] : [])];
+    return [...kind, ...(c.recount === "ours" ? [{ code: "DIVERGENCE_CONFIRMED" as const, detail: `boundary ${c.height}` }] : []),
+      ...(cmp?.outvoted() === true ? [{ code: "SOURCES_DISAGREE" as const, detail: `the store's source, against the recount and the reference at boundary ${c.height}` }] : [])];
   }
 
   function status(): ReplicaStatus {

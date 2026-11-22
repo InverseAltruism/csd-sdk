@@ -1,6 +1,6 @@
 // The comparison with a reference (compare.ts) through open(): each kind of difference a mock reference can show, the
 // first differing boundary found by the search, PIN_DISPUTED at a pin and TUPLE_RECORDS above it, the streak before a
-// recount acts and both of its outcomes, and a hostile reference (one that lies about a boundary it agreed on, one that
+// recount acts and its three outcomes, the limit on rebuilds, and a hostile reference (one that lies about a boundary it agreed on, one that
 // never answers, one on another chain, answers out of shape or over size, a search held to its request budget). Paired
 // throughout: an honest equal reference adds no note, no request in status() and no recount, and a reference on the
 // store's own origin is labelled so and changes no level and no verdict.
@@ -52,6 +52,15 @@ const asBlocks = (s: Source): BlocksSource =>
   ({ ...s, basis: { kind: "blocks", root: { kind: "own-node", node: "http://127.0.0.1:8789" }, bodies: "http://127.0.0.1:8789" } }) as unknown as BlocksSource;
 const heights = [...truth.keys()];
 const X = heights[Math.floor(heights.length / 2)]!;   // a boundary well inside the range
+// Another chain: the fixture without its records at and above X's epoch, so its tuples differ from X up.
+const fxB: BlockFixture = { ...fx, blocks: fx.blocks.filter((b) => b.height <= X - 30 || b.txs.length === 0) };
+const truthB = await truthOf(fxB, TOP + 900);
+/** A memory store whose reset first calls `before` (which may throw, failing the reset). */
+const storeWith = (before: () => void): Store => {
+  const mem = memoryStore();
+  return { ...mem, open: (k) => mem.open(k), rows: (h) => mem.rows(h), boundaries: () => mem.boundaries(), headerWindow: () => mem.headerWindow(),
+    commit: (c) => mem.commit(c), close: () => mem.close(), reset: async () => { before(); return mem.reset(); } };
+};
 const openAt = (top: { now: number }, table: Table, extra: { log?: string[]; reply?: (p: string) => Response | Promise<Response> | null; feed?: string; base?: string; maxRequests?: number; timeoutMs?: number } = {}) =>
   open({ source: growing(fx, top, { feed: extra.feed ?? "https://feed.example/x" }),
     reference: { base: extra.base ?? REF, fetch: reference(table, extra), ...(extra.maxRequests === undefined ? {} : { maxRequests: extra.maxRequests }),
@@ -111,10 +120,7 @@ const counted = (f: BlockFixture, top: { now: number }) => { const s = growing(f
   await r.close();
 }
 {
-  // The reference's chain: the fixture without its records at and above X's epoch, so its tuples differ from X up; a
-  // recount over that chain equals the reference, and the store is rebuilt.
-  const fxB: BlockFixture = { ...fx, blocks: fx.blocks.filter((b) => b.height <= X - 30 || b.txs.length === 0) };
-  const truthB = await truthOf(fxB, TOP + 300);
+  // The reference is on chain B; a recount over that chain equals the reference, and the store is rebuilt.
   const top = { now: TOP }, r = await serverOpen({ source: growing(fx, top), reference: { base: REF, fetch: reference((h) => truthB.get(h) ?? null) }, recount: asBlocks(growing(fxB, top)) });
   let s: ReplicaStatus | null = null;
   for (let i = 0; i < 3; i++) { s = await r.advance(); top.now += 30; }
@@ -130,6 +136,42 @@ const counted = (f: BlockFixture, top: { now: number }) => { const s = growing(f
   let s: ReplicaStatus | null = null;
   for (let i = 0; i < 5; i++) { s = await r.advance(); top.now += 30; }
   ok("without a recount source: five runs report the difference and nothing acts", s?.compare?.streak === 5 && s.compare.recount === null && s.cursor !== null);
+  await r.close();
+}
+{
+  // A reference that differs from X up and a recount source that is down: the recount gives nothing, so it sides with
+  // neither, and the store stays as it is.
+  let resets = 0;
+  const top = { now: TOP }, down: Source = { ...growing(fx, top), next: async () => ({ kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: "down", retryAfterMs: 0 }) };
+  const r = await serverOpen({ source: growing(fx, top), store: storeWith(() => { resets++; }), reference: { base: REF, fetch: reference(differs) }, recount: asBlocks(down) });
+  let s: ReplicaStatus | null = null;
+  for (let i = 0; i < 6; i++) { s = await r.advance(); top.now += 30; }
+  ok("a recount that sides with neither: no store reset over six runs, the replica keeps its cursor", s?.compare?.recount === "neither" && resets === 0 &&
+    s.cursor?.height === top.now - 30 && !s.why.some((w) => w.code === "STORE_UNCONFIRMED"), JSON.stringify({ c: s?.compare, resets }));
+  await r.close();
+}
+
+console.log("rebuilds stop while the store's source refills what the recount and the reference disagree with:");
+{
+  // The store's source serves chain A, the recount and the reference chain B: each rebuild refills A, and the difference
+  // forms again three boundaries later.
+  let resets = 0, table: Table = (h) => truthB.get(h) ?? null;
+  const top = { now: TOP }, r = await serverOpen({ source: growing(fx, top), store: storeWith(() => { resets++; }),
+    reference: { base: REF, fetch: reference((h) => table(h)) }, recount: asBlocks(growing(fxB, top)) });
+  let s: ReplicaStatus | null = null;
+  for (let i = 0; i < 14; i++) { s = await r.advance(); top.now += 30; }
+  const why = s === null ? [] : s.why.map((w) => w.code), note = s?.notes.find((n) => n.code === "SOURCES_DISAGREE");
+  ok(`two rebuilds in fourteen runs, then none: STORE_UNCONFIRMED and SOURCES_DISAGREE (${resets} resets)`, resets === 2 && why.includes("STORE_UNCONFIRMED") &&
+    note !== undefined && /recount and the reference/.test(note.detail ?? "") && s?.cursor?.height === top.now - 30 && s.compare?.recount === "reference",
+    JSON.stringify({ resets, why, c: s?.compare }));
+  const truthA = await truthOf(fx, TOP + 900);
+  table = (h) => truthA.get(h) ?? null;
+  const eq = await r.advance();
+  top.now += 30;
+  ok("an equal comparison lifts both", eq.compare?.kind === "equal" && !eq.why.some((w) => w.code === "STORE_UNCONFIRMED") && !eq.notes.some((n) => n.code === "SOURCES_DISAGREE"));
+  table = (h) => truthB.get(h) ?? null;
+  for (let i = 0; i < 4; i++) { s = await r.advance(); top.now += 30; }
+  ok("and clears the count: the next recount that sides with the reference rebuilds again", resets === 3, String(resets));
   await r.close();
 }
 {
@@ -295,12 +337,8 @@ console.log("the recount: a block source, ended by an abort or close():");
 
 console.log("the recount finds the store wrong and its reset throws:");
 {
-  const fxB: BlockFixture = { ...fx, blocks: fx.blocks.filter((b) => b.height <= X - 30 || b.txs.length === 0) };
-  const truthB = await truthOf(fxB, TOP + 300);
-  const mem = memoryStore();
   let broken = true;
-  const store: Store = { ...mem, open: (k) => mem.open(k), rows: (h) => mem.rows(h), boundaries: () => mem.boundaries(), headerWindow: () => mem.headerWindow(),
-    commit: (c) => mem.commit(c), close: () => mem.close(), reset: async () => { if (broken) throw new Error("EIO"); return mem.reset(); } };
+  const store = storeWith(() => { if (broken) throw new Error("EIO"); });
   const top = { now: TOP }, r = await serverOpen({ source: growing(fx, top), store, reference: { base: REF, fetch: reference((h) => truthB.get(h) ?? null) }, recount: asBlocks(growing(fxB, top)) });
   let s: ReplicaStatus | null = null;
   for (let i = 0; i < 4; i++) { s = await r.advance(); top.now += 30; }

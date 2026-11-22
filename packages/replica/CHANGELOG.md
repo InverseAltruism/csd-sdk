@@ -9,7 +9,9 @@
   which settles a difference held for `STREAK` new boundaries (confirmed, or the store rebuilt). After review: the pin
   is read again at each new boundary until an equal answer; reads do not wait on the reference; a recount ends with the
   advance's signal or `close()`; `recount` must be a block source; a failed reset keeps `STORE_UNCONFIRMED` and is retried. The resolver's `tuple.ts` is
-  not moved: a differential against a test-only copy of it finds the same tuple at every boundary.
+  not moved: a differential against a test-only copy of it finds the same tuple at every boundary. After the second
+  review: a boundary a rollback leaves under 12 deep is withheld until the chain grows back over it; at most `REBUILDS`
+  (2) rebuilds with no equal comparison between, then `STORE_UNCONFIRMED` and `SOURCES_DISAGREE`.
 - `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
   `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
   last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last

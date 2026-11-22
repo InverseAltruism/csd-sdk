@@ -232,8 +232,10 @@ An answer is verified only when every condition holds. Each failed one adds its 
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
-table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
-answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
+table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared; or, with its `detail` naming
+the boundary, the store's source disagrees with a recount and a reference that agree, "Tuples and a reference"),
+`WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
+`CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
 directory, a read or write failed, or a reset it needed failed, the browser store's unconfirmed reset included; the
@@ -583,7 +585,11 @@ answering; equal to the reference's, the store is rebuilt (`STORE_UNCONFIRMED` w
 that throws keeps `STORE_UNCONFIRMED` and is tried again at the next new boundary); neither, nothing changes. Without
 `recount` a difference is reported and never acted on. The cost a reference can impose is bounded: a recount per
 difference held for three boundaries, so a reference that differs for three and agrees for one forces one full read
-from the floor every four boundaries (120 blocks). The same object may be both `source` and `recount`: the recount then
+from the floor every four boundaries (120 blocks). A rebuild refills from the store's own source, so a source that
+keeps serving what the recount and the reference agree against would be rebuilt every few boundaries: after `REBUILDS`
+(2) rebuilds with no equal comparison between them, a recount that sides with the reference rebuilds no more. The
+store is kept, `STORE_UNCONFIRMED` holds and the note `SOURCES_DISAGREE` names the boundary, until a comparison is
+equal (which also clears the count) or a recount equals the store's tuple. Replace that source. The same object may be both `source` and `recount`: the recount then
 reads the store's own source again, which still finds a store damaged since it was filled.
 
 ## The browser store

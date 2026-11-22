@@ -62,7 +62,8 @@ export function ownNode(o: OwnNodeOptions): OpenOptions {
  *  for STREAK new boundaries, a separate loop over it in memory reads to its source's tip (RECOUNT_MS at most) and
  *  takes that boundary. Equal to the replica's own tuple, the difference is confirmed (the note DIVERGENCE_CONFIRMED)
  *  and the replica keeps answering; equal to the reference's, the store is rebuilt (STORE_UNCONFIRMED while it
- *  refills). Without `recount` a difference is only reported. A `recount` whose basis is not complete blocks bound to
+ *  refills), up to REBUILDS times with no equal comparison between, then kept with STORE_UNCONFIRMED and the note
+ *  SOURCES_DISAGREE. Without `recount` a difference is only reported. A `recount` whose basis is not complete blocks bound to
  *  headers throws ReplicaConfigError: a feed's word cannot settle a difference that leads to a rebuild. */
 export function open(o: OpenOptions & { readonly recount?: BlocksSource }): Promise<Reader> {
   const { recount, ...rest } = o;

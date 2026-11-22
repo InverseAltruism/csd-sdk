@@ -28,6 +28,8 @@ export interface CompareReport {
 }
 /** Runs in a row with one first differing boundary before a recount may act (CONVENTION section 34.3). */
 export const STREAK = 3;
+/** Rebuilds with no equal comparison between them before a recount that sides with the reference rebuilds no more. */
+export const REBUILDS = 2;
 /** The largest tuple answer read: the documented one is under 300 bytes. */
 export const ANSWER_BYTES = 4096;
 const RUN_MS = 20_000;
@@ -55,15 +57,19 @@ export interface CompareView {
   readonly pin: { readonly height: number; readonly blockHash: string; readonly eventsHash: string; readonly stateHash: string } | null;
 }
 
-/** The state of the comparison: `run` after each advance, `report`, `pinDisputed` and `owed` for status(), which reads
- *  no reference. `recount(height, signal)` gives the recount's tuple at a boundary, or null when it cannot; `rebuild`
- *  resets the store. Without `recount` a difference is reported and never acted on. A run reads the reference once for
- *  each new newest boundary: the pin while no answer at it has been equal, then the boundary. `owed` holds while the
- *  recount found the store wrong and its reset failed: the reset is tried again at the next new boundary. */
+/** The state of the comparison: `run` after each advance, `report`, `pinDisputed`, `owed` and `outvoted` for status(),
+ *  which reads no reference. `recount(height, signal)` gives the recount's tuple at a boundary, or null when it cannot;
+ *  `rebuild` resets the store. Without `recount` a difference is reported and never acted on. A run reads the reference
+ *  once for each new newest boundary: the pin while no answer at it has been equal, then the boundary. `owed` holds
+ *  while the recount found the store wrong and its reset failed: the reset is tried again at the next new boundary.
+ *  `outvoted` holds once the recount sided with the reference after REBUILDS rebuilds with no equal comparison between
+ *  them: the store's source keeps refilling what both disagree with, so the store is kept, not rebuilt again, until a
+ *  comparison is equal or a recount equals the store's own tuple. */
 export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: Gates; recount?: (height: number, signal: AbortSignal) => Promise<Tuple | null>; rebuild: () => Promise<void> }) {
   const f = o.ref.fetch ?? globalThis.fetch.bind(globalThis), base = o.ref.base.replace(/\/+$/, "");
   const timeoutMs = o.ref.timeoutMs ?? 5_000, maxRequests = o.ref.maxRequests ?? 16;
   let report: CompareReport | null = null, pinDisputed = false, pinAgreed = false, owed = false, compared: string | null = null;
+  let rebuilds = 0, outvoted = false;   // rebuilds since the last equal comparison
   // The first differing boundary and the reference's tuple there, kept so the next run probes it alone.
   let first: { height: number; hash: string; theirs: Tuple; recounted: boolean } | null = null, agreed: { height: number; hash: string } | null = null;
 
@@ -125,7 +131,7 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
         return;
       }
       if (equal(at.tuple, top)) {
-        agreed = { height: top.height, hash: top.blockHash };
+        agreed = { height: top.height, hash: top.blockHash }; rebuilds = 0; outvoted = false;
         set({ kind: "equal", height: top.height, lastAgreeing: top.height, streak: 0, detail: null, gates: null, recount: null });
         return;
       }
@@ -167,7 +173,7 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
 
   // Only a difference whose first boundary held for STREAK runs, recounted once from blocks. Equal to the replica's
   // own tuple, the difference is confirmed and the replica keeps answering; equal to the reference's, the store is
-  // rebuilt; neither, nothing changes.
+  // rebuilt, up to REBUILDS times with no equal comparison between; neither, nothing changes.
   async function act(view: CompareView, signal: AbortSignal): Promise<void> {
     if (o.recount === undefined || first === null || first.recounted || report === null || report.streak < STREAK) return;
     first.recounted = true;
@@ -176,8 +182,16 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
     const same = (a: Tuple | null, b: Tuple | null) => a !== null && b !== null && a.blockHash === b.blockHash && a.eventsHash === b.eventsHash && a.stateHash === b.stateHash;
     const recount = same(got, ours) ? "ours" : same(got, theirs) ? "reference" : "neither";
     report = { ...report, recount };
-    if (recount === "reference") await rebuild();
+    if (recount === "ours") outvoted = false;
+    if (recount !== "reference") return;
+    if (rebuilds >= REBUILDS) {
+      outvoted = true;
+      report = { ...report, detail: `the store's source disagrees with the recount and the reference at ${at.height}; not rebuilt again after ${REBUILDS} rebuilds` };
+      return;
+    }
+    rebuilds++;
+    await rebuild();
   }
 
-  return { run, report: () => report, pinDisputed: () => pinDisputed, owed: () => owed };
+  return { run, report: () => report, pinDisputed: () => pinDisputed, owed: () => owed, outvoted: () => outvoted };
 }
