@@ -16,8 +16,9 @@ throw `ReplicaConfigError` for one at run time. `basisKey` names a store without
 root and bodies names the same store, which is kept only on the conditions of "Pins" below.
 
 - `.`: the types, `NOT_VERIFIED_CODES`, `NOTE_CODES`, `checkBasis`, `levelOf`, `proofOf`, `basisKey`, `memoryStore()`,
-  the reader, `open` and `openLog` ("Reading" below), `checkPin` and `pinned` ("Pins" below), and `nameHistory`
-  ("A csd-indexer feed" below).
+  the reader, `open` and `openLog` ("Reading" below), `checkPin` and `pinned` ("Pins" below), `nameHistory` and
+  `appliedIds` ("A csd-indexer feed" below), and the resolver's five state reads with `leaseInfo` and
+  `nameDetailsOf` ("The resolver's reads" below).
 - `./display`: a page that shows a name or a balance from our API at level 1 ("Display" below). It does not load
   `resolve()` or the block machinery.
   The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
@@ -535,8 +536,10 @@ whole domain the first time and the indexer's chain-order feeds after it; the sc
 signal.
 
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
-byte for byte apart from import paths, then cleaned under review; `scripts/move-residual.mjs <resolver git dir>
-<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not moved:
+byte for byte apart from import paths, then cleaned under review; `appliedIds` (`.`) is the set of ids a replay
+applied, which the resolver passes to `nameHistory` as `fullApplied`. `scripts/move-residual.mjs <resolver git dir>
+<commit>` prints what differs from the resolver's copy, file by file, and says "code identical" for a file whose
+tokens, comments, whitespace and import paths aside, are the resolver's. The resolver's hash tuple book is not moved:
 the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
 

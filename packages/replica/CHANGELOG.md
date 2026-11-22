@@ -2,6 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
+- The resolver's five state reads, moved from the private CairnX resolver at 0c95ad2 with their code unchanged
+  (`src/resolver/read.ts` as `src/handlers.ts`, and `src/nameview.ts`): `readState`, `readName`, `readResolve`,
+  `readNameHistory`, `readProfile` over a `ReadSnapshot`, with `leaseInfo` and `nameDetailsOf`, exported from `.`;
+  the resolver's purity guard moved with them (`test/handlers.test.ts`), and so did its nameview cases. `appliedIds` is
+  exported from `.`. `scripts/move-residual.mjs` lists both files and reports "code identical" for a TypeScript
+  file whose tokens equal the resolver's.
 - `Reader.snapshot()`: the tip view and the events held up to it from one commit, frozen, one object per state
   (`Snapshot`). `dryRun`'s `at` is the cursor it was tried above (it named the tip, also while behind it or above it).
 - `indexerFeed`: a step's tip carries its header time, read from the indexer's `/block/<hash>` (it was 0, so every

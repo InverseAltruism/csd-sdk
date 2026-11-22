@@ -14,7 +14,9 @@ export { replicaLoop, type Loop, type LoopOpen, type LoopOptions, type LoopStatu
 export { open, openLog, type DryRunTx, type EventLog, type OpenOptions, type Reader } from "./reader.js";
 export { REBUILDS, STREAK, type CompareKind, type CompareReport, type TupleReference } from "./compare.js";
 export type { Tuple } from "./tuple.js";
-export { nameHistory, type NameEventKind, type NameHistEntry, type NameHistory, type NameHistoryCheck } from "./namehist.js";
+export { appliedIds, nameHistory, type NameEventKind, type NameHistEntry, type NameHistory, type NameHistoryCheck } from "./namehist.js";
+export { readName, readNameHistory, readProfile, readResolve, readState, type ReadAnswer, type ReadSnapshot } from "./handlers.js";
+export { leaseInfo, nameDetailsOf } from "./nameview.js";
 export type {
   Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Snapshot, Transfer, Witness, WitnessTip,
 } from "./answer.js";
