@@ -152,10 +152,17 @@ console.log("reads start advances at most once per READ_ADVANCE_MS:");
   for (let i = 0; i < 20; i++) { t += 100; await r.snapshot(); }
   await ticks(5);
   ok(`past ${READ_ADVANCE_MS} ms: one more advance for 20 reads, none for the 20 after it`, after === 2 && advances === 2 && steps === stepsAfter, `${after} ${advances}`);
-  t = now - 60_000;
+  // The next advance to end, or false after 3 s: no advance() call of the test's own may count.
+  const ended = () => new Promise<boolean>((go) => { const off = r.subscribe(() => { off(); clearTimeout(t3); go(true); }); const t3 = setTimeout(() => { off(); go(false); }, 3000); });
+  t = now + READ_ADVANCE_MS + 2_000;
+  const none = ended();
   await r.snapshot();
-  await r.advance();
-  ok("a clock set back counts as the interval passed: the read starts an advance", advances === 3, `${advances}`);
+  ok("paired: a read inside the interval by a clock that moved forward starts none", (await none) === false && advances === 2, `${advances}`);
+  t = now - 60_000;
+  const one = ended();
+  await r.snapshot();
+  ok("a clock set back counts as the interval passed: the read starts an advance", (await one) === true && advances === 3, `${advances}`);
+  await ticks(2);   // the run that just ended clears after its listeners
   const own = advances;
   await r.advance();
   ok("paired: advance() starts one whenever none runs", advances === own + 1);

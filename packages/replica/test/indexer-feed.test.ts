@@ -265,6 +265,25 @@ console.log("the indexer's tip below the cursor, at a held boundary, at the floo
   }
 }
 
+{
+  // With inclusion, the verified tip back under the floor's final depth while the indexer replaced the cursor's block:
+  // nothing above the floor can be compared, and the store rolls back to the floor, not below it.
+  const a = signed, b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "u", from: H0 + 20 }] });
+  let w = { chain: a, vt: H0 + 40 };
+  const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(w.chain.indexer({ tip: H0 + 40 }))(i, r)) as typeof fetch, pageSize: 3,
+    verifyInclusion: true, headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: H0 + 40 }).headerMerkleAt!(h),
+    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: H0 + 40 }).rawTxAt!(id), verifiedTipHeight: async () => w.vt };
+  const loop = replicaLoop({ source: indexerFeed(opts), store: memoryStore(), ...WIDE });
+  await loop.open();
+  const s1 = await loop.advance();
+  w = { chain: b, vt: 5 };
+  const s2 = await loop.advance();
+  ok("the cursor's block replaced, the final height under the floor: rolled back to the floor, no refusal",
+    s1.cursor?.height === H0 + 28 && s2.lastReorg?.to.height === ACTIVATION_HEIGHT - 1 && s2.cursor?.height === ACTIVATION_HEIGHT - 1 && s2.lastError === null,
+    JSON.stringify({ c: s2.cursor, r: s2.lastReorg, e: s2.lastError }));
+  await loop.close();
+}
+
 console.log("block hashes the indexer no longer gives:");
 {
   const TIP = H0 + 40;   // an epoch boundary
