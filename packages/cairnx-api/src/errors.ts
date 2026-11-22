@@ -1,6 +1,9 @@
 // The error codes of a v1 refusal, each with its one HTTP status and the side that answers it. From 1.0.0 the codes and
-// their statuses are part of the contract (test/errors.test.ts holds the table): within version 1 a code is not renamed,
-// reused or removed. Codes may be added; a client treats a code it does not know by its status.
+// their statuses are promised (test/errors.test.ts holds the table), and codes may be added; a client treats a code it
+// does not know by its status. The contract's retirement rule (README, "The 1.0 contract"): a route or a field (of a row
+// or of the envelope) is removed only after it has been marked deprecated, with the date, in CHANGELOG.md and the
+// documentation, and served unchanged for six months from that date; a change of meaning is a new API version,
+// /api/cairnx/v2/.
 
 type Side = "service" | "proxy" | "both";
 const entry = <S extends number, F extends Side>(status: S, from: F) => Object.freeze({ status, from });
