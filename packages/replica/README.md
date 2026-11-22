@@ -239,6 +239,9 @@ the boundary, the store's source disagrees with a recount and a reference that a
 `WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
 `FINAL_VIEW` (the source serves final blocks only, so its tip is its final height, 12 below the chain tip it read,
 by design: a csd-indexer feed with `verifyInclusion`; `BEHIND` then counts from that tip),
+`PEER_FAR_AHEAD` (a witness named a tip more than 12 above the replica's whose header meets its own bits; `TIP_BEHIND_PEER`
+is set with it), `TIP_STALE_LONG` (the tip's header time is more than `STALE_MAX_MS`, 6 hours, before the clock, plus
+the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
@@ -568,14 +571,20 @@ statuses and bodies are the resolver's (on cairnx-core's recorded fixture to 117
 state, 0 differ, `test/read-routes.test.ts`); the canonical state, the applied ids and each name's history (at most
 1,024) are kept while the snapshot's key holds. The headers are the resolver's (`content-type`
 `application/json; charset=utf-8`, `access-control-allow-origin: *`, `x-content-type-options: nosniff`) with the
-server's own verdict: `x-cairnx-at` (`<height>:<hash>` of the view's block) and `x-cairnx-why` (the verdict's codes,
-comma-separated, empty when verified), both named in `access-control-expose-headers` so a page on another origin can
-read them. The bodies carry no level: over HTTP every answer is level 1 to its reader. While the snapshot is not one to
+server's own verdict: `x-cairnx-at` (`<height>:<hash>` of the view's block), `x-cairnx-why` (the verdict's codes,
+comma-separated, empty when verified) and `x-cairnx-notes` (its notes' codes, comma-separated, empty when none), all
+three named in `access-control-expose-headers` so a page on another origin can read them, on a 503 too. The bodies carry no level: over HTTP every answer is level 1 to its reader. While the snapshot is not one to
 serve the answer is 503 `{ ok: false, error: "not ready: <codes>; retry shortly" }`, never a 404 (which a wallet takes
 as "not registered"): on `WITHHELD` (`NOT_SYNCED`, `STORE_UNCONFIRMED`, `PIN_DISPUTED`, `PIN_MISMATCH`,
 `PIN_OFF_CHAIN`, `RULES_DIFFER`, `BRANCH_UNRESOLVED`) and on `BEHIND` once the view is 12 or more below the tip (a
-catch-up; under that the resolver also answers between two polls). Every other code is served and named. The hosted
-resolver imports the five reads and keeps its own dispatch: only a replica's own server withholds.
+catch-up; under that the resolver also answers between two polls), and on the notes `WITHHELD_NOTES`:
+`SOURCES_DISAGREE` (a witness gave another block at a height the replica holds), `PEER_FAR_AHEAD` (a witness's valid tip
+is more than 12 above the replica's; a peer up to 12 ahead is served with `TIP_BEHIND_PEER`) and `TIP_STALE_LONG`
+(the tip is more than 6 hours old; a tip stale by the 30 minutes of `TIP_STALE` alone is served, since a drought
+between blocks would otherwise make every replica refuse at once). Every other code and note is served and named:
+the codes in `x-cairnx-why`, the notes in `x-cairnx-notes`, both exposed. Under `FINAL_VIEW` a served answer is at
+most 23 blocks behind the chain tip its source read: 12 by design and fewer than 12 of `BEHIND`. The hosted resolver
+imports the five reads and keeps its own dispatch: only a replica's own server withholds.
 
 ## Tuples and a reference
 

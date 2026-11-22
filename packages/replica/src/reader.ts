@@ -21,7 +21,7 @@ import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
 import { tupleOf, type Tuple } from "./tuple.js";
 import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
-import { FRESH_MS, verdict } from "./verdict.js";
+import { FRESH_MS, STALE_MAX_MS, olderThan, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
@@ -163,15 +163,18 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", finalOnly, synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
+      level, feed: basis.kind === "feed", finalOnly, synced, now, peerAhead: (t) => board.peerLead(t) > 0, refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
       rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
     // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
     // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
     const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
+    const lead = synced === null ? 0 : board.peerLead(synced.tip);
     const notes: { code: NoteCode; detail?: string }[] = [...(finalOnly ? [{ code: "FINAL_VIEW" as const }] : []), ...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
-      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes()];
+      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes(),
+      ...(lead > FINAL_DEPTH ? [{ code: "PEER_FAR_AHEAD" as const, detail: `a witness's tip ${lead} blocks above` }] : []),
+      ...(synced !== null && olderThan(now, synced.tip.time, STALE_MAX_MS, finalOnly) ? [{ code: "TIP_STALE_LONG" as const }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };

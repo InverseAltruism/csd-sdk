@@ -11,7 +11,14 @@ import type { Cursor, TipView } from "./types.js";
  *  (`finalOnly`) reports a tip FINAL_DEPTH blocks below the chain's, so its tip may be older by that many target block
  *  times. */
 export const FRESH_MS = 30 * 60_000;
+/** How old a tip header may be before a replica's server withholds its answers (the note TIP_STALE_LONG): 6 hours, 180
+ *  target block times, long against a drought between blocks and short against a source that is syncing or stopped. */
+export const STALE_MAX_MS = 6 * 60 * 60_000;
 const FINAL_AGE_S = FINAL_DEPTH * TARGET_BLOCK_SECS;
+/** Whether a tip of header time `tipTime` (seconds) is older than `ms` at `now` (ms), with a final-only source's
+ *  allowance. */
+export const olderThan = (now: number, tipTime: number, ms: number, finalOnly: boolean): boolean =>
+  now / 1000 - tipTime > ms / 1000 + (finalOnly ? FINAL_AGE_S : 0);
 
 export interface VerdictInput {
   readonly level: 1 | 2 | 3; readonly feed: boolean;
@@ -49,7 +56,7 @@ export function verdict(v: VerdictInput): NotVerifiedCode[] {
   else {
     if (s.cursor.height < s.tip.height) why.push("BEHIND");
     if (s.cursor.height > s.tip.height) why.push("BRANCH_UNRESOLVED");
-    if (v.now / 1000 - s.tip.time > FRESH_MS / 1000 + (v.finalOnly === true ? FINAL_AGE_S : 0)) why.push("TIP_STALE");
+    if (olderThan(v.now, s.tip.time, FRESH_MS, v.finalOnly === true)) why.push("TIP_STALE");
     if (v.peerAhead(s.tip)) why.push("TIP_BEHIND_PEER");
   }
   if (v.unconfirmed) why.push("STORE_UNCONFIRMED");

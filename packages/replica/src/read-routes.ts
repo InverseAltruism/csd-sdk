@@ -4,7 +4,7 @@
 // imports the handlers and answers as it does today. A 404 comes only from a handler's "not registered".
 import { FINAL_DEPTH, NAME_RE, canonicalState, type ChainEvent } from "@inversealtruism/cairnx-core";
 import type { Answer, Snapshot } from "./answer.js";
-import type { NotVerifiedCode } from "./codes.js";
+import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { readName, readNameHistory, readProfile, readResolve, readState, type ReadAnswer, type ReadSnapshot } from "./handlers.js";
 import { appliedIds, nameHistory, type NameHistory } from "./namehist.js";
 import type { Reader } from "./reader.js";
@@ -15,15 +15,20 @@ import type { Reader } from "./reader.js";
 export const WITHHELD: readonly NotVerifiedCode[] = Object.freeze([
   "NOT_SYNCED", "STORE_UNCONFIRMED", "PIN_DISPUTED", "PIN_MISMATCH", "PIN_OFF_CHAIN", "RULES_DIFFER", "BRANCH_UNRESOLVED",
 ] as const);
+/** The notes on which the server answers 503: a witness gave another block at a height the replica holds, a witness's
+ *  valid tip is more than FINAL_DEPTH above the replica's, or the tip is older than STALE_MAX_MS. Every other note is
+ *  served and named in `x-cairnx-notes`. */
+export const WITHHELD_NOTES: readonly NoteCode[] = Object.freeze(["SOURCES_DISAGREE", "PEER_FAR_AHEAD", "TIP_STALE_LONG"] as const);
 
-/** The resolver's JSON headers, and the two of the server's verdict exposed to a page on another origin. */
+/** The resolver's JSON headers, and the three of the server's verdict exposed to a page on another origin. */
 export const READ_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*", "x-content-type-options": "nosniff",
-  "access-control-expose-headers": "x-cairnx-at, x-cairnx-why",
+  "access-control-expose-headers": "x-cairnx-at, x-cairnx-why, x-cairnx-notes",
 });
 
 /** One answer: its status, its headers (READ_HEADERS, `x-cairnx-at` `<height>:<hash>` of the view when there is one,
- *  `x-cairnx-why` the codes of the replica's verdict, comma-separated, empty when verified) and its body. */
+ *  `x-cairnx-why` the codes of the replica's verdict and `x-cairnx-notes` the codes of its notes, each comma-separated
+ *  and empty when there are none) and its body. */
 export interface ReadResponse { readonly status: number; readonly headers: Readonly<Record<string, string>>; readonly body: string }
 
 const bodyOf = (re: RegExp) => re.source.replace(/^\^/, "").replace(/\$$/, "");
@@ -37,11 +42,12 @@ const ROUTES: readonly (readonly [RegExp, (s: ReadSnapshot, arg: string) => Read
 // The histories kept per snapshot: each is two replays of the name's records (namehist.ts).
 const HISTORIES = 1024;
 
-/** Why `a` is withheld: its codes in WITHHELD, and BEHIND once its view is FINAL_DEPTH or more below the tip. */
-export function withheldBy(a: Answer<Snapshot>): NotVerifiedCode[] {
+/** Why `a` is withheld: its codes in WITHHELD, BEHIND once its view is FINAL_DEPTH or more below the tip, and its notes
+ *  in WITHHELD_NOTES. */
+export function withheldBy(a: Answer<Snapshot>): (NotVerifiedCode | NoteCode)[] {
   const v = a.verified ? a.value : a.shown, codes = a.why.map((w) => w.code);
   const far = a.at !== null && v !== null && a.at.tipHeight - v.height >= FINAL_DEPTH;
-  return codes.filter((c) => WITHHELD.includes(c) || (c === "BEHIND" && far));
+  return [...codes.filter((c) => WITHHELD.includes(c) || (c === "BEHIND" && far)), ...a.notes.map((n) => n.code).filter((c) => WITHHELD_NOTES.includes(c))];
 }
 
 /** The answer for `path` (a URL's pathname: `/cairnx/state`, or `/cairnx/{name,resolve,name-history,profile}/<name>`
@@ -79,7 +85,8 @@ export function replicaReads(reader: Pick<Reader, "snapshot">, o: { readonly wai
     }
     if (handler === null) return null;
     const a = await reader.snapshot({ waitMs: o.waitMs ?? 0 }), v = a.verified ? a.value : a.shown;
-    const headers = { ...READ_HEADERS, ...(a.at === null ? {} : { "x-cairnx-at": `${a.at.height}:${a.at.hash ?? ""}` }), "x-cairnx-why": a.why.map((w) => w.code).join(",") };
+    const headers = { ...READ_HEADERS, ...(a.at === null ? {} : { "x-cairnx-at": `${a.at.height}:${a.at.hash ?? ""}` }),
+      "x-cairnx-why": a.why.map((w) => w.code).join(","), "x-cairnx-notes": a.notes.map((n) => n.code).join(",") };
     const why = withheldBy(a);
     if (v === null || why.length > 0) {
       return { status: 503, headers, body: JSON.stringify({ ok: false, error: `not ready: ${(why.length > 0 ? why : a.why.map((w) => w.code)).join(", ")}; retry shortly` }) };

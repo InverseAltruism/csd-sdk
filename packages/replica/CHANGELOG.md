@@ -2,6 +2,10 @@
 
 ## 0.1.0 (unreleased)
 
+- `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a
+  witness's valid tip more than 12 above) and the new `TIP_STALE_LONG` (the tip older than `STALE_MAX_MS`, 6 hours); a
+  `TIP_STALE` tip alone and a peer up to 12 ahead stay served. The notes reach a client in `x-cairnx-notes`, exposed
+  with the other two (`FINAL_VIEW` never reached the headers).
 - `replicaReads(reader)` in `./server`: the resolver's five state reads from `reader.snapshot()`, with the resolver's
   statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
   `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
