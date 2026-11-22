@@ -16,5 +16,5 @@ export { REBUILDS, STREAK, type CompareKind, type CompareReport, type TupleRefer
 export type { Tuple } from "./tuple.js";
 export { nameHistory, type NameEventKind, type NameHistEntry, type NameHistory, type NameHistoryCheck } from "./namehist.js";
 export type {
-  Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, Witness, WitnessTip,
+  Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Snapshot, Transfer, Witness, WitnessTip,
 } from "./answer.js";

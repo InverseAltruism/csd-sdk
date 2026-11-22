@@ -3,8 +3,8 @@
 // a commit in flight at most its own `waitMs`, or until its signal aborts, and past that answers NOT_SYNCED with
 // nothing shown; a commit that never settles leaves advance() pending (the store's failure) and no read hanging.
 // Real timers bound the waits here; no verdict depends on them.
-import { TREASURY_ADDR, nameRegFee } from "@inversealtruism/cairnx-core";
-import { memoryStore, open, type Answer, type Source, type Step, type Store } from "../src/index.js";
+import { TREASURY_ADDR, nameRegFee, resolve, stateHash } from "@inversealtruism/cairnx-core";
+import { memoryStore, open, type Answer, type Snapshot, type Source, type Step, type Store } from "../src/index.js";
 import { fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { cap } from "./node-harness.js";
@@ -56,6 +56,33 @@ console.log("reads at microtask offsets around a rollback's commit:");
   }
   ok(`${runs} reads, commits 0 to 6 microtasks late, reads 0 to 40 after the step begins: none verified, each SHALLOW or NOT_SYNCED (commit in flight, nothing shown) (${shallow} and ${inFlight})`,
     runs === 287 && verified.length === 0 && shallow + inFlight === runs && inFlight > 0, verified.join(" "));
+}
+
+console.log("snapshots at microtask offsets around a rollback's commit:");
+{
+  // Each snapshot's state is resolve() of its own events at its own height: never a state of one commit with the
+  // events of another.
+  let runs = 0, whole = 0, inFlight = 0;
+  const bad: string[] = [];
+  for (let j = 0; j <= 6; j += 2) for (let k = 0; k <= 40; k += 4) {
+    const inner = memoryStore(), late = { on: false };
+    const store: Store = { ...inner, async commit(c) { if (late.on) await ticks(j); return inner.commit(c); } };
+    const sc = script(12), r = await open({ source: sc.source, store, clock });
+    await r.advance();
+    late.on = true;
+    let got: Promise<Answer<Snapshot>> | null = null;
+    sc.arm(() => { got = ticks(k).then(() => r.snapshot()); });
+    await r.advance();
+    const a = await got!, v = a.verified ? a.value : a.shown;
+    runs++;
+    if (v === null) { if (codes(a) === "NOT_SYNCED" && a.why[0]?.detail === "a step's commit is in flight") inFlight++; else bad.push(`j=${j},k=${k}: ${codes(a)}`); }
+    else if (v.state.tipHeight === v.height && a.at?.height === v.height && v.events.every((e) => e.height <= v.height) &&
+      stateHash(resolve([...v.events], v.height)) === stateHash(v.state)) whole++;
+    else bad.push(`j=${j},k=${k}: height ${v.height}`);
+    await r.close();
+  }
+  ok(`${runs} snapshots around a commit: each a whole commit's state and events (${whole}) or NOT_SYNCED with the commit in flight (${inFlight})`,
+    bad.length === 0 && whole + inFlight === runs && whole > 0, bad.join("; "));
 }
 
 console.log("the bound of a read's wait for a slow commit:");

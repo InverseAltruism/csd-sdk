@@ -6,7 +6,7 @@
 import {
   CAIRNX_EVENT_RULE, FINAL_DEPTH, NAME_RE, TICKER_RE, canonicalJson, eventOfTx, resolve, type CairnXState, type ChainEvent, type EventRule, type EventRuleTx,
 } from "@inversealtruism/cairnx-core";
-import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Transfer, Witness } from "./answer.js";
+import type { Answer, AnswerMeta, At, BalanceValue, BoundCursor, NameValue, Page, ReadOptions, ReplicaStatus, Snapshot, Transfer, Witness } from "./answer.js";
 import { basisKey, checkBasis, floorBreak, levelOf, proofOf } from "./basis.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
@@ -59,8 +59,11 @@ export interface Reader extends EventLog {
   state(o?: ReadOptions): Promise<Answer<CairnXState>>;
   /** What cairnx-core's resolve() does with `tx`, a Propose or an Attest by `author`, in the block above the cursor
    *  after every event held: whether it applies, with the reason code and note of the applied log. It reads the tip
-   *  view, so its `at` is the tip at depth 0. */
+   *  view; its `at` is the cursor it was tried above, which is the tip at depth 0 when the replica is synced. */
   dryRun(tx: DryRunTx, author: string, o?: Omit<ReadOptions, "minDepth">): Promise<Answer<{ readonly applied: boolean; readonly code: string | null; readonly note: string | null }>>;
+  /** The tip view (depth 0, the lower of the cursor and the tip) and every event held up to it, from one commit, frozen:
+   *  what a server answers the CairnX resolver's reads from (handlers.ts, read-routes.ts). `at` names the view's block. */
+  snapshot(o?: Omit<ReadOptions, "minDepth">): Promise<Answer<Snapshot>>;
 }
 /** A transaction to try: its app payload and outputs as cairnx-core's event rule reads them. */
 export type DryRunTx = EventRuleTx["tx"];
@@ -98,6 +101,11 @@ const deepFreeze = <T>(v: T): T => {
   return v;
 };
 const copy = <T>(v: T): T => (v === null ? v : structuredClone(v));
+// An answer whose value was read at `height` (the cursor, or a view below the tip) names that block in `at`.
+function atHeight<T>(a: Answer<T>, height: number, hash: string | null): Answer<T> {
+  if (a.at === null || a.at.height === height) return a;
+  return { ...a, at: { ...a.at, height, hash, deepHeight: height, depth: Math.max(0, a.at.tipHeight - height) } };
+}
 // name and primary: the deep view is the value; when the tip view differs, SHALLOW with the tip view in `shown`, since
 // a recent change of a name is the caution (design section 5).
 function bothViews<T>(v: Views, f: (s: CairnXState) => T): Out<T> {
@@ -335,6 +343,8 @@ export function open(o: OpenOptions): Promise<Reader> {
 /** Internal: open() with a recount source, which ./server's open() takes. */
 export async function openWith(o: OpenOptions, recount: Source | null): Promise<Reader> {
   const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay(), recount, true);
+  // The last snapshot, kept while its key names the state the loop holds: one copy per commit, however many reads.
+  let snap: { key: string; value: Snapshot } | null = null;
   return {
     ...log,
     balance(ticker, address, ro) {
@@ -370,18 +380,36 @@ export async function openWith(o: OpenOptions, recount: Source | null): Promise<
     state(ro) {
       return read(ro, true, (v) => { const s = v.deep === null ? null : structuredClone(v.deep); return { value: s, shown: s }; });
     },
-    dryRun(tx, author, ro) {
+    async dryRun(tx, author, ro) {
       const a = addressOf(author);
       let ev: ChainEvent | null = null;
       try { ev = a === null ? null : eventOfTx({ pos: 1, txid: TRY_TXID, tx }, Number.MAX_SAFE_INTEGER - 1, a); } catch { ev = null; }   // refused by the rule
-      return read({ ...ro, minDepth: 0 }, ev !== null, () => {
+      const tried: { c: Cursor | null } = { c: null };
+      const answer = await read({ ...ro, minDepth: 0 }, ev !== null, () => {
         const c = log.status().cursor;
         if (c === null) return { value: null, shown: null };
+        tried.c = c;
         const h = c.height + 1, events = [...loop.rows(0).flatMap((r) => r.events), { ...ev!, height: h }];
         const entry = resolve(events, h).events.find((e) => e.id === TRY_TXID && e.height === h);
         const value = { applied: entry?.ok === true, code: entry?.code ?? null, note: entry?.note ?? null };
         return { value, shown: value };
       });
+      return tried.c === null ? answer : atHeight(answer, tried.c.height, tried.c.hash);
+    },
+    async snapshot(ro) {
+      const view: { height: number; hash: string | null } = { height: -1, hash: null };
+      const answer = await read<Snapshot>({ ...ro, minDepth: 0 }, true, (v) => {
+        const c = loop.status().cursor;
+        if (c === null || v.top === null) return { value: null, shown: null };
+        const height = Math.min(c.height, v.deepHeight), key = `${height}:${c.hash}:${loop.generation()}`;
+        view.height = height; view.hash = height === c.height ? c.hash : loop.hashAt(height);
+        if (snap?.key !== key) {
+          const events = loop.rows(0).filter((r) => r.height <= height).flatMap((r) => r.events);
+          snap = { key, value: deepFreeze({ key, height, state: structuredClone(v.top), events: structuredClone(events) }) };
+        }
+        return { value: snap.value, shown: snap.value };
+      });
+      return view.height < 0 ? answer : atHeight(answer, view.height, view.hash);
     },
   };
 }

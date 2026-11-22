@@ -282,8 +282,12 @@ rows is reset and filled again, except a store filled under an older pin that a 
 `dryRun({ app, outputs }, author)` replays every event held with `tx` (a Propose or an Attest, its outputs as
 cairnx-core's event rule reads them, so a fee or a payment can be tried) in the block above the cursor, and answers
 whether it applies, with the code and note of the applied log; a transaction the event rule does not take (another
-domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. It reads the tip view, so its
-`at` is the tip at depth 0, and it takes no `minDepth`. `local({ node, pin?, fetch? })`,
+domain, an author out of form) is `INPUT_INVALID`. It changes nothing the replica holds. It reads the tip view and takes
+no `minDepth`; its `at` is the cursor it was tried above, which is the tip at depth 0 when the replica is synced (behind
+the tip, or with the tip below the cursor, `at` still names the cursor). `snapshot()` is the tip view at depth 0, the
+lower of the cursor and the tip, with every event held up to it, both from one commit and frozen; `at` names the
+view's block, and two snapshots with one `key` are one object. It is what a server answers the resolver's reads from
+("The resolver's reads" below). `local({ node, pin?, fetch? })`,
 in `./browser` and `./server`, is what `open` takes for one's own node held in memory: `nodeBlocks` under that entry's
 address rule, above `pin` when one is given ("Pins" below), and `memoryStore()`.
 

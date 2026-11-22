@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- `Reader.snapshot()`: the tip view and the events held up to it from one commit, frozen, one object per state
+  (`Snapshot`). `dryRun`'s `at` is the cursor it was tried above (it named the tip, also while behind it or above it).
 - `indexerFeed`: a step's tip carries its header time, read from the indexer's `/block/<hash>` (it was 0, so every
   answer said `TIP_STALE`); with `verifyInclusion` the tip is the final height, the highest block the Scanner emits
   for (it was the indexer's tip, so every answer said `BEHIND`), and every answer carries the new note `FINAL_VIEW`;
