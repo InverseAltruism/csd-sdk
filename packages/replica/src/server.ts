@@ -3,10 +3,11 @@
 // (comma-separated, parsed strictly by parseHosts), read once from the process environment and from nowhere else.
 import type { Witness } from "./answer.js";
 import { diskStore } from "./disk-store.js";
+import { ReplicaConfigError } from "./errors.js";
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
 import { localOf } from "./presets.js";
-import type { OpenOptions } from "./reader.js";
+import { openWith, type OpenOptions, type Reader } from "./reader.js";
 import type { BlocksSource, Pin } from "./types.js";
 
 export * from "./index.js";
@@ -55,4 +56,19 @@ const OWN_NODE_STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 export function ownNode(o: OwnNodeOptions): OpenOptions {
   const { dir, witness, ...rest } = o;
   return { source: local(rest).source, store: diskStore({ dir }), witnesses: witness === undefined ? [] : [witness], step: OWN_NODE_STEP };
+}
+
+/** open() with `recount`, a block source of the server's: when a reference's difference has started at one boundary
+ *  for STREAK new boundaries, a separate loop over it in memory reads to its source's tip (RECOUNT_MS at most) and
+ *  takes that boundary. Equal to the replica's own tuple, the difference is confirmed (the note DIVERGENCE_CONFIRMED)
+ *  and the replica keeps answering; equal to the reference's, the store is rebuilt (STORE_UNCONFIRMED while it
+ *  refills), up to REBUILDS times with no equal comparison between, then kept with STORE_UNCONFIRMED and the note
+ *  SOURCES_DISAGREE. Without `recount` a difference is only reported. A `recount` whose basis is not complete blocks bound to
+ *  headers throws ReplicaConfigError: a feed's word cannot settle a difference that leads to a rebuild. */
+export function open(o: OpenOptions & { readonly recount?: BlocksSource }): Promise<Reader> {
+  const { recount, ...rest } = o;
+  if (recount !== undefined && (recount as { basis?: { kind?: unknown } }).basis?.kind !== "blocks") {
+    return Promise.reject(new ReplicaConfigError(`open: recount must be a block source, not a ${String((recount as { basis?: { kind?: unknown } }).basis?.kind)} source`));
+  }
+  return openWith(rest, recount ?? null);
 }

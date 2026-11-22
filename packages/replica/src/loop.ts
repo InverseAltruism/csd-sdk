@@ -48,9 +48,18 @@ export interface LoopStatus {
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
-  /** The held boundary at `height`, its state hash replayed once and memoized when it was stored without one; null when
-   *  no boundary is held there or the store is not open. */
+  /** The served boundary at `height`: its state hash as stored, or replayed once and memoized when it was stored
+   *  without one; null when no boundary is served there or the store is not open. A held boundary is served while it is
+   *  FINAL_DEPTH deep under the cursor: one a rollback left shallower is kept and served again once the chain held
+   *  grows back over it, as the resolver's book withdraws it. */
   boundary(height: number): Boundary | null;
+  /** The heights of the served boundaries, ascending; none while the store is not open. */
+  boundaryHeights(): number[];
+  /** The newest served boundary whose state hash is stored or was replayed already: nothing is replayed for it. */
+  newestBoundary(): Boundary | null;
+  /** Resets the store and reads it again empty, so the next advance refills it; until a step reaches its tip the
+   *  status says `unconfirmed`. Queued with open, advance and close. */
+  rebuild(): Promise<void>;
   open(): Promise<LoopOpen>;
   /** Runs steps until caught up, backed off, aborted or past `budgetMs`, and resolves after the last commit. */
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
@@ -137,9 +146,18 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   const cursor = (): Cursor | null => meta?.cursor ?? null;
+  // A commit adds a boundary only once FINAL_DEPTH deep, so only a rollback leaves one shallower; its block and events
+  // are kept under the cursor, so it is withheld, not dropped.
+  const served = (): Boundary[] => {
+    const c = cursor();
+    return opened === "open" && c !== null ? bounds.filter((b) => b.height + FINAL_DEPTH <= c.height) : [];
+  };
   const hashAt = (h: number): string | null => hashIn(held, cursor(), h);
   const eventsHashAt = (h: number): string | null => eventsHashIn(held, cursor(), h);
-  // Replayed from the rows held: a boundary's stored state hash is never read here, since a store can hold a wrong one.
+  // Replayed from the rows held, not read from a stored boundary: a source checks a pin against the store with it
+  // (pinned.ts), so it must not take the store's own record of the value it checks. boundary() and newestBoundary() do
+  // serve a stored state hash as recorded: in the disk and browser stores the boundary chain their record names covers
+  // it, checked at open (store-format.ts); a memory store lives in the process.
   const stateHashAt = (h: number): string | null => {
     const c = cursor();
     if (c === null || h > c.height) return null;
@@ -341,8 +359,22 @@ export function replicaLoop(o: LoopOptions): Loop {
     async quiet() { while (busy !== null) await busy; },
     rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),
+    boundaryHeights: () => served().map((b) => b.height),
+    newestBoundary() {
+      const bs = served();
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const b = bs[i]!, hash = b.stateHash ?? filled.get(b.height) ?? null;
+        if (hash !== null) return { ...b, stateHash: hash };
+      }
+      return null;
+    },
+    rebuild: () => queued(async () => {
+      try { await store.reset(); } catch (e) { storeError = messageOf(e); storeReason = "io"; throw e; }
+      unconfirmed = true; tip = null;
+      await read();
+    }),
     boundary(h) {
-      const b = opened === "open" ? bounds.find((x) => x.height === h) : undefined;
+      const b = served().find((x) => x.height === h);
       if (b === undefined || b.stateHash !== null) return b ?? null;
       let hash = filled.get(h);
       if (hash === undefined) {

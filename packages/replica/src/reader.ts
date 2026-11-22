@@ -12,23 +12,30 @@ import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { sameRule } from "./contract.js";
 import { afterInApplyOrder, boundOf, nextOf, resumeOf, type HeldChain } from "./cursor.js";
 import { ReplicaConfigError, messageOf } from "./errors.js";
-import { coreCheck, type CoreModule } from "./gates.js";
+import { comparer, type TupleReference } from "./compare.js";
+import { either } from "./http.js";
+import { coreCheck, LOADED_GATES, type CoreModule } from "./gates.js";
 import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
 import { fullReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
+import { tupleOf, type Tuple } from "./tuple.js";
 import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
 import { FRESH_MS, verdict } from "./verdict.js";
 import { addressOf, balanceOf, nameOf, primaryOf } from "./views.js";
 import { witnessBoard } from "./witness.js";
 
 /** `source`: a block source (or, in tests, a feed); `store` defaults to memoryStore(); `witnesses` are asked with each
- *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms.
+ *  advance; `core` is the caller's cairnx-core module, compared with the one this package loads; `clock` gives ms;
+ *  `reference`: a host whose tuples each advance compares with the replica's (compare.ts; open() only).
  *  `step`, internal: the budget of each step, default the loop's (64 blocks, 10 requests). */
 export interface OpenOptions {
   readonly source: Source; readonly store?: Store; readonly witnesses?: readonly Witness[]; readonly core?: CoreModule; readonly clock?: () => number;
-  readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
+  readonly reference?: TupleReference; readonly step?: { readonly maxBlocks: number; readonly maxRequests: number };
 }
+/** How long a recount from blocks may run before it gives no answer: it reads its source from the floor to the source's
+ *  tip, 10 minutes at most. The advance's signal and close() end it sooner, and an ended recount settles nothing. */
+export const RECOUNT_MS = 600_000;
 export interface EventLog {
   /** The events after `after` (exclusive) at least `minDepth` deep, in the order of CONVENTION section 33.3. A cursor
    *  whose events hash is no longer the replica's at its height is CURSOR_OFF_BRANCH, nothing shown (cursor.ts). */
@@ -78,6 +85,13 @@ type Out<T> = { value: T | null; shown: T | null; why?: NotVerifiedCode[]; notes
 const rootOf = (b: Basis): { root: HeaderRoot; pin: Cursor | null } | null =>
   b.kind === "blocks" ? { root: b.root, pin: null } : b.kind === "pinned" ? { root: b.above.root, pin: b.pin } : null;
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return url; } };
+// Every origin a store's records or headers are read from: a reference on one of them is no second source.
+const originsOf = (b: Basis): string[] => {
+  const blocks = b.kind === "pinned" ? b.above : b.kind === "blocks" ? b : null;
+  if (blocks === null) return b.kind === "feed" ? [originOf(b.feed)] : b.kind === "display" ? [originOf(b.origin)] : [];
+  const root = blocks.root;
+  return [originOf(blocks.bodies), ...(root.kind === "own-node" ? [originOf(root.node)] : root.kind === "caller" ? [originOf(root.origin)] : [])];
+};
 // openLog's: another rule's events have no CairnX state, so a boundary keeps a null state hash.
 const deepFreeze = <T>(v: T): T => {
   if (typeof v === "object" && v !== null && !Object.isFrozen(v)) { Object.freeze(v); for (const x of Object.values(v)) deepFreeze(x); }
@@ -93,7 +107,7 @@ function bothViews<T>(v: Views, f: (s: CairnXState) => T): Out<T> {
 }
 const noState: Materializer = { load: () => undefined, apply: () => undefined, rollback: () => undefined, stateAt: () => null, replayMs: null };
 
-async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
+async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: Source | null = null, compares = false) {
   // Every answer's `vouch` is this object, so it is frozen; every other value a read returns is built for that read.
   const basis = deepFreeze(checkBasis(o.source.basis)), clock = o.clock ?? Date.now, witnesses = o.witnesses ?? [];
   if (basis.kind === "display") throw new ReplicaConfigError("open: a display source is read through ./display");
@@ -110,7 +124,26 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
   await loop.open();
   restore(store.kept?.() ?? null);
   const level = levelOf(basis), meta = { level, proof: proofOf(basis), vouch: basis }, listeners = new Set<(s: ReplicaStatus) => void>();
-  let running: Promise<ReplicaStatus> | null = null;
+  // `running` is a whole advance; `stepping` the part a read waits for (the step and the witnesses), so a read is not
+  // held by a reference, which the advance compares after it. close() aborts the comparison and a recount.
+  let running: Promise<ReplicaStatus> | null = null, stepping: Promise<void> | null = null;
+  const closing = new AbortController();
+  const ref = compares ? o.reference : undefined;
+  const cmp = ref === undefined ? null : comparer({
+    ref, sameOrigin: originsOf(basis).includes(originOf(ref.base)), gates: LOADED_GATES, rebuild: () => loop.rebuild(),
+    ...(recount === null ? {} : { recount: (h: number, sig: AbortSignal) => recountAt(recount, h, sig) }),
+  });
+  // A separate loop over the recount source in memory, read to `height` FINAL_DEPTH deep: its tuple there, or null.
+  async function recountAt(src: Source, height: number, signal: AbortSignal): Promise<Tuple | null> {
+    const l = replicaLoop({ source: src, store: memoryStore(), rule, clock, ...o.step });
+    try { await l.open(); await l.advance({ budgetMs: RECOUNT_MS, signal }); return signal.aborted ? null : tupleOf(l.boundary(height)); } finally { await l.close(); }
+  }
+  const pin = o.source.pin;
+  const view = {
+    heights: () => loop.boundaryHeights(), tupleAt: (h: number) => tupleOf(loop.boundary(h)), hashAt: (h: number) => loop.hashAt(h),
+    newest: () => tupleOf(loop.newestBoundary()), pin: basis.kind === "pinned" && pin !== undefined ? { height: pin.height, blockHash: pin.blockHash, eventsHash: pin.eventsHash, stateHash: pin.stateHash } : null,
+  };
+  const COMPARE_NOTES = { branch: "TUPLE_BRANCH", records: "TUPLE_RECORDS", rules: "TUPLE_RULES" } as const;
 
   function judge(minDepth: number): Pick<AnswerMeta, "why" | "notes" | "at"> & { codes: NotVerifiedCode[] } {
     const now = board.now(), s = loop.status(), w = board.witnessed(loop.generation());   // the clock first: a set-back voids
@@ -120,15 +153,15 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     // Only a pinned source keeps a refusal of its pin; an anchor root without one names PIN_OFF_CHAIN for a step alone.
     const e = basis.kind === "pinned" ? s.lastError?.code : undefined, refused = e === "PIN_MISMATCH" || e === "PIN_OFF_CHAIN" || e === "RULES_DIFFER" ? e : null;
     const codes = verdict({
-      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed,
-      rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip),
+      level, feed: basis.kind === "feed", synced, now, peerAhead: (t) => board.peerAhead(t), refused, unconfirmed: s.unconfirmed || (cmp?.owed() ?? false) || (cmp?.outvoted() ?? false),
+      rulesDiffer: (tip) => core.differ(tip) || board.rulesDiffer(core.own, tip), disputed: cmp?.pinDisputed() ?? false,
       witness: r === null || r.root.kind === "own-node" ? null : { at: w?.at ?? null },
     });
     // Why the store is unavailable reaches a caller that only reads as one of a fixed list (a refusal met inside a
     // later load throws only into advance()); the store's own message, which holds paths, stays on the loop's status.
     const unavailable = s.storeReason === null ? { code: "STORE_UNAVAILABLE" as const } : { code: "STORE_UNAVAILABLE" as const, detail: STORE_DETAILS[s.storeReason] };
     const notes: { code: NoteCode; detail?: string }[] = [...(core.two ? [{ code: "TWO_CORES" as const }] : []), ...(s.store === "unavailable" ? [unavailable] : []),
-      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : [])];
+      ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes()];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };
@@ -165,27 +198,39 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     }
   }
 
+  function compareNotes(): { code: NoteCode; detail?: string }[] {
+    const c = cmp?.report() ?? null;
+    if (c === null) return [];
+    const kind = c.kind === "branch" || c.kind === "records" || c.kind === "rules" ? [{ code: COMPARE_NOTES[c.kind] as NoteCode, detail: `boundary ${c.height}` }] : [];
+    return [...kind, ...(c.recount === "ours" ? [{ code: "DIVERGENCE_CONFIRMED" as const, detail: `boundary ${c.height}` }] : []),
+      ...(cmp?.outvoted() === true ? [{ code: "SOURCES_DISAGREE" as const, detail: `the store's source, against the recount and the reference at boundary ${c.height}` }] : [])];
+  }
+
   function status(): ReplicaStatus {
     const s = loop.status(), j = judge(FINAL_DEPTH), w = board.witnessed(loop.generation());
     return { ...meta, why: j.why, notes: j.notes, at: j.at, verified: j.codes.length === 0, source: basisKey(basis), cursor: copy(s.cursor),
       storeReason: s.storeReason, storeError: s.storeError, keepError,
-      witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: null, compare: null, replayMs: s.replayMs };
+      witnessed: w === null ? null : { height: w.height, at: w.at }, lastReorg: copy(s.lastReorg), lastError: copy(s.lastError), tuple: tupleOf(loop.newestBoundary()), compare: copy(cmp?.report() ?? null), replayMs: s.replayMs };
   }
 
   // A call while a run is in flight joins it (its own budget and signal are not applied), so two runs never overlap.
   function advance(a: { budgetMs?: number; signal?: AbortSignal } = {}): Promise<ReplicaStatus> {
     if (running !== null) return running;
     const signal = a.signal ?? new AbortController().signal;
-    const run = (async () => {
+    const stepped = (async () => {
       await Promise.all([loop.advance(a), board.tips(signal)]);
       await board.confirm({ cursor: loop.status().cursor, hashAt: (h) => loop.hashAt(h), generation: () => loop.generation() }, signal);
+    })();
+    const run = (async () => {
+      await stepped;
+      await cmp?.run(view, either(signal, closing.signal));
       await keep();
       const s = status();
       for (const f of listeners) f(s);
       return s;
     })();
-    running = run;
-    const clear = () => { if (running === run) running = null; };
+    running = run; stepping = stepped;
+    const clear = () => { if (running === run) { running = null; stepping = null; } };
     run.then(clear, clear);
     return run;
   }
@@ -206,10 +251,12 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     const minDepth = o.minDepth ?? FINAL_DEPTH, invalid = (): Answer<T> =>
       ({ ...meta, verified: false, value: null, shown: null, why: [{ code: "INPUT_INVALID" }], notes: [], at: null });
     if (!inputOk || !Number.isSafeInteger(minDepth) || minDepth < 0) return invalid();
-    // A read starts an advance unless one runs, then waits for it and for a commit in flight, together at most
+    // A read starts an advance unless one runs, then waits for its step (not the comparison that follows it) and for a
+    // commit in flight, together at most
     // `waitMs` (default 0) from now. From the last check of committing() on nothing is awaited, so a read either
     // answers from the state the last whole commit left or, with a commit still in flight, NOT_SYNCED with nothing shown.
-    const deadline = Date.now() + (o.waitMs ?? 0), step = running ?? advance();
+    if (running === null) void advance().catch(() => undefined);
+    const deadline = Date.now() + (o.waitMs ?? 0), step = stepping!;
     let ran = false;
     void step.then(() => { ran = true; }, () => { ran = true; });
     await within(o, deadline, () => ran, () => step);
@@ -266,7 +313,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer) {
     status,
     subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; },
     advance,
-    async close() { await running?.catch(() => undefined); await loop.close(); },
+    async close() { closing.abort(); await running?.catch(() => undefined); await loop.close(); },
   };
   return { log, read, loop, pagedChain };
 }
@@ -279,8 +326,13 @@ export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Pr
 /** A CairnX replica: the event log and the reads over cairnx-core's resolve(). Throws ReplicaConfigError for a basis
  *  that cannot give every event from activation (`code` BELOW_FLOOR), a pin of another rule (`code` PIN_MISMATCH) or a
  *  witness on the header source's origin. */
-export async function open(o: OpenOptions): Promise<Reader> {
-  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay());
+export function open(o: OpenOptions): Promise<Reader> {
+  return openWith(o, null);
+}
+
+/** Internal: open() with a recount source, which ./server's open() takes. */
+export async function openWith(o: OpenOptions, recount: Source | null): Promise<Reader> {
+  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay(), recount, true);
   return {
     ...log,
     balance(ticker, address, ro) {

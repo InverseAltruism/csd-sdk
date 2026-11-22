@@ -232,16 +232,17 @@ An answer is verified only when every condition holds. Each failed one adds its 
 
 The tip is the one the loop's last step reported, a header the root vouches for, never `Source.tip()`. Every clock is
 `clock()` (default `Date.now`). Notes: `TWO_CORES` (a caller's cairnx-core is a second module with the same gate
-table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared), `WITNESS_MALFORMED` (a witness
-answered its tip or its gate table out of form, and was taken as silent), `CURSOR_ABOVE_TIP` (an `events` or
+table), `SOURCES_DISAGREE` (a witness gave another hash at the height it was compared; or, with its `detail` naming
+the boundary, the store's source disagrees with a recount and a reference that agree, "Tuples and a reference"),
+`WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
+`CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
 directory, a read or write failed, or a reset it needed failed, the browser store's unconfirmed reset included; the
 store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
 `storeError`, that message in full: it is for the server's own logs and is not forwarded to clients, since it can hold
-paths. Exported and not emitted yet:
-`UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
-`TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
+paths. `PIN_DISPUTED` and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES` and `DIVERGENCE_CONFIRMED` come from
+a reference ("Tuples and a reference" below). Exported and not emitted yet: `UNSUPPORTED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
 
 A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
@@ -523,9 +524,73 @@ signal.
 
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
 byte for byte apart from import paths, then cleaned under review; `scripts/move-residual.mjs <resolver git dir>
-<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not part of
-this package yet. The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
+<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not moved:
+the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
+
+## Tuples and a reference
+
+Each epoch boundary the loop holds `FINAL_DEPTH` deep is a tuple of CONVENTION section 34: `{ height, blockHash,
+eventsHash, stateHash }`. A boundary is added once it is 12 deep, dropped by a rollback below it and kept by the store;
+a refused step commits none. A rollback to a shorter branch that leaves a kept boundary fewer than 12 blocks under the
+cursor withholds it (no tuple, not compared) until the chain held is 12 above it again, as the resolver withdraws it.
+`status().tuple` is the newest boundary whose state hash is known (the loop replays a boundary's state when it becomes
+deep within 24 epochs of the tip; an older one is replayed on demand), read from memory.
+`test/tuple-differential.test.ts` feeds one feed through this book and through the resolver's own (a test-only copy of
+its `src/tuple.ts` at cairnx `c89ab86`, unchanged since `a0d3f27`) and finds the same tuple at every boundary both hold:
+the 2,905 of the recorded capture to 117,000, and across a reorg below and above kept boundaries, a refused scan and
+rollbacks that leave a boundary 1 to 11 blocks under the cursor; after each accepted scan both serve the same boundaries.
+While scans are refused the resolver withholds every tuple and this book serves the tuples it committed. If the chain
+reorganises below them meanwhile, those tuples name a block the chain no longer holds at that height until the next
+accepted step rolls them back: a comparer reading one then sees `branch`, another block hash, not a difference.
+
+`open({ ..., reference: { base, fetch?, timeoutMs?, maxRequests? } })` compares the replica's tuples with a host's
+(`base` the prefix of `/cairnx/tuple/<height>[:<blockHash>]`, ours `https://cairn-substrate.com/trade/api`). When an
+advance holds a new newest boundary with a known tuple, the reference is read for it by height and block hash, then by
+height. This runs after the advance's step: a read that waits on the advance waits for the step and the witnesses,
+not for the reference. `status().compare` is a `CompareReport` (null before the first comparison; `height` is -1 on
+an `unavailable` report that has no boundary yet):
+
+| kind | what the reference answered | note |
+|---|---|---|
+| `equal` | the same tuple | none |
+| `branch` | another block hash at that height: two branches, compared again later, never a difference | `TUPLE_BRANCH` |
+| `records` | the same block hash and another events hash at the first boundary that differs | `TUPLE_RECORDS` |
+| `rules` | the same events hash and another state hash there (`gates` carries this package's table; the reference serves none) | `TUPLE_RULES` |
+| `missing` | a 404 by hash and by height | none |
+| `unavailable` | no answer within the run's bounds, or an answer that is not the documented shape | none |
+
+For a difference, a binary search over the held boundaries between the last agreeing one and the newest finds the
+first that differs (`height`, with `lastAgreeing` below it); `streak` counts the new newest boundaries in a row whose
+difference starts at that boundary (advances at one tip do not add to it). A pinned store's pin is read with each new
+newest boundary until the reference gives the pin's own tuple, which is then kept: the pin's block hash with another
+events hash is `PIN_DISPUTED`, which withholds `verified` until the reference answers the pin's tuple (a 404 at the pin
+leaves the last answer's verdict). So a reference can withhold `verified` on a pinned store: that is the design, a
+recount does not settle it, and an integrator who names a reference accepts it. A difference first seen above the pin
+lies in rows the replica proved from blocks, so it is `TUPLE_RECORDS` with `verified` unchanged. A reference is hostile
+input: each advance reads it at most
+`maxRequests` times (default 16) within 20 s, each request within `timeoutMs` (default 5 s), each answer at most 4,096
+bytes; an answer out of shape, or one that contradicts itself, ends that run `unavailable`. `status()` reads nothing.
+Nothing a reference answers raises a level or counts as a witness's confirmation. A reference on an origin the store is
+filled from is marked `sameOrigin`; the test is equality of URL origins and nothing more (`www.`, a trailing dot,
+another scheme or port read as another origin), so it is a label for a caller who names its sources honestly, not a
+defence against one host under two names.
+
+A difference is acted on only with `recount` (`./server`'s `open`), a block source of the server's (`open` refuses a
+source whose basis is not blocks), and only once its first boundary has stayed the same for `STREAK` (3) new
+boundaries: a separate loop over `recount` in memory reads from its floor to its source's tip, for at most `RECOUNT_MS`
+(10 minutes), and takes that boundary. The advance's signal and `close()` end a recount, and an ended recount settles
+nothing. Equal to the replica's tuple, the difference is confirmed (`DIVERGENCE_CONFIRMED`) and the replica keeps
+answering; equal to the reference's, the store is rebuilt (`STORE_UNCONFIRMED` while it refills to the tip; a reset
+that throws keeps `STORE_UNCONFIRMED` and is tried again at the next new boundary); neither, nothing changes. Without
+`recount` a difference is reported and never acted on. The cost a reference can impose is bounded: a recount per
+difference held for three boundaries, so a reference that differs for three and agrees for one forces one full read
+from the floor every four boundaries (120 blocks). A rebuild refills from the store's own source, so a source that
+keeps serving what the recount and the reference agree against would be rebuilt every few boundaries: after `REBUILDS`
+(2) rebuilds with no equal comparison between them, a recount that sides with the reference rebuilds no more. The
+store is kept, `STORE_UNCONFIRMED` holds and the note `SOURCES_DISAGREE` names the boundary, until a comparison is
+equal (which also clears the count) or a recount equals the store's tuple. Replace that source. The same object may be both `source` and `recount`: the recount then
+reads the store's own source again, which still finds a store damaged since it was filled.
 
 ## The browser store
 

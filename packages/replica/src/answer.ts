@@ -3,6 +3,8 @@
 import type { NameView, TokenMove } from "@inversealtruism/cairnx-core";
 import type { BlockHeader } from "@inversealtruism/csd-codec";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
+import type { CompareReport } from "./compare.js";
+import type { Tuple } from "./tuple.js";
 import type { StoreReason } from "./loop.js";
 import type { Basis, Cursor, RecordProof, TipView } from "./types.js";
 
@@ -70,5 +72,5 @@ export interface ReplicaStatus extends AnswerMeta {
   readonly witnessed: { readonly height: number; readonly at: number } | null;
   readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;
   readonly lastError: { readonly code: string; readonly reason: string; readonly at: number } | null;
-  readonly tuple: null; readonly compare: null; readonly replayMs: number | null;
+  readonly tuple: Tuple | null; readonly compare: CompareReport | null; readonly replayMs: number | null;
 }
