@@ -4,14 +4,17 @@
 
 - A held replay context: `newReplayContext()` keeps `resolve()`'s fold between tips. `advance(toHeight, events)`
   applies the whole blocks above the context's height, in apply order; `stateAt(t)`, at that height, answers in place.
-  For inputs made of plain values (what JSON carries) whose event heights and tips are safe integers, its answer at t
-  is what `resolve()` returns over the same events at t, and an answer handed out earlier does not change later; a
-  height or tip outside that domain is refused with a `ReplayContextRefusal` ("domain") and the caller replays with
-  `resolve()`. The other refusals, each thrown before any write: "order" (a target below the height, an event at or
-  below it or above the target; a new context stands at -1, so it refuses a negative height, which `resolve()` skips
-  below activation), "tip" (an answer off the height), "broken" (any call after a handler threw inside `advance`),
-  "sloppy" (a build that runs the module in sloppy mode, where a write to a frozen shared part would be dropped
-  instead of throwing). No copy and no serialising: a reorg that removes an applied block costs one full replay.
+  It takes an event whose height is a safe integer (`isChainHeight`), whose position is a safe integer >= 0 and whose
+  id is a string, as CONVENTION section 33 builds them. For inputs made of plain values (what JSON carries), its answer
+  at t is what `resolve()` returns over the same events at t, and an answer handed out earlier does not change later.
+  Any other event, and a height or tip outside `isChainHeight`, is refused with a `ReplayContextRefusal` ("domain")
+  and the caller replays with `resolve()`. `advance` reads its events once and keeps a one-level copy of each, so a
+  write into an event after the call changes no later answer. The other refusals, each thrown before any write:
+  "order" (a target below the height, an event at or below it or above the target; a new context stands at -1, so it
+  refuses a negative height, which `resolve()` skips below activation), "tip" (an answer off the height), "broken"
+  (any call after the replay threw inside `advance` or `stateAt`, where `resolve()` throws too), "sloppy" (a build
+  that runs the module in sloppy mode, where a write to a frozen shared part would be dropped instead of throwing). The
+  context keeps no earlier state: a reorg that removes an applied block costs one full replay.
   `isChainHeight`, the one domain rule (`Number.isSafeInteger`), is exported and read by `resolve()`'s fold and by the
   context. `resolve()` is unchanged: the seal against 0.2.9 finds its whole result identical over each input of
   0.2.9's proof, and walks a held context through 26,303 of them, 1,270,287 answers each equal to `resolve()`

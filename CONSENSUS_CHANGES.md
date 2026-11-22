@@ -62,28 +62,37 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 ## cairnx-core 0.2.10, cairnx-api 0.1.3 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
 No rule changes. New root exports: `newReplayContext`, `ReplayContextRefusal` (with its code type) and
-`isChainHeight`. `resolve.ts` exports `createFold` to `src/replay-context.ts` only, and its `inDomain` now reads
-`isChainHeight` (`types.ts`, exactly `Number.isSafeInteger`), the rule the context's refusal reads too; `resolve()`
-performs the same operations as in 0.2.9.
+`isChainHeight`. `resolve.ts` exports `createFold` and `events.ts` exports `isIndex` to `src/replay-context.ts` only
+(neither from the root), and the fold's `inDomain` now reads `isChainHeight` (`types.ts`, exactly
+`Number.isSafeInteger`), the rule the context's refusal reads too; `resolve()` performs the same operations as in
+0.2.9.
 
 A held context runs the fold between tips: `advance(toHeight, events)` applies the whole blocks above its height in
 apply order, and `stateAt(t)`, at that height, runs the fold's end in place (the last flush, the closing sweep at `t +
 1`, the materialized state). Inside the domain this is a full replay's answer: the answer's sweep at `t + 1` is one
 more sweep height, the exact-height sweep's effect sequence does not depend on sweep heights (0.2.9's entry), and the
 next block's flush and sweep follow the answer as they would follow the block before. Outside the domain the fold's
-single batches depend on where sweeps run, so the context refuses ("domain") and the caller replays. The other
-refusals are "order" (a new context stands at -1, so a negative height is refused), "tip", "broken" (after a handler
-threw inside `advance`) and "sloppy" (a build running the module in sloppy mode), each thrown before any write. An
-answer shares nothing a later advance writes: open offers and every bid are copied one level deep (an offer that
-answers a bid is pushed onto its offers, closed or not), the log is sliced, and the parts it shares (closed offers,
-their nested records, log entries, profiles) are frozen, so a write the fold made there would throw and break the
-context instead of changing an earlier answer.
+single batches depend on where sweeps run, so the context refuses ("domain") and the caller replays. It refuses
+("domain") too an event whose position is not a safe integer >= 0 (`isIndex`) or whose id is not a string: there
+`applyOrder` is no consistent order (a NaN key compares equal), and a sort of one block alone can order it unlike
+`resolve()`'s sort of the whole stream. `advance` reads its argument once into one array of one-level copies of the
+events: a block's deferred cancels read their event's height, position and id again at the next flush, which a
+caller's later write into the event would otherwise reach; `paidTo`, not copied, is read during the call only. The
+other refusals are "order" (a new context stands at -1, so a negative height is refused), "tip", "broken" (after the
+replay threw inside `advance` or `stateAt`) and "sloppy" (a build running the module in sloppy mode), each thrown
+before any write. An answer shares nothing a later advance writes: open offers and every bid are copied one level deep
+(an offer that answers a bid is pushed onto its offers, closed or not), the log is sliced, and the parts it shares
+(closed offers, their nested records, log entries, profiles) are frozen, so a write the fold made there would throw
+and break the context instead of changing an earlier answer.
 
-What is claimed: for inputs made of plain values (what JSON carries) whose event heights and tips are safe integers,
-the context's answer at t equals `resolve()` over the same events at t, including the whole result, and an answer
-handed out earlier does not change later; where `resolve()` throws over the same events, the context throws that error
-(from `advance`, or from `stateAt` for a throw at the tip) and refuses every later call ("broken"). A getter or a
-conversion with side effects is outside the claim, as for `resolve()`.
+What is claimed: for inputs made of plain values (what JSON carries) whose tips and event heights are safe integers,
+whose event positions are safe integers >= 0 and whose event ids are strings (the context refuses any other), the
+context's answer at t equals `resolve()` over the same events at t, including the whole result, and an answer handed
+out earlier does not change later, nor does a write into an event after it was given; where `resolve()` throws inside
+the replay over the same events (in a handler, or at the end at the tip), the context throws that error (from
+`advance`, or from `stateAt` for a throw at the tip) and refuses every later call ("broken"). A throw while `advance`
+reads its argument (one that is not iterable) is `resolve()`'s throw too and leaves the context as it was. A getter or
+a conversion with side effects is outside the claim, as for `resolve()`.
 
 The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.9`, each baseline bound to npm.
 `resolve()` is state-neutral: its whole result, codes and moves included, is identical to 0.2.9's and `canonicalState`
@@ -101,7 +110,8 @@ new context; no answer that differs. Check mode is clean on 24,357 inputs, the t
 `packages/cairnx/test/replay-context.test.ts` walks every height of the sweep streams (D at its dense tips), every
 event height of the replay corpus with the heights below them and the pinned heights, and the growth streams at 500,
 with answers at seeded random steps against one step per block, answers written over, a reorg, each refusal with the
-context unchanged, and the sloppy-mode refusal. cairnx-api 0.1.3 adds `order=length` on `names` and takes this core as
+context unchanged (positions and ids outside the domain among them), a fed event written over after `advance`, a
+generator as the events, an answer's name profile written over, and the sloppy-mode refusal. cairnx-api 0.1.3 adds `order=length` on `names` and takes this core as
 its exact peer.
 
 ## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height

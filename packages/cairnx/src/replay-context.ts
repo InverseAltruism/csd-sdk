@@ -1,8 +1,8 @@
 // A held replay context: the fold of resolve() kept between tips, fed whole blocks in order and answering in place at
-// the last height it was given (CONVENTION section 5). Its answer at t is what resolve() returns over the same events
-// at t for every event it takes. It takes an event whose height is a safe integer (isChainHeight), whose position is a
-// safe integer >= 0 and whose id is a string: outside the first the fold's sweeps would depend on where answers ran,
-// outside the other two applyOrder is no consistent order, so a sort of one block alone could order it differently
+// the last height it was given (CONVENTION section 5). Over the events it takes, its answer at t is what resolve()
+// returns over the same events at t. It takes an event whose height is a safe integer (isChainHeight), whose position
+// is a safe integer >= 0 and whose id is a string: outside the first the fold's sweeps would depend on where answers
+// ran, outside the other two applyOrder is no consistent order, so a sort of one block alone could order it differently
 // from resolve()'s sort of the whole stream. It refuses the rest, and the caller replays with resolve().
 import { isIndex } from "./events.js";
 import { applyOrder, createFold, eventId } from "./resolve.js";
@@ -14,7 +14,7 @@ export type ReplayContextRefusalCode = "domain" | "order" | "tip" | "broken" | "
  *  outside isChainHeight, an event position that is not a safe integer >= 0, or an event id (a Propose's id, an
  *  Attest's txid) that is not a string; "order": a target below the context's height, or an event at or below it or
  *  above the target (a negative height, for a new context); "tip": an answer asked off the context's height;
- *  "broken": any call after a handler threw inside advance or stateAt; "sloppy": a context started where a write to a
+ *  "broken": any call after the replay threw inside advance or stateAt; "sloppy": a context started where a write to a
  *  frozen object does not throw. */
 export class ReplayContextRefusal extends Error {
   readonly code: ReplayContextRefusalCode;
@@ -52,7 +52,7 @@ export function newReplayContext(): ReplayContext {
     advance(toHeight, events) {
       live();
       if (!isChainHeight(toHeight)) throw new ReplayContextRefusal("domain", `target height ${String(toHeight)} is not a safe integer`);
-      // A block's deferred cancels read their event again at the next flush (its height, position and id).
+      // Copied: a block's deferred cancels read their event again at the next flush (its height, position and id).
       const batch = [...events].map((e) => ({ ...e }));
       for (const e of batch) {
         if (!isChainHeight(e.height)) throw new ReplayContextRefusal("domain", `event height ${String(e.height)} is not a safe integer`);
