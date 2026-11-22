@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.10
 
 - A held replay context: `newReplayContext()` keeps `resolve()`'s fold between tips. `advance(toHeight, events)`
   applies the whole blocks above the context's height, in apply order; `stateAt(t)`, at that height, answers in place.
@@ -22,9 +22,9 @@
   sweep streams (D, over 284,000 blocks, at its dense tips; the malformed ones until refused), every event height of
   the replay corpus and the growth streams at 500, with answers re-read after later advances and written over. On the
   replay corpus (1,133 events in 774 blocks), advancing one block and answering at it, 774 times, took 2.81 percent of
-  the time of a `resolve()` per block (medians of five interleaved runs on a host at load 30 to 40, where the build
-  without the copy and the position and id checks took 4.41 percent); those checks and the copy alone take 0.108 ms
-  over the whole corpus.
+  the time of a `resolve()` per block (medians of five interleaved runs on a host at load 30 to 40; the build without
+  the copy and the position and id checks measured 4.41 percent in the same runs, and the runs' ranges overlap, so the
+  two figures do not rank the builds); those checks and the copy alone take 0.108 ms over the whole corpus.
 
 ## 0.2.9
 

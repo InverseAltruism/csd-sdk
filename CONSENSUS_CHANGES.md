@@ -61,8 +61,9 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## cairnx-core 0.2.10, cairnx-api 0.1.3 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
-No rule changes. New root exports: `newReplayContext`, `ReplayContextRefusal` (with its code type) and
-`isChainHeight`. `resolve.ts` exports `createFold` and `events.ts` exports `isIndex` to `src/replay-context.ts` only
+No rule changes. New root exports: `newReplayContext`, the type `ReplayContext`, `ReplayContextRefusal` (with its code
+type) and `isChainHeight`. CONVENTION.md section 5 gains one paragraph: a resolver may hold its replay between tips
+and answer in place inside the domain. `resolve.ts` exports `createFold` and `events.ts` exports `isIndex` to `src/replay-context.ts` only
 (neither from the root), and the fold's `inDomain` now reads `isChainHeight` (`types.ts`, exactly
 `Number.isSafeInteger`), the rule the context's refusal reads too; `resolve()` performs the same operations as in
 0.2.9.
