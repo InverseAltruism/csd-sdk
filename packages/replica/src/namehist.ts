@@ -42,6 +42,7 @@
 import { isName, nameCommit, parseRecord } from "@inversealtruism/cairnx-core";
 import { resolve } from "@inversealtruism/cairnx-core";
 import { EPOCH_LEN, isNameGive, isTokenWant, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL, type AppliedEvent, type CairnXState, type ChainEvent, type NameState, type ProposeEvent } from "@inversealtruism/cairnx-core";
+import { applyOrder } from "./order.js";
 
 export type NameEventKind = "name" | "nfinalize" | "ncommit" | "nxfer" | "nset" | "nrenew" | "nprofile" | "offer" | "fill" | "cancel" | "claim" | "fclaim" | "ocancel" | "attest"; // "attest" = an attest with a non-fill/cancel/claim score (labeled honestly, never defaulted to "fill"). "fclaim" = the V28+ open-lane reserve Propose, the fclaim-lane successor to "claim"; label vocabulary only here (this selector does not route the fill-attest-on-the-fclaim-txid, so a fclaim-lane name sale surfaces scopedReplaySufficient:false, failing closed).
 
@@ -92,6 +93,8 @@ export function appliedIds(log: readonly AppliedEvent[]): Set<string> {
 
 /** A selected record and what its relevance to the name hangs on. */
 interface Pick extends NameHistEntry {
+  /** the record as the stream carries it: its raw id is resolve()'s tie-break, `txid` is lowercased */
+  ev: ChainEvent;
   /** offers: the proposer; ocancels: the proposer, whose name offers it can cancel. */
   seller?: string;
   /** offers: a fill depends on state outside the name's events (open lane, or a token want). */
@@ -129,7 +132,7 @@ function selectCandidates(events: readonly ChainEvent[], name: string): Candidat
   const add = (ev: ChainEvent, kind: NameEventKind, extra: Partial<Pick> = {}): Pick => {
     const k = eventId(ev);
     let p = picked.get(k);
-    if (!p) { p = { txid: k, height: ev.height, pos: ev.pos, kind, ...extra }; picked.set(k, p); }
+    if (!p) { p = { txid: k, height: ev.height, pos: ev.pos, kind, ev, ...extra }; picked.set(k, p); }
     return p;
   };
 
@@ -190,19 +193,17 @@ function selectCandidates(events: readonly ChainEvent[], name: string): Candidat
   return { picked, revealsByHash };
 }
 
-/** resolve()'s apply order (cairnx-core `applyOrder`): height, a block's proposals before its attests, pos, then the
- *  ordinal id. A pick is an attest exactly when it names the offer it attests. */
-const isAttest = (p: Pick) => p.offer !== undefined;
-const before = (a: Pick, b: Pick) => a.height < b.height || (a.height === b.height && (isAttest(a) !== isAttest(b) ? isAttest(b)
-  : a.pos < b.pos || (a.pos === b.pos && a.txid < b.txid)));
+/** resolve()'s apply order over the records as the stream carries them (raw ids, not the lowercased keys). */
+const order = (a: Pick, b: Pick) => applyOrder(a.ev, b.ev);
+const before = (a: Pick, b: Pick) => order(a, b) < 0;
 
 /** The candidates a client must replay: a record either replay applied, whatever its kind. The name's own records and
  *  its offers stand on their own; an attest also needs its offer kept, and of the commits a kept reveal or finalize
  *  names only the earliest is kept (copies of a public hash are applied too). An ocancel is logged applied even when it cancels nothing, so per kept offer of its seller only the first
  *  one after the offer, before the offer closed (its expiry, or a fill or cancel a replay applied), is kept. A record
  *  that is a no-op in both replays changed nothing either replay can see; dropping it is
- *  checked by keepPruned. Superseded address and profile records go last (dropSuperseded). */
-function keptIds({ picked, revealsByHash }: Candidates, applied: (id: string) => boolean, scopedApplied: (id: string) => boolean): Set<string> {
+ *  checked by keepPruned. */
+function keptIds({ picked, revealsByHash }: Candidates, applied: (id: string) => boolean): Set<string> {
   const kept = new Set<string>();
   for (const [id, p] of picked) if (NAME_KINDS.has(p.kind) && applied(id)) kept.add(id);
   for (const [id, p] of picked) if (!kept.has(id) && applied(id) && p.offer !== undefined && kept.has(p.offer)) kept.add(id);
@@ -224,13 +225,12 @@ function keptIds({ picked, revealsByHash }: Candidates, applied: (id: string) =>
     if (p.kind === "offer") closes.set(id, Math.min(closes.get(id) ?? Infinity, p.openUntil!));
     else if (p.offer !== undefined && (p.fill || p.cancel)) closes.set(p.offer, Math.min(closes.get(p.offer) ?? Infinity, p.height));
   }
-  const ocancels = [...picked.values()].filter((p) => p.kind === "ocancel" && applied(p.txid)).sort((a, b) => (before(a, b) ? -1 : 1));
+  const ocancels = [...picked.values()].filter((p) => p.kind === "ocancel" && applied(p.txid)).sort(order);
   for (const [id, closesAt] of closes) {
     const o = picked.get(id)!;
     const first = ocancels.find((c) => c.seller === o.seller && before(o, c) && c.height < closesAt);
     if (first) kept.add(first.txid);
   }
-  dropSuperseded(picked, kept, scopedApplied);
   return kept;
 }
 
@@ -242,24 +242,30 @@ const WRITES: Partial<Record<NameEventKind, readonly ("nset" | "nprofile")[]>> =
   nset: ["nset"], nprofile: ["nprofile"], nxfer: ["nset", "nprofile"], fill: ["nset", "nprofile"],
 };
 
-/** Removes from `kept` each nset and nprofile that a later kept record the scoped replay applies overwrites or clears:
+/** `kept` without each nset and nprofile that a later kept record the scoped replay applies overwrites or clears:
  *  the record's address is the last applied nset's after the last transfer or sale, or none, and so for the profile.
  *  The latest record of the walk stays, so the hints' highest height does not move. */
-function dropSuperseded(picked: ReadonlyMap<string, Pick>, kept: Set<string>, scopedApplied: (id: string) => boolean): void {
-  const walk = [...kept].map((id) => picked.get(id)!).filter((p) => WRITES[p.kind]).sort((a, b) => (before(a, b) ? 1 : -1));
+function dropSuperseded(picked: ReadonlyMap<string, Pick>, kept: ReadonlySet<string>, scopedApplied: (id: string) => boolean): Set<string> {
+  const out = new Set(kept);
+  const walk = [...kept].map((id) => picked.get(id)!).filter((p) => WRITES[p.kind]).sort((a, b) => order(b, a));
   const written = new Set<"nset" | "nprofile">();   // the fields a later applied record writes or clears
   for (const p of walk) {
-    if ((p.kind === "nset" || p.kind === "nprofile") && written.has(p.kind)) kept.delete(p.txid);
+    if ((p.kind === "nset" || p.kind === "nprofile") && written.has(p.kind)) out.delete(p.txid);
     if (scopedApplied(p.txid)) for (const f of WRITES[p.kind]!) written.add(f);
   }
+  return out;
 }
 
-/** `kept` when replaying it gives `name` the record `selectedRecord` (the replay of all of `selected`), else
- *  `selected`: a prune never changes the record a client's replay of the hints reaches (test/namehist-prune.test.ts). */
+/** The first of `prunes` (subsets of `selected`, smallest first) whose replay gives `name` the record `selectedRecord`
+ *  (the replay of all of `selected`), else `selected`: a prune never changes the record a client's replay of the hints
+ *  reaches, and a rejected prune falls back to the next larger one (test/namehist-prune.test.ts). */
 export function keepPruned(events: readonly ChainEvent[], name: string, tipHeight: number, selected: ReadonlySet<string>,
-  kept: ReadonlySet<string>, selectedRecord: NameState | undefined): ReadonlySet<string> {
-  if (kept.size === selected.size) return selected;
-  return sameRecord(resolve(subset(events, kept), tipHeight).names[name], selectedRecord) ? kept : selected;
+  prunes: readonly ReadonlySet<string>[], selectedRecord: NameState | undefined): ReadonlySet<string> {
+  for (const kept of prunes) {
+    if (kept.size === selected.size) return selected;
+    if (sameRecord(resolve(subset(events, kept), tipHeight).names[name], selectedRecord)) return kept;
+  }
+  return selected;
 }
 
 /** The ordered, name-scoped txids a wallet must verify+replay to recompute `name`'s ownership. Without `check` nothing
@@ -293,7 +299,11 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     // of the name and the attests on it, its proposer's ocancels) must not grow the hints past a wallet's cap or flag
     // the name. A record only one replay applies stays: it is how an out-of-scope dependency shows.
     const applied = (id: string) => fullApplied.has(id) || scopedApplied.has(id);
-    ids = keepPruned(events, name, check.tipHeight, all, keptIds(candidates, applied, (id) => scopedApplied.has(id)), scoped.names[name]);
+    // The superseded-record prune, else the applied-record prune alone, else the whole selection: a rejected
+    // superseded-record prune serves no more than the applied-record prune.
+    const appliedKept = keptIds(candidates, applied);
+    const latest = dropSuperseded(picked, appliedKept, (id) => scopedApplied.has(id));
+    ids = keepPruned(events, name, check.tipHeight, all, latest.size < appliedKept.size ? [latest, appliedKept] : [appliedKept], scoped.names[name]);
     // The class flags keep marking where an adversarially WITHHELD subset can diverge even when this server's own
     // subset does not, but only for a fill a replay applied: a refused fill decided nothing. Kept ids are applied
     // already; `applied(id)` matters only when keepPruned fell back to the whole selection, which no known record

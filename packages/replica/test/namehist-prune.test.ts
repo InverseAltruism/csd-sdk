@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { buildRecord, nameCommit } from "@inversealtruism/cairnx-core";
 import { resolve } from "@inversealtruism/cairnx-core";
 import { appliedIds, keepPruned, nameHistory } from "../src/namehist.js";
-import { CONF_TOKEN_FILL, DEPLOY_FEE, NAME_TERM_EPOCHS, SCORE_CANCEL, SCORE_FILL, TREASURY_ADDR, epochOf, feeBpsAt, nameRegFee, tradeFee, type CairnXRecord, type ChainEvent, type NameState } from "@inversealtruism/cairnx-core";
+import { CONF_TOKEN_FILL, DEPLOY_FEE, NAME_TERM_EPOCHS, ZERO_ADDR, SCORE_CANCEL, SCORE_FILL, TREASURY_ADDR, epochOf, feeBpsAt, nameRegFee, tradeFee, type CairnXRecord, type ChainEvent, type NameState } from "@inversealtruism/cairnx-core";
 import { supersededHints } from "./namehist-oracle.js";
 import { passCount, t } from "./runner.js";
 
@@ -229,9 +229,9 @@ t("the prune guard: a pruned selection whose replay differs from the whole selec
   const whole = replayHints(evs, TIP + 3, victim, [...selected]);
   const id = (e: ChainEvent) => (e as { id: string }).id;
   const wrong = new Set([...selected].filter((x) => x !== id(setAddr)));   // drops the applied nset
-  assert.equal(keepPruned(evs, victim, TIP + 3, selected, wrong, whole), selected, "a prune that changes the record falls back");
+  assert.equal(keepPruned(evs, victim, TIP + 3, selected, [wrong], whole), selected, "a prune that changes the record falls back");
   const right = new Set([...selected].filter((x) => x !== id(foreign)));   // drops the refused one
-  assert.equal(keepPruned(evs, victim, TIP + 3, selected, right, whole), right, "paired: a prune that keeps the record is used");
+  assert.equal(keepPruned(evs, victim, TIP + 3, selected, [right], whole), right, "paired: a prune that keeps the record is used");
 });
 
 // Superseded address and profile records. Each nset and nprofile replaces its field whole and a transfer or sale
@@ -338,26 +338,79 @@ t("the guard over the new prune: dropping the last nset of a run instead of the 
   const selected = new Set(nameHistory(evs, plain).events.map((e) => e.txid));
   const whole = replayHints(evs, TIP + 10, plain, [...selected]);
   const keepFirst = new Set([...selected].filter((x) => x !== idOf(run[1]!)));
-  assert.equal(keepPruned(evs, plain, TIP + 10, selected, keepFirst, whole), selected, "keeping the first changes the address: not served");
+  assert.equal(keepPruned(evs, plain, TIP + 10, selected, [keepFirst], whole), selected, "keeping the first changes the address: not served");
   const keepLast = new Set([...selected].filter((x) => x !== idOf(run[0]!)));
-  assert.equal(keepPruned(evs, plain, TIP + 10, selected, keepLast, whole), keepLast, "paired: keeping the last is served");
+  assert.equal(keepPruned(evs, plain, TIP + 10, selected, [keepLast], whole), keepLast, "paired: keeping the last is served");
+  assert.equal(keepPruned(evs, plain, TIP + 10, selected, [new Set([...keepFirst].filter((x) => x !== idOf(run[0]!))), keepFirst, keepLast], whole), keepLast,
+    "rejected prunes step to the next larger one that keeps the record, not to the whole selection");
 });
 
-t("on every name of the capture: no served nset or nprofile is superseded, none dropped sits above the highest hint, and the hints replay to the record", () => {
-  let names = 0, shorter = 0;
+/** `ev` with the id `id` and the block position `pos`. */
+const at = (ev: ChainEvent, id: string, pos = 1) => ({ ...ev, id, pos }) as ChainEvent;
+const hexId = (lead: string) => "0x" + lead + "0".repeat(63);
+
+t("the tie-break in one block and position is resolve()'s raw-id order: an uppercase id applies before a lowercase one", () => {
+  // "0xB0..." sorts before "0xa0..." by code unit, so resolve() applies the B record first and the a record wins; a
+  // lowercased compare puts them the other way round. 257 strangers' refused nset records ride along: a prune the
+  // guard refused would serve them all.
+  const strangers = Array.from({ length: 257 }, (_, k) => nset(ATTACKER, TIP + 10 + k, ATTACKER));
+  const tip = TIP + 300;
+  const first = at(nprofile({ display: "first" }, TIP + 2), hexId("B")), last = at(nprofile({ display: "last" }, TIP + 2), hexId("a"));
+  const r = servePlain([first, last, ...strangers], tip);
+  assert.deepEqual(r.record?.profile, { display: "last" }, "setup: the lowercase id applied last");
+  assert.deepEqual(r.txids, r.expect([last]).map((x) => x.toLowerCase()), "only the record resolve() applied last is served");
+  const xfer = at(nxfer(Q, TIP + 2), hexId("B")), set = at(nset(addr(9), TIP + 2, Q), hexId("a"));
+  const x = servePlain([xfer, set, ...strangers], tip);
+  assert.deepEqual([x.record?.owner, x.record?.addr], [Q, addr(9)], "setup: the transfer applied before the new owner's nset");
+  assert.deepEqual([...x.txids].sort(), x.expect([xfer, set]).map((y) => y.toLowerCase()).sort(), "the transfer and the new owner's nset are served");
+});
+
+t("two nset records in one block and position: the higher id applies last and is the one served, in either input order", () => {
+  const lo = at(nset(addr(1), TIP + 2), hexId("1")), hi = at(nset(addr(2), TIP + 2), hexId("2"));
+  for (const evs of [[hi, lo], [lo, hi]]) {
+    const r = servePlain(evs, TIP + 10);
+    assert.equal(r.record?.addr, addr(2), "setup");
+    assert.deepEqual(r.txids, r.expect([hi]));
+  }
+});
+
+t("an address record and a profile record do not supersede each other, in either order", () => {
+  for (const evs of [[nset(addr(1), TIP + 1), nprofile({ display: "p" }, TIP + 2)], [nprofile({ display: "p" }, TIP + 1), nset(addr(1), TIP + 2)]]) {
+    const r = servePlain(evs, TIP + 10);
+    assert.deepEqual([r.record?.addr, r.record?.profile], [addr(1), { display: "p" }], "setup");
+    assert.deepEqual(r.txids, r.expect(evs));
+  }
+});
+
+t("an unset (an nset to the zero address) supersedes the address before it and is served alone; a later nset supersedes it", () => {
+  const set = nset(addr(1), TIP + 1), unset = nset(ZERO_ADDR, TIP + 2);
+  const r = servePlain([set, unset], TIP + 10);
+  assert.equal(r.record?.addr, undefined, "setup: the unset cleared the address");
+  assert.deepEqual(r.txids, r.expect([unset]));
+  const again = nset(addr(3), TIP + 3);
+  const a = servePlain([set, unset, again], TIP + 10);
+  assert.equal(a.record?.addr, addr(3), "setup");
+  assert.deepEqual(a.txids, a.expect([again]));
+});
+
+t("on every name of the capture: no served nset or nprofile is superseded, none dropped sits above the highest hint, and the hints replay to the full record (for a name flagged insufficient, to the whole selection's)", () => {
+  let names = 0, shorter = 0, flagged = 0;
   for (const name of Object.keys(live.names)) {
     const now = served(corpus.events, TIP, name);
     const legacy = nameHistory(corpus.events, name).events;
-    if (!now.hist.scopedReplaySufficient) continue;
     names++;
+    if (!now.hist.scopedReplaySufficient) {
+      flagged++;
+      assert.deepEqual(replayHints(corpus.events, TIP, name, now.txids), replayHints(corpus.events, TIP, name, legacy.map((e) => e.txid)), name);
+    }
     const dropped = supersededHints(corpus.events, TIP, name, legacy.map((e) => e.txid)).filter((id) => !now.txids.includes(id));
     if (dropped.length) shorter++;
     assert.deepEqual(supersededHints(corpus.events, TIP, name, now.txids), [], name);
     const top = Math.max(...now.hist.events.map((e) => e.height));   // the wallet's depth is counted from it
     for (const id of dropped) assert.ok(legacy.find((e) => e.txid === id)!.height <= top, `${name}: ${id} was above the highest hint`);
-    assert.deepEqual(replayHints(corpus.events, TIP, name, now.txids), live.names[name], name);
+    if (now.hist.scopedReplaySufficient) assert.deepEqual(replayHints(corpus.events, TIP, name, now.txids), live.names[name], name);
   }
-  assert.ok(names > 50 && shorter > 0, `${names} names, ${shorter} served without a superseded record of the unpruned selection`);
+  assert.ok(names > 50 && shorter > 0 && flagged > 0, `${names} names (${flagged} flagged), ${shorter} served without a superseded record of the unpruned selection`);
 });
 
 console.log(`namehist-prune: ${passCount()} passed`);
