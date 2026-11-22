@@ -2,8 +2,10 @@
 // patterns; hex is lowercase only, and nothing is normalised.
 import { AMOUNT_RE, MAX_AMOUNT } from "@inversealtruism/cairnx-core";
 
-/** A `rev`: 16 lowercase hex digits. Internal: the form of `rev` is not part of the contract. */
-export const REV_RE = /^[0-9a-f]{16}$/;
+/** The `rev` part of `at`: an opaque token of 1 to 64 ASCII letters, digits, ".", "_" and "-". This grammar is the
+ *  contract, so a host on this release reads a `rev` of a form a later release emits as a state it does not hold (409),
+ *  never as a malformed request (400). The form these handlers emit (`revOf`) is not part of it. */
+export const REV_RE = /^[0-9A-Za-z._-]{1,64}$/;
 
 /** At most 15 digits: the front door's HEIGHT bound, below 10^15 and so within the safe integers. */
 const HEIGHT_DIGITS = 15;

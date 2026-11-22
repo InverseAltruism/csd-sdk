@@ -27,6 +27,9 @@ const ACCEPT: [Route, string, Record<string, unknown>][] = [
   ["names", "limit=200", { limit: 200 }],
   ["names", `at=117000:${H}`, { at: { height: 117000, hash: H, rev: null } }],
   ["names", `at=117000:${H}:${REV}`, { at: { height: 117000, hash: H, rev: REV } }],
+  // rev is an opaque token: 1 to 64 of ASCII letters, digits, ".", "_" and "-", whatever form a later server emits
+  ...[REV.toUpperCase(), REV.slice(1), "a".repeat(32), "v2-abc.def", "_", "Z".repeat(64), "a.b_c-D9"].map((rev): [Route, string, Record<string, unknown>] =>
+    ["names", `at=117000:${H}:${rev}`, { at: { height: 117000, hash: H, rev } }]),
   ["names", `at=0:${H}`, { at: { height: 0, hash: H, rev: null } }],
   ["names", `at=999999999999999:${H}`, { at: { height: 999999999999999, hash: H, rev: null } }],
   ["names", "after=alice", { after: { name: "alice" } }],
@@ -70,6 +73,9 @@ const REFUSE: [Route, string, string][] = [
   // unknown, including a filter of another route and a parameter in another case
   ["names", "foo=1", "foo"],
   ["names", "Limit=5", "(not shown)"],
+  // the echo's shape, 1 to 16 lowercase letters, at its bounds (17 letters is "(not shown)", below)
+  ["names", "a=1", "a"],
+  ["names", `${"a".repeat(16)}=1`, "a".repeat(16)],
   ["names", "ticker=CAIRN", "ticker"],
   ["names", "kind=name", "kind"],
   ["bids", "kind=name", "kind"],
@@ -115,9 +121,10 @@ const REFUSE: [Route, string, string][] = [
   ["names", "at=117000", "at"],
   ["names", `at=117000:${H.toUpperCase().replace("0X", "0x")}`, "at"],
   ["names", `at=0117000:${H}`, "at"],
-  ["names", `at=117000:${H}:${REV.toUpperCase()}`, "at"],
-  ["names", `at=117000:${H}:${REV.slice(1)}`, "at"],
   ["names", `at=117000:${H}:${REV}:x`, "at"],
+  // a rev outside the token grammar: empty, 65 characters, or a ":", "/", "%", space, "+" or non-ASCII letter inside
+  ...["", "a".repeat(65), "ab%3Acd", "ab/cd", "ab%2Fcd", "ab%25cd", "ab%20cd", "ab+cd", "ab%2Bcd", "ab%C3%A9cd"].map((rev): [Route, string, string] =>
+    ["names", `at=117000:${H}:${rev}`, "at"]),
   ["names", `at=9007199254740992:${H}`, "at"],
   ["names", `at=1000000000000000:${H}`, "at"],
   ["names", `at=1e3:${H}`, "at"],
@@ -219,7 +226,7 @@ for (const [route, q, param] of REFUSE) {
 console.log("what a refusal echoes, and what the parser takes:");
 const SECRET = "<script>alert(1)</script>";
 for (const [what, q] of [["a markup-shaped name", `${encodeURIComponent(SECRET)}=1`], ["a 100,000-character name", `${"x".repeat(100000)}=1`],
-  ["an empty name", "=5"], ["a name with a digit", "limit2=1"]] as const) {
+  ["an empty name", "=5"], ["a name with a digit", "limit2=1"], ["a 17-letter name", `${"a".repeat(17)}=1`]] as const) {
   const r = parseQuery("names", q);
   ok(`${what} is refused with param "(not shown)" and no input in the message`,
     !r.ok && r.error.param === "(not shown)" && !r.error.message.includes("script") && !r.error.message.includes("xxxx") && r.error.message.length < 100, show(r.ok ? r.query : { ...r.error, param: r.error.param.slice(0, 40) }));
