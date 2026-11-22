@@ -19,12 +19,15 @@
   for (it was the indexer's tip, so every answer said `BEHIND`), and every answer carries the new note `FINAL_VIEW`;
   such a tip is stale only 12 target block times (24 minutes) after the 30 minutes. `Source.tip()` with
   `verifyInclusion` gives the last step's tip.
-- `indexerFeed`: a store cursor above the indexer's tip is a block the indexer's chain does not have, so a shorter
-  branch that changes only block hashes rolls back to the last boundary whose hash agrees and ends on the indexer's
-  tip (the cursor stayed above it, `BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was served). The
-  cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back to it, as the hosted resolver's
-  published state already drops; the store refills from the next scans. A final height that moves back under
-  `verifyInclusion`, the indexer's tip unchanged, still rolls nothing back.
+- `indexerFeed`: a store cursor whose block is off the indexer's chain (the indexer's tip below it, or another hash at
+  its height) rolls back to the lower of that block and the last held boundary whose hash the indexer gives, never
+  below the floor, and the next step reads on to the indexer's tip. A shorter branch that changes only block hashes
+  left the cursor above the indexer's tip (`BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was
+  served); after review, also a tip that lands on a held boundary, the floor, and a shorter branch above the final
+  height under `verifyInclusion`. The cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back
+  to it, as the hosted resolver's published state already drops; the store refills from the next scans. An indexer
+  whose tip is under the floor leaves the step idle at that tip, below the cursor. A final height that moves back with
+  the cursor's block still the indexer's rolls nothing back.
 - The tuple book and the comparison (design section 6): `status().tuple`, the newest boundary's tuple from the loop's
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;

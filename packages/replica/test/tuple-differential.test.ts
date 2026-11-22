@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { FINAL_DEPTH, mint } from "@inversealtruism/cairnx-core";
+import { ACTIVATION_HEIGHT, FINAL_DEPTH, mint } from "@inversealtruism/cairnx-core";
 import { memoryStore, replicaLoop, type Loop } from "../src/index.js";
 import { branchRefusal, indexerFeed, Scanner } from "../src/server.js";
 import { tupleOf, type Tuple } from "../src/tuple.js";
@@ -25,7 +25,13 @@ import { done, ok } from "./check.js";
 import { fx } from "./core-files.js";
 import { TupleBook } from "./fixtures/cairnx-tuple-c89ab86.js";
 import { captureIndexer } from "./indexer-capture.js";
-import { A, H0, buildChain, defaultSpecs, type Spec } from "./scan/scan-chain.js";
+import { A, H0, KA, KB, KC, KEYS, buildChain, defaultSpecs, type Spec } from "./scan/scan-chain.js";
+
+/** scan-chain's indexer answers objects shaped like a Response; the block-hash and block-time reads take a real one. */
+const realOf = (f: typeof fetch): typeof fetch => (async (input: string | URL | Request, init?: RequestInit) => {
+  const r = (await f(input, init)) as unknown as { status: number; json(): Promise<unknown> };
+  return r instanceof Response ? r : new Response(JSON.stringify(await r.json()), { status: r.status });
+}) as typeof fetch;
 
 const WIDE = { maxBlocks: 100_000, maxRequests: 100_000 };
 const same = (a: Tuple | null | undefined, b: Tuple | null | undefined) => a != null && b != null && JSON.stringify(a) === JSON.stringify(b);
@@ -176,19 +182,19 @@ console.log("rollbacks that leave a kept boundary 1 to 11 blocks under the curso
   ok(`a branch from ${B + 6} to ${B + 11}: the cursor is ${B + 11}, ${B} is 11 deep, neither serves it`,
     loop.status().cursor?.height === B + 11 && loop.status().lastReorg !== null && !shallow.ours && !shallow.theirs);
   const held: number[] = [];
-  for (let d = 1; d <= 11; d++) {
+  for (let d = 0; d <= 11; d++) {
     now = a.indexer({ tip: B + 13 });
     await step(); compare();
     now = branch(`x${d}`, B + d, B + d);
     await step(); compare();
     if (loop.status().cursor?.height !== B + d || servedB().ours || servedB().theirs) held.push(d);
   }
-  ok("for each depth from 1 to 11 under the cursor, neither serves it", held.length === 0, held.join(", "));
+  ok("for each depth from 0 to 11 under the cursor, neither serves it", held.length === 0, held.join(", "));
   // The same rollbacks with no record of their own: only the block hashes from the fork up change, and the indexer's
   // tip is below the replica's cursor.
   const quiet = (name: string, from: number, tip: number) => buildChain(specs, { forks: [{ name, from }] }).indexer({ tip });
   const heldQuiet: number[] = [];
-  for (let d = 1; d <= 11; d++) {
+  for (let d = 0; d <= 11; d++) {
     now = a.indexer({ tip: B + 13 });
     await step(); compare();
     now = quiet(`q${d}`, B + d, B + d);
@@ -196,11 +202,56 @@ console.log("rollbacks that leave a kept boundary 1 to 11 blocks under the curso
     if (loop.status().cursor?.height !== B + d || servedB().ours || servedB().theirs) heldQuiet.push(d);
   }
   ok("the same with only block hashes changed: the cursor is the indexer's tip and neither serves it", heldQuiet.length === 0, heldQuiet.join(", "));
+  // The indexer's tip drops on A to the floor (the height below activation): both serve nothing.
+  now = a.indexer({ tip: B + 13 });
+  await step(); compare();
+  now = a.indexer({ tip: ACTIVATION_HEIGHT - 1 });
+  await step(); compare();
+  ok(`the indexer's tip at the floor ${ACTIVATION_HEIGHT - 1}: the cursor there, neither serves a boundary`,
+    loop.status().cursor?.height === ACTIVATION_HEIGHT - 1 && loop.boundaryHeights().length === 0 && served(book).size === 0, JSON.stringify(loop.status().cursor));
   now = a.indexer({ tip: B + 13 });
   await step(); compare();
   ok(`branch A at ${B + 13} again: both serve ${B}, the same tuple as before`, servedB().ours && servedB().theirs && JSON.stringify(tupleOf(loop.boundary(B))) === kept);
   ok(`over ${n.steps} polls, ${n.compared} served tuples compared, ${n.differ} differ, ${n.uneven} with a boundary one side serves alone`,
     n.compared > 0 && n.differ === 0 && n.uneven === 0);
+  await loop.close();
+}
+
+console.log("with inclusion, rollbacks to a shorter branch that leave a kept boundary 0 to 11 blocks under the final height:");
+{
+  // The resolver runs no inclusion, so the replica is compared with a fresh replica of the new branch: cursor, events
+  // and every boundary it serves. A from B - 20 to B + 25 (final B + 13); for each d, B + d + 12 on a branch from B + d,
+  // with a record of its own at B + d or none, then A again.
+  const B = H0 + 40, rec = (h: number, amount: string): Spec => ({ kind: "propose", rec: mint({ ticker: "DUST", amount }), proposer: KA, height: h });
+  const specs = [...defaultSpecs({ A: KA, B: KB, C: KC }), rec(B + 3, "6")];
+  const a = buildChain(specs, { keys: KEYS });
+  let w = { chain: a, tip: B + 25 };
+  const inc = { indexerUrl: "http://idx", pageSize: 3, verifyInclusion: true,
+    fetch: ((i: string | URL | Request, r?: RequestInit) => realOf(w.chain.indexer({ tip: w.tip }))(i, r)) as typeof fetch,
+    headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerMerkleAt!(h), rawTxAt: (id: string) => w.chain.verified({ verifiedTip: w.tip }).rawTxAt!(id),
+    verifiedTipHeight: async () => w.tip };
+  const loop = replicaLoop({ source: indexerFeed(inc), store: memoryStore(), ...WIDE });
+  await loop.open();
+  const fresh = async () => {
+    const l = replicaLoop({ source: indexerFeed({ ...inc, fetch: realOf(w.chain.indexer({ tip: w.tip })) }), store: memoryStore(), ...WIDE });
+    await l.open(); await l.advance();
+    const v = { cursor: JSON.stringify(l.status().cursor), events: l.status().eventsHash, bounds: JSON.stringify(l.boundaryHeights().map((h) => tupleOf(l.boundary(h)))) };
+    await l.close();
+    return v;
+  };
+  const differ: string[] = [];
+  let compared = 0;
+  for (let d = 0; d <= 11; d++) for (const own of [true, false]) {
+    w = { chain: a, tip: B + 25 };
+    await loop.advance();
+    const branch = buildChain(own ? [...specs, rec(B + d, "9")] : specs, { keys: KEYS, forks: [{ name: `i${d}${own ? "r" : "q"}`, from: B + d }] });
+    w = { chain: branch, tip: B + d + 12 };
+    await loop.advance();
+    const f = await fresh(), mine = { cursor: JSON.stringify(loop.status().cursor), events: loop.status().eventsHash, bounds: JSON.stringify(loop.boundaryHeights().map((h) => tupleOf(loop.boundary(h)))) };
+    compared++;
+    if (mine.cursor !== f.cursor || mine.events !== f.events || mine.bounds !== f.bounds) differ.push(`d=${d}${own ? " record" : ""}: ${mine.cursor}`);
+  }
+  ok(`${compared} branches, each with its own record or none: the replica equals a fresh replica of the branch, ${differ.length} differ`, compared === 24 && differ.length === 0, differ.slice(0, 3).join("; "));
   await loop.close();
 }
 

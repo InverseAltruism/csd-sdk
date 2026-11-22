@@ -1,10 +1,10 @@
 // indexerFeed: the replica source over the resolver's Scanner, which reads a csd-indexer. Its basis is a feed, level 1,
 // or 2 with verifyInclusion, whose bodies, heights and authors are bound as the Scanner binds them. Each step is one
 // scan. The events of the rule are those at or above its activation, Attests only on a Propose among them (CONVENTION
-// section 33.1). Up to the lower of the cursor and the scan's top they are checked against the store, and so are the
-// block hashes it holds there (the cursor's and its boundary rows'): the step is a reorg to the lower of the last event
-// block whose events hash agrees (section 34.3) and the last held block hash the indexer still gives; a cursor above the
-// indexer's tip is a block it does not give. Its events above
+// section 33.1). Up to the lower of the cursor and the scan's top they are checked against the store by their events
+// hash (section 34.3); a step whose events differ there is a reorg to the last event block that agrees. A cursor whose
+// block is not on the indexer's chain (the indexer's tip below it, or another block at its height) is also a reorg, to
+// the lower of that and the last held boundary whose hash the indexer gives, never below the floor. Its events above
 // the cursor are the step's blocks, grouped by height in the order of section 33.3, with a row and its hash at each
 // epoch boundary. The cursor is the last block the scan answered for whole: the tip, or with verifyInclusion the final
 // height (the Scanner emits nothing above it), or the last boundary the request budget reached, the tip then being the
@@ -47,23 +47,16 @@ function lastAgreeing(blocks: Map<number, ChainEvent[]>, at: number, floor: numb
   return held(at) === hash ? at : best;
 }
 
-/** Of the cursor (when at or below `at`) and the boundary rows the store holds at or below `at`, walked down from the
- *  top, the first whose block hash the indexer still gives: null when that is the first one walked or none is held, so
- *  no held hash moved; `floor` when none agrees. A cursor above `indexerTip` is a block the indexer's chain does not
- *  have, so it counts as moved and the first boundary that agrees is returned. A cursor above `at` but not above the
- *  indexer's tip (a final height that moved back) moved nothing. A block hash commits its parent, so every block below
- *  one that agrees is the indexer's too, and the walk reads one hash while nothing moved. */
-async function lastHashAgreeing(ctx: StepContext, at: number, floor: number, now: (h: number) => Promise<string>, indexerTip: number): Promise<number | null> {
-  const c = ctx.cursor!, heights = c.height <= at ? [c.height] : [];
-  for (let b = Math.floor(at / EPOCH_LEN) * EPOCH_LEN; b > floor; b -= EPOCH_LEN) if (b !== c.height) heights.push(b);
-  let first = c.height <= indexerTip;
-  for (const h of heights) {
-    const held = h === c.height ? c.hash : ctx.hashAt(h);
-    if (held === null) continue;
-    if ((await now(h)) === held) return first ? null : h;
-    first = false;
+/** Of the boundary rows the store holds above `floor` and at or below `at`, other than the cursor's, walked down from
+ *  the top, the first whose block hash the indexer gives there; `floor` when none does. A block hash commits its
+ *  parent, so every block below one that agrees is the indexer's too. */
+async function lastHashAgreeing(ctx: StepContext, at: number, floor: number, now: (h: number) => Promise<string>): Promise<number> {
+  const c = ctx.cursor!;
+  for (let b = Math.floor(at / EPOCH_LEN) * EPOCH_LEN; b > floor; b -= EPOCH_LEN) {
+    const held = b === c.height ? null : ctx.hashAt(b);
+    if (held !== null && (await now(b)) === held) return b;
   }
-  return first ? null : floor;
+  return floor;
 }
 
 /** The events of `rule` among a scan's: at or above its activation, and an Attest only on a Propose kept (an Attest on
@@ -113,10 +106,17 @@ export function indexerFeed(o: ScanOptions): Source {
       return { height, hash, time: await timeOf(s, height, hash) };
     };
     if (ctx.cursor !== null) {
-      // Above the scan's top the Scanner emitted nothing, so the store is compared only up to it.
-      const at = Math.min(ctx.cursor.height, top);
-      const to = Math.min(lastAgreeing(blocks, at, floor, ctx.eventsHashAt), (await lastHashAgreeing(ctx, at, floor, now, r.tipHeight)) ?? at);
-      if (to !== at) return { kind: "reorg", to: { height: to, hash: await now(to) }, tip: await tipOf() };
+      // The cursor's block is off the indexer's chain when the indexer's tip is below it or another block is at its
+      // height: the store rolls back to the last held boundary the indexer gives and the last event block that agrees.
+      // A final height below the cursor on the same chain moves nothing. Above the scan's top the Scanner emitted
+      // nothing, so events are compared only up to it. An indexer whose tip is under the floor names no block a
+      // rollback could end on: the step is idle with that tip, below the cursor, until its tip passes the floor again.
+      const c = ctx.cursor, at = Math.min(c.height, top);
+      const off = c.height > r.tipHeight || (await now(c.height)) !== c.hash;
+      if (off && r.tipHeight < floor) return { kind: "idle", tip: await tipOf() };
+      const eventsTo = lastAgreeing(blocks, at, floor, ctx.eventsHashAt);
+      const to = off ? Math.max(floor, Math.min(eventsTo, await lastHashAgreeing(ctx, at, floor, now))) : eventsTo;
+      if ((off || to !== at) && to < c.height) return { kind: "reorg", to: { height: to, hash: await now(to) }, tip: await tipOf() };
     }
     const after = ctx.cursor?.height ?? floor;
     if (top <= after) return { kind: "idle", tip: await tipOf(top === ctx.cursor?.height ? ctx.cursor.hash : undefined) };

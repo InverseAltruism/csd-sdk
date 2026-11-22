@@ -194,6 +194,77 @@ console.log("verifyInclusion: the verified tip moves back, then forward:");
   await loop.close();
 }
 
+console.log("the indexer's tip below the cursor, at a held boundary, at the floor and under it:");
+{
+  // One chain, no inclusion: the store to 30,090, then the indexer's tip drops to a height and stays there.
+  const T0 = 30_090, live = { tip: T0 };
+  const f = ((i: string | URL | Request, r?: RequestInit) => real(plain.indexer({ tip: live.tip }))(i, r)) as typeof fetch;
+  const floor = ACTIVATION_HEIGHT - 1;
+  for (const T1 of [30_061, 30_060, 30_030, 29_970, floor]) {
+    live.tip = T0;
+    const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: f, pageSize: 3 }), store: memoryStore(), ...WIDE });
+    await loop.open();
+    const a = await loop.advance();
+    live.tip = T1;
+    const s = await loop.advance();
+    const unfinal = loop.boundaryHeights().filter((h) => h + 12 > T1);
+    ok(`tip ${T0} to ${T1}: rolled back, the cursor the indexer's tip, no boundary served under 12 deep on its chain`,
+      a.cursor?.height === T0 && s.lastReorg !== null && s.cursor?.height === T1 && s.cursor.hash === plain.hashAt(T1) && unfinal.length === 0 && s.lastError === null,
+      JSON.stringify({ c: s.cursor?.height, r: s.lastReorg?.to.height, e: s.lastError, unfinal }));
+    await loop.close();
+  }
+  live.tip = T0;
+  const under = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: f, pageSize: 3 }), store: memoryStore(), ...WIDE });
+  await under.open();
+  await under.advance();
+  live.tip = 100;
+  const u = await under.advance();
+  ok("tip under the floor: no block above it to roll back to, the step idle at the indexer's tip below the cursor",
+    u.lastReorg === null && u.cursor?.height === T0 && u.tip?.height === 100 && u.lastError === null, JSON.stringify({ c: u.cursor?.height, t: u.tip, e: u.lastError }));
+  live.tip = T0 + 5;
+  const back = await under.advance();
+  ok("and once the indexer's tip passes the cursor again on the same chain, it goes on from the cursor", back.lastReorg === null && back.cursor?.height === T0 + 5);
+  await under.close();
+}
+{
+  // With inclusion, a shorter branch above the boundary: A to 29,965 with a record at 29,952, the final height 29,953;
+  // then B from 29,946 to 29,963, the final height 29,951, under the cursor 29,953.
+  const B0 = H0 + 40, rec: Spec = { kind: "propose", rec: mint({ ticker: "DUST", amount: "7" }), proposer: KA, height: B0 + 12 };
+  const a = buildChain([...defaultSpecs({ A: KA, B: KB, C: KC }), rec], { keys: KEYS });
+  const b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "b", from: B0 + 6 }] });
+  let w = { chain: a, tip: B0 + 25 };
+  const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(w.chain.indexer({ tip: w.tip }))(i, r)) as typeof fetch, pageSize: 3,
+    verifyInclusion: true, headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerMerkleAt!(h),
+    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: w.tip }).rawTxAt!(id), verifiedTipHeight: async () => w.tip };
+  const loop = replicaLoop({ source: indexerFeed(opts), store: memoryStore(), ...WIDE });
+  await loop.open();
+  const s1 = await loop.advance();
+  w = { chain: b, tip: B0 + 23 };
+  const s2 = await loop.advance();
+  const want = (await new Scanner({ indexerUrl: "http://idx", fetch: b.indexer({ tip: B0 + 23 }), pageSize: 3, ...b.verified({ verifiedTip: B0 + 23 }) }).scan()).events;
+  ok("with inclusion, a shorter branch above the boundary under the cursor: rolled back, the record gone, ended at the new final height",
+    s1.cursor?.height === B0 + 13 && s2.lastReorg?.to.height === B0 && s2.cursor?.height === B0 + 11 && s2.cursor.hash === b.hashAt(B0 + 11) &&
+    canon(held(loop)) === canon(want.filter((e) => e.height <= B0 + 11)), JSON.stringify({ c1: s1.cursor?.height, c2: s2.cursor, r: s2.lastReorg, e: s2.lastError }));
+  await loop.close();
+}
+{
+  // With inclusion and the header source ahead of the indexer: the cursor is the indexer's tip; the verified tip then
+  // moves back below it on the same chain.
+  const TT = H0 + 70;
+  for (const k of [1, 12, 30]) {
+    let vt = TT + 400;
+    const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: TT })), pageSize: 3,
+      ...signed.verified({ verifiedTip: Number.MAX_SAFE_INTEGER }), verifiedTipHeight: async () => vt }), store: memoryStore(), ...WIDE });
+    await loop.open();
+    const a = await loop.advance();
+    vt = TT - k;
+    const s = await loop.advance();
+    ok(`the cursor at the indexer's tip ${TT}, the verified tip back to ${TT - k}: no rollback`, a.cursor?.height === TT && s.lastReorg === null && s.cursor?.height === TT &&
+      s.eventCount === a.eventCount, JSON.stringify({ a: a.cursor?.height, r: s.lastReorg }));
+    await loop.close();
+  }
+}
+
 console.log("block hashes the indexer no longer gives:");
 {
   const TIP = H0 + 40;   // an epoch boundary
