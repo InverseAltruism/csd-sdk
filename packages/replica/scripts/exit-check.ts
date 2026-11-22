@@ -29,8 +29,14 @@ import { cap, node } from "../test/node-harness.js";
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), ".."), ROOT = join(PKG, "..", "..");
 const SCOPE = "@inversealtruism/";
-/** The packages the check installs by name; their workspace dependencies come with them. */
-const NAMES = ["cairnx-replica", "cairnx-pin", "csd-anchors"];
+/** The packages the check installs by name, their workspace dependencies with them, and the surface each documents:
+ *  its exports entries (a removed one is a breaking change) and the files beside dist/ its README names. */
+const SURFACE: Record<string, { entries: string[]; files: string[] }> = {
+  "cairnx-replica": { entries: [".", "./display", "./browser", "./server", "./testing"], files: ["dist/cli.js", "README.md", "LICENSE", "CHANGELOG.md"] },
+  "cairnx-pin": { entries: [".", "./pin.json"], files: ["pin.json", "README.md", "LICENSE", "CHANGELOG.md"] },
+  "csd-anchors": { entries: [".", "./anchors.json"], files: ["anchors.json", "scripts/table.mjs", "scripts/render-wallet.mjs", "README.md", "LICENSE", "CHANGELOG.md"] },
+};
+const NAMES = Object.keys(SURFACE);
 const ANSWERS = join(PKG, "examples", "answers.json"), REFERENCE = join(PKG, "scripts", "exit-reference.json");
 const PIN_CAPTURE = join(ROOT, "packages", "pin", "test", "fixtures", "node-blocks-143296-143356.json");
 
@@ -110,7 +116,10 @@ try {
 
   console.log("every entry of the three, from the install:");
   for (const n of NAMES) {
-    const m = installed(n), name = SCOPE + n;
+    const m = installed(n), name = SCOPE + n, at = join(work, "node_modules", ...name.split("/"));
+    const entries = Object.keys(m.exports as Record<string, unknown>), missing = SURFACE[n]!.files.filter((f) => !existsSync(join(at, f)));
+    ok(`${n}: its entries are ${SURFACE[n]!.entries.join(" ")}, and ${SURFACE[n]!.files.join(", ")} are installed`,
+      entries.join() === SURFACE[n]!.entries.join() && missing.length === 0, `entries ${entries.join(" ")}; missing ${missing.join(", ")}`);
     for (const [sub, target] of Object.entries(m.exports as Record<string, unknown>)) {
       const spec = sub === "." ? name : name + sub.slice(1), json = sub.endsWith(".json");
       const types = typeof target === "object" && target !== null ? (target as { types?: string }).types : undefined;
