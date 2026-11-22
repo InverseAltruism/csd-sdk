@@ -8,8 +8,9 @@ blocks above the pin. Below the pin the trust is this release.
 npm install @inversealtruism/cairnx-pin @inversealtruism/cairnx-replica@<version> @inversealtruism/cairnx-core@<version>
 ```
 
-`@inversealtruism/cairnx-replica` is an exact peer: install the version this package's `peerDependencies` name, and
-the cairnx-core that replica names.
+`@inversealtruism/cairnx-replica` is an optional peer with a range (`^` the replica version this release was built
+with): the package uses it for the `Pin` type alone. Install a replica inside that range and the cairnx-core that
+replica names.
 
 ```ts
 import { PIN } from "@inversealtruism/cairnx-pin";

@@ -2,7 +2,7 @@
 // Release invariant (see CONSENSUS_CHANGES.md): packages are versioned on INDEPENDENT cadence:
 // `cairnx-core` tracks consensus activation heights and bumps ahead of the stable `csd-*` primitives,
 // which move on their own. They need NOT share a version. Coherence is checked below by: (1) every
-// inter-package dependency is "workspace:*", which pnpm freezes to the dependency's EXACT current
+// inter-package dependency is "workspace:*" (but the one range peer, RANGE_PEERS), which pnpm freezes to the EXACT current
 // version when the dependent publishes; (2) the published graph: a package version already on npm
 // keeps the pins it shipped with, so those pins must equal the current workspace versions (bump the
 // dependent when its dependency moves); (3) the published dist: for each package whose workspace
@@ -53,10 +53,28 @@ for (const p of pkgs) {
   if (!semver.test(String(p.version))) errors.push(`${p.name}: invalid semver version "${p.version}"`);
 }
 
+// One inter-dep is a range, by design: cairnx-pin uses cairnx-replica for its `Pin` type alone, so it peers on
+// `workspace:^`, which pnpm packs as `^<replica version>`, and a replica release inside that range needs no pin release.
+// Every other inter-dep is `workspace:*`, packed exact.
+const RANGE_PEERS = new Map([["@inversealtruism/cairnx-pin", new Set(["@inversealtruism/cairnx-replica"])]]);
+const rangePeer = (name, field, dep) => field === "peerDependencies" && RANGE_PEERS.get(name)?.has(dep) === true;
+/** Whether `version` lies in `range`, a caret range `^X.Y.Z` as npm reads one; any other form is no range. */
+function caretAllows(range, version) {
+  const r = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(String(range)), v = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version));
+  if (!r || !v) return false;
+  const [a, b, c] = r.slice(1).map(Number), [x, y, z] = v.slice(1).map(Number);
+  const atLeast = x > a || (x === a && (y > b || (y === b && z >= c)));
+  return atLeast && (a > 0 ? x === a : b > 0 ? x === 0 && y === b : x === 0 && y === 0 && z === c);
+}
+
 const ours = new Set(pkgs.map((p) => p.name));
 for (const p of pkgs) {
   for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
     for (const [dep, range] of Object.entries(p[field] ?? {})) {
+      if (rangePeer(p.name, field, dep)) {
+        if (range !== "workspace:^") errors.push(`${p.name} ${field}.${dep} = "${range}" (must be "workspace:^": it peers for a type alone, see RANGE_PEERS)`);
+        continue;
+      }
       if (ours.has(dep) && range !== "workspace:*") {
         errors.push(`${p.name} ${field}.${dep} = "${range}" (must be "workspace:*")`);
       }
@@ -75,6 +93,10 @@ await Promise.all(pkgs.filter((p) => !p.private).map(async (p) => {
   for (const field of ["dependencies", "peerDependencies"]) {
     for (const [dep, pinned] of Object.entries(meta[field] ?? {})) {
       const current = workspaceVersion.get(dep);
+      if (current !== undefined && rangePeer(p.name, field, dep)) {
+        if (!caretAllows(pinned, current)) errors.push(`${p.name}@${p.version} is published with the peer range ${dep}@${pinned}, which the workspace's ${current} is outside (bump ${p.name})`);
+        continue;
+      }
       if (current !== undefined && pinned !== current) {
         errors.push(`${p.name}@${p.version} is published pinning ${dep}@${pinned}${field === "peerDependencies" ? " as a peer" : ""}, workspace has ${current} (bump ${p.name})`);
       }
@@ -90,5 +112,5 @@ if (errors.length) {
   for (const e of errors) console.error("  - " + e);
   process.exit(1);
 }
-console.log(`lockstep OK: ${pkgs.length} packages, inter-deps workspace:*, published pins match workspace, published dist equals this build, dist fresh (M4)`);
+console.log(`lockstep OK: ${pkgs.length} packages, inter-deps workspace:* (cairnx-pin's replica peer workspace:^), published pins match workspace, published dist equals this build, dist fresh (M4)`);
 console.log("  versions: " + pkgs.map((p) => `${p.name.replace("@inversealtruism/", "")}@${p.version}`).join(", "));

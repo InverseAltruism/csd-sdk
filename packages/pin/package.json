@@ -24,7 +24,7 @@
     "prepack": "pnpm build",
     "prepublishOnly": "node ../../scripts/publish-guard.mjs"
   },
-  "peerDependencies": { "@inversealtruism/cairnx-replica": "workspace:*" },
+  "peerDependencies": { "@inversealtruism/cairnx-replica": "workspace:^" },
   "peerDependenciesMeta": { "@inversealtruism/cairnx-replica": { "optional": true } },
   "devDependencies": {
     "@inversealtruism/cairnx-core": "workspace:*",

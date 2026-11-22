@@ -74,6 +74,35 @@ try {
   const out = run(api("1.0.0")).out;
   ok("a published exact peer behind the workspace version fails, naming the bump", /api@0\.1\.0 is published pinning core@1\.0\.0 as a peer, workspace has 1\.1\.0 \(bump api\)/.test(out), out);
 
+  console.log("check-lockstep, cairnx-pin's range peer on cairnx-replica:");
+  const PIN = "@inversealtruism/cairnx-pin", REPLICA = "@inversealtruism/cairnx-replica";
+  const pinManifest = (peer: string) => JSON.stringify({ name: PIN, version: "0.1.0", peerDependencies: { [REPLICA]: peer } });
+  const setReplica = (version: string) => put("packages/replica/package.json", JSON.stringify({ name: REPLICA, version }));
+  setReplica("0.1.3");
+  put("packages/pin/package.json", pinManifest("workspace:^"));
+  const ranged = run({});
+  ok("honest: cairnx-pin peering on cairnx-replica as workspace:^, nothing published: lockstep OK", ranged.code === 0 && /lockstep OK/.test(ranged.out), ranged.out);
+  put("packages/pin/package.json", pinManifest("workspace:*"));
+  const exact = run({});
+  ok("cairnx-pin peering on cairnx-replica as workspace:* (an exact pin again) fails, naming workspace:^",
+    exact.code === 1 && /cairnx-pin peerDependencies\.@inversealtruism\/cairnx-replica = "workspace:\*" \(must be "workspace:\^"/.test(exact.out), exact.out);
+  put("packages/pin/package.json", pinManifest("workspace:^"));
+  put("packages/api/package.json", JSON.stringify({ name: "api", version: "0.1.0", peerDependencies: { core: "workspace:^" } }));
+  const elsewhere = run({});
+  put("packages/api/package.json", apiManifest);
+  ok("workspace:^ on any other inter-dep fails", elsewhere.code === 1 && /api peerDependencies\.core = "workspace:\^" \(must be "workspace:\*"\)/.test(elsewhere.out), elsewhere.out);
+  const pinAt = (peer: string): Served => ({ "/@inversealtruism%2fcairnx-pin/0.1.0": { peerDependencies: { [REPLICA]: peer } } });
+  const inside = run(pinAt("^0.1.0")).out;
+  ok("a published pin whose peer range ^0.1.0 holds the workspace's replica 0.1.3 is no pin error", !/cairnx-pin@0\.1\.0 is published/.test(inside) && /cairnx-pin@0\.1\.0: registry metadata names no tarball/.test(inside), inside);
+  setReplica("0.2.0");
+  const outside = run(pinAt("^0.1.0")).out;
+  ok("a published pin whose peer range ^0.1.0 does not hold the workspace's replica 0.2.0 fails, naming the bump",
+    /cairnx-pin@0\.1\.0 is published with the peer range @inversealtruism\/cairnx-replica@\^0\.1\.0, which the workspace's 0\.2\.0 is outside \(bump @inversealtruism\/cairnx-pin\)/.test(outside), outside);
+  setReplica("0.1.3");
+  const stale = run(pinAt("0.1.0")).out;
+  ok("a published pin with an exact replica peer behind the workspace fails (an exact spec is no range)", /cairnx-pin@0\.1\.0 is published with the peer range @inversealtruism\/cairnx-replica@0\.1\.0, which the workspace's 0\.1\.3 is outside/.test(stale), stale);
+  for (const d of ["pin", "replica"]) rmSync(join(root, "packages", d), { recursive: true, force: true });
+
   console.log("check-lockstep published dist:");
   const same = run(core(CORE_DIST));
   ok("honest: core@1.1.0 on the registry with this tree's dist: lockstep OK", same.code === 0 && /lockstep OK/.test(same.out), same.out);

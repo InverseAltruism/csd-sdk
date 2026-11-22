@@ -7,7 +7,7 @@
 // repos checked out under the same parent (the dev/host layout). Skips any repo that isn't present.
 //
 //   node scripts/check-consumer-pins.mjs        # exit 1 if a consumer pins a different cairnx-core, or a cairnx-api,
-//                                               # cairnx-replica or cairnx-pin published against another peer than it pins
+//                                               # or cairnx-replica published against another cairnx-core than it pins
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +42,7 @@ function consensusDrift(ver) {
 }
 
 // One copy per consumer: a package with an exact peer on another workspace package (cairnx-api and cairnx-replica on
-// cairnx-core, cairnx-pin on cairnx-replica) is packed from `workspace:*` with the peer's version of the commit it was
+// cairnx-core; cairnx-pin's peer on cairnx-replica is a range, which npm itself holds a consumer to) is packed from `workspace:*` with the peer's version of the commit it was
 // released from, which its `<name>-<ver>` tag names (docs/release.md). A consumer that pins such a package, in any
 // dependency section, must pin that peer version in its dependencies; any other pin installs a second copy or runs the
 // package on a peer it was not built against. A version with no tag, or a tag whose manifest names another version,
@@ -51,7 +51,6 @@ const SCOPE = "@inversealtruism/";
 const PEERED = [
   ["cairnx-api", "packages/cairnx-api/package.json", "cairnx-core", "packages/cairnx/package.json", "TWO CORES"],
   ["cairnx-replica", "packages/replica/package.json", "cairnx-core", "packages/cairnx/package.json", "TWO CORES"],
-  ["cairnx-pin", "packages/pin/package.json", "cairnx-replica", "packages/replica/package.json", "TWO REPLICAS"],
 ];
 const SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 /** The `version` of `path` at the tag, or null. */

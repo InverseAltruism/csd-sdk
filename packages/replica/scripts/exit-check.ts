@@ -131,6 +131,10 @@ try {
       ok(`${spec}: import, require${json ? "" : " and its types"}`, esm.code === 0 && cjs.code === 0 && typed, `${esm.err}${cjs.err}`.trim().split("\n").slice(-3).join(" | "));
     }
   }
+  // The pin peers on the replica for a type alone: a range, so a replica release inside it needs no pin release.
+  const pinPeer = installed("cairnx-pin").peerDependencies?.[`${SCOPE}cairnx-replica`];
+  ok(`cairnx-pin ships its replica peer as the range ^${installed("cairnx-replica").version}, optional`,
+    pinPeer === `^${installed("cairnx-replica").version}` && installed("cairnx-pin").peerDependenciesMeta?.[`${SCOPE}cairnx-replica`]?.optional === true, String(pinPeer));
   const bin = join(work, "node_modules", ".bin", "cairnx-replica");
   const usage = await child(bin, [], work);
   ok("the command is installed: cairnx-replica with no arguments prints its usage and exits 2", usage.code === 2 && usage.out.includes("usage: cairnx-replica check"), usage.out + usage.err);

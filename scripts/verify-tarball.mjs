@@ -4,8 +4,8 @@
 // `pnpm pack` does not emit):
 //   - package/package.json names the committed manifest's package and version (the package directory's
 //     package.json at HEAD), carries no "workspace:" specifier, pins each workspace dependency at the version its
-//     package.json at HEAD names (workspaceVersions) and every other dependency as that manifest declares it, keeps
-//     its other fields, and keeps its scripts with the same text, less the ones pnpm drops when packing
+//     package.json at HEAD names (workspaceVersions; a `workspace:^` spec as `^` that version) and every other
+//     dependency as that manifest declares it, keeps its other fields, and keeps its scripts with the same text, less the ones pnpm drops when packing
 //     (PACK_DROPPED_SCRIPTS); the package.json on disk, whose scripts prepack and the publish guard run, has the
 //     commit's scripts exactly;
 //   - every other file outside dist/ is the HEAD commit's file at that path, byte for byte (`git ls-tree` and
@@ -24,6 +24,10 @@ import { diffDist, untar } from "./published-dist.mjs";
 import { versionMap, workspacePackagesAtHead } from "./workspace.mjs";
 
 const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+/** What pnpm packs a `workspace:` spec as: `workspace:^` and `workspace:~` keep their operator, any other the exact
+ *  version. Undefined when the package is not in the workspace. */
+const packedSpec = (/** @type {string} */ spec, /** @type {string | undefined} */ v) =>
+  v === undefined ? undefined : spec === "workspace:^" ? `^${v}` : spec === "workspace:~" ? `~${v}` : v;
 // The scripts pnpm drops from a packed manifest: PREPUBLISH_SCRIPTS of createExportableManifest in
 // @pnpm/exportable-manifest, as bundled in pnpm 10.32.1 (the packageManager this repo pins).
 const PACK_DROPPED_SCRIPTS = ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"];
@@ -62,7 +66,7 @@ export function verifyTarball(tgz, pkgDir, versions) {
     out.push(`package.json is ${packed.name}@${packed.version}, the commit's is ${tree.name}@${tree.version}`);
   for (const f of DEP_FIELDS) {
     const want = Object.fromEntries(Object.entries(tree[f] ?? {}).map(([d, spec]) =>
-      [d, String(spec).startsWith("workspace:") ? versions.get(d) ?? `(no workspace package ${d})` : spec]));
+      [d, String(spec).startsWith("workspace:") ? packedSpec(String(spec), versions.get(d)) ?? `(no workspace package ${d})` : spec]));
     if (canon(packed[f] ?? {}) !== canon(want)) out.push(`package.json ${f} ${canon(packed[f] ?? {})}, expected ${canon(want)}`);
   }
   for (const [k, v] of Object.entries(packed.scripts ?? {}))
