@@ -693,7 +693,10 @@ expected tuple is at another height than the newest final boundary held) or `una
 hours). The exit
 code is 0 for `equal` and `held`, 1 for any other result (`no-tuple` when no final boundary was reached), and 2 for a
 usage or configuration error. A refusal the next step would repeat (`PIN_MISMATCH`, `PIN_OFF_CHAIN`, `BELOW_FLOOR`)
-ends the run at once. The command asks no host it was not given and holds nothing on disk (`test/cli.test.ts`).
+ends the run at once. While it reads, the command prints to stderr a progress line (`syncing: cursor <h> of tip <h>`,
+the level, the proof and the codes) whenever one of those changes and every 30 s, and each new source error
+(`source error <code>: <reason>`); the deadline also ends a step in flight, prints `deadline: <ms> ms passed waiting
+for ...` with what it waited for and the last source error, and gives the result `timeout`. The command asks no host it was not given and holds nothing on disk (`test/cli.test.ts`).
 
 ## Known replicas
 

@@ -28,12 +28,12 @@ const withRef = (f: typeof fetch, answer: (path: string) => { status: number; bo
   return new Response(JSON.stringify(a.body), { status: a.status, headers: { "content-type": "application/json" } });
 };
 const run = async (args: string[], f: typeof globalThis.fetch, extra: { loadPin?: () => Promise<unknown>; sleep?: (ms: number) => Promise<void> } = {}) => {
-  const lines: string[] = [];
-  const code = await runCheck(["check", ...args], { out: (l) => lines.push(l), fetch: f, ...extra });
+  const lines: string[] = [], err: string[] = [];
+  const code = await runCheck(["check", ...args], { out: (l) => lines.push(l), err: (l) => err.push(l), fetch: f, ...extra });
   const last = lines.at(-1) ?? "";
   let report: { tuple: unknown; result: string; level: number; proof: string; lastError: { code: string } | null } | null = null;
   try { report = JSON.parse(last); } catch { report = null; }
-  return { code, lines, report };
+  return { code, lines, err, report };
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -110,6 +110,25 @@ console.log("usage and configuration errors exit 2; a sticky refusal ends the ru
   const bad = await run(["--node", NODE, "--pin", "--json", "--timeout-ms", "5000"], f, { loadPin: async () => ({ PIN: { ...d.pin, log: async () => d.log, eventsHash: "0x" + "cd".repeat(32) } }), sleep: async () => { slept++; } });
   ok("a pin whose events hash is not its log's: PIN_MISMATCH ends the run at once, no tuple, exit 1",
     bad.code === 1 && bad.report?.result === "no-tuple" && bad.report.lastError?.code === "PIN_MISMATCH" && slept === 0 && Date.now() - t0 < 5_000, bad.lines.join("\n"));
+}
+
+console.log("a run that cannot finish says so while it waits and at its deadline:");
+{
+  // A node that takes every request and never answers, as a stalled connection does: only the request's abort ends it.
+  const silent: typeof fetch = (_input, init) => new Promise((_, no) => init?.signal?.addEventListener("abort", () => no(init.signal!.reason), { once: true }));
+  let t0 = Date.now();
+  const s = await run(["--node", NODE, "--json", "--timeout-ms", "3000"], silent);
+  ok("a source that never answers: the run ends at its deadline, exit 1, result timeout, the message naming the first step it waited for",
+    s.code === 1 && s.report?.result === "timeout" && Date.now() - t0 < 8_000 && s.err.some((l) => /^deadline: 3000 ms passed waiting for the source's first step/.test(l)), [...s.err, ...s.lines].join("\n"));
+  const busy: typeof fetch = async () => new Response('{"ok":false,"error":"unavailable"}', { status: 503, headers: { "content-type": "application/json" } });
+  t0 = Date.now();
+  const e = await run(["--node", NODE, "--json", "--timeout-ms", "3000"], busy, { sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 200))) });
+  ok("a source that answers an error forever: each error printed as it comes, then the deadline naming it, exit 1",
+    e.code === 1 && e.report?.result === "timeout" && Date.now() - t0 < 8_000 && e.err.some((l) => /^source error SOURCE_UNAVAILABLE: /.test(l))
+      && e.err.some((l) => /^deadline: 3000 ms passed waiting for the source's first step \(last error SOURCE_UNAVAILABLE: /.test(l)), [...e.err, ...e.lines].join("\n"));
+  const h = await run(["--node", NODE, "--json"], node({ answers: cap.answers }).f);
+  ok("the honest run prints its progress, the cursor against the tip with the level and the codes, and no deadline line",
+    h.code === 0 && h.err.some((l) => /^syncing: cursor 30300 of tip 30300, level 3, proof inclusion, why /.test(l)) && !h.err.some((l) => /^deadline/.test(l)), h.err.join("\n"));
 }
 
 done("cli");

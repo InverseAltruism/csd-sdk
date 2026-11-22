@@ -7,7 +7,7 @@
 // --live, only the legs whose endpoint is named run, each compared with --reference.
 //
 //   pnpm exec tsx packages/replica/scripts/exit-check.ts [--from packed|npm] [--keep]
-//   pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm --live --reference <base> [--indexer <base>] [--origin <origin>] [--node <url>] [--full]
+//   pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm --live --reference <base> [--indexer <base>] [--origin <origin>] [--node <url>] [--full] [--timeout-ms <ms>]
 //   pnpm exec tsx packages/replica/scripts/exit-check.ts --write-answers     (records the examples' answers again)
 // The packed mode needs a built tree (pnpm -r build). --full adds the live legs that read from the activation height.
 import { execFileSync, spawn } from "node:child_process";
@@ -64,11 +64,12 @@ function closure(): Record<string, any>[] {
 
 const run = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) =>
   execFileSync(cmd, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 << 20 });
-/** A child's exit code and output; the child runs while this process serves its sources. */
-const child = (cmd: string, args: string[], cwd: string) => new Promise<{ code: number | null; out: string; err: string }>((done_) => {
+/** A child's exit code and output; the child runs while this process serves its sources. With `echo`, its stderr (the
+ *  command's progress and errors) is printed as it comes. */
+const child = (cmd: string, args: string[], cwd: string, echo = false) => new Promise<{ code: number | null; out: string; err: string }>((done_) => {
   const c = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
   let out = "", err = "";
-  c.stdout.on("data", (b) => { out += b; }); c.stderr.on("data", (b) => { err += b; });
+  c.stdout.on("data", (b) => { out += b; }); c.stderr.on("data", (b) => { err += b; if (echo) process.stdout.write(String(b).replace(/^(?=.)/gm, "    | ")); });
   c.on("close", (code) => done_({ code, out, err }));
 });
 
@@ -194,7 +195,7 @@ try {
     ...(arg("--origin") && flag("--full") ? [["hosted, from the activation root", ["--hosted", arg("--origin")!, "--anchor", root]] as [string, string[]]] : []),
     ...(arg("--node") ? [["own node, above the pin", ["--node", arg("--node")!, "--pin"]] as [string, string[]]] : []),
     ...(arg("--node") && flag("--full") ? [["own node, from the activation height", ["--node", arg("--node")!]] as [string, string[]]] : []),
-  ].map(([l, a]) => [l, [...a, "--reference", arg("--reference")!]] as [string, string[]]) : [
+  ].map(([l, a]) => [l, [...a, "--reference", arg("--reference")!, ...(arg("--timeout-ms") ? ["--timeout-ms", arg("--timeout-ms")!] : [])]] as [string, string[]]) : [
     ["feed: a csd-indexer over cairnx-core's recorded blocks to 117,000", ["--feed", src.indexer, ...expect(ref.feed)]],
     ["own node: the recorded node to 30,300", ["--node", src.node, ...expect(ref.blocks)]],
     ["own node above the shipped pin: the recorded node to 143,356", ["--node", src.nodePin, "--pin", ...expect(ref.pin)]],
@@ -203,7 +204,7 @@ try {
   ];
   if (live && legs.length === 0) throw new Error("--live names no leg: give --indexer, --origin or --node");
   for (const [label, args] of legs) {
-    const r = await child(bin, ["check", ...args, "--json"], work);
+    const r = await child(bin, ["check", ...args, "--json"], work, live);
     let report: { result?: string; level?: number; proof?: string; tuple?: Ref | null; why?: string[]; compare?: unknown } = {};
     try { report = JSON.parse(r.out.trim().split("\n").at(-1) ?? ""); } catch { report = {}; }
     console.log(`  ${label}: level ${report.level}, proof ${report.proof}, tuple ${JSON.stringify(report.tuple)}${live ? `, compare ${JSON.stringify(report.compare)}` : ""}`);

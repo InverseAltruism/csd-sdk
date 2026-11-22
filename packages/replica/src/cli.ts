@@ -23,9 +23,11 @@ const STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 const STICKY = new Set(["PIN_MISMATCH", "PIN_OFF_CHAIN", "BELOW_FLOOR"]);
 const PIN_PACKAGE = "@inversealtruism/cairnx-pin";
 
-export type Result = "equal" | "held" | "branch" | "records" | "rules" | "missing" | "unavailable" | "no-tuple";
+export type Result = "equal" | "held" | "branch" | "records" | "rules" | "missing" | "unavailable" | "no-tuple" | "timeout";
 export interface CheckIo {
   readonly out: (line: string) => void;
+  /** Progress, each source error and the deadline, one line each; default stderr, so --json keeps stdout to the report. */
+  readonly err?: (line: string) => void;
   readonly fetch?: typeof fetch;
   /** The pin's module; default an import of @inversealtruism/cairnx-pin. */
   readonly loadPin?: () => Promise<unknown>;
@@ -91,17 +93,49 @@ function against(ours: Tuple, want: Tuple): Result {
   return ours.stateHash === want.stateHash ? "equal" : "rules";
 }
 
-/** Advances until the cursor reaches the tip, a sticky refusal, or the deadline; waits while a step makes no progress. */
-async function readOn(advance: () => Promise<ReplicaStatus>, timeoutMs: number, sleep: (ms: number) => Promise<void>): Promise<ReplicaStatus> {
-  const end = Date.now() + timeoutMs;
-  let s = await advance(), wait = 500, last = s.cursor?.height ?? null;
-  while (!(s.cursor !== null && s.at !== null && s.cursor.height >= s.at.tipHeight) && !STICKY.has(s.lastError?.code ?? "") && Date.now() < end) {
-    if ((s.cursor?.height ?? null) === last) { await sleep(Math.min(wait, Math.max(0, end - Date.now()))); wait = Math.min(wait * 2, 30_000); }
-    else wait = 500;
-    last = s.cursor?.height ?? null;
-    s = await advance();
-  }
-  return s;
+/** How often a sync that has not changed prints its progress line again. */
+const PROGRESS_MS = 30_000;
+const caughtUp = (s: ReplicaStatus) => s.cursor !== null && s.at !== null && s.cursor.height >= s.at.tipHeight;
+const progressOf = (s: ReplicaStatus) =>
+  `syncing: cursor ${s.cursor?.height ?? "none"} of tip ${s.at?.tipHeight ?? "unknown"}, level ${s.level}, proof ${s.proof}, why ${s.why.map((w) => w.code).join(",") || "none"}, notes ${s.notes.map((n) => n.code).join(",") || "none"}`;
+const errorOf = (e: NonNullable<ReplicaStatus["lastError"]>) => `${e.code}: ${e.reason}`;
+/** What a run that has not finished was waiting for, for its deadline line. */
+const waitingFor = (s: ReplicaStatus) => `${s.cursor === null ? "the source's first step" : `the cursor ${s.cursor.height} to reach the tip ${s.at?.tipHeight ?? "unknown"}`}${
+  s.lastError === null ? " (no answer yet)" : ` (last error ${errorOf(s.lastError)})`}`;
+
+/** Advances until the cursor reaches the tip, a sticky refusal, or the deadline, which also ends an advance in flight;
+ *  waits while a step makes no progress. Prints a progress line when the cursor, the tip or the codes change (and every
+ *  PROGRESS_MS), and each new source error. */
+async function readOn(advance: (signal: AbortSignal) => Promise<ReplicaStatus>, status: () => ReplicaStatus, timeoutMs: number,
+  sleep: (ms: number) => Promise<void>, err: (line: string) => void): Promise<{ s: ReplicaStatus; timedOut: boolean }> {
+  const end = Date.now() + timeoutMs, stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(new Error("the deadline passed")), timeoutMs);
+  let shown = "", shownAt = 0, lastErr = "", wait = 500, last: number | null = null;
+  const report = (s: ReplicaStatus) => {
+    const p = progressOf(s);
+    if (p !== shown || Date.now() - shownAt >= PROGRESS_MS) { err(p); shown = p; shownAt = Date.now(); }
+    const e = s.lastError === null ? "" : `${errorOf(s.lastError)}@${s.lastError.at}`;
+    if (e !== "" && e !== lastErr) err(`source error ${errorOf(s.lastError!)}`);
+    lastErr = e;
+  };
+  // The advance ends with its signal, but a source's request may settle later: the deadline does not wait for it.
+  const bounded = () => Promise.race([advance(stop.signal), new Promise<null>((r) => stop.signal.addEventListener("abort", () => r(null), { once: true }))]);
+  try {
+    for (;;) {
+      const got = stop.signal.aborted ? null : await bounded();
+      const s = got ?? status();
+      report(s);
+      if (got === null || Date.now() >= end) {
+        if (caughtUp(s)) return { s, timedOut: false };
+        err(`deadline: ${timeoutMs} ms passed waiting for ${waitingFor(s)}`);
+        return { s, timedOut: true };
+      }
+      if (caughtUp(s) || STICKY.has(s.lastError?.code ?? "")) return { s, timedOut: false };
+      if ((s.cursor?.height ?? null) === last) { await sleep(Math.min(wait, Math.max(0, end - Date.now()))); wait = Math.min(wait * 2, 30_000); }
+      else wait = 500;
+      last = s.cursor?.height ?? null;
+    }
+  } finally { clearTimeout(timer); }
 }
 
 /** The command: prints its report through `io.out` and returns the exit code. */
@@ -118,9 +152,10 @@ export async function runCheck(argv: readonly string[], io: CheckIo): Promise<nu
     throw e;
   }
   try {
-    const s = await readOn(() => replica.advance(), a.timeoutMs, io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))));
+    const { s, timedOut } = await readOn((signal) => replica.advance({ signal }), () => replica.status(), a.timeoutMs,
+      io.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), io.err ?? ((l) => console.error(l)));
     const want = a.want;
-    const result: Result = s.tuple === null ? "no-tuple" : want !== null ? against(s.tuple, want)
+    const result: Result = timedOut ? "timeout" : s.tuple === null ? "no-tuple" : want !== null ? against(s.tuple, want)
       : a.reference !== undefined ? (s.compare?.kind ?? "unavailable") : "held";
     const report = {
       source: s.source, level: s.level, proof: s.proof, verified: s.verified, why: s.why.map((w) => w.code), notes: s.notes.map((n) => n.code),
