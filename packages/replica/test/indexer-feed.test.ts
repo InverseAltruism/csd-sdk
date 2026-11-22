@@ -453,6 +453,16 @@ console.log("with inclusion the verified headers name the tip:");
       (got.status !== 200 || got.headers["x-cairnx-why"] === why), `why ${why} tip ${st.at?.tipHeight} cursor ${st.cursor?.height} status ${got.status}`);
     await r.close();
   }
+  // The request budget counts the headerAt reads: with 4 requests a step ends at a boundary short of the final height.
+  {
+    const TT = H0 + 200, base = signed.verified({ verifiedTip: TT });
+    let asked = 0;
+    const st = await next(indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: TT })), pageSize: 3, ...base,
+      headerAt: (h: number) => { asked++; return base.headerAt(h); } }), null, 4);
+    ok("a budget of 4 requests: the step ends at a boundary below the final height, its reach that height, few headerAt reads",
+      st.kind === "blocks" && st.cursor.height % 30 === 0 && st.cursor.height < TT - FINAL_DEPTH && st.reach === TT - FINAL_DEPTH && asked <= 5,
+      JSON.stringify(st.kind === "blocks" ? { c: st.cursor.height, reach: st.reach, asked } : st));
+  }
   // headerAt that throws or answers out of form.
   for (const [what, answer, code] of [
     ["throws", async () => { throw new Error("the header source is down"); }, "SOURCE_UNAVAILABLE"],
