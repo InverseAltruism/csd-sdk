@@ -10,5 +10,5 @@ export {
 } from "./routes.js";
 export { parseQuery, type Query, type QueryError, type ParseResult, type AtQuery } from "./params.js";
 export {
-  CURSORS, type CursorCodec, type NameKey, type NewestKey, type AnchorKey, type TickerKey, type HolderKey, type EventKey,
+  CURSORS, type CursorCodec, type NameKey, type NewestKey, type LengthKey, type AnchorKey, type TickerKey, type HolderKey, type EventKey,
 } from "./cursor.js";

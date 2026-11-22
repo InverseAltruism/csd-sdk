@@ -148,7 +148,7 @@ Every route takes `at`, `keys`, `after` and `limit`.
 
 | Route | Order and `after` | Filters |
 |---|---|---|
-| `names` | `order=name` (default): `<name>`; `order=newest` (height desc, name asc): `<height>:<name>` | `owner` (address), `status` (`held`, `pending`, `lapsed`) |
+| `names` | `order=name` (default): `<name>`; `order=newest` (height desc, name asc): `<height>:<name>`; `order=length` (length asc, name asc): `<length>:<name>`, the length that of the name | `owner` (address), `status` (`held`, `pending`, `lapsed`) |
 | `bids` | height desc, id asc: `<height>:<id>` | `status` (`open`, `cancelled`, `expired`, `done`) |
 | `tokens` | ticker asc: `<ticker>` | |
 | `events` | height asc, pos asc: `<height>:<pos>` | |

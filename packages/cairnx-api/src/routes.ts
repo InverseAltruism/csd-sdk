@@ -52,7 +52,7 @@ export const KEYS_MAX = 32;
 
 export const ROUTE_TABLE = deepFreeze({
   names: {
-    key: NAME_RE, limitMax: 200, orders: { name: CURSORS.name, newest: CURSORS.newest },
+    key: NAME_RE, limitMax: 200, orders: { name: CURSORS.name, newest: CURSORS.newest, length: CURSORS.length },
     filters: { owner: { re: ADDR_RE }, status: { values: NAME_STATUSES } }, required: [],
   },
   bids: { key: HASH_RE, limitMax: 200, orders: { newest: CURSORS.anchor }, filters: { status: { values: BID_STATUSES } }, required: [] },

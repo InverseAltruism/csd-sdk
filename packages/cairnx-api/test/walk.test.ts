@@ -34,6 +34,7 @@ const bidText = textOrder(canonical.bids), tickerText = textOrder(canonical.toke
 
 const byName = Object.values(flagged).sort((a, b) => bytes(a.name, b.name));
 const byNewest = [...byName].sort((a, b) => b.height - a.height);          // stable: name order within a height
+const byLength = [...byName].sort((a, b) => Buffer.byteLength(a.name, "ascii") - Buffer.byteLength(b.name, "ascii")); // stable: bytewise within a length
 const bids = [...rows.bids].sort((a, b) => (bidText.get(a.id) ?? 0) - (bidText.get(b.id) ?? 0)).sort((a, b) => b.height - a.height);
 const tokens = [...rows.tokens].sort((a, b) => (tickerText.get(a.ticker) ?? 0) - (tickerText.get(b.ticker) ?? 0));
 const offers = [...rows.offers].sort((a, b) => (offerText.get(a.id) ?? 0) - (offerText.get(b.id) ?? 0)).sort((a, b) => b.height - a.height);
@@ -55,10 +56,10 @@ const STATUS = { held: (r: (typeof rows.names)[number]) => !r.pending && !r.expi
 
 type Walk = { route: string; query: string; want: readonly object[] };
 const walks: Walk[] = [];
-for (const [order, sortedRows] of [["name", byName], ["newest", byNewest]] as const) {
+for (const [order, sortedRows] of [["name", byName], ["newest", byNewest], ["length", byLength]] as const) {
   for (const owner of OWNERS) {
     for (const status of [null, "held", "pending", "lapsed"] as const) {
-      const q = [order === "name" ? "" : "order=newest", owner === null ? "" : `owner=${owner}`, status === null ? "" : `status=${status}`];
+      const q = [order === "name" ? "" : `order=${order}`, owner === null ? "" : `owner=${owner}`, status === null ? "" : `status=${status}`];
       walks.push({ route: "names", query: q.filter(Boolean).join("&"), want: sortedRows.filter((r) => (owner === null || r.owner === owner) && (status === null || STATUS[status](r))) });
     }
   }
@@ -103,8 +104,13 @@ ok(`${checked} pinned walks (${walks.length} filter and order combinations x 5 l
 ok("the combinations reach non-empty and empty results, and multi-page walks", walks.some((w) => w.want.length === 0) && walks.filter((w) => w.want.length > 7).length > 5);
 ok("every name status filter has rows (held, pending, lapsed, and one both pending and lapsed)", (["held", "pending", "lapsed"] as const).every((st) => byName.some(STATUS[st]))
   && byName.some((r) => r.pending === true && r.expired === true));
+const tieClasses = [...new Set(byName.map((r) => r.name.length))].filter((l) => {
+  const group = byName.filter((r) => r.name.length === l).map((r) => r.name);
+  return group.some((n) => /^[0-9]/.test(n)) && group.some((n) => /^[a-z]/.test(n)) && group.some((n) => n.includes("-"));
+});
+ok(`the length walks cross ties: lengths ${tieClasses.join(", ")} each hold names opening with a digit and a letter and one with a hyphen`, tieClasses.length > 0);
 const keysOf = (list: readonly object[], k: string) => list.map((r) => (r as Record<string, unknown>)[k]);
-const pairs: [readonly object[], readonly string[], string][] = [[byName, Object.keys(input.names), "name"], [byNewest, Object.keys(input.names), "name"],
+const pairs: [readonly object[], readonly string[], string][] = [[byName, Object.keys(input.names), "name"], [byNewest, Object.keys(input.names), "name"], [byLength, Object.keys(input.names), "name"],
   [bids, Object.keys(input.bids), "id"], [tokens, Object.keys(input.tokens), "ticker"], [offers, Object.keys(input.offers), "id"],
   [holdersOf("CAIRN"), Object.keys(input.balances.CAIRN ?? {}), "address"], [events, input.events.map((e) => e.id), "txid"]];
 ok("each oracle order differs from the order of the view's input", pairs.every(([a, inputKeys, k]) => show(keysOf(a, k)) !== show(inputKeys)));

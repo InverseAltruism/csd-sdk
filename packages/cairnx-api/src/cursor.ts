@@ -18,6 +18,7 @@ export interface CursorCodec<K, Row> {
 
 export interface NameKey { name: string }
 export interface NewestKey { height: number; name: string }
+export interface LengthKey { length: number; name: string }
 export interface AnchorKey { height: number; id: string }
 export interface TickerKey { ticker: string }
 export interface HolderKey { amount: bigint; address: string }
@@ -46,6 +47,15 @@ const newest: CursorCodec<NewestKey, NameRow> = {
   decode: (c) => { const v = heightAnd(c, NAME_RE); return v && { height: v[0], name: v[1] }; },
   compare: (a, b) => num(b.height, a.height) || asc(a.name, b.name),
   of: (r) => ({ height: r.height, name: r.name }),
+};
+
+// The length is the name's own, so a cursor whose length differs from its name's names no key and is refused: a `newest`
+// cursor fits this grammar only when its height equals its name's length.
+const length: CursorCodec<LengthKey, NameRow> = {
+  encode: (k) => `${k.length}:${k.name}`,
+  decode: (c) => { const v = heightAnd(c, NAME_RE); return v && v[0] === v[1].length ? { length: v[0], name: v[1] } : null; },
+  compare: (a, b) => num(a.length, b.length) || asc(a.name, b.name),
+  of: (r) => ({ length: r.name.length, name: r.name }),
 };
 
 const anchor: CursorCodec<AnchorKey, OfferRow | BidRow> = {
@@ -84,7 +94,8 @@ const event: CursorCodec<EventKey, EventRow> = {
   of: (r) => ({ height: r.height, pos: r.pos }),
 };
 
-/** The codec of each order: names by name; names newest first (height desc, name asc); offers and bids (height desc,
+/** The codec of each order: names by name; names newest first (height desc, name asc); names shortest first (length
+ *  asc, name asc; a name is ASCII, so its length is its byte length); offers and bids (height desc,
  *  id asc); tokens by ticker; holders by balance (available + locked desc, address asc); events in chain position
  *  (height asc, pos asc). */
-export const CURSORS = deepFreeze({ name, newest, anchor, ticker, holder, event });
+export const CURSORS = deepFreeze({ name, newest, length, anchor, ticker, holder, event });
