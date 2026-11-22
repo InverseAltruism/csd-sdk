@@ -25,6 +25,7 @@ pnpm test:crosslang              # full JS<->Python differential: the fork gate 
 pnpm run audit:all               # citation check (hard), audit self-tests, invariants, money-safety, race harness
 node scripts/check-lockstep.mjs  # workspace pins, published pins and dist, dist freshness (queries npm)
 node scripts/npm-window.mjs      # the npm window in check mode: pack, guard, verify-tarball; publishes nothing
+pnpm exec tsx packages/replica/scripts/exit-check.ts   # the replica, pin and anchors installed from packed tarballs, against recorded answers
 pnpm test:live                   # needs CSD_RPC: the oracle and the client and light live suites; never in CI
 node scripts/check-consumer-pins.mjs   # cross-repo pin coherence over sibling consumer checkouts; skips absent ones
 ```
