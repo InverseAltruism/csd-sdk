@@ -230,6 +230,28 @@ epoch. For an offer or bid anchored below V22 that sweep applies the §24 cap on
 (40 100), that is from tip 40 099 on. A name's `expired` (§17) is read at the tip's own epoch: it is present when
 `epochOf(tipHeight) > paidThroughEpoch + NAME_GRACE_EPOCHS`.
 
+For the heights a chain produces (block heights, non-negative integers below 2^53) the state at a tip does not depend
+on the heights at which sweeps ran between events: an item only becomes due as the height grows, whether it is due
+reads that item alone, and an expiry writes the item's status and what it releases (an addition to one seller's
+balance, or the unlock of one name) or deletes one reservation. A resolver may apply each expiry at the first height
+it is due, or every due expiry before each event, as cairnx-core 0.2.8 and the Python reference do. So an event that
+writes nothing (§40.1) changes no state: at most it adds a sweep at its height and runs the flush of the previous
+block's deferred cancels (§16) that the next event at a new height would run before its own sweep; below activation,
+or repeated at V29 or above, it adds neither.
+
+`resolve()` takes heights and tips of any value, and outside that domain the heights at which sweeps run can matter:
+an offer whose event height is NaN has a NaN cap (§24) from V21 on, so it is due below V21 and at no height from V21
+on, and a commit at the string height "90000" gives a reservation the deadline "90000820", which a sweep compares as
+text at a string height and as a number at a number one. cairnx-core from 0.2.9 applies each expiry at the first
+height it is due only while every event height and the tip it has read is a safe integer (`Number.isSafeInteger`).
+Inside that domain being due only grows with height, so batches at the due heights give the state of one batch per
+sweep; the first height or tip outside it ends the batches before any sweep reads it; from then on every sweep is the
+one before each event and at `tipHeight + 1`, as in 0.2.8. That gives the state 0.2.8 gives for inputs made of plain
+values (what JSON carries); a getter or a conversion with side effects, which the fold reads a different number of
+times, is outside that statement. Outside the domain the result is not consensus: released cores have answered
+differently (0.2.4 and 0.2.7 on a string height), so a caller checks that event heights and the tip are safe integers
+before the call.
+
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
 Serialization is **canonical JSON** in the state form of §5.1: object keys sorted in ordinal (code-unit) order at every

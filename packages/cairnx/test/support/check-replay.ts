@@ -1,10 +1,12 @@
 // The replay's check mode over the seal's inputs: the case files, the replay corpus at every pinned and event height,
-// the resolve cases of codes.json, the fuzz sequences of the file named on the command line, and the growth streams
-// at full size. Every indexed read is compared with the plain walk; the index invariants are asserted after every
-// event, or every 64th event on a stream of more than 1,000 events. Run by scripts/seal-differential.mjs step 4(g):
-//   tsx test/support/check-replay.ts <fuzz.json>
+// the resolve cases of codes.json, the fuzz sequences of the files named on the command line inside the domain, the
+// growth streams at full size and the sweep streams. Every indexed read is compared with the plain walk and each
+// expiry checked to land at the first height it is due; the index invariants are asserted after every event, or every
+// 64th event on a stream of more than 1,000 events. Run by scripts/seal-differential.mjs step 4(g):
+//   tsx test/support/check-replay.ts <fuzz.json> [<more fuzz.json> ...]
 import { readFileSync } from "node:fs";
 import { fullGrowthStreams } from "../../../../conformance/growth-streams.mjs";
+import { parseNumbers, sweepStreams } from "../../../../conformance/sweep-streams.mjs";
 import * as R from "../../src/index.js";
 import { replay } from "../../src/resolve.js";
 import type { ChainEvent } from "../../src/index.js";
@@ -32,15 +34,23 @@ for (const h of [...new Set([...pins, ...corpus.events.map((e: ChainEvent) => e.
   run(`corpus@${h}`, byHeight.slice(0, upto), h);
 }
 for (const c of read("codes.json").resolve) run(`codes.json:${c.name}`, c.events, c.tipHeight);
-const fuzzFile = process.argv[2];
-if (!fuzzFile) { console.error("usage: check-replay.ts <fuzz.json>"); process.exit(2); }
-const seqs: { events: ChainEvent[]; tipHeight: number }[] = JSON.parse(readFileSync(fuzzFile, "utf8"));
-let threw = 0;
-seqs.forEach((s, i) => {
-  let plain: unknown = null;
-  try { R.resolve(s.events, s.tipHeight); } catch (e) { plain = e; }
-  if (plain !== null) { threw++; return; }                         // a sequence resolve() refuses is the seal's step (d)
-  run(`fuzz#${i}`, s.events, s.tipHeight);
-});
+const fuzzFiles = process.argv.slice(2);
+if (!fuzzFiles.length) { console.error("usage: check-replay.ts <fuzz.json> [<more fuzz.json> ...]"); process.exit(2); }
+let threw = 0, outside = 0;
+// Check mode holds the index to the plain walk, which agree for heights a chain produces. Outside that domain (a height
+// or tip that is not a safe integer) the index, 0.2.8's as well, can pop differently from the walk (a string key in
+// the heap); those inputs are compared with the baseline by the seal's steps (d3) and (w) instead.
+const inDomain = (s: { events: ChainEvent[]; tipHeight: unknown }) => Number.isSafeInteger(s.tipHeight) && s.events.every((e) => Number.isSafeInteger(e.height));
+for (const [f, file] of fuzzFiles.entries()) {
+  const seqs = parseNumbers(readFileSync(file, "utf8")) as { events: ChainEvent[]; tipHeight: number }[];
+  seqs.forEach((s, i) => {
+    if (!inDomain(s)) { outside++; return; }
+    let plain: unknown = null;
+    try { R.resolve(s.events, s.tipHeight); } catch (e) { plain = e; }
+    if (plain !== null) { threw++; return; }                       // a sequence resolve() refuses is the seal's step (d)
+    run(`fuzz${f}#${i}`, s.events, s.tipHeight);
+  });
+}
 for (const s of fullGrowthStreams(R)) for (const tip of [s.tipHeight, ...s.tips]) run(`${s.key} ${s.label}@${tip}`, s.events, tip);
-console.log(`check mode clean on ${inputs} inputs (${events} events)${threw ? `; ${threw} fuzz sequences that resolve() itself throws on were skipped` : ""}`);
+for (const s of sweepStreams(R)) run(`sweep ${s.key}@${s.tipHeight}`, s.events, s.tipHeight);
+console.log(`check mode clean on ${inputs} inputs (${events} events)${threw ? `; ${threw} fuzz sequences that resolve() itself throws on were skipped` : ""}${outside ? `; ${outside} outside the domain left to the baseline differential` : ""}`);

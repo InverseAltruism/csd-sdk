@@ -62,6 +62,26 @@ this directory, only the JS implementation existed, so the contract was asserted
   recaptures; bulk cancels and displacements over 20,000 offers; the V21 crossing; edge cases), each with the
   expectations it was built to meet, read from the reason codes. `scripts/seal-differential.mjs` step 4(f) runs them
   at full size against the baseline; `packages/cairnx/test/growth.test.ts` at 500 and 1,000 against pinned states.
+- **`fuzz-resolve.mjs`:** generated sequences through the JS resolver and `cairnx_ref.py`, canonical states compared;
+  `--emit` writes them for the seal. With `--expiry` the sequences are built so that offers, bids, reservations and
+  recapture reservations end between events and later events read what they released, with a floor per kind of expiry
+  (an offer, a bid, a reservation, a recapture reservation, an expiry under the V21 cap). With `--malformed` those
+  kinds and the tip carry values no chain produces: numbers that are not safe integers (NaN, the infinities, negative,
+  fractional, 2^53 and above), numeric and other strings, null, undefined, booleans, arrays, objects and BigInts, on
+  both sides of V21 and of an epoch edge, with reservations from commits at string heights; a floor per kind, per
+  type, for the tip, for an offer with a NaN height open past V21 though its raw expiry fell due below it and for a
+  string deadline. The reference gets the sequences whose numbers are all integers: its arithmetic on NaN and the
+  infinities is Python's (a NaN in its sort key, `min(E, NaN) = E`, `inf // 30 = NaN`) and it writes no state that
+  holds a float, so the comparison with cairnx-core 0.2.8 over all of them is the seal's step (d3). Every run also
+  resolves each sequence with an event that writes nothing at many heights and requires the same result, from JS
+  (whole result) and from the reference (canonical state): CONVENTION section 5's property, checked by the reference
+  on its own output (in `--malformed`, only where every height and the tip are safe integers).
+- **`sweep-streams.mjs`** (JavaScript only, not a cross-language job): twelve streams that put expiries at a height
+  with no event or at one height together and read them with a later event, each with the codes it was built to show
+  (X and X2 hold an offer with a NaN height across V21, Y and Y2 reservations from commits at string heights); also
+  the dense walk's tips and prefixes, the events that write nothing, the JSON form for NaN, the infinities and
+  BigInts, and what a malformed sequence carried and reached, shared by the seal, the fuzz and
+  `packages/cairnx/test/sweep.test.ts`.
 - **`moves-check.mjs`** (JavaScript only, not a cross-language job): the token moves of a `resolve()` result
   (CONVENTION section 41) against its input events and the state it returned: the identity (for every ticker and
   address, received less sent equals available plus locked), the mint totals, each transfer's move equal to its own

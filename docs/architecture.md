@@ -30,11 +30,16 @@ checks its table and writes one esm module with its types.
 
 ## cairnx-core modules (`packages/cairnx/src/`)
 
-- `resolve.ts`: the replay loop and its apply order (`applyOrder`, `eventId`: CONVENTION section 33.3); its
+- `resolve.ts`: the replay as a fold over events in apply order (one step per event; the closing sweep and the
+  materialized state at the tip are its only tip-dependent end) and its apply order (`applyOrder`, `eventId`:
+  CONVENTION section 33.3); its
   per-record handlers and shared state context live in `resolve/`, whose handlers write each token move (CONVENTION
   section 41) on the applied entry at the line that moves the balance, and `resolve/store.ts` holds the offers, bids, names and recapture reservations with the replay's private indexes (expiry
   queues in `resolve/minqueue.ts`; candidates per owner for the reservation caps, per holder for the live-hold cap, per
-  seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on.
+  seller and give asset for the bulk cancel, per name for the voids) and the only writes to the fields they key on; its
+  sweep applies each expiry at the first height it is due, one batch per such height in ascending order, while every
+  height and tip the fold has read is a safe integer, and one batch per sweep from the first that is not (the fold's
+  `inDomain` in `resolve.ts`, CONVENTION section 5).
 - `types.ts`: all gate heights, fee constants, regexes, RESERVED_NAMES, and the pure client selectors including
   claimWindowOf.
 - `records.ts`: parseRecord, explainRecord (the record code of a refusal) and its per-record key allow-sets; the

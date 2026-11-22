@@ -318,6 +318,10 @@ const state = resolve(events, tipHeight);
 console.log(state.names, state.tokens.CAIRN, state.balances.CAIRN);
 ```
 
+For inputs made of plain values (what JSON carries), a release that changes no rule (`CONSENSUS_CHANGES.md`) returns
+what the previous core returned and throws where it threw, and only event heights and a tip that are safe integers,
+as a chain produces them, are consensus, so check both before the call (`CONVENTION.md` section 5).
+
 ### What a resolver result proves
 
 - Display: an answer read from someone's API. It is worth the trust you place in that API.

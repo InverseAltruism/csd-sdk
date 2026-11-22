@@ -6,16 +6,16 @@ built-in, so it runs in a browser. Its rows are `@inversealtruism/cairnx-core`'s
 exact peer dependency: install the cairnx-core version this package was published against; any other installs a
 second core or runs this package on a core it was not built against.
 
-## What 0.1.1 is
+## What 0.1.2 is
 
 - The handlers and types the CairnX resolver, its first consumer, will mount to answer the six reads.
-- Not a live HTTP API: as of 0.1.1 no public route serves these reads.
+- Not a live HTTP API: as of 0.1.2 no public route serves these reads.
 - Not the 1.0 contract: until 1.0.0, any release may change a route, a parameter, a row or envelope field, an error
   code or a cursor grammar, and CHANGELOG.md names each change. What an answer of the public API promises, and the
   notice before a field or route is retired, start on the day the API's documentation is published, not with a
   package version.
 
-The rest of this file describes 0.1.1 as built: 0.1.0's API, on cairnx-core 0.2.8.
+The rest of this file describes 0.1.2 as built: 0.1.0's API, on cairnx-core 0.2.9.
 
 ## What an answer means
 

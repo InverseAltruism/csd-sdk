@@ -11,6 +11,8 @@
 // arguments. If this script does not exit 0, NOTHING PUBLISHES.
 //
 // What it does, in order:
+//   0. the build under test is the tree's: the CAIRNX_CORE_VERSION of packages/cairnx/dist equals the version in
+//      packages/cairnx/package.json, so a dist of another version with a fresh mtime cannot stand in for the tree;
 //   1. settled-tree check: scripts/check-lockstep.mjs (dist not older than src);
 //   2. every vector file present at the baseline is unchanged in the working tree; 2b content-pins the replay corpus
 //      and hashes, and the vector and fixture files added after the baseline;
@@ -25,9 +27,23 @@
 //      present, and the cases of forward.json and moves.json, (f) the streams of conformance/growth-streams.mjs at full
 //      size (16,000 registrations; 20,000 open bids, offers with holds, live reservations, live recaptures; 2,000 bulk
 //      cancels and 2,000 displacements over 20,000 offers; the V21 crossing; the edges), each with the expectations it
-//      was built to meet read from the new log, (g) when the tree has the replay's check mode
-//      (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d), the codes.json cases of (e) and
-//      (f) replayed with it: each indexed read compared with the plain walk, the index invariants asserted after every
+//      was built to meet read from the new log, and the streams of conformance/sweep-streams.mjs, (d2) the sequences of
+//      conformance/fuzz-resolve.mjs --expiry (offers, bids, reservations and recapture reservations that end between
+//      events), with a floor per kind of expiry read back from the baseline outputs and each sequence resolved again
+//      with events that write nothing (CONVENTION section 5), (d3) the sequences of conformance/fuzz-resolve.mjs
+//      --malformed (offers, bids, reservations, recapture reservations and tips carrying heights, expiries or tips no
+//      chain produces: numbers that are not safe integers, strings, null, undefined, booleans, arrays, objects,
+//      BigInts; on both sides of V21 and of an epoch edge), with a floor per kind read back from the baseline outputs
+//      and per type, a throw required to carry the baseline's message, compared with the code baseline alone when one
+//      is given (outside the domain the two baselines can differ; the count is printed), (w) a dense walk over the sequences of (d2) and
+//      (d3) and the sweep streams: each at every tip from two below its first event to its tip (over a span of more
+//      than 2,000 blocks, every tip within three epochs above each event height and beside each expiry height and
+//      gate; an event whose height is not above the tip, a NaN or a string such as "x9" included, is in the prefix),
+//      against the code baseline's whole result when one is given, else the baseline's canonicalState, (g) when the
+//      tree has the replay's check mode (packages/cairnx/test/support/check-replay.ts), every input of (a), (c), (d),
+//      (d2), the codes.json cases of (e), (f), the sweep streams and the inputs of (d3) inside the domain (every height
+//      and the tip a safe integer) replayed with it: each indexed read compared with the plain
+//      walk, each expiry checked to land at the first height it is due, the index invariants asserted after every
 //      event (every 64th on a stream of more than 1,000 events);
 //      when the new build has the code table, every log entry carries a code whose outcome is its `ok`;
 //      (h) the token moves of every input of (a) to (f) checked by conformance/moves-check.mjs (the identity of §41,
@@ -62,12 +78,26 @@ const step = (s) => console.log(`\n== SEAL: ${s} ==`);
 const VEC = "packages/cairnx/test/vectors";
 const readJson = (rel) => JSON.parse(readFileSync(join(ROOT, ...rel.split("/")), "utf8"));
 
+// ── 0. the build under test is the tree's version ──────────────────────────────────────────────────
+const NEW_DIST = join(ROOT, "packages", "cairnx", "dist", "index.js");
+step("build version (packages/cairnx/dist against packages/cairnx/package.json)");
+if (!existsSync(NEW_DIST)) die(`no build at ${NEW_DIST}: run pnpm -r build first`);
+const NEW = await import(pathToFileURL(NEW_DIST).href);
+{
+  const manifest = readJson("packages/cairnx/package.json").version;
+  if (NEW.CAIRNX_CORE_VERSION !== manifest) die(`the build in packages/cairnx/dist is cairnx-core ${NEW.CAIRNX_CORE_VERSION}, the manifest says ${manifest}: rebuild, then re-run`);
+  console.log(`  cairnx-core ${manifest}`);
+}
+
 // ── 1. settled tree ────────────────────────────────────────────────────────────────────────────────
 step("settled-tree check (check-lockstep: dist fresh, workspace pins)");
 {
   const r = sh(process.execPath, [join(ROOT, "scripts", "check-lockstep.mjs")], { stdio: "inherit" });
   if (r.status !== 0) die("check-lockstep failed (stale dist or broken pins) - rebuild, then re-run");
 }
+// The sweep streams module also holds the typed text the whole-result compares use: NaN, the infinities, null and
+// BigInts each keep their own text, where JSON.stringify writes the first four as null.
+const SW = await import(pathToFileURL(join(ROOT, "conformance", "sweep-streams.mjs")).href);
 
 // ── 2. the pinned vector files must not have moved ─────────────────────────────────────────────────
 // Every listed file that exists at the baseline is compared with the WORKING TREE (staged or not), so an uncommitted
@@ -203,7 +233,6 @@ const OLD = await import(pathToFileURL(join(wt, "packages", "cairnx", "dist", "i
 const codeWt = CODE_BASELINE_REF ? buildAt(CODE_BASELINE_REF) : null;
 if (codeWt) await bindToNpm(CODE_BASELINE_REF, codeWt);
 const CODE = codeWt ? await import(pathToFileURL(join(codeWt, "packages", "cairnx", "dist", "index.js")).href) : null;
-const NEW = await import(pathToFileURL(join(ROOT, "packages", "cairnx", "dist", "index.js")).href);
 const { checkMoves } = await import(pathToFileURL(join(ROOT, "conformance", "moves-check.mjs")).href);
 // Whether a build writes token moves (CONVENTION §41): the log of one issuer deploy and one mint. A baseline that writes
 // none is compared with each new entry's `moves` left out; one that writes them is compared with them.
@@ -246,7 +275,8 @@ const report = (name, what, events, a, b) => {
   console.error(`    new: ${b.slice(Math.max(0, k - 60), k + 100)}`);
 };
 const lastMs = { old: 0, new: 0 };            // the last diffCase's resolve times (one run each, informational)
-const diffCase = (name, events, tip) => {
+// vsOld false: compared with the code baseline only (step (d3) when one is given).
+const diffCase = (name, events, tip, vsOld = true) => {
   for (const e of events) if (e.kind === "propose") proposes.set(`${e.uri}\u0000${e.payloadHash}`, { uri: e.uri, payloadHash: e.payloadHash });
   let t0 = performance.now();
   const os = OLD.resolve(events, tip);
@@ -254,12 +284,14 @@ const diffCase = (name, events, tip) => {
   t0 = performance.now();
   const ns = NEW.resolve(events, tip);
   lastMs.new = performance.now() - t0;
-  const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
-  if (a !== b) report(name, "canonicalState", events, a, b);
-  const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
-  if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
+  if (vsOld) {
+    const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
+    if (a !== b) report(name, "canonicalState", events, a, b);
+    const fa = SW.stringifyNumbers(os), fb = SW.stringifyNumbers(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
+    if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
+  }
   if (CODE) {
-    const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(CODE_MOVES ? ns : stripMoves(ns));
+    const fc = SW.stringifyNumbers(CODE.resolve(events, tip)), fn = SW.stringifyNumbers(CODE_MOVES ? ns : stripMoves(ns));
     if (fc !== fn) report(name, `full state with code${CODE_MOVES ? "" : ", without moves,"} vs ${CODE_BASELINE_REF}`, events, fc, fn);
   }
   const mv = checkMoves(ns, NEW.TREASURY_ADDR, events);
@@ -397,6 +429,76 @@ step(`resolve differential (d): conformance/fuzz-resolve.mjs --emit, ${FUZZ_N} s
   console.log(`  ${seqs.length} sequences, ${events} events${threw ? `, ${threw} threw in both builds alike` : ""}`);
 }
 
+// The expiry sequences: the same generator's --expiry mode, so that sweeps between events have something to do.
+const EXPIRY_N = 3_000;
+const BASE = CODE ?? OLD;                     // the baseline the floors are read from and the dense walk compares with
+step(`resolve differential (d2): conformance/fuzz-resolve.mjs --expiry --emit, ${EXPIRY_N} sequences, seed ${FUZZ_SEED}, floors read from ${CODE ? CODE_BASELINE_REF : BASELINE_REF}`);
+const expirySeqs = [];
+{
+  const file = join(wt, "seal-fuzz-expiry.json");
+  const r = sh(process.execPath, [join(ROOT, "conformance", "fuzz-resolve.mjs"), String(EXPIRY_N), String(FUZZ_SEED), "--expiry", "--emit", file]);
+  if (r.status !== 0) die(`fuzz-resolve --expiry --emit failed: ${r.stderr || r.stdout}`);
+  expirySeqs.push(...JSON.parse(readFileSync(file, "utf8")));
+  if (expirySeqs.length !== EXPIRY_N) die(`fuzz-resolve --expiry emitted ${expirySeqs.length} sequences, not ${EXPIRY_N}`);
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, v21: 0 };
+  let events = 0, inert = 0, inertDiffs = 0;
+  expirySeqs.forEach((s, i) => {
+    events += s.events.length;
+    const ns = diffCase(`expiry#${i}`, s.events, s.tipHeight);
+    const k = SW.expiryKinds(BASE, s.events, BASE.resolve(s.events, s.tipHeight));
+    for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
+    const added = SW.inertEvents(SW.denseTips(s.events, s.tipHeight, NEW.EPOCH_LEN, SW.dueHeights(NEW, s.events), 300));
+    inert += added.length;
+    if (JSON.stringify(NEW.resolve([...added, ...s.events], s.tipHeight)) !== JSON.stringify(ns)) { inertDiffs++; bump("events that write nothing changed a result"); }
+  });
+  const floor = Math.floor(EXPIRY_N / 50);
+  console.log(`  ${EXPIRY_N} sequences, ${events} events; reach (sequences with that expiry and a later event, read from the baseline): ${JSON.stringify(reach)}, floor ${floor} each`);
+  console.log(`  events that write nothing: ${inert} added, ${inertDiffs} result(s) changed`);
+  for (const [k, n] of Object.entries(reach)) if (n < floor) problems.push(`expiry reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
+}
+
+// The malformed sequences: what the replay does with fields no chain produces must not move either (resolve() takes
+// them; CONVENTION section 5 says what its sweep does with them).
+const MALFORMED_N = 3_000;
+step(`resolve differential (d3): conformance/fuzz-resolve.mjs --malformed --emit, ${MALFORMED_N} sequences, seed ${FUZZ_SEED}, floors read from ${CODE ? CODE_BASELINE_REF : BASELINE_REF}`);
+const malformedSeqs = [];
+{
+  const file = join(wt, "seal-fuzz-malformed.json");
+  const r = sh(process.execPath, [join(ROOT, "conformance", "fuzz-resolve.mjs"), String(MALFORMED_N), String(FUZZ_SEED), "--malformed", "--emit", file]);
+  if (r.status !== 0) die(`fuzz-resolve --malformed --emit failed: ${r.stderr || r.stdout}`);
+  malformedSeqs.push(...SW.parseNumbers(readFileSync(file, "utf8")));
+  if (malformedSeqs.length !== MALFORMED_N) die(`fuzz-resolve --malformed emitted ${malformedSeqs.length} sequences, not ${MALFORMED_N}`);
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, tipOnly: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
+  const types = Object.fromEntries(SW.MALFORMED_TYPES.map((t) => [t, 0]));
+  // Outside the domain the baselines need not agree with each other: 0.2.7's indexes read a string deadline other
+  // than 0.2.6's walk did (CONSENSUS_CHANGES, cairnx-core 0.2.9). With a code baseline (d3) is compared with it alone,
+  // and the inputs on which the two baselines differ are counted.
+  let events = 0, threw = 0, baselinesDiffer = 0;
+  malformedSeqs.forEach((s, i) => {
+    events += s.events.length;
+    let bs = null, oldThrow = null, newThrow = null;
+    try { bs = BASE.resolve(s.events, s.tipHeight); } catch (e) { oldThrow = String(e?.message ?? e); }
+    try { NEW.resolve(s.events, s.tipHeight); } catch (e) { newThrow = String(e?.message ?? e); }
+    const k = SW.malformedKinds(BASE, s.events, s.tipHeight, bs);
+    for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
+    for (const t of k.types) types[t]++;
+    if (oldThrow !== null || newThrow !== null) {
+      threw++;
+      if (oldThrow !== newThrow) report(`malformed#${i}`, "throw", s.events, String(oldThrow), String(newThrow));
+      return;
+    }
+    if (CODE) {
+      let oc;
+      try { oc = OLD.canonicalState(OLD.resolve(s.events, s.tipHeight)); } catch (e) { oc = `THROW ${e?.message ?? e}`; }
+      if (oc !== CODE.canonicalState(bs)) baselinesDiffer++;
+    }
+    diffCase(`malformed#${i}`, s.events, s.tipHeight, !CODE);
+  });
+  const floor = Math.floor(MALFORMED_N / 50);
+  console.log(`  ${MALFORMED_N} sequences, ${events} events${threw ? `, ${threw} threw (the same message in both builds, or a divergence above)` : ""}${CODE ? `; compared with ${CODE_BASELINE_REF} (${baselinesDiffer} on which ${BASELINE_REF} and ${CODE_BASELINE_REF} already differ)` : ""}; reach (sequences in which the baseline met a malformed field of that kind; tip: a tip that is not a safe integer; tipOnly: such a tip with every height a safe integer; crossV21, aboveV21: such a sequence on that side; nanOffer: an offer with a NaN height open past V21 though its raw expiry fell due below it; textDeadline: a reservation from a commit at a string height): ${JSON.stringify(reach)}; types (sequences carrying each on a height, an expiry or the tip): ${JSON.stringify(types)}; floor ${floor} each`);
+  for (const [k, n] of [...Object.entries(reach), ...Object.entries(types)]) if (n < floor) problems.push(`malformed reach too thin: ${k} ${n} < floor ${floor} (a thin run proves nothing)`);
+}
+
 const CODES_FILE = `${VEC}/codes.json`;
 const codesVectors = existsSync(join(ROOT, ...CODES_FILE.split("/"))) ? readJson(CODES_FILE) : null;
 step(`resolve differential (e): the resolve cases of ${CODES_FILE}${codesVectors ? "" : " (absent)"}, and the cases of forward.json and moves.json`);
@@ -424,14 +526,41 @@ step("resolve differential (f): conformance/growth-streams.mjs at full size, wit
     for (const m of missed) problems.push(`${s.key} ${s.label}: expected ${m}`);
     console.log(`  ${s.key} ${s.label}: ${s.events.length} events, ${1 + s.tips.length} tip(s), ${diverged - before} divergence(s), ${missed.length ? `${missed.length} expectation(s) MISSED` : "expectations met"}; one run: baseline ${Math.round(oldMs)} ms, tree ${Math.round(newMs)} ms`);
   }
-  console.log(`  ${inputs} stream inputs diffed`);
+  for (const s of SW.sweepStreams(NEW)) {
+    diffCase(`sweep ${s.key}@${s.tipHeight}`, s.events, s.tipHeight);
+    inputs++;
+    const missed = s.expect(G.resolverAt(NEW.resolve, s));
+    for (const m of missed) problems.push(`sweep ${s.key} ${s.label}: expected ${m}`);
+  }
+  console.log(`  ${inputs} stream inputs diffed (growth streams and the ${SW.sweepStreams(NEW).length} sweep streams)`);
+}
+
+step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (d2), the ${MALFORMED_N} of (d3) and the sweep streams, against ${CODE ? `${CODE_BASELINE_REF}'s whole result` : `${BASELINE_REF}'s canonicalState`}`);
+{
+  let walks = 0, tips = 0, walkDiffs = 0;
+  const walk = (name, events, tip) => {
+    walks++;
+    for (const t of SW.denseTips(events, tip, NEW.EPOCH_LEN, [...SW.dueHeights(NEW, events), ...Object.values(NEW.GATE_HEIGHTS)])) {
+      const upto = SW.upTo(events, t);
+      // a malformed input can make resolve() throw (a BigInt in arithmetic): then both must throw the same message
+      const answer = (f) => { try { return f(); } catch (e) { return `THROW ${e?.message ?? e}`; } };
+      const a = answer(() => { const bs = BASE.resolve(upto, t); return CODE ? SW.stringifyNumbers(bs) : OLD.canonicalState(bs); });
+      const b = answer(() => { const ns = NEW.resolve(upto, t); return CODE ? SW.stringifyNumbers(CODE_MOVES ? ns : stripMoves(ns)) : NEW.canonicalState(ns); });
+      tips++;
+      if (a !== b) { walkDiffs++; report(`${name}@${t}`, "dense walk", upto, a, b); }
+    }
+  };
+  expirySeqs.forEach((s, i) => walk(`expiry#${i}`, s.events, s.tipHeight));
+  malformedSeqs.forEach((s, i) => walk(`malformed#${i}`, s.events, s.tipHeight));
+  for (const s of SW.sweepStreams(NEW)) walk(`sweep ${s.key}`, s.events, s.tipHeight);
+  console.log(`  ${walks} walks, ${tips} tips, ${walkDiffs} tip(s) differ`);
 }
 
 const CHECK_SCRIPT = "packages/cairnx/test/support/check-replay.ts";
 const hasCheck = existsSync(join(ROOT, ...CHECK_SCRIPT.split("/")));
-step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), the codes.json cases of (e), (f)${hasCheck ? "" : " (absent in this tree)"}`);
+step(`resolve differential (g): the replay's check mode over the inputs of (a), (c), (d), (d2), the codes.json cases of (e), (f), the sweep streams and the inputs of (d3) inside the domain${hasCheck ? "" : " (absent in this tree)"}`);
 if (hasCheck) {
-  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json")], { stdio: "inherit" });
+  const r = sh("pnpm", ["--filter", "@inversealtruism/cairnx-core", "exec", "tsx", "test/support/check-replay.ts", join(wt, "seal-fuzz.json"), join(wt, "seal-fuzz-expiry.json"), join(wt, "seal-fuzz-malformed.json")], { stdio: "inherit" });
   if (r.status !== 0) { bump("check mode"); console.error("  CHECK MODE FAILED (the first failing input is printed above)"); }
 }
 
@@ -634,7 +763,7 @@ if (diverged || problems.length) {
   if (smallestUri) console.error(`  shortest uri parseRecord disagrees on: ${smallestUri}`);
   die(`${diverged} divergence(s) between the ${BASELINE_REF} baseline and the tree${problems.length ? `, ${problems.length} other failure(s)` : ""}`);
 }
-console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once ${OLD_MOVES ? "`code` is" : "`code` and `moves` are"} left out)${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`${CODE_MOVES ? "" : ", once `moves` is left out"}` : ""}; token moves pass the identity on ${movesSeen.inputs} inputs (${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")})`);
+console.log(`\nSEAL: resolve, parse and client surface identical to ${BASELINE_REF} (state byte for byte; the log once ${OLD_MOVES ? "`code` is" : "`code` and `moves` are"} left out${CODE ? `; the malformed inputs of (d3) against ${CODE_BASELINE_REF} alone` : ""})${CODE ? `; the whole result identical to ${CODE_BASELINE_REF} including \`code\`${CODE_MOVES ? "" : ", once `moves` is left out"}` : ""}; token moves pass the identity on ${movesSeen.inputs} inputs (${Object.entries(moveLegs).map(([l, n]) => `${l} ${n}`).join(", ")})`);
 
 // ── 8. the real fork gate ──────────────────────────────────────────────────────────────────────────
 if (process.env.SEAL_SKIP_CROSSLANG === "1") {

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- The replay runs as a fold (one step per event, an end at the tip that alone reads the tip) and its expiry sweep
+  applies each expiry at the first height it is due, one batch per such height in ascending order, where 0.2.8 applied
+  every due expiry in one batch before each event; it does so only while each event height and the tip it has read is
+  a safe integer, and from the first value outside that domain (an input no chain produces) it runs one batch per
+  sweep, as 0.2.8 does. No rule changed. For inputs made of plain values (what JSON carries) 0.2.9 returns what 0.2.8
+  returns, and throws where 0.2.8 throws: derived in CONVENTION.md section 5 and checked by
+  `scripts/seal-differential.mjs`, which finds the whole result, codes and moves included, identical to npm's 0.2.8 on
+  each input of its differential, among them 3,000 sequences built so that offers, bids, reservations and recapture
+  reservations end between events, 3,000 whose heights, expiries and tips no chain produces (numbers that are not safe
+  integers, strings, null, booleans, arrays, objects, and also undefined and BigInts) and a dense walk of 1,699,031
+  tips. Outside plain values two inputs are known to differ: an event whose `height` is a getter that answers
+  differently on later reads (0.2.8 applies the event, 0.2.9 skips it, since the fold reads the height once more), and
+  an events array with an `undefined` entry after an event whose handler throws (both throw a TypeError, with another
+  text; `test/fold.test.ts`). Heights and the tip are consensus only as a chain produces them, non-negative integers
+  below 2^53: outside that, released cores answer differently (0.2.4 and 0.2.7 on a string height), so a caller checks
+  them before the call. No export changed. `conformance/fuzz-resolve.mjs` checks the property of section 5 in the
+  Python reference by adding events that write nothing, and gains `--expiry` and `--malformed` with a floor per kind
+  and per type; `test/sweep.test.ts` pins twelve constructed streams; check mode asserts that each expiry lands at the
+  first height it is due.
+
 ## 0.2.8
 
 - Token moves in the applied log (CONVENTION section 41, no gate): an applied mint, transfer or fill that moved tokens

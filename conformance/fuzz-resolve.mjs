@@ -1,14 +1,24 @@
-// DIFFERENTIAL FUZZER (non-self-fulfilling) — generate thousands of random + adversarial CairnX event
+// DIFFERENTIAL FUZZER (non-self-fulfilling): generate thousands of random + adversarial CairnX event
 // sequences and assert the shipping JS resolver and the INDEPENDENT Python port (cairnx_ref.py) produce
 // byte-identical canonicalState on EVERY one. Neither side is told the expected answer; a single
 // divergence = a latent cross-language consensus fork. Seeded for reproducibility (prints the seed).
 //   node conformance/fuzz-resolve.mjs [N] [seed]
 //   node conformance/fuzz-resolve.mjs N seed --emit <file>   writes the N generated sequences as JSON and exits before the
 //                                                            differential (scripts/seal-differential.mjs replays them)
+//   --expiry   sequences built so that offers, bids, reservations and recapture reservations end inside them, at heights
+//              with no event, and later events read what each released; a floor per kind of expiry fails a thin run.
+//   --malformed  sequences whose offers, bids, reservations, recapture reservations and tips carry heights, expiries
+//              or tips no chain produces (numbers that are not safe integers, numeric and other strings, null,
+//              undefined, booleans, arrays, objects, BigInts), on both sides of V21 and of an epoch edge, with a floor
+//              per kind and per type; the reference gets the all-integer ones.
+// Every run also checks that events which write nothing change nothing (CONVENTION section 5) on the sequences whose
+// heights a chain can produce: each is resolved again with an Attest on an unknown proposal at many heights, by JS
+// (whole result) and by the reference (canonical state).
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { canonicalState, resolve } from "../packages/cairnx/dist/index.js";
 import * as R from "../packages/cairnx/dist/index.js";
+import { MALFORMED_TYPES, denseTips, dueHeights, expiryKinds, inertEvents, malformedKinds, stringifyNumbers } from "./sweep-streams.mjs";
 let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (declared top-level to avoid TDZ)
 // REBIND B0a: v2.8 fclaim GENERATION-SIDE counters. These record what the generator INTENDED to emit; they
 // are NOT evidence that the resolver reached the branch. Denied fclaims are not canonically observable
@@ -27,6 +37,12 @@ const ARGS = process.argv.slice(2);
 const EMIT_AT = ARGS.indexOf("--emit");
 const EMIT = EMIT_AT >= 0 ? ARGS.splice(EMIT_AT, 2)[1] : undefined;
 if (EMIT_AT >= 0 && !EMIT) { console.error("--emit needs a file path"); process.exit(2); }
+const EXPIRY_AT = ARGS.indexOf("--expiry");
+const EXPIRY = EXPIRY_AT >= 0;
+if (EXPIRY) ARGS.splice(EXPIRY_AT, 1);
+const MALFORMED_AT = ARGS.indexOf("--malformed");
+const MALFORMED = MALFORMED_AT >= 0;
+if (MALFORMED) ARGS.splice(MALFORMED_AT, 1);
 const N = Number(ARGS[0] || 3000);
 let SEED = Number(ARGS[1] || 0xC417 ^ (N * 2654435761 >>> 0)) >>> 0;
 const rng = () => { SEED = (SEED * 1664525 + 1013904223) >>> 0; return SEED / 0x100000000; };
@@ -40,7 +56,7 @@ const addr = () => "0x" + (ADDRS[ri(0, ADDRS.length - 1)].slice(2)); // includes
 const TICKERS = ["GOLD", "PAY", "TKN", "ZZZ9", "A1B", "WCSD"];
 // names: numeric (integer-key ordering), boundary indices, non-canonical-decimal, strings, invalid
 const NAMES = ["1", "2", "10", "42", "0", "007", "4294967294", "4294967295", "0x", "alice", "zzz", "a-b", "BAD!", "", "x".repeat(33)];
-// token (deploy) names CAN be unicode ≤32 — exercise canonical-JSON emit + UTF-16 length
+// token (deploy) names CAN be unicode ≤32: exercise canonical-JSON emit + UTF-16 length
 const TOKNAMES = [undefined, "Gold", "金", "𝕏coin", "á", "💎", "￿x", "x".repeat(32), "x".repeat(33), "lone\uD800"];
 const AMOUNTS = ["1", "100", "999999999", "79228162514264337593543950335" /*2^96-1*/, "79228162514264337593543950336" /*2^96*/, "0"];
 const BIGEXP = [10, 1500, 9007199254740991, 9007199254740992, 1e21];
@@ -49,7 +65,7 @@ const validOr = (fn) => { try { return fn(); } catch { return null; } };
 const amt = () => pick(AMOUNTS);
 const tick = () => chance(0.85) ? pick(TICKERS) : ("T" + ri(0, 99));
 // v1.9 nprofile `p` maps: valid pkeys (lowercase/dotted/integer-index ≤32ch) + sometimes empty (= clear),
-// values incl. astral/emoji and boundary 256-byte — exercises the V19 gate/apply/LWW/clear/materialize branches.
+// values incl. astral/emoji and boundary 256-byte: exercises the V19 gate/apply/LWW/clear/materialize branches.
 const PKEYS = ["display", "avatar", "bio", "url", "com.twitter", "a.b.c", "x", "k0", "k1", "2", "10", "z".repeat(32)];
 const pmap = () => { const n = ri(0, 6); const m = {}; for (let i = 0; i < n; i++) m[pick(PKEYS)] = chance(0.15) ? "\u{1F600}" : (chance(0.1) ? "x".repeat(256) : "v" + ri(0, 9999)); return m; };
 
@@ -88,7 +104,7 @@ function buildRec() {
 let idc = 1;
 const nid = () => "0x" + (idc++).toString(16).padStart(64, "0");
 
-// A COHERENT flow that actually SUCCEEDS — so the V16 accept path (rebate math + state mutation) is
+// A COHERENT flow that actually SUCCEEDS: so the V16 accept path (rebate math + state mutation) is
 // exercised, not just parse/reject. deploy→mint→[bid]→offer→fill, with paidTo computed correctly
 // (incl. the rebate for a bid-answered v1.6 offer) OR deliberately underpaid.
 function coherentFlow(h0) {
@@ -159,7 +175,7 @@ function v23ClearFlow(h0) {
   const regH = Math.min(R.V25_HEIGHT, R.V23_HEIGHT) - 200;
   const NM = "z" + ri(100, 9999); reg(NM, regH); set(NM, D, regH + 2);
   if (chance(0.5)) { const NM2 = "y" + ri(100, 9999); reg(NM2, regH + 3); set(NM2, D, regH + 4); }  // 2nd self-pointing name -> primary recompute on clear
-  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the clear can land a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior) — not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
+  if (h >= R.V23_HEIGHT) gV23Clears++;   // count ONLY genuine above-gate clears (>=V23 -> addr undefined). When h0 is low the clear can land a few blocks BELOW the gate, where it's a literal-0x0 store (old behavior): not a clear, so don't count it (audit: the old unconditional ++ overcounted ~4.5%).
   set(NM, R.ZERO_ADDR, h);   // the CLEAR (height >= V23 -> n.addr = undefined; owner-gated; the name is owned+paid so it APPLIES)
   if (chance(0.4)) { h += 2; set(NM, B, h); }   // sometimes re-point after clear (clear-then-reset)
   return ev;
@@ -251,7 +267,7 @@ function fclaimFlow(h0) {
 }
 
 // v1.9 nprofile materialization (H1): register a name by its owner ABOVE the V19 gate, set a profile
-// (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear — exercising the
+// (owner-gated; sometimes a non-owner that must no-op), then LWW-replace or transfer-clear: exercising the
 // apply / last-write-wins / clear-on-transfer / tip-materialization branches the random fuzzer rarely hits.
 function nprofileFlow(h0) {
   const ev = []; const O = "0x" + "ce".repeat(20), B = "0x" + "bd".repeat(20);
@@ -338,6 +354,219 @@ function recaptureFlow() {
   return ev;
 }
 
+// --expiry. A seller's offers (CSD- or token-priced, open or taker-bound, some answering a bid), bids, cancels, bulk
+// cancels, transfers, fill attempts and fclaims, with expiries a few epochs out and gaps that cross epoch boundaries, so
+// that items end at heights holding no event and later events read what they released; reservations left to lapse
+// and re-revealed by a rival; a name offer that ends before a transfer. A fifth of the sequences start below V21 with
+// offers and bids past the v2.1 cap that cross it; a sixth are recapture reservations that lapse before a rival's.
+function expirySeq() {
+  if (chance(1 / 6)) return recaptureExpirySeq();
+  const L = R.EPOCH_LEN, ev = [], at = new Map();
+  const posAt = (hh) => { const p = at.get(hh) ?? 0; at.set(hh, p + 1); return p; };
+  const S = "0x" + "e1".repeat(20), B = "0x" + "e3".repeat(20), C = "0x" + "e4".repeat(20), X = "0x" + "e5".repeat(20);
+  const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
+  const A = (pid, who, hh, score, pt) => ev.push({ kind: "attest", txid: nid(), proposalId: pid, attester: who, score, confidence: 0, height: hh, pos: posAt(hh), paidTo: pt || {} });
+  const FAR = 9_000_000_000_000_000;
+  const crossV21 = chance(0.2);
+  let h = crossV21 ? ri(R.V17_HEIGHT + 10, R.V21_HEIGHT - 400) : ri(R.V29_HEIGHT, R.V29_HEIGHT + 30_000);
+  const T1 = "E" + ri(100, 999), T2 = "W" + ri(100, 999);
+  P(validOr(() => R.deploy({ ticker: T1, decimals: 0, supply: "1000", mint: "issuer" })), S, h, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T1, amount: "1000" })), S, h + 1, FAR);
+  P(validOr(() => R.deploy({ ticker: T2, decimals: 0, supply: "1000", mint: "issuer" })), B, h, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T2, amount: "1000" })), B, h + 1, FAR);
+  h += 2;
+  const expiry = (hh) => (crossV21 && hh < R.V21_HEIGHT && chance(0.6) ? R.epochOf(hh) + ri(R.MAX_OFFER_EPOCHS + 1, R.MAX_OFFER_EPOCHS + 400) : R.epochOf(hh) + ri(0, 3));
+  const offers = [], bids = [];
+  const pay = (o, hh) => Object.fromEntries(R.requiredFillOutputs({ id: o.id, seller: S, give: o.give, want: { value: "1000", payto: S }, status: "open", expiresEpoch: o.expiresEpoch,
+    height: o.height, feeBps: R.FEE_BPS_V16, ...(o.taker ? { taker: o.taker } : {}), ...(o.bid ? { bid: o.bid } : {}) }, "1000").map((x) => [x.to, String(x.value)]));
+  const len = ri(6, 18);
+  for (let i = 0; i < len; i++) {
+    h += chance(0.3) ? ri(0, 2) : ri(1, 45);
+    const r = rng();
+    if (r < 0.26) {
+      const give = { ticker: T1, amount: String(ri(1, 60)) }, csd = chance(0.7), taker = chance(0.5) ? B : undefined;
+      const bid = bids.length && chance(0.35) ? pick(bids) : undefined;
+      const rec = validOr(() => R.offer({ give, want: csd ? { value: "1000" } : { ticker: T2, amount: "1" }, ...(bid ? { bid: bid.id, taker: B } : taker ? { taker } : {}) }));
+      const ee = bid && chance(0.5) ? bid.expiresEpoch + ri(1, 3) : expiry(h);
+      const e = P(rec, S, h, ee);
+      if (e && csd) offers.push({ id: e.id, give, expiresEpoch: ee, height: h, taker: bid ? B : taker, bid: bid?.id });
+    } else if (r < 0.40) {
+      const e = P(validOr(() => R.bid({ want: { ticker: T1, amount: "1" }, give: { value: "1000" } })), B, h, expiry(h));
+      if (e) bids.push(e);
+    } else if (r < 0.52) {
+      P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, h, FAR);
+    } else if (r < 0.60 && offers.length) {
+      A(pick(offers).id, S, h, R.SCORE_CANCEL);
+    } else if (r < 0.65) {
+      P(validOr(() => R.offerCancelAll(chance(0.5) ? { ticker: T1 } : {})), S, h, FAR);
+    } else if (r < 0.75 && offers.length) {
+      const o = pick(offers);
+      A(o.id, o.taker ?? C, h, R.SCORE_FILL, pay(o, h));
+    } else if (r < 0.82 && offers.length && h >= R.V28_HEIGHT) {
+      const o = pick(offers);
+      P(validOr(() => R.fclaim({ offer: o.id })), C, h, R.epochOf(h) + ri(0, R.FCLAIM_MAX_EPOCH_AHEAD));
+    } else if (r < 0.94 && h >= R.V25_HEIGHT) {
+      // a reservation left to lapse, finalized one time in four; a rival reveals the name after the deadline or before it
+      const nm = "ex" + ri(1000, 99999), salt = "e4e4e4e4e4e4e4e4e4", rs = "e5e5e5e5e5e5e5e5e5";
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, C) })), C, h, FAR);
+      const rv = h + ri(1, R.REG_COMMIT_MAX_BLOCKS);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), C, rv, FAR);
+      const end = h + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+      if (chance(0.25)) { const hf = h + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS); P(validOr(() => R.nameFinalize({ name: nm, salt })), C, hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() }); }
+      const ch = chance(0.75) ? end + ri(-6, 40) : rv + ri(0, 10);
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, rs, X) })), X, ch, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt: rs })), X, ch + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    } else if (h >= R.V27_HEIGHT) {
+      // a name registered by S and offered with a short expiry; a transfer just before and just after the offer ends
+      const nm = "eo" + ri(1000, 99999), salt = "e1e1e1e1e1e1e1e1e1";
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, S) })), S, h, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), S, h + 1, FAR);
+      const hf = h + R.REG_COMMIT_MAX_BLOCKS + 1;
+      P(validOr(() => R.nameFinalize({ name: nm, salt })), S, hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() });
+      const ho = hf + ri(0, 3), ee = R.epochOf(ho) + ri(0, 2), end = (ee + 1) * L;
+      P(validOr(() => R.offer({ give: { name: nm }, want: { value: "1000" }, taker: B })), S, ho, ee);
+      P(validOr(() => R.nameXfer({ name: nm, to: X })), S, end + ri(-1, 0), FAR);
+      if (chance(0.5)) P(validOr(() => R.nameXfer({ name: nm, to: C })), S, end + ri(1, 30), FAR);
+    }
+  }
+  if (crossV21) {
+    // later events at V21 and past the latest capped expiry, so the cap is read by an event and not only by the tip
+    const capped = dueHeights(R, ev).filter((x) => x >= R.V21_HEIGHT);
+    for (const hh of [R.V21_HEIGHT + ri(0, 40), Math.max(R.V21_HEIGHT, ...capped) + ri(0, 40)]) if (hh > h) { h = hh; P(validOr(() => R.transfer({ ticker: T1, to: X, amount: "1" })), S, h, FAR); }
+  }
+  const last = Math.max(...ev.map((e) => e.height));
+  return { events: ev, tipHeight: last + ri(0, 3 * L) };
+}
+
+// --expiry: a name registered below V25 lapses; E reserves it for recapture and lets the reservation end; F reveals it
+// after E's deadline (or before it, refused); sometimes E's finalize comes too late, and E's fresh registration of
+// another name ends at the same height.
+function recaptureExpirySeq() {
+  const NM = "rx" + ri(100, 9999), FN = "fx" + ri(100, 9999), sE = "e7e7e7e7e7e7e7e7e7", sF = "f7f7f7f7f7f7f7f7f7";
+  const ev = [], at = new Map();
+  const push = (who, rec, h, paid) => { if (rec) { const p = at.get(h) ?? 0; at.set(h, p + 1); ev.push({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: h, pos: p, expiresEpoch: 9_000_000_000_000_000, paidTo: paid || {} }); } };
+  const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+  push(RC_D, validOr(() => R.nameClaim({ name: NM })), regH, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+  const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * R.EPOCH_LEN + ri(0, 600);
+  push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), cEh);
+  push(RC_E, validOr(() => R.nameClaim({ name: NM, salt: sE })), cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  if (chance(0.5)) {
+    push(RC_E, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(FN, sE, RC_E) })), cEh);
+    push(RC_E, validOr(() => R.nameClaim({ name: FN, salt: sE })), cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  }
+  const end = cEh + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+  const cFh = chance(0.75) ? end + ri(-6, 40) : cEh + ri(1, 20);
+  push(RC_F, validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), cFh);
+  push(RC_F, validOr(() => R.nameClaim({ name: NM, salt: sF })), cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+  if (chance(0.3)) { const hf = end + ri(0, 3); push(RC_E, validOr(() => R.nameFinalize({ name: NM, salt: sE })), hf, { [TREAS]: recapturePremium(NM, regH, hf).toString() }); }
+  const last = Math.max(...ev.map((e) => e.height));
+  return { events: ev, tipHeight: last + ri(0, 90) };
+}
+
+// --malformed. A seller's offers and bids, sealed reservations and recapture reservations, each carrying now and then a
+// height or an expiry from the malformed lists, around a base height on either side of V21 and next to an epoch edge;
+// NaN-height offers get expiries due below V21 (the class whose expiry rises across V21), and some sequences hold
+// them across V21 with no event between their raw due height and V21; transfers and tips around
+// V21 and the epoch edges read what the sweeps released. Recapture reservations need a lapsed lease, so theirs lie far
+// above V21. Heights and expiries kept valid elsewhere so that the malformed field is the one the replay meets; a
+// sequence's tip is an integer read from its valid heights.
+const BAD_H = [Number.NaN, Infinity, -Infinity, -5, 0.5, 2 ** 53, 2 ** 53 + 2, 1e17];
+const BAD_E = [Number.NaN, Infinity, -Infinity, -3, 0.5, 2 ** 53, 2 ** 53 + 2, 1e21];
+// Values of other types than number, for heights, expiries and tips: what resolve() takes from a caller that did not
+// parse its feed (a numeric string, another string, null, undefined, a boolean, an array, an object, a BigInt).
+const BAD_T = [(h) => String(h), () => "x9", () => "", () => null, () => undefined, () => true, () => false, (h) => [h], () => ({}), (h) => BigInt(Math.floor(h))];
+function malformedSeq() {
+  const L = R.EPOCH_LEN, ev = [], at = new Map(), FAR = 9_000_000_000;
+  const posAt = (hh) => { const k = String(hh); const p = at.get(k) ?? 0; at.set(k, p + 1); return p; };
+  const S = "0x" + "c1".repeat(20), B = "0x" + "c3".repeat(20), C = "0x" + "c4".repeat(20), X = "0x" + "c5".repeat(20);
+  const P = (rec, who, hh, ee, pt) => { if (!rec) return null; const e = { kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: posAt(hh), expiresEpoch: ee, paidTo: pt || {} }; ev.push(e); return e; };
+  // two sequences in five carry only integers, so that the reference (given only those) replays them too; one in ten
+  // keeps every height and expiry valid and puts only the tip outside the domain
+  const ints = chance(0.4), tipOnly = !ints && chance(0.1), okInt = (v) => !ints || (Number.isInteger(v) && Math.abs(v) < 1e21);
+  const badH = (h) => { if (tipOnly) return h; if (!ints && chance(0.35)) return pick(BAD_T)(h); const v = chance(0.25) && !ints ? Number.NaN : pick(BAD_H.filter(okInt)); return v === 0.5 ? h + 0.5 : v; };
+  const badE = (e) => { if (tipOnly) return e; if (!ints && chance(0.2)) return pick(BAD_T)(e); const v = pick(BAD_E.filter(okInt)); return v === 0.5 ? e + 0.5 : v; };
+  // the tip, now and then outside the domain: another type, or a number that is not a safe integer
+  const tipOf = (t) => (ints || (!tipOnly && !chance(0.3)) ? t : chance(0.6) ? pick(BAD_T)(t) : pick([t + 0.5, Number.NaN, Infinity, 2 ** 53 + 2]));
+  if (!tipOnly && chance(0.12)) {
+    // sealed reservations whose commit heights are numeric strings: a deadline is then a string ("90000" + 8 + 20 is
+    // "90000820"), which a sweep compares as text at a string height and as a number at a number one; up to three for
+    // one owner and, half the time, a fourth name committed and revealed far above at string or number heights, which
+    // the reservation cap counts against them; the tip a string or a number, far above or near
+    const h = ri(R.V29_HEIGHT, R.V29_HEIGHT + 20_000), salt = "c6c6c6c6c6c6c6c6c6";
+    const reserve = (nm, hc, hr) => { P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, C) })), C, hc, FAR); P(validOr(() => R.nameClaim({ name: nm, salt })), C, hr, FAR); };
+    for (let j = ri(1, 3); j > 0; j--) reserve("em" + ri(1000, 99999), String(h + 10 * j), h + 10 * j + ri(1, R.REG_COMMIT_MAX_BLOCKS));
+    const far = h * ri(11_000, 20_000);   // above each deadline read as a number ("h" + 8 + 20 + 1 is about 10,000 h)
+    if (chance(0.5)) { const H = far + ri(0, 1000); reserve("em" + ri(1000, 99999), String(H), chance(0.5) ? String(H + 1) : H + 1); }
+    const t = chance(0.5) ? far + ri(0, 2000) : h + ri(40, 160);
+    return { events: ev, tipHeight: chance(0.5) ? String(t) : t };
+  }
+  if (!tipOnly && chance(0.15)) {
+    // offers with a NaN height whose raw expiry falls due below V21, and (half the time) no event from that height up
+    // to V21: 0.2.8 leaves such an offer open from V21 on (its cap is NaN), where a sweep that ran a batch at its raw
+    // due height would have expired it; with an event between, it expires below V21 either way
+    const T = "N" + ri(100, 999), base = R.V21_HEIGHT - ri(200, 6000);
+    P(validOr(() => R.deploy({ ticker: T, decimals: 0, supply: "1000", mint: "issuer" })), S, base, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+    P(validOr(() => R.mint({ ticker: T, amount: "1000" })), S, base + 1, FAR);
+    let due = R.V21_HEIGHT;
+    for (let j = ri(1, 3); j > 0; j--) {
+      const E = ri(R.epochOf(base + 1), R.epochOf(R.V21_HEIGHT) - 2);
+      due = Math.min(due, (E + 1) * L);
+      P(validOr(() => R.offer({ give: { ticker: T, amount: String(ri(1, 400)) }, want: { value: "1000" } })), S, Number.NaN, E);
+    }
+    if (chance(0.5)) P(validOr(() => R.transfer({ ticker: T, to: X, amount: String(ri(1, 400)) })), S, ri(due, R.V21_HEIGHT - 1), FAR);
+    for (let j = ri(1, 3); j > 0; j--) P(validOr(() => R.transfer({ ticker: T, to: X, amount: String(ri(1, 1000)) })), S, R.V21_HEIGHT + ri(0, 60), FAR);
+    return { events: ev, tipHeight: tipOf(Math.max(...ev.map((e) => e.height).filter(Number.isSafeInteger)) + ri(0, 90)) };
+  }
+  if (chance(0.15)) {
+    // a lapsed name, reserved for recapture with a malformed commit, reveal or finalize height
+    const NM = "rm" + ri(1000, 99999), sE = "c7c7c7c7c7c7c7c7c7", sF = "f8f8f8f8f8f8f8f8f8";
+    const regH = ri(R.V15_HEIGHT + 10, R.V25_HEIGHT - 10);
+    P(validOr(() => R.nameClaim({ name: NM })), RC_D, regH, FAR, { [TREAS]: R.nameRegFee(NM, regH).toString() });
+    const cEh = (leaseEnd(regH) + R.NAME_GRACE_EPOCHS + 1) * L + ri(0, 600);
+    const which = ri(0, 2);
+    P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sE, RC_E) })), RC_E, which === 0 ? badH(cEh) : cEh, FAR);
+    P(validOr(() => R.nameClaim({ name: NM, salt: sE })), RC_E, which === 1 ? badH(cEh + 1) : cEh + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    const end = cEh + R.REG_COMMIT_MAX_BLOCKS + R.REG_FINALIZE_GRACE_BLOCKS;
+    if (which === 2 || chance(0.3)) { const hf = which === 2 ? badH(end - 2) : end - ri(0, 10); P(validOr(() => R.nameFinalize({ name: NM, salt: sE })), RC_E, hf, FAR, { [TREAS]: recapturePremium(NM, regH, Number.isFinite(hf) ? hf : end).toString() }); }
+    const cFh = end + ri(-4, 40);
+    P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(NM, sF, RC_F) })), RC_F, cFh, FAR);
+    P(validOr(() => R.nameClaim({ name: NM, salt: sF })), RC_F, cFh + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+    return { events: ev, tipHeight: tipOf(Math.max(...ev.map((e) => e.height).filter((x) => Number.isSafeInteger(x) && x < 1e9)) + ri(0, 90)) };
+  }
+  const below = chance(0.5);
+  let h = below ? R.V21_HEIGHT - ri(40, 900) : (chance(0.5) ? R.V21_HEIGHT + ri(0, 900) : R.V29_HEIGHT + ri(0, 20_000));
+  h = Math.floor(h / L) * L + pick([-2, -1, 0, 1, 28]);   // next to an epoch edge
+  const T1 = "M" + ri(100, 999);
+  P(validOr(() => R.deploy({ ticker: T1, decimals: 0, supply: "1000", mint: "issuer" })), S, h - 4, FAR, { [TREAS]: String(R.DEPLOY_FEE) });
+  P(validOr(() => R.mint({ ticker: T1, amount: "1000" })), S, h - 3, FAR);
+  const len = ri(4, 12);
+  for (let i = 0; i < len; i++) {
+    h += chance(0.3) ? ri(0, 2) : ri(1, 40);
+    const r = rng(), mh = chance(0.5), me = !mh || chance(0.3);
+    if (r < 0.35) {
+      const hh = mh ? badH(h) : h;
+      // a NaN-height offer due below V21, so that the stream crosses V21 with it held
+      const ee = Number.isNaN(hh) ? R.epochOf(R.V21_HEIGHT) - ri(1, 30) : me ? badE(R.epochOf(h) + ri(0, 2)) : R.epochOf(h) + ri(0, 2);
+      P(validOr(() => R.offer({ give: { ticker: T1, amount: String(ri(1, 50)) }, want: { value: "1000" }, ...(chance(0.5) ? { taker: B } : {}) })), S, hh, ee);
+    } else if (r < 0.5) {
+      P(validOr(() => R.bid({ want: { ticker: T1, amount: "1" }, give: { value: "1000" } })), B, mh ? badH(h) : h, me ? badE(R.epochOf(h) + ri(0, 2)) : R.epochOf(h) + ri(0, 2));
+    } else if (r < 0.7 && h >= R.V25_HEIGHT) {
+      const nm = "em" + ri(1000, 99999), salt = "c4c4c4c4c4c4c4c4c4", which = ri(0, 2);
+      P(validOr(() => R.nameCommitRecord({ commit: R.nameCommit(nm, salt, C) })), C, which === 0 ? badH(h) : h, FAR);
+      P(validOr(() => R.nameClaim({ name: nm, salt })), C, which === 1 ? badH(h + 1) : h + ri(1, R.REG_COMMIT_MAX_BLOCKS), FAR);
+      const hf = h + R.REG_COMMIT_MAX_BLOCKS + ri(1, R.REG_FINALIZE_GRACE_BLOCKS);
+      if (which === 2 || chance(0.3)) P(validOr(() => R.nameFinalize({ name: nm, salt })), C, which === 2 ? badH(hf) : hf, FAR, { [TREAS]: R.nameRegFee(nm, hf).toString() });
+    } else {
+      P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, h, FAR);
+    }
+  }
+  // transfers on both sides of V21 and of the next epoch edge read what the sweeps released
+  const edge = (R.epochOf(h) + 1) * L;
+  for (const hh of [edge - 1, edge, R.V21_HEIGHT - 1, R.V21_HEIGHT + ri(0, 3)]) if (hh > h - 40) P(validOr(() => R.transfer({ ticker: T1, to: X, amount: String(ri(1, 400)) })), S, hh, FAR);
+  const last = Math.max(...ev.map((e) => e.height).filter((x) => Number.isSafeInteger(x) && x < 1e9));
+  return { events: ev, tipHeight: tipOf(last + ri(0, 3 * L)) };
+}
+
 function genSeq() {
   if (chance(0.20)) { const e = coherentFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
   if (chance(0.14)) { const e = nameFlow(ri(29900, 40040)); if (e.length) return { events: e, tipHeight: e[e.length - 1].height + ri(0, 40) }; }
@@ -392,7 +621,7 @@ function genSeq() {
     } else {
       // an attest (fill/cancel/claim/garbage) referencing a real-ish or random proposal id
       const pidRef = offerIds.length && chance(0.8) ? pick(offerIds) : nid();
-      const score = pick([0, 100, 100, 50, 50, ri(0, 200)]); // 50 = SCORE_CLAIM (v1.7) — exercise the claim branch
+      const score = pick([0, 100, 100, 50, 50, ri(0, 200)]); // 50 = SCORE_CLAIM (v1.7): exercise the claim branch
       const confidence = pick([0, 100, 1_000_000, ri(0, 2_000_000)]);
       events.push({ kind: "attest", txid: nid(), proposalId: pidRef, attester: addr(), score, confidence, height: h, pos, paidTo: randPaidTo() });
     }
@@ -406,7 +635,7 @@ function randPaidTo() {
   const vals = ["1", "1000000", "100000000", "125500000", "1500000", "500000000", "79228162514264337593543950335"];
   // adversarial NON-canonical forms: raw BigInt()/int() historically DIVERGED on these (one yields a value,
   // the other throws). The AMOUNT_RE gate (ptAmt / _pt) must make BOTH treat them as 0, so the differential
-  // MUST stay byte-identical — this is the regression guard for QA finding #1 (paidTo input-contract).
+  // MUST stay byte-identical: this is the regression guard for QA finding #1 (paidTo input-contract).
   const adversarial = ["0x10", "0b101", "1_000", "", " 5 ", "+5", "007", "0xff", "1.0", "-3", "1e3", "0xdeadbeef"];
   for (let i = 0; i < k; i++) m[addr()] = chance(0.25) ? pick(adversarial) : pick(vals);
   if (chance(0.5)) m[TREAS] = chance(0.25) ? pick(adversarial) : pick(["1500000", "1000000", "100000000", "0", "25500000"]);
@@ -414,23 +643,54 @@ function randPaidTo() {
 }
 
 // generate, run JS, batch to Python, diff
-const seqs = Array.from({ length: N }, genSeq);
+const seqs = Array.from({ length: N }, MALFORMED ? malformedSeq : EXPIRY ? expirySeq : genSeq);
 if (EMIT) {
-  writeFileSync(EMIT, JSON.stringify(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
+  writeFileSync(EMIT, stringifyNumbers(seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight }))));
   console.log(`emitted ${N} sequences to ${EMIT}`);
   process.exit(0);
 }
-const js = seqs.map((s) => { try { return canonicalState(resolve(s.events, s.tipHeight)); } catch (e) { return "JS_THROW:" + (e?.message || e); } });
+const runs = seqs.map((s) => { try { return { st: resolve(s.events, s.tipHeight) }; } catch (e) { return { err: "JS_THROW:" + (e?.message || e) }; } });
+const js = runs.map((r) => r.err ?? canonicalState(r.st));
+// --malformed: the reference gets the sequences whose numbers are all integers JSON writes as such. Its arithmetic
+// on NaN and the infinities is Python's, not JavaScript's (a NaN key in its sort, min(E, NaN) = E, inf // 30 = NaN),
+// and it refuses to write a state that holds a float; neither reaches a chain input. The events that write nothing go
+// where the property is claimed (CONVENTION section 5): every event height and the tip a safe integer.
+const intOnly = (s) => [s.tipHeight, ...s.events.flatMap((e) => [e.height, e.pos, ...(e.kind === "propose" ? [e.expiresEpoch] : [])])]
+  .every((x) => Number.isInteger(x) && Math.abs(x) < 1e21);
+const toRef = seqs.map((s) => !MALFORMED || intOnly(s));
+const withTwin = seqs.map((s, i) => !MALFORMED || (runs[i].st !== undefined && Number.isSafeInteger(s.tipHeight) && s.events.every((e) => Number.isSafeInteger(e.height))));
+// each sequence's twin: an event that writes nothing at each height of a dense walk (at most 300, the expiry heights kept)
+const inertAt = (s) => {
+  const due = dueHeights(R, s.events).filter((x) => x <= s.tipHeight);
+  const tips = denseTips(s.events.filter((e) => Number.isSafeInteger(e.height)), s.tipHeight, R.EPOCH_LEN, [...due, ...Object.values(R.GATE_HEIGHTS)], 300);
+  const keep = new Set(due.flatMap((x) => [x - 1, x]));
+  return tips.length <= 300 ? tips : tips.filter((x, i) => keep.has(x) || i % Math.ceil(tips.length / 300) === 0);
+};
+const twins = seqs.map((s, i) => (withTwin[i] ? { events: [...inertEvents(inertAt(s)), ...s.events], tipHeight: s.tipHeight } : null));
+let inertJs = 0, inertPy = 0, inertN = 0;
+seqs.forEach((s, i) => {
+  if (!twins[i]) return;
+  inertN += twins[i].events.length - s.events.length;
+  let b;
+  const a = runs[i].err ?? JSON.stringify(runs[i].st);
+  try { b = JSON.stringify(resolve(twins[i].events, s.tipHeight)); } catch (e) { b = "JS_THROW:" + (e?.message || e); }
+  if (a !== b && ++inertJs <= 5) console.error(`✗ seq #${i} JS: events that write nothing changed the result`);
+});
+const refIdx = seqs.map((_, i) => i).filter((i) => toRef[i]), twinIdx = refIdx.filter((i) => twins[i]);
 const py = spawnSync("python3", [new URL("./cairnx_ref.py", import.meta.url).pathname],
-  { input: JSON.stringify({ resolve: seqs.map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+  { input: JSON.stringify({ resolve: [...refIdx.map((i) => seqs[i]), ...twinIdx.map((i) => twins[i])].map((s) => ({ events: s.events, tipHeight: s.tipHeight })) }), encoding: "utf8", maxBuffer: 2048 * 1024 * 1024 });
 if (py.status !== 0) { console.error("python ref crashed:\n", py.stderr.slice(0, 4000)); process.exit(1); }
-const pj = JSON.parse(py.stdout).resolve;
+const pall = JSON.parse(py.stdout).resolve;
+const pj = new Array(N);
+refIdx.forEach((i, k) => { pj[i] = pall[k]; });
+twinIdx.forEach((i, k) => { if (pall[refIdx.length + k] !== pj[i] && ++inertPy <= 5) console.error(`✗ seq #${i} reference: events that write nothing changed the canonical state`); });
 
-let diverged = 0, jsThrows = 0;
+let diverged = 0, jsThrows = 0, notToRef = 0;
 const cov = { filledV16Rebate: 0, filledAny: 0, numericNameInState: 0, bigAmountInState: 0, viaFill: 0, expired: 0, feeBps150: 0, v17Claimed: 0, v17OpenFilled: 0, nprofileSet: 0, pendingReg: 0, fclaimHeld: 0, fclaimFilled: 0, aboveV28: 0, recaptureFinalized: 0 };
 for (let i = 0; i < N; i++) {
-  // A throw fails the run: every replayer would stop at that sequence's block, whatever Python answers.
-  if (js[i].startsWith("JS_THROW:")) { if (++jsThrows <= 5) console.error(`✗ seq #${i} JS resolve() threw: ${js[i].slice(9, 200)}`); continue; }
+  // A throw fails the run: every replayer would stop at that sequence's block, whatever Python answers. In --malformed a
+  // throw is an answer to an input no chain produces (a BigInt in arithmetic); the seal's step (d3) requires 0.2.8's.
+  if (js[i].startsWith("JS_THROW:")) { if (++jsThrows <= 5 && !MALFORMED) console.error(`✗ seq #${i} JS resolve() threw: ${js[i].slice(9, 200)}`); continue; }
   // coverage: confirm the fuzzer actually reaches the high-risk paths
   try {
     const st = JSON.parse(js[i]);
@@ -453,6 +713,7 @@ for (let i = 0; i < N; i++) {
     // a recapturer owns a name only through a v2.6 recapture nfinalize: no flow registers or transfers one to them
     if (st.names && Object.values(st.names).some((n) => n && (n.owner === RC_E || n.owner === RC_F) && !n.pending && !n.expired)) cov.recaptureFinalized++;
   } catch { /* JS state always parses */ }
+  if (!toRef[i]) { notToRef++; continue; }
   if (js[i] !== pj[i]) {
     diverged++;
     if (diverged <= 5) {
@@ -464,12 +725,43 @@ for (let i = 0; i < N; i++) {
     }
   }
 }
-console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw`);
+console.log(`\nDIFFERENTIAL FUZZ: ${N} sequences · ${N - diverged - jsThrows - notToRef} byte-identical · ${diverged} DIVERGED · ${jsThrows} js-threw${MALFORMED ? ` · ${notToRef} not given to the reference (a value that is not an integer)` : ""}`);
 // cov.* are STATE-DERIVED (read back out of canonical state, so they are evidence the resolver reached the
 // branch). gen.* are GENERATION-SIDE intent only and are never asserted; see the note at the top.
 console.log(`coverage hit: ${JSON.stringify({ ...cov, v23Clears: gV23Clears })}`);
 console.log(`gen (intent only, not evidence): ${JSON.stringify({ fclaimGrants: gFclaimGrants, fclaimDenies: gFclaimDenies, v28LegacyEmitted: gV28LegacyEmitted })}`);
-console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeight, ...s.events.map((e) => e.height)), 0)} (V28 = ${R.V28_HEIGHT})`);
+console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, ...[s.tipHeight, ...s.events.map((e) => e.height)].filter(Number.isSafeInteger)), 0)} (V28 = ${R.V28_HEIGHT})`);
+console.log(`events that write nothing: ${inertN} added over ${twins.filter(Boolean).length} twins (${twinIdx.length} to the reference); results changed: JS ${inertJs}, reference ${inertPy}`);
+if (inertJs || inertPy) process.exit(1);
+if (MALFORMED) {
+  // the floors: sequences in which the replay met a malformed field on each kind, a tip outside the domain (and one
+  // with every height inside it), each side
+  // of V21, an offer with a NaN height open past V21 though its raw expiry fell due below it, a reservation with a
+  // string deadline; and sequences carrying each type on a height, an expiry or the tip
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, tip: 0, tipOnly: 0, crossV21: 0, aboveV21: 0, nanOffer: 0, textDeadline: 0 };
+  const types = Object.fromEntries(MALFORMED_TYPES.map((t) => [t, 0]));
+  seqs.forEach((s, i) => {
+    const k = malformedKinds(R, s.events, s.tipHeight, runs[i].st ?? null);
+    for (const x of Object.keys(reach)) if (k[x]) reach[x]++;
+    for (const t of k.types) types[t]++;
+  });
+  const floor = Math.max(1, Math.floor(N / 50));
+  console.log(`malformed reach (sequences, floor ${floor} each): ${JSON.stringify(reach)}`);
+  console.log(`malformed types (sequences, floor ${floor} each): ${JSON.stringify(types)}; ${jsThrows} sequence(s) resolve() refused by throwing`);
+  const thin = [...Object.entries(reach), ...Object.entries(types)].filter(([, n]) => n < floor);
+  if (thin.length) { console.error(`✗ malformed reach below the floor: ${thin.map(([k, n]) => `${k} ${n}`).join(", ")}`); process.exit(1); }
+  process.exit(diverged ? 1 : 0);
+}
+if (EXPIRY) {
+  // the floors: sequences in which each kind of expiry happens with a later event at or above its height
+  const reach = { offer: 0, bid: 0, reservation: 0, recapture: 0, v21: 0 };
+  seqs.forEach((s, i) => { if (js[i].startsWith("JS_THROW:")) return; const k = expiryKinds(R, s.events, resolve(s.events, s.tipHeight)); for (const x of Object.keys(reach)) if (k[x]) reach[x]++; });
+  const floor = Math.max(1, Math.floor(N / 50));
+  console.log(`expiry reach (sequences, floor ${floor} each): ${JSON.stringify(reach)}`);
+  const thin = Object.entries(reach).filter(([, n]) => n < floor);
+  if (thin.length) { console.error(`✗ expiry reach below the floor: ${thin.map(([k, n]) => `${k} ${n}`).join(", ")}`); process.exit(1); }
+  process.exit(diverged || jsThrows ? 1 : 0);
+}
 // HONEST-COUNTER guard: prove v23ClearFlow actually REACHES the clear branch (a paid+owned name cleared at
 // >=V23 -> addr undefined), so the gV23Clears counter cannot silently lie again (audit caught a flat under-fee
 // that left the name unowned, no-op'ing every clear). Deterministic, independent of the random seed.
@@ -484,8 +776,8 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
     mk(R.nameSet({ name: NM, addr: R.ZERO_ADDR }), H),                                       // CLEAR at >=V23
   ];
   const n = resolve(seq, H + 5).names[NM];
-  if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED — owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
-  if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0 — the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
+  if (!n || n.owner !== D || n.addr != null) { console.error(`✗ v23 clear self-check FAILED: owned name not cleared (owner=${n && n.owner}, addr=${n && n.addr}); the clear branch is not really exercised`); process.exit(1); }
+  if (gV23Clears <= 0) { console.error("✗ v23Clears coverage is 0: the differential fuzz never exercised the V23 clear branch"); process.exit(1); }
   console.log(`✓ v23 clear self-check: a paid+owned name was genuinely cleared (addr->undefined); fuzz exercised the branch ${gV23Clears}x`);
 }
 // V25 self-check: prove a commit -> PAYMENT-FREE reveal -> nfinalize genuinely FINALIZES to a NORMAL owned name
@@ -501,9 +793,9 @@ console.log(`max generated height: ${seqs.reduce((m, s) => Math.max(m, s.tipHeig
   ];
   const st = resolve(seq, hf + 3), n = st.names[NM];
   if (!n || n.owner !== A.toLowerCase() || n.pending || n.viaFill || Number(st.feesPaid) !== Number(R.nameRegFee(NM, hf))) {
-    console.error(`✗ v25 finalize self-check FAILED — reserve→finalize did not yield a clean owned name (owner=${n && n.owner}, pending=${n && n.pending}, viaFill=${n && n.viaFill}, feesPaid=${st.feesPaid})`); process.exit(1);
+    console.error(`✗ v25 finalize self-check FAILED: reserve→finalize did not yield a clean owned name (owner=${n && n.owner}, pending=${n && n.pending}, viaFill=${n && n.viaFill}, feesPaid=${st.feesPaid})`); process.exit(1);
   }
-  if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0 — the fuzz never materialized a V25 reservation"); process.exit(1); }
+  if (!cov.pendingReg) { console.error("✗ pendingReg coverage is 0: the fuzz never materialized a V25 reservation"); process.exit(1); }
   console.log(`✓ v25 finalize self-check: commit→payment-free reveal→nfinalize yields a normal owned name (fee once, not viaFill); fuzz materialized ${cov.pendingReg} pending reservation(s)`);
 }
 // V28 self-check (REBIND B0a). The headline defect this batch closes: before it, NOT ONE attest in 20,000

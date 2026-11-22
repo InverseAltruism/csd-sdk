@@ -59,6 +59,88 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
+## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
+
+No rule changes. `resolve.ts` runs the replay as a fold: one step per event in apply order, and an end at the tip
+(the last flush of deferred cancels, the closing sweep at `tipHeight + 1`, the materialized state) that is the only
+step reading the tip. No export and no type changed; `dist/index.d.ts` differs from 0.2.8's by two colons in
+`canonicalState`'s comment, where em dashes were, and by the version literal of `CAIRNX_CORE_VERSION`.
+
+`resolve/store.ts` sweeps by due height. Before the batch at its own height a sweep runs one batch at each lower
+height at which the head of an expiry queue falls due, in ascending order: an offer or bid keyed k from
+`(k + 1) * EPOCH_LEN`, a reservation or recapture reservation from `finalizeBy + 1`, and V21 while no sweep has
+reached it, where offers and bids anchored below V22 take their capped keys. Each item thus expires at the first
+height it is due, and the sequence of expiry effects does not depend on the heights at which sweeps run. 0.2.8 and
+`cairnx_ref.py` apply every due expiry in one batch before each event; for the heights a chain produces the two give
+the same state because expiry effects commute: what is due only grows with height, whether an item is due reads that
+item alone, each effect is an addition to one seller's balance, an idempotent unlock, a status write on the item
+itself or the deletion of one key, and a sweep writes no log entry. CONVENTION.md section 5 now states the property.
+Check mode asserts each batch against the walk at its height and, while sweeps split, that no item of a batch was due
+one height lower.
+
+A later change breaks the property, and needs the sweep's order proved again, if it writes a log entry per expiry,
+records on an item when it expired, lets one expiry close or change another item (a bid's end voiding its answers, a
+reservation's end touching offers, a lapse applied by the sweep), makes a release other than an addition, or makes
+being due depend on another item. Each also makes a replay depend on events that write nothing. What catches that is
+the reference side of `conformance/fuzz-resolve.mjs --expiry`: the Python reference sweeps before each event and
+resolves each sequence again with events that write nothing added. The JS side does not go red there, since
+cairnx-core's sweep runs the same batches with or without them, and a log entry per expiry would not show at all, the
+gate comparing canonical state.
+
+Inputs no chain produces broke the equality twice in review (the other vendor's two passes). An offer whose event
+height is NaN has a NaN cap from V21 on, so it is due below V21 and at no height from V21 on: a batch at its raw due
+height expired it where 0.2.8 keeps it open. A commit at the string height "90000" gives a reservation the deadline
+"90000820": the next due height read it as the number 900008201 and a batch deleted the reservation, where 0.2.8's
+sweep at the string height "1000000001" compares text and keeps it, and with three such reservations a fourth reveal
+passed the cap 0.2.8 refuses. A first fix recognised the NaN-height offer as it entered the store; the string deadline
+came through a reservation, so recognising items kind by kind does not close the class. The batches at due heights now
+run only inside the domain they are proven for: every event height and the tip a safe integer. `resolve.ts` holds the
+one predicate, `inDomain`, applied to each event's height before its sweep and to the tip before the closing sweep;
+the first value outside ends the batches for the rest of the replay (`endSplit`), and from then on each sweep is the
+single batch, whose code is 0.2.8's sweep. By the lines cited here, every other value that reaches a due test or a
+queue key is a safe integer already or follows from a height: an offer's `expiresEpoch` is refused unless a safe
+integer (`packages/cairnx/src/resolve/market.ts` :175, `Number.isSafeInteger(`), a bid's likewise (:77), and each
+`finalizeBy` is an event height plus `REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
+(`packages/cairnx/src/resolve/names.ts` :86 and :120), from the reveal's height or a commit's (:32,
+`commits.set(rec.commit, ev.height)`). Inside the domain the NaN-height condition could not fire, so it is removed.
+Sweep streams X, X2, Y and Y2 pin the four cases against 0.2.8, and the seal's step (d3) compares the sequences of
+`fuzz-resolve.mjs --malformed` (values of every type on every kind and on the tip) with 0.2.8. Check mode, whose index
+reads as the plain walk only inside the domain (0.2.8's own check mode throws on a string deadline), runs on the
+sequences inside it. Outside the domain the released versions already disagree: on a string deadline 0.2.7's indexes
+read differently from 0.2.6's walk (the tree before the store, a805573^, equals 0.2.4 on each of the nine widened
+sequences that show it, the 0.2.7 tag differs on each), and 0.2.8 and this version follow 0.2.7. No chain produces
+such an input, so the seal's step (d3) compares with 0.2.8 alone and prints how many inputs 0.2.4 and 0.2.8 disagree
+on.
+
+What is claimed, and over what. For inputs made of plain values (what JSON carries) 0.2.9 returns what 0.2.8 returns
+and throws where 0.2.8 throws: 0.2.8 read each event's height and id in a pass before its first handler and 0.2.9
+reads each event when it applies it, which reaches the same first throw as long as each event is an object. Two inputs
+outside plain values are known to differ: an event whose `height` is a getter that answers differently on later reads
+(0.2.8 applies the event, 0.2.9 skips it, since the fold reads the height once more, in `inDomain`), and an events
+array with an `undefined` entry after an event whose handler throws (both throw a TypeError, the texts differ;
+`packages/cairnx/test/fold.test.ts`). An accessor or a conversion with side effects is outside the claim. Heights and
+the tip are consensus only as a chain produces them, non-negative integers below 2^53: outside that, released cores
+answer differently (0.2.4 and 0.2.7 on a string deadline, above) and the Python reference differs on NaN and the
+infinities, so a caller validates both before the call.
+
+The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.8`, each baseline bound to npm:
+`canonicalState` byte-identical to 0.2.4 and the whole result identical to 0.2.8 including codes and moves over the 97
+cases of the case files, the replay corpus at 795 heights, 20,000 fuzz sequences, the 145 resolve cases of
+`codes.json`, the 14 of `forward.json` and the 13 of `moves.json`, 65 stream inputs (the growth streams at full size
+and the twelve of `conformance/sweep-streams.mjs`), and the 3,000 sequences of the new `fuzz-resolve.mjs --expiry`
+mode (an expired offer with a later event in 2,170 of them, a bid in 1,744, a swept reservation in 1,398, a swept
+recapture reservation in 301, an expiry under the V21 cap in 403; floor 60 each, read from 0.2.8), each also resolved
+with 842,620 events that write nothing added in all, none changing a result. The 3,000 sequences of `--malformed` are
+compared with 0.2.8 alone, whole result or the same throw (122 threw alike; 0.2.4 and 0.2.8 differ on 9): a malformed
+field met on an offer in 1,867, a bid in 1,002, a reservation in 611, a recapture reservation in 234; a tip outside
+the domain in 786, 225 of them with every height inside; 1,395 crossing V21 and 1,032 wholly above it; a NaN-height
+offer open past V21 though its raw expiry fell due below it in 349; a reservation with a string deadline in 349; each
+of the 13 types in at least 151; floor 60 each. A dense walk over the sequences of both modes and the sweep streams,
+6,012 walks and 1,699,031 tips, each equal to 0.2.8's answer; check mode clean on 24,357 inputs (2,745 malformed ones
+outside the domain left to the differential); the token moves of 28,607 inputs; `parseRecord` equal over 275,166
+records; 1,418 client-surface checks; crosslang green, with the inert-event check in the three fuzz modes. cairnx-api
+0.1.2 is a peer-only step onto this core.
+
 ## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
 `bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose
@@ -532,7 +614,7 @@ byte-identical to 0.1.38 with every opt-in off. 0.1.40 = that surface + this gat
   lapsed: three completed fclaim buys wrongly denied a fourth honest claim. At an event height >= V29 the cap
   counts only holds on OPEN offers (`ev.height < V29_HEIGHT || x.status === "open"`, the fclaim grant ladder).
   The post-V29 count is a strict SUBSET of the pre-V29 count, so the change can only GRANT more, never newly
-  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/store.ts` :256), where the clause is inert by design (SCORE_CLAIM at
+  deny. The legacy SCORE_CLAIM path calls the same counter (`liveHoldCount`, `packages/cairnx/src/resolve/store.ts` :287), where the clause is inert by design (SCORE_CLAIM at
   height >= V28 is rejected before it, and V29 > V28); it is kept for symmetry and documented as unreachable.
 
 **Byte-identity below the gate:** `scripts/v29-below-gate-differential.mjs` exits 0 (canonical state

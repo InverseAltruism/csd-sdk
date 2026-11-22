@@ -1,9 +1,12 @@
 // The replay's store (src/resolve/store.ts) on paths resolve() reaches rarely or not at all: an owner change of a
 // pending reservation, sweeps and hold counts at heights below an earlier one's (NaN heights reorder the replay), the
-// bulk-cancel and void candidates, and check mode refusing a field written past the store. Each read here runs with check mode on, so a read that differs from
+// bulk-cancel and void candidates, check mode refusing a field written past the store, and the sweep's loop guard. Each read here runs with check mode on, so a read that differs from
 // the plain walk throws.
 import assert from "node:assert/strict";
-import { EPOCH_LEN, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, V21_HEIGHT, V28_HEIGHT, V29_HEIGHT, epochOf } from "../src/index.js";
+import {
+  DEPLOY_FEE, EPOCH_LEN, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, TREASURY_ADDR, V21_HEIGHT, V28_HEIGHT, V29_HEIGHT, deploy, epochOf,
+  mint, offer as offerRecord, resolve, stateHash, type ChainEvent,
+} from "../src/index.js";
 import { createStore, type NameRec, type OfferRec } from "../src/resolve/store.js";
 
 let pass = 0;
@@ -136,6 +139,28 @@ const offer = (id: string, height: number, expiresEpoch: number): OfferRec =>
   ok(v.voidTargets("bravo", h).map((o) => o.id.slice(-1)).join() === "5", "a closed offer leaves the name's candidates");
   v.addOffer({ ...n1, status: "open" });                                  // the same id again, open
   ok(v.voidTargets("bravo", h).map((o) => o.id.slice(-1)).join() === "4,5", "a void lists in the offers map's order");
+}
+
+// ── the sweep's loop guard: a due height that rounds below the height that pops its entry ──
+// An offer keyed 2^53 - 297: (k + 1) * EPOCH_LEN rounds to a height whose epoch is still k, so the batch there pops
+// nothing; the guard ends the loop and the batch at the asked height expires it, as one batch per sweep does. Check
+// mode stays off here: its "not due one height lower" needs a due height a double can hold. Through resolve() the
+// guard is out of reach: a tip of 3e17 is not a safe integer, so the fold runs one batch per sweep.
+{
+  const k = 2 ** 53 - 297, d = (k + 1) * EPOCH_LEN;
+  ok(epochOf(d) === k, "the computed due height of the entry falls in its own epoch (the case the guard exists for)");
+  const s = createStore();
+  const o = offer("0x" + "ee".repeat(32), 90_002, k);
+  s.addOffer(o);
+  let released = 0;
+  s.sweep(3e17, () => { released++; });
+  ok(s.offers.get(o.id)?.status === "expired" && released === 1, "the sweep returns and expires the offer once, as the walk does");
+  const S = "0x" + "71".repeat(20), P = (b: { uri: string; payloadHash: string }, h: number, pos: number, exp: number, paidTo = {}): ChainEvent =>
+    ({ kind: "propose", id: "0x" + String(pos + h).padStart(64, "0"), proposer: S, uri: b.uri, payloadHash: b.payloadHash, expiresEpoch: exp, height: h, pos, paidTo });
+  const ev = [P(deploy({ ticker: "GRD", decimals: 0, supply: "10", mint: "issuer" }), 90_000, 0, FAR, { [TREASURY_ADDR]: String(DEPLOY_FEE) }),
+    P(mint({ ticker: "GRD", amount: "10" }), 90_001, 0, FAR), P(offerRecord({ give: { ticker: "GRD", amount: "3" }, want: { value: "1000" }, taker: "0x" + "72".repeat(20) }), 90_002, 0, k)];
+  // the tip is outside the domain (one batch per sweep); the published cairnx-core 0.2.8 gives this stateHash
+  ok(stateHash(resolve(ev, 3e17)) === "0xbbf78cf9c7fc161a63a7369bf41e6d0d6b6e1db0d4db29167bae7fb7b35b70ca", "resolve() at tip 3e17 equals 0.2.8");
 }
 
 console.log(`replay store: ${pass} passed`);

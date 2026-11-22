@@ -1,8 +1,8 @@
 // CairnX pure deterministic resolver (CONVENTION.md). (events, tipHeight) → CairnXState.
 // No I/O, no clocks, no randomness, no float math on values: two resolvers fed the same chain
-// prefix MUST produce byte-identical canonical state — that determinism IS the trust model. This is
+// prefix MUST produce byte-identical canonical state: that determinism IS the trust model. This is
 // GUARDED (not merely asserted) by the JS⇄Python differential in conformance/: the raw regex-vs-regex
-// check, the full parse gate, the nprofile cross-lang + constant-PARITY check, and the resolve fuzz —
+// check, the full parse gate, the nprofile cross-lang + constant-PARITY check, and the resolve fuzz,
 // each byte-identical or the build fails.
 //
 // v1.1 adds: names (commit-reveal back-dated registrar + transfer + set + name offers) and
@@ -14,7 +14,7 @@ import {
   type TokenState,
 } from "./types.js";
 import { applyAttest } from "./resolve/attest.js";
-import { createContext, ptAmt } from "./resolve/context.js";
+import { createContext, ptAmt, type ResolveCtx } from "./resolve/context.js";
 import { createStore, type StoreOptions } from "./resolve/store.js";
 import { applyBid, applyFclaim, applyOcancel, applyOffer } from "./resolve/market.js";
 import {
@@ -24,7 +24,7 @@ import { applyDeploy, applyMint, applyTmeta, applyTransfer } from "./resolve/tok
 
 export { ptAmt };
 
-// Ordinal (code-unit) string comparison — the ONLY comparator allowed anywhere in the resolver.
+// Ordinal (code-unit) string comparison: the ONLY comparator allowed anywhere in the resolver.
 // localeCompare is ICU-collation-dependent and therefore non-reproducible across runtimes; a
 // third-party (Rust/Go/…) resolver must be able to match byte-for-byte from plain byte order.
 const ord = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -51,7 +51,15 @@ export function resolve(events: ChainEvent[], tipHeight: number): CairnXState {
 /** resolve() with the options of its private indexes (src/resolve/store.ts): check mode, which runs the plain walks
  *  beside every indexed read, and the visit counters. For the tests and the seal; the package root does not export it. */
 export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptions = {}): CairnXState {
-  const ordered = [...events].sort(applyOrder);
+  const fold = createFold(opts);
+  for (const e of [...events].sort(applyOrder)) fold.apply(e);
+  return fold.finish(tipHeight);
+}
+
+// The replay as a fold over events in apply order. apply() takes one event: the V29 drop, the flush of the previous
+// block's deferred cancels when the height changes, the sweep at the event's height, its handler. finish() is the end,
+// the only step that reads the tip: the last flush, the closing sweep at tipHeight + 1 and the materialized state.
+function createFold(opts: StoreOptions) {
   // v2.9 (§32, V29 / REBIND M4): drop a DUPLICATED event before apply. The ordering step above sorts but never
   // de-dupes, so a double-fed transaction (an overlapping scanner page: cairnx/src/scan.ts pushes pages verbatim)
   // applies twice and double-credits o.paid / o.delivered on the partial-fill path. A transaction has ONE identity
@@ -62,20 +70,20 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   // duplicated feed no longer double-applies), so it rides the SAME gate as M5. The cairnx-service-side de-dup on
   // the attestation pull (scan.ts) is a separate, un-gated defensive change; only this resolve() half is gated.
   const seenIds = new Set<string>();
-  const applied: ChainEvent[] = [];
-  for (const e of ordered) {
-    if (e.height >= V29_HEIGHT) { const k = eventId(e); if (seenIds.has(k)) continue; seenIds.add(k); }
-    applied.push(e);
-  }
-
   const store = createStore(opts);
   const c = createContext(store);
-  const { tokens, balances, names, recaptures, offers, bids, fclaims, log, refused, sweepExpired } = c;
+  const { refused, sweepExpired } = c;
   let pendingBlock = -1;
   const applyPendingCancels = () => { for (const f of c.pendingCancels) f(); c.pendingCancels = []; };
+  // The sweep's batches at due heights are proven for heights a chain produces: each event's height and the tip a safe
+  // integer. Inside that domain being due only grows with height, so the batches give the state of one batch per sweep;
+  // the first height outside it ends them before any sweep reads it; from then on every sweep is the batch 0.2.8 runs.
+  const inDomain = (height: unknown): void => { if (!Number.isSafeInteger(height)) store.endSplit(); };
 
-  for (const ev of applied) {
-    if (beforeActivation(ev.height)) continue;
+  const apply = (ev: ChainEvent): void => {
+    inDomain(ev.height);
+    if (ev.height >= V29_HEIGHT) { const k = eventId(ev); if (seenIds.has(k)) return; seenIds.add(k); }
+    if (beforeActivation(ev.height)) return;
     if (ev.height !== pendingBlock) { applyPendingCancels(); pendingBlock = ev.height; }
     sweepExpired(ev.height);
     store.verify(ev.height);
@@ -83,7 +91,7 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
 
     if (ev.kind === "propose") {
       const parsed = explainRecord(ev.uri, ev.payloadHash);
-      if (!parsed.ok) { refused(ev, ev.id, "invalid", parsed.code, "unparseable/non-canonical record"); continue; }
+      if (!parsed.ok) { refused(ev, ev.id, "invalid", parsed.code, "unparseable/non-canonical record"); return; }
       const rec = parsed.record;
       const who = ev.proposer.toLowerCase();
       switch (rec.t) {
@@ -106,16 +114,24 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
     } else {
       applyAttest(c, ev);
     }
-  }
+  };
 
-  applyPendingCancels();   // flush the final block's deferred cancels before the closing sweep
-  // Closing sweep at tipHeight + 1 (NOT tipHeight): materialized state must reflect everything expired AS OF
-  // the tip, and an offer whose effExpiry epoch == epochOf(tip) is expired at the FIRST height of the next
-  // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
-  // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
-  sweepExpired(tipHeight + 1);
-  store.verify(tipHeight + 1, true);
+  const finish = (tipHeight: number): CairnXState => {
+    applyPendingCancels();   // flush the final block's deferred cancels before the closing sweep
+    // Closing sweep at tipHeight + 1 (NOT tipHeight): materialized state must reflect everything expired AS OF
+    // the tip, and an offer whose effExpiry epoch == epochOf(tip) is expired at the FIRST height of the next
+    // epoch. Using tip+1 makes the materialized view agree with the event side (a fill submitted at tip+1 would
+    // be rejected). Mirrored in cairnx_ref.py (sweep_expired(tip_height + 1)); pinned by the vectors.
+    inDomain(tipHeight);
+    sweepExpired(tipHeight + 1);
+    store.verify(tipHeight + 1, true);
+    return materialize(c, tipHeight);
+  };
+  return { apply, finish };
+}
 
+function materialize(c: ResolveCtx, tipHeight: number): CairnXState {
+  const { tokens, balances, names, recaptures, offers, bids, fclaims, log } = c;
   // ── materialize canonical state (sorted; values as decimal strings) ──
   const tokensOut: Record<string, TokenState> = {};
   for (const [t, tok] of [...tokens.entries()].sort(([a], [b]) => ord(a, b))) tokensOut[t] = { ...tok.meta, minted: tok.minted.toString() };
@@ -135,7 +151,7 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   const tipEpoch = epochOf(tipHeight);
   for (const [nm, n] of [...names.entries()].sort(([a], [b]) => ord(a, b))) {
     if (tipV25 && n.pending) {
-      // v2.5 reservation: a minimal shape (no addr/viaFill/profile/lease — it holds none yet). The closing sweep
+      // v2.5 reservation: a minimal shape (no addr/viaFill/profile/lease: it holds none yet). The closing sweep
       // drops any reservation past finalizeBy, so a materialized `pending` name is always still finalizable
       // (finalizeBy > tipHeight). Emitted only at v2.5+ tips, so every pre-v2.5 canonical hash is byte-identical.
       namesOut[nm] = { name: nm, owner: n.owner, claimId: n.id, height: n.height, effectiveHeight: n.effHeight, locked: n.locked, pending: true as const, finalizeBy: n.finalizeBy! };
@@ -152,7 +168,7 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   for (const [id, o] of [...offers.entries()].sort(([a], [b]) => ord(a, b))) offersOut[id] = o;
   const bidsOut: Record<string, BidState> = {};
   for (const [id, b] of [...bids.entries()].sort(([a], [b2]) => ord(a, b2))) bidsOut[id] = b;
-  // v2.6: the recapture reservations are a DIAGNOSTIC surface (like `events`) — EXCLUDED from canonicalState
+  // v2.6: the recapture reservations are a DIAGNOSTIC surface (like `events`): EXCLUDED from canonicalState
   // (see below), so zero fork surface. The cairnx service exposes it so a wallet/UI can confirm it is still the
   // current recapture winner BEFORE spending the premium at nfinalize (a finalize by a reserver who was
   // displaced in the reserve->freeze window would burn the premium; this lets the client refuse that).
@@ -167,9 +183,9 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
   return { tipHeight, tokens: tokensOut, balances: balancesOut, names: namesOut, offers: offersOut, bids: bidsOut, recaptures: recapturesOut, fclaims: fclaimsOut, events: log, feesPaid: c.feesPaid.toString() };
 }
 
-/** Canonical serialization of state (FORMAT 2) — byte-identical across honest resolvers.
+/** Canonical serialization of state (FORMAT 2): byte-identical across honest resolvers.
  *  The canonical surface is the DATA ONLY: {tipHeight, tokens, balances, names, offers, bids,
- *  feesPaid}. The applied-event log is deliberately EXCLUDED — its free-text reason strings are
+ *  feesPaid}. The applied-event log is deliberately EXCLUDED: its free-text reason strings are
  *  implementation diagnostics, and making them normative would force every third-party resolver
  *  to reproduce English prose byte-for-byte. (Format 1, pre-2026-06-12, included the log and
  *  sorted with localeCompare; pinned format-1 hashes live in test/vectors/replay-hashes.json
