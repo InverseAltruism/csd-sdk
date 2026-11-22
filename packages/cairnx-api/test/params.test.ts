@@ -173,6 +173,7 @@ const REFUSE: [Route, string, string][] = [
   ["tokens", "after=cairn", "after"],
   // filter values
   ["names", "status=expired", "status"],
+  ["names", "order=rarity", "order"],
   ["names", "order=Length", "order"],
   ["names", "order=Newest", "order"],
   ...["constructor", "toString", "__proto__", "hasOwnProperty"].map((v): [Route, string, string] => ["names", `order=${v}`, "order"]),

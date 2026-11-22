@@ -74,10 +74,10 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   quotes no input. Pass the raw query string or `URL.searchParams`, never a record from a query parser, which merges
   a repeated parameter. Any other `query`, or a route outside the six, throws a `TypeError`.
 - `CURSORS`, `CursorCodec` and the key types: the cursor of each list order, with `encode`, `decode`, `compare` and
-  `of(row)`. A cursor is only a position: a cursor of another list or snapshot that fits the grammar is valid
-  (`44682:2` is an `events` cursor and a `newest` names cursor alike). A cursor is valid only for the order that
-  issued it, and the server does not promise to refuse every foreign one (a `newest` names cursor whose height equals
-  its name's length reads as an `order=length` position).
+  `of(row)`. A cursor is only a position: a cursor of another list or snapshot that fits the grammar is read as
+  one (`44682:2` is an `events` cursor and a `newest` names cursor alike). A cursor is meant for the order that
+  issued it: a foreign one is refused when it does not fit that order's grammar and is read as a position when it
+  does (a `newest` names cursor whose height equals its name's length reads as an `order=length` position).
 
 ## Handlers (`./handlers`)
 
