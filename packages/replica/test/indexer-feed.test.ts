@@ -514,6 +514,46 @@ console.log("with inclusion the verified headers name the tip:");
   await plainOld.close();
 }
 {
+  // headerAt is asked only at or below the final height (genesis while that is below it): here it refuses above it,
+  // over syncs, verified tips moving back and under the floor, indexers dropping under it and branch moves.
+  const b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "z", from: H0 + 20 }] });
+  type W = { idx: typeof signed; hdr: typeof signed; tip: number; vt: number };
+  const runs: W[][] = [
+    [{ idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }, { idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 30 }, { idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 10 },
+      { idx: signed, hdr: signed, tip: H0 + 40, vt: 5 }, { idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }],
+    [{ idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }, { idx: signed, hdr: signed, tip: ACTIVATION_HEIGHT - 1, vt: H0 + 40 }, { idx: signed, hdr: signed, tip: 100, vt: H0 + 40 },
+      { idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }],
+    [{ idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }, { idx: b, hdr: b, tip: H0 + 38, vt: H0 + 38 }, { idx: signed, hdr: b, tip: H0 + 40, vt: H0 + 38 }, { idx: b, hdr: b, tip: H0 + 12, vt: 5 }],
+    [{ idx: signed, hdr: signed, tip: H0 + 40, vt: H0 + 40 }, { idx: b, hdr: b, tip: H0 + 40, vt: ACTIVATION_HEIGHT + 5 }, { idx: b, hdr: b, tip: H0 + 40, vt: ACTIVATION_HEIGHT + 11 },
+      { idx: b, hdr: b, tip: H0 + 40, vt: ACTIVATION_HEIGHT + 12 }],
+  ];
+  let asked = 0, steps = 0;
+  const above: string[] = [], failed: string[] = [];
+  for (const ws of runs) {
+    let w = ws[0]!;
+    const all = () => w.hdr.verified({ verifiedTip: Number.MAX_SAFE_INTEGER });
+    const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", pageSize: 3, verifyInclusion: true,
+      fetch: ((i: string | URL | Request, q?: RequestInit) => real(w.idx.indexer({ tip: w.tip }))(i, q)) as typeof fetch,
+      headerMerkleAt: (h: number) => all().headerMerkleAt!(h), rawTxAt: (id: string) => all().rawTxAt!(id), verifiedTipHeight: async () => w.vt,
+      headerAt: (h: number) => {
+        asked++;
+        const final = w.vt - FINAL_DEPTH;
+        if (h > final && !(h === 0 && final < 0)) { above.push(`${h} over ${final}`); throw new Error(`no header above the final height ${final}`); }
+        return all().headerAt(h);
+      } }), store: memoryStore(), ...WIDE });
+    await loop.open();
+    for (const x of ws) {
+      w = x;
+      const s = await loop.advance();
+      steps++;
+      if (s.lastError !== null && s.lastError !== undefined) failed.push(`${x.tip}/${x.vt}: ${s.lastError.code}`);
+    }
+    await loop.close();
+  }
+  ok(`headerAt refusing above the final height: ${steps} steps over ${runs.length} sequences, ${asked} reads, none above it, no step failed`,
+    steps === 17 && asked > 0 && above.length === 0 && failed.length === 0, `above ${above.slice(0, 3).join(", ")} | failed ${failed.join(", ")}`);
+}
+{
   // The indexer on another branch than the verified headers: B from H0 + 20 while the verified headers are A's. It is
   // served only up to the last boundary where it gives the verified hash, and the store holds the verified hashes.
   const T = H0 + 40, b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "x", from: H0 + 20 }] });
