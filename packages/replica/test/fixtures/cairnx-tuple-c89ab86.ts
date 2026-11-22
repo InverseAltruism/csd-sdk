@@ -1,6 +1,10 @@
-// Test-only reference, not part of the package: the CairnX resolver's src/tuple.ts at cairnx c89ab86 (sha256 348a645493240c12876229a9ef4fd5d54de7e508576bca288828032e6ac87d71 of those bytes), four of its import specifiers rewritten and nothing else, so test/tuple-differential.test.ts runs the book the hosted front door serves beside the replica's.
+// Test-only reference, not part of the package: the CairnX resolver's src/tuple.ts at cairnx c89ab86, sha256
+// 348a645493240c12876229a9ef4fd5d54de7e508576bca288828032e6ac87d71 of the original file. Comments naming private plans or
+// files were reworded and four import specifiers rewritten; the code is the original's: sha256
+// 11cb05433eb532d548716658e9a3408d532f56d07af1b4e29d0f86009aa52e6e over its tokens without comments or whitespace, with
+// the four specifiers read back, which test/tuple-differential.test.ts checks.
 // The hash tuple of cairnx-core CONVENTION §34, (height, blockHash, eventsHash, stateHash), at each epoch boundary once
-// it is Scanner.FINALITY blocks deep (Plan 91 R4): what two replicas compare (§34.3). The service's scan loop advances
+// it is Scanner.FINALITY blocks deep: what two replicas compare (§34.3). The service's scan loop advances
 // the book once per accepted scan; the reads (tupleRead) only look a kept tuple up and never replay.
 import { createHash } from "node:crypto";
 import { eventLine } from "./cairnx-tuple-deps.js";
@@ -9,7 +13,7 @@ import { Scanner } from "../../src/scanner.js";
 import { EPOCH_LEN, EVENTS_HASH_START, eventsHashStep, stateHash, type CairnXState, type ChainEvent } from "@inversealtruism/cairnx-core";
 
 export interface Tuple { height: number; blockHash: string; eventsHash: string; stateHash: string }
-/** Boundaries kept in memory until an event store holds them (Plan 91 G3): 720 epochs, about 30 days of 120 s blocks. */
+/** Boundaries kept in memory: 720 epochs, about 30 days of 120 s blocks. */
 export const MAX_TUPLES = 720;
 /** Boundaries one scan computes at most, so a catch-up after a stall, a deep reorg or a changed feed spreads its
  *  replays over scans. */
@@ -25,7 +29,7 @@ export function finalBoundary(tip: number): number | null {
 interface Kept { tuple: Tuple; content: string }
 
 /** `events` in (height, position) order, and at each epoch boundary in [from, to] (`from` a boundary) a sha256 over
- *  every field of every event at or below it (memo.ts eventLine). The events hash reads only (height, position, id,
+ *  every field of every event at or below it (each event's JSON and a newline). The events hash reads only (height, position, id,
  *  author) of an event, and a later scan can serve another value of a field resolve() also reads for an event it
  *  already returned (the refresh's full pull re-reads the rows), so a changed prefix is detected on this digest. */
 function prefixes(events: readonly ChainEvent[], from: number, to: number): { sorted: ChainEvent[]; content: Map<number, string> } {
@@ -107,7 +111,7 @@ export class TupleBook {
 
   /** Every kept tuple stops being served until an accepted scan's pass verifies it again. The only place verification
    *  is cleared: the service calls it at the end of every poll that does not end in an accepted scan whose pass
-   *  completed (src/service.ts sync). */
+   *  completed. */
   withhold(): void { this.verified = null; }
 
   private dropFrom(height: number): void {

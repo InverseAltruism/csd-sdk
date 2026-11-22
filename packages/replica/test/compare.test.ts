@@ -1,5 +1,5 @@
 // The comparison with a reference (compare.ts) through open(): each kind of difference a mock reference can show, the
-// first differing boundary found by the search, PIN_DISPUTED at a pin and TUPLE_RECORDS above it, S4's streak before a
+// first differing boundary found by the search, PIN_DISPUTED at a pin and TUPLE_RECORDS above it, the streak before a
 // recount acts and both of its outcomes, and a hostile reference (one that lies about a boundary it agreed on, one that
 // never answers, one on another chain, answers out of shape or over size, a search held to its request budget). Paired
 // throughout: an honest equal reference adds no note, no request in status() and no recount, and a reference on the
@@ -92,7 +92,7 @@ console.log("each kind of comparison:");
   await r.close();
 }
 
-console.log("S4: three runs at one first differing boundary, then the recount:");
+console.log("three runs at one first differing boundary, then the recount:");
 const differs: Table = (h) => { const t = truth.get(h); return t === undefined ? null : h >= X ? { ...t, eventsHash: flip(t.eventsHash) } : t; };
 /** A recount source over `f` that counts the steps asked of it. */
 const counted = (f: BlockFixture, top: { now: number }) => { const s = growing(f, top), n = { steps: 0 }; return { n, src: { ...s, next: (c: Parameters<Source["next"]>[0]) => { n.steps++; return s.next(c); } } as Source }; };

@@ -9,6 +9,9 @@
 // from the new branch), a reorg above every kept boundary (both keep them), and a refused scan (the tip block changed
 // during it): the resolver withholds every tuple until an accepted scan, the replica commits nothing and keeps serving
 // what it committed before, which equals what the resolver served before and serves again after.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { FINAL_DEPTH, mint } from "@inversealtruism/cairnx-core";
 import { memoryStore, replicaLoop, type Loop } from "../src/index.js";
 import { branchRefusal, indexerFeed, Scanner } from "../src/server.js";
@@ -27,6 +30,27 @@ const hashReader = (f: typeof fetch) => async (h: number): Promise<string | null
 };
 /** The boundaries the resolver's book serves now, by height. */
 const served = (book: TupleBook) => new Map(book.heights().flatMap((h) => { const t = book.get(h); return t === undefined ? [] : [[h, t] as const]; }));
+
+console.log("the reference copy is the resolver's code:");
+{
+  // The copy's tokens without comments or whitespace, its four rewritten import specifiers read back, against the hash
+  // of the original's taken the same way (the copy's first lines).
+  const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
+  const BACK: readonly [string, string][] = [
+    ['import { eventLine } from "./cairnx-tuple-deps.js";', 'import { eventLine } from "./memo.js";'],
+    ['import { replay } from "./cairnx-tuple-deps.js";', 'import { replay } from "./replay.js";'],
+    ['import { Scanner } from "../../src/scanner.js";', 'import { Scanner } from "./scan.js";'],
+    ['} from "@inversealtruism/cairnx-core";', '} from "./types.js";'],
+  ];
+  let text = readFileSync(new URL("./fixtures/cairnx-tuple-c89ab86.ts", import.meta.url), "utf8");
+  const once = BACK.every(([ours]) => text.split(ours).length === 2);
+  for (const [ours, theirs] of BACK) text = text.replace(ours, theirs);
+  const sc = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text), tokens: string[] = [];
+  for (let k = sc.scan(); k !== ts.SyntaxKind.EndOfFileToken; k = sc.scan()) tokens.push(sc.getTokenText());
+  const got = createHash("sha256").update(tokens.join("\u0000")).digest("hex");
+  const ORIGINAL = "11cb05433eb532d548716658e9a3408d532f56d07af1b4e29d0f86009aa52e6e";
+  ok("its code, comments and whitespace aside, hashes to the original's, as its header records", once && got === ORIGINAL && text.includes(ORIGINAL), got);
+}
 
 console.log("the recorded capture, every boundary to 117,000:");
 {

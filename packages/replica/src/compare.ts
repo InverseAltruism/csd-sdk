@@ -26,7 +26,7 @@ export interface CompareReport {
   readonly sameOrigin: boolean; readonly detail: string | null; readonly gates: Gates | null;
   readonly recount: "ours" | "reference" | "neither" | null;
 }
-/** Runs in a row with one first differing boundary before a recount may act (CONVENTION section 34.3, plan S4). */
+/** Runs in a row with one first differing boundary before a recount may act (CONVENTION section 34.3). */
 export const STREAK = 3;
 /** The largest tuple answer read: the documented one is under 300 bytes. */
 export const ANSWER_BYTES = 4096;
@@ -146,7 +146,7 @@ export function comparer(o: { ref: TupleReference; sameOrigin: boolean; gates: G
     }
   }
 
-  // S4: only a difference whose first boundary held for STREAK runs, recounted once from blocks. Equal to the replica's
+  // Only a difference whose first boundary held for STREAK runs, recounted once from blocks. Equal to the replica's
   // own tuple, the difference is confirmed and the replica keeps answering; equal to the reference's, the store is
   // rebuilt; neither, nothing changes.
   async function act(view: CompareView): Promise<void> {
