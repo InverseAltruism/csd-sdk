@@ -28,13 +28,14 @@ function orders<K>(what: string, codec: CursorCodec<K, never>, keys: K[], oracle
   ok(`${what}: encoded cursors sort through decode as their keys do`, show(encoded) === show(a));
 }
 
-const names = rows.names.map(CURSORS.name.of), newest = rows.names.map(CURSORS.newest.of);
+const names = rows.names.map(CURSORS.name.of), newest = rows.names.map(CURSORS.newest.of), lengthKeys = rows.names.map(CURSORS.length.of);
 const offers = rows.offers.map(CURSORS.anchor.of), bids = rows.bids.map(CURSORS.anchor.of);
 const tickers = rows.tokens.map(CURSORS.ticker.of), holders = rows.holders.map(CURSORS.holder.of), events = rows.events.map(CURSORS.event.of);
 
 console.log("round trips:");
 roundTrips("name", CURSORS.name, [...names, { name: "a" }, { name: "10" }, { name: `a${"-b".repeat(15)}c` }]);
 roundTrips("newest", CURSORS.newest, [...newest, { height: 0, name: "0" }, { height: 999_999_999_999_999, name: "z" }]);
+roundTrips("length", CURSORS.length, [...lengthKeys, { length: 1, name: "0" }, { length: 32, name: `a${"-b".repeat(15)}c` }]);
 roundTrips("anchor (offers)", CURSORS.anchor, offers);
 roundTrips("anchor (bids)", CURSORS.anchor, [...bids, { height: 0, id: H }]);
 roundTrips("ticker", CURSORS.ticker, [...tickers, { ticker: "ABC" }, { ticker: "Z00000000000" }]);
@@ -52,9 +53,15 @@ ok("a literal anchor cursor decodes to its height and id", show(CURSORS.anchor.d
 ok("an offers cursor does not fit the newest names grammar (a hash is not a name)", CURSORS.newest.decode(CURSORS.anchor.encode(offers[0]!)) === null);
 ok("a newest names cursor with a decimal name decodes as an events position", show(CURSORS.event.decode("7:10")) === show({ height: 7, pos: 10 }));
 
+ok("the length cursor of each corpus name is \"<length>:<name>\", spelled from the name's bytes", rows.names.every((r) =>
+  CURSORS.length.encode(CURSORS.length.of(r)) === `${Buffer.byteLength(r.name, "ascii")}:${r.name}`));
+ok("a names cursor and a newest cursor do not fit the length grammar", names.every((k) => CURSORS.length.decode(CURSORS.name.encode(k)) === null)
+  && newest.filter((k) => k.height !== k.name.length).every((k) => CURSORS.length.decode(CURSORS.newest.encode(k)) === null));
+
 console.log("malformed:");
 refuses("name", CURSORS.name, ["", "Alice", "-a", "a-", "a_b", "a".repeat(33), "1:a", "é", "a b"]);
 refuses("newest", CURSORS.newest, ["", "alice", "1:", ":a", "01:a", "-1:a", "1:A", "1:a:b", "1.0:a", "9007199254740992:a", "1000000000000000:a", "1e3:a", " 1:a"]);
+refuses("length", CURSORS.length, ["", "alice", "5", "4:alice", "6:alice", "05:alice", "5:Alice", "5:alice:x", "1:", ":a", "44682:2", "33:" + "a".repeat(33), "5.0:alice"]);
 refuses("anchor", CURSORS.anchor, ["", H, `1000000000000000:${H}`, `1:${H.toUpperCase().replace("0X", "0x")}`, `${H}:1`, `1:${H}:x`, `01:${H}`, `1:${A}`, `1:${H.slice(0, -1)}`]);
 refuses("ticker", CURSORS.ticker, ["", "cairn", "AB", "A".repeat(13), "1ABC", "AB-C"]);
 refuses("holder", CURSORS.holder, ["", A, `1:${A.toUpperCase().replace("0X", "0x")}`, `-1:${A}`, `01:${A}`, `${MAX_AMOUNT + 1n}:${A}`, `${"9".repeat(500)}:${A}`, `1:${H}`, `1.5:${A}`]);
@@ -79,6 +86,12 @@ console.log("order:");
 orders("name (bytewise ascending)", CURSORS.name, [...names, { name: "9" }, { name: "10" }, { name: "a-b" }, { name: "ab" }], (a, b) => bytes(a.name, b.name));
 ok("name: \"10\" sorts before \"9\" (bytewise, not the state object's integer-first order)", CURSORS.name.compare({ name: "10" }, { name: "9" }) < 0);
 orders("newest (height desc, name asc)", CURSORS.newest, newest, (a, b) => sign(b.height - a.height) || bytes(a.name, b.name));
+// Equal lengths across every class of byte the name grammar admits: digits, hyphen, lowercase. Uppercase and
+// non-ASCII bytes are outside NAME_RE, so no name holds one.
+const tied = ["a-b", "a0b", "ab0", "0-0", "00a", "9-9", "z-z", "a9z", "b", "9", "z", "0", "ab-cd", "ab0cd", "abzcd", "10", "9a"].map((name) => ({ length: name.length, name }));
+orders("length (length asc, name asc)", CURSORS.length, [...lengthKeys, ...tied], (a, b) => sign(Buffer.byteLength(a.name) - Buffer.byteLength(b.name)) || bytes(a.name, b.name));
+ok("length: equal lengths order bytewise, hyphen before digits before letters", show([...tied].sort(CURSORS.length.compare).map((k) => k.name))
+  === show(["0", "9", "b", "z", "10", "9a", "0-0", "00a", "9-9", "a-b", "a0b", "a9z", "ab0", "z-z", "ab-cd", "ab0cd", "abzcd"]));
 orders("anchor on offers (height desc, id asc)", CURSORS.anchor, offers, (a, b) => sign(b.height - a.height) || bytes(a.id, b.id));
 orders("anchor on bids (height desc, id asc)", CURSORS.anchor, bids, (a, b) => sign(b.height - a.height) || bytes(a.id, b.id));
 orders("ticker (bytewise ascending)", CURSORS.ticker, tickers, (a, b) => bytes(a.ticker, b.ticker));
