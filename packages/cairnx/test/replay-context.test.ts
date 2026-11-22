@@ -4,8 +4,10 @@
 // malformed ones until the context refuses), every event height of the replay corpus with the height below each and
 // every pinned height, the growth streams at 500 at every event height and their tips; the same walks with answers at
 // seeded random steps against one step per block; every answer re-read at the end (a later advance changes none), and,
-// on the streams, every answer written over (no later answer moves). The seal walks wider (step (i)). Then a reorg (a context thrown away and rebuilt), each refusal with the context unchanged and the
-// caller's fallback, the one predicate both the fold and the context read, and the sloppy-mode refusal.
+// on the streams, every answer written over (no later answer moves). The seal walks wider (step (i)). Then a reorg (a
+// context thrown away and rebuilt), each refusal with the context unchanged and the caller's fallback, a throw at the
+// tip, a fed event written over after advance, a generator as the events, an answer's name profile written over, the
+// one predicate both the fold and the context read, and the sloppy-mode refusal.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
