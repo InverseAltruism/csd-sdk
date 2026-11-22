@@ -19,10 +19,10 @@ let pass = 0;
 const ok = (cond: boolean, name: string) => { assert.ok(cond, name); pass++; };
 const total = { inputs: 0, prefixes: 0, answers: 0, refusals: 0, scribbled: 0, kept: 0, tried: 0, blocked: 0, stepCompares: 0 };
 const check = (name: string, w: ContextWalk) => {
-  assert.deepEqual(w.diffs, [], `${name}: answers that differ from resolve()`);
-  assert.deepEqual(w.badRefusals, [], `${name}: a refusal whose code does not match the predicate`);
-  assert.deepEqual(w.threwDiff, [], `${name}: a throw that is not resolve()'s`);
-  assert.equal(w.changed, 0, `${name}: an answer changed after it was returned`);
+  assert.equal(w.diffs.length, 0, `${name}: ${w.diffs.length} answer(s) differ from resolve(), the first at ${w.diffs[0]}`);
+  assert.equal(w.badRefusals.length, 0, `${name}: a refusal whose code does not match the predicate (${w.badRefusals[0]})`);
+  assert.equal(w.threwDiff.length, 0, `${name}: a throw that is not resolve()'s, at ${w.threwDiff[0]}`);
+  assert.equal(w.changed, 0, `${name}: ${w.changed} of ${w.kept} answer(s) changed after they were returned`);
   total.kept += w.kept; total.tried += w.tried; total.blocked += w.blocked;
 };
 const range = (lo: number, hi: number) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
