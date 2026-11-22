@@ -306,9 +306,10 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     ids = keepPruned(events, name, check.tipHeight, all, latest.size < appliedKept.size ? [latest, appliedKept] : [appliedKept], scoped.names[name]);
     // The class flags keep marking where an adversarially WITHHELD subset can diverge even when this server's own
     // subset does not, but only for a fill a replay applied: a refused fill decided nothing. Kept ids are applied
-    // already; `applied(id)` matters only when keepPruned fell back to the whole selection, which no known record
-    // shape reaches (out-of-scope fclaim holds are not selected; same-block fills and cancels close an offer first),
-    // so no test drives it. It stays so the fallback keeps the same rule.
+    // already; `applied(id)` matters only when keepPruned fell back to the whole selection, so the fallback follows
+    // the same rule. A name-for-token sale whose seller cancels after it reaches that fallback: the fill closes the
+    // offer in the full replay only, the ocancel that closes it in the scoped replay is pruned, and the guard rejects
+    // the set; the applied fill flags the name (test/namehist.test.ts, "a later ocancel by the seller").
     scopedInsufficient = [...ids].some((id) => unsoundFill(id) && applied(id));
     compareInsufficient = !sameRecord(scoped.names[name], fullRec);
   } else {

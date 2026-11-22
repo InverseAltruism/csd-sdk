@@ -364,6 +364,14 @@ console.log("\nName-for-token fill (scoped-insufficient via out-of-scope buyer t
   ok("token want: sufficiency BREAKS (scoped != full), DIVERGE log expected", !equiv(full, "tokname", tip));
   ok("token want: nameHistory flags scopedReplaySufficient=FALSE even though the offer is TAKER-BOUND", nameHistory(full, "tokname").scopedReplaySufficient === false);
   ok("token want: check mode (the service's) flags it too: the full chain applied the fill", nameHistory(full, "tokname", { tipHeight: tip }).scopedReplaySufficient === false);
+  // The seller's later bare ocancel closes the offer only in the scoped replay (the fill closed it in the full one), so
+  // a prune without it leaves the name locked there: the guard rejects every prune and serves the whole selection,
+  // a stranger's refused nset included.
+  const withCancel = [...full, prop({ v: 1, t: "nset", name: "tokname", addr: D } as CairnXRecord, { proposer: D, height: H + 8 }),
+    prop({ v: 1, t: "ocancel" } as CairnXRecord, { proposer: A, height: H + 10 })];
+  const served = nameHistory(withCancel, "tokname", { tipHeight: tip });
+  ok("token want: a later ocancel by the seller reaches the guard's fallback: the whole selection is served, flagged",
+    JSON.stringify(served.events) === JSON.stringify(nameHistory(withCancel, "tokname").events) && served.events.length === 5 && served.scopedReplaySufficient === false);
 }
 
 // ── The MAX_PENDING_REG reservation-cap scoping gap, closed by the
