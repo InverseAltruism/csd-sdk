@@ -6,16 +6,16 @@ built-in, so it runs in a browser. Its rows are `@inversealtruism/cairnx-core`'s
 exact peer dependency: install the cairnx-core version this package was published against; any other installs a
 second core or runs this package on a core it was not built against.
 
-## What 0.1.2 is
+## What 0.1.3 is
 
 - The handlers and types the CairnX resolver, its first consumer, will mount to answer the six reads.
-- Not a live HTTP API: as of 0.1.2 no public route serves these reads.
+- Not a live HTTP API: as of 0.1.3 no public route serves these reads.
 - Not the 1.0 contract: until 1.0.0, any release may change a route, a parameter, a row or envelope field, an error
   code or a cursor grammar, and CHANGELOG.md names each change. What an answer of the public API promises, and the
   notice before a field or route is retired, start on the day the API's documentation is published, not with a
   package version.
 
-The rest of this file describes 0.1.2 as built: 0.1.0's API, on cairnx-core 0.2.9.
+The rest of this file describes 0.1.3 as built: 0.1.0's API with `order=length` on `names`, on cairnx-core 0.2.9.
 
 ## What an answer means
 
@@ -75,7 +75,9 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   a repeated parameter. Any other `query`, or a route outside the six, throws a `TypeError`.
 - `CURSORS`, `CursorCodec` and the key types: the cursor of each list order, with `encode`, `decode`, `compare` and
   `of(row)`. A cursor is only a position: a cursor of another list or snapshot that fits the grammar is valid
-  (`44682:2` is an `events` cursor and a `newest` names cursor alike).
+  (`44682:2` is an `events` cursor and a `newest` names cursor alike). A cursor is valid only for the order that
+  issued it, and the server does not promise to refuse every foreign one (a `newest` names cursor whose height equals
+  its name's length reads as an `order=length` position).
 
 ## Handlers (`./handlers`)
 

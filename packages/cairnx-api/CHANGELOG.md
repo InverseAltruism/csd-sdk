@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (unreleased)
 
 - `names` takes `order=length`: shortest name first, names of one length bytewise. Its cursor is
   `<length>:<name>`; a cursor whose length is not its name's is refused as INVALID_QUERY on `after`. The default order
   stays `name`.
-- 0.1.2, a peer-only step: cairnx-core 0.2.9 is the exact peer. No route, parameter, row, envelope field, error code or
+
+## 0.1.2
+
+- A peer-only step: cairnx-core 0.2.9 is the exact peer. No route, parameter, row, envelope field, error code or
   cursor grammar changed; `rev` moves with the package version.
 
 ## 0.1.1
