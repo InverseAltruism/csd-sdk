@@ -87,7 +87,7 @@ ok("so does its newest cursor", newestAfter.rows.length === newestWant && newest
 const sl = swept!.name.length;
 const lengthAfter = page([view], "names", `order=length&after=${sl}:${swept!.name}&limit=200`);
 const lengthWant = rows.names.filter((n) => n.name.length > sl || (n.name.length === sl && Buffer.compare(Buffer.from(n.name), Buffer.from(swept!.name)) > 0)).length;
-ok("so does its length cursor", lengthAfter.rows.length === lengthWant && lengthAfter.next === null);
+ok("so does its length cursor", lengthAfter.ok === true && lengthAfter.rows.length === lengthWant && lengthAfter.next === null);
 for (const [what, cursor] of [["a name cursor", byNameFirst()], ["a newest cursor", `${swept!.h}:${swept!.name}`]] as const) {
   const r = refused([view], "names", `order=length&after=${cursor}`);
   ok(`${what} on order=length is 400 INVALID_QUERY naming after`, r.status === 400 && r.error.code === "INVALID_QUERY" && r.error.param === "after");
