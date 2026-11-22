@@ -106,9 +106,10 @@ console.log("usage and configuration errors exit 2; a sticky refusal ends the ru
   const d = await derivePin(upTo(30_000));
   let slept = 0;
   const t0 = Date.now();
-  const bad = await run(["--node", NODE, "--pin", "--json"], f, { loadPin: async () => ({ PIN: { ...d.pin, log: async () => d.log, eventsHash: "0x" + "cd".repeat(32) } }), sleep: async () => { slept++; } });
+  // The bound only keeps a run that does not stop short: the honest one ends at its first advance.
+  const bad = await run(["--node", NODE, "--pin", "--json", "--timeout-ms", "5000"], f, { loadPin: async () => ({ PIN: { ...d.pin, log: async () => d.log, eventsHash: "0x" + "cd".repeat(32) } }), sleep: async () => { slept++; } });
   ok("a pin whose events hash is not its log's: PIN_MISMATCH ends the run at once, no tuple, exit 1",
-    bad.code === 1 && bad.report?.result === "no-tuple" && bad.report.lastError?.code === "PIN_MISMATCH" && slept === 0 && Date.now() - t0 < 30_000, bad.lines.join("\n"));
+    bad.code === 1 && bad.report?.result === "no-tuple" && bad.report.lastError?.code === "PIN_MISMATCH" && slept === 0 && Date.now() - t0 < 5_000, bad.lines.join("\n"));
 }
 
 done("cli");
