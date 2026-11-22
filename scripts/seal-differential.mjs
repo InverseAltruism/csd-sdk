@@ -11,6 +11,8 @@
 // arguments. If this script does not exit 0, NOTHING PUBLISHES.
 //
 // What it does, in order:
+//   0. the build under test is the tree's: the CAIRNX_CORE_VERSION of packages/cairnx/dist equals the version in
+//      packages/cairnx/package.json, so a dist of another version with a fresh mtime cannot stand in for the tree;
 //   1. settled-tree check: scripts/check-lockstep.mjs (dist not older than src);
 //   2. every vector file present at the baseline is unchanged in the working tree; 2b content-pins the replay corpus
 //      and hashes, and the vector and fixture files added after the baseline;
@@ -76,12 +78,26 @@ const step = (s) => console.log(`\n== SEAL: ${s} ==`);
 const VEC = "packages/cairnx/test/vectors";
 const readJson = (rel) => JSON.parse(readFileSync(join(ROOT, ...rel.split("/")), "utf8"));
 
+// ── 0. the build under test is the tree's version ──────────────────────────────────────────────────
+const NEW_DIST = join(ROOT, "packages", "cairnx", "dist", "index.js");
+step("build version (packages/cairnx/dist against packages/cairnx/package.json)");
+if (!existsSync(NEW_DIST)) die(`no build at ${NEW_DIST}: run pnpm -r build first`);
+const NEW = await import(pathToFileURL(NEW_DIST).href);
+{
+  const manifest = readJson("packages/cairnx/package.json").version;
+  if (NEW.CAIRNX_CORE_VERSION !== manifest) die(`the build in packages/cairnx/dist is cairnx-core ${NEW.CAIRNX_CORE_VERSION}, the manifest says ${manifest}: rebuild, then re-run`);
+  console.log(`  cairnx-core ${manifest}`);
+}
+
 // ── 1. settled tree ────────────────────────────────────────────────────────────────────────────────
 step("settled-tree check (check-lockstep: dist fresh, workspace pins)");
 {
   const r = sh(process.execPath, [join(ROOT, "scripts", "check-lockstep.mjs")], { stdio: "inherit" });
   if (r.status !== 0) die("check-lockstep failed (stale dist or broken pins) - rebuild, then re-run");
 }
+// The sweep streams module also holds the typed text the whole-result compares use: NaN, the infinities, null and
+// BigInts each keep their own text, where JSON.stringify writes the first four as null.
+const SW = await import(pathToFileURL(join(ROOT, "conformance", "sweep-streams.mjs")).href);
 
 // ── 2. the pinned vector files must not have moved ─────────────────────────────────────────────────
 // Every listed file that exists at the baseline is compared with the WORKING TREE (staged or not), so an uncommitted
@@ -217,7 +233,6 @@ const OLD = await import(pathToFileURL(join(wt, "packages", "cairnx", "dist", "i
 const codeWt = CODE_BASELINE_REF ? buildAt(CODE_BASELINE_REF) : null;
 if (codeWt) await bindToNpm(CODE_BASELINE_REF, codeWt);
 const CODE = codeWt ? await import(pathToFileURL(join(codeWt, "packages", "cairnx", "dist", "index.js")).href) : null;
-const NEW = await import(pathToFileURL(join(ROOT, "packages", "cairnx", "dist", "index.js")).href);
 const { checkMoves } = await import(pathToFileURL(join(ROOT, "conformance", "moves-check.mjs")).href);
 // Whether a build writes token moves (CONVENTION §41): the log of one issuer deploy and one mint. A baseline that writes
 // none is compared with each new entry's `moves` left out; one that writes them is compared with them.
@@ -272,11 +287,11 @@ const diffCase = (name, events, tip, vsOld = true) => {
   if (vsOld) {
     const a = OLD.canonicalState(os), b = NEW.canonicalState(ns);
     if (a !== b) report(name, "canonicalState", events, a, b);
-    const fa = JSON.stringify(os), fb = JSON.stringify(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
+    const fa = SW.stringifyNumbers(os), fb = SW.stringifyNumbers(stripCodes(OLD_MOVES ? ns : stripMoves(ns)));
     if (fa !== fb) report(name, `full state without code${OLD_MOVES ? "" : " and moves"}`, events, fa, fb);
   }
   if (CODE) {
-    const fc = JSON.stringify(CODE.resolve(events, tip)), fn = JSON.stringify(CODE_MOVES ? ns : stripMoves(ns));
+    const fc = SW.stringifyNumbers(CODE.resolve(events, tip)), fn = SW.stringifyNumbers(CODE_MOVES ? ns : stripMoves(ns));
     if (fc !== fn) report(name, `full state with code${CODE_MOVES ? "" : ", without moves,"} vs ${CODE_BASELINE_REF}`, events, fc, fn);
   }
   const mv = checkMoves(ns, NEW.TREASURY_ADDR, events);
@@ -415,7 +430,6 @@ step(`resolve differential (d): conformance/fuzz-resolve.mjs --emit, ${FUZZ_N} s
 }
 
 // The expiry sequences: the same generator's --expiry mode, so that sweeps between events have something to do.
-const SW = await import(pathToFileURL(join(ROOT, "conformance", "sweep-streams.mjs")).href);
 const EXPIRY_N = 3_000;
 const BASE = CODE ?? OLD;                     // the baseline the floors are read from and the dense walk compares with
 step(`resolve differential (d2): conformance/fuzz-resolve.mjs --expiry --emit, ${EXPIRY_N} sequences, seed ${FUZZ_SEED}, floors read from ${CODE ? CODE_BASELINE_REF : BASELINE_REF}`);
@@ -530,8 +544,8 @@ step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (
       const upto = SW.upTo(events, t);
       // a malformed input can make resolve() throw (a BigInt in arithmetic): then both must throw the same message
       const answer = (f) => { try { return f(); } catch (e) { return `THROW ${e?.message ?? e}`; } };
-      const a = answer(() => { const bs = BASE.resolve(upto, t); return CODE ? JSON.stringify(bs) : OLD.canonicalState(bs); });
-      const b = answer(() => { const ns = NEW.resolve(upto, t); return CODE ? JSON.stringify(CODE_MOVES ? ns : stripMoves(ns)) : NEW.canonicalState(ns); });
+      const a = answer(() => { const bs = BASE.resolve(upto, t); return CODE ? SW.stringifyNumbers(bs) : OLD.canonicalState(bs); });
+      const b = answer(() => { const ns = NEW.resolve(upto, t); return CODE ? SW.stringifyNumbers(CODE_MOVES ? ns : stripMoves(ns)) : NEW.canonicalState(ns); });
       tips++;
       if (a !== b) { walkDiffs++; report(`${name}@${t}`, "dense walk", upto, a, b); }
     }

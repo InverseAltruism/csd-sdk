@@ -46,6 +46,7 @@ jobs:
       - run: pnpm exec tsx test/published-dist.test.ts
       - run: pnpm exec tsx test/check-lockstep.test.ts   # workspace:*, a published peer pin, the published dist compare, the publish guard client check
       - run: pnpm exec tsx test/npm-window.test.ts   # the npm window: verify-tarball on a real pack, the publish step against a stand-in npm
+      - run: pnpm exec tsx test/seal-differential.test.ts   # the seal's version step and its typed whole-result compares
       - run: pnpm exec tsx test/check-consumer-pins.test.ts
       - run: pnpm exec tsx test/ci-workflow.test.ts   # this file: read-only token, no stored credentials, SHA pins, the secret scan
       - run: pnpm exec tsx test/ci-runner-image.test.ts   # every job on a fixed runner image, not a -latest one

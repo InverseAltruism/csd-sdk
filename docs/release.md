@@ -19,7 +19,9 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
   `docs/incidents/README.md`). `test/check-lockstep.test.ts` covers the compare and the integrity check on a stand-in
   registry, `test/published-dist.test.ts` the reader. `scripts/seal-differential.mjs` runs the same compare
   (`registryBind`) on each baseline it builds, so a state-neutral release is proven against the dist npm serves for
-  the baseline's version; `test/published-dist.test.ts` pins that a wrong tarball fails it. Run the seal with a short
+  the baseline's version; `test/published-dist.test.ts` pins that a wrong tarball fails it. On the new side the seal
+  first requires the build's `CAIRNX_CORE_VERSION` to equal `packages/cairnx/package.json`'s version (freshness alone
+  is an mtime); `test/seal-differential.test.ts` pins both sides. Run the seal with a short
   `TMPDIR`: its check-mode step starts the `tsx` CLI, which listens on `$TMPDIR/tsx-<uid>/<pid>.pipe`, and a Unix
   socket path longer than 107 bytes fails with `listen EINVAL`.
 - Dist freshness: `dist/` is not older than `src/`, for versions not yet on npm.
