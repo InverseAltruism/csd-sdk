@@ -2,6 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
+- The tuple book and the comparison (design section 6): `status().tuple`, the newest boundary's tuple from the loop's
+  boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
+  unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;
+  the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED`; `./server`'s `open` takes `recount`,
+  which settles a difference held for `STREAK` advances (confirmed, or the store rebuilt). The resolver's `tuple.ts` is
+  not moved: a differential against a test-only copy of it finds the same tuple at every boundary.
 - `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
   `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
   last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last

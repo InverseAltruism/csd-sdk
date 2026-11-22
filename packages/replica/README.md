@@ -239,9 +239,8 @@ holds it; the note's `detail` names why from a fixed list: another process or co
 directory, a read or write failed, or a reset it needed failed, the browser store's unconfirmed reset included; the
 store's own message, which holds paths, is not put in an answer). `status()` also carries `storeReason` and
 `storeError`, that message in full: it is for the server's own logs and is not forwarded to clients, since it can hold
-paths. Exported and not emitted yet:
-`UNSUPPORTED`, `PIN_DISPUTED`, and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`,
-`TUPLE_RULES`, `DIVERGENCE_CONFIRMED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
+paths. `PIN_DISPUTED` and the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES` and `DIVERGENCE_CONFIRMED` come from
+a reference ("Tuples and a reference" below). Exported and not emitted yet: `UNSUPPORTED` and `REPLAY_SLOW`. `LEVEL_DISPLAY` and `SOURCE_UNAVAILABLE` come only from
 `./display` (a display basis is refused by `open`).
 
 A witness can withhold `verified` and cannot grant it against another's word: one witness that names a higher tip
@@ -523,9 +522,51 @@ signal.
 
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
 byte for byte apart from import paths, then cleaned under review; `scripts/move-residual.mjs <resolver git dir>
-<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not part of
-this package yet. The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
+<commit>` prints what differs from the resolver's copy, file by file. The resolver's hash tuple book is not moved:
+the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
+
+## Tuples and a reference
+
+Each epoch boundary the loop holds `FINAL_DEPTH` deep is a tuple of CONVENTION section 34: `{ height, blockHash,
+eventsHash, stateHash }`. A boundary is added once it is 12 deep, dropped by a rollback below it and kept by the store;
+a refused step commits none. `status().tuple` is the newest boundary whose state hash is known (the loop replays a
+boundary's state when it becomes deep within 24 epochs of the tip; an older one is replayed on demand), read from memory.
+`test/tuple-differential.test.ts` feeds one feed through this book and through the resolver's own (a test-only copy of
+it at the commit the hosted front door runs) and finds the same tuple at every boundary: the 2,905 of the recorded
+capture to 117,000, and across a reorg below and above kept boundaries and a refused scan (the resolver then withholds
+every tuple until an accepted scan; this book serves what it committed, which is what the resolver served before and
+serves again after).
+
+`open({ ..., reference: { base, fetch?, timeoutMs?, maxRequests? } })` compares the replica's tuples with a host's
+(`base` the prefix of `/cairnx/tuple/<height>[:<blockHash>]`, ours `https://cairn-substrate.com/trade/api`). After each
+advance the newest boundary with a known tuple is read by height and block hash, then by height, and
+`status().compare` is a `CompareReport`:
+
+| kind | what the reference answered | note |
+|---|---|---|
+| `equal` | the same tuple | none |
+| `branch` | another block hash at that height: two branches, compared again later, never a difference | `TUPLE_BRANCH` |
+| `records` | the same block hash and another events hash at the first boundary that differs | `TUPLE_RECORDS` |
+| `rules` | the same events hash and another state hash there (`gates` carries this package's table; the reference serves none) | `TUPLE_RULES` |
+| `missing` | a 404 by hash and by height | none |
+| `unavailable` | no answer within the run's bounds, or an answer that is not the documented shape | none |
+
+For a difference, a binary search over the held boundaries between the last agreeing one and the newest finds the
+first that differs (`height`, with `lastAgreeing` below it); `streak` counts the advances in a row whose difference
+starts at that boundary. A pinned store's pin is read once: the pin's block hash with another events hash is
+`PIN_DISPUTED`, which withholds `verified`; a difference first seen above the pin lies in rows the replica proved from
+blocks, so it is `TUPLE_RECORDS` with `verified` unchanged. A reference is hostile input: each advance reads it at most
+`maxRequests` times (default 16) within 20 s, each request within `timeoutMs` (default 5 s), each answer at most 4,096
+bytes; an answer out of shape, or one that contradicts itself, ends that run `unavailable`. `status()` reads nothing.
+Nothing a reference answers raises a level or counts as a witness's confirmation; a reference on an origin the store is
+filled from is marked `sameOrigin`.
+
+A difference is acted on only with `recount` (`./server`'s `open`), a block source of the server's, and only once its
+first boundary has stayed the same for `STREAK` (3) advances: a separate loop over `recount` in memory reads to that
+boundary 12 deep. Equal to the replica's tuple, the difference is confirmed (`DIVERGENCE_CONFIRMED`) and the replica
+keeps answering; equal to the reference's, the store is rebuilt (`STORE_UNCONFIRMED` while it refills to the tip);
+neither, nothing changes. Without `recount` a difference is reported and never acted on.
 
 ## The browser store
 
