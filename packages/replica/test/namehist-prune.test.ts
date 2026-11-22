@@ -247,9 +247,12 @@ const inOrder = (evs: ChainEvent[], ids: string[]) => {
   return [...ids].sort((a, b) => at.get(a)! - at.get(b)!);
 };
 /** Serves `plain` over the corpus plus `extra` at `tip`; asserts the hints replay to the full record and that the
- *  hints' own replay supersedes none of them (test/namehist-oracle.ts). */
+ *  hints' own replay supersedes none of them (test/namehist-oracle.ts). A stranger's refused nset rides along: it is
+ *  selected but never served, so a guard that fell back to the whole selection shows in the exact hints. */
 function servePlain(extra: ChainEvent[], tip: number) {
-  const evs = [...corpus.events, ...extra];
+  const stranger = propose({ v: 1, t: "nset", name: plain, addr: ATTACKER } as CairnXRecord, TIP + 1);
+  const evs = [...corpus.events, ...extra, stranger];
+  assert.ok(nameHistory(evs, plain).events.some((e) => e.txid === idOf(stranger)), "setup: the stranger's nset is selected");
   const r = served(evs, tip, plain);
   assert.equal(r.hist.scopedReplaySufficient, true);
   assert.deepEqual(replayHints(evs, tip, plain, r.txids), r.record, "the served hints replay to the full record");
