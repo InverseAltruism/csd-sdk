@@ -328,7 +328,7 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
   return { log, read, loop, pagedChain };
 }
 
-/** A replica of another rule's events (design section 5, M12): the event log and its status, no resolved state. */
+/** A replica of another rule's events (CONVENTION section 35.2): the event log and its status, no resolved state. */
 export async function openLog(o: OpenOptions & { readonly rule: EventRule }): Promise<EventLog> {
   return (await start(o, o.rule, noState)).log;
 }

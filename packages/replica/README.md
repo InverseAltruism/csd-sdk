@@ -112,7 +112,7 @@ replayed on demand.
     cursor unchanged, and the next `advance()` goes on. From the anchor at 29,859 to a tip of 144,460 that is 224
     batches, about 26 steps at 10 requests a step (arithmetic, not measured). It holds a second window of 45 +
     `window` headers beside the first and the 45 of the seed: with the default window, 1,575 headers, about 1.5 MB
-    at 974 bytes a header object (design section 9).
+    at 974 bytes a header object.
   - `{ kind: "caller", headers }`: a `VerifiedHeaders` (`floor`, `origin`, `sync`, `at`, `offer?`) the caller keeps.
     Each step syncs it to the server's tip (`SOURCE_UNAVAILABLE` when `sync` answers null, `BELOW_FLOOR` when `floor`
     lies above the activation height less one) and asks `at` for the cursor's hash. Another hash starts the search
@@ -264,7 +264,7 @@ under an anchor or caller root `NOT_WITNESSED` until the next witness round conf
 
 No value a read returns shares a mutable object with the reader: the basis every answer carries as `vouch` is frozen,
 and `events()` pages, `state()` and `status()`'s cursor, last reorg and last error are copies (a page of 1,000 events
-cost about 2 ms to copy in Node on this host, 2026-11-19).
+cost about 2 ms to copy in Node on the maintainers' host, 2026-11-19).
 
 The confirmation lives in memory. After a restart (a new `open` over a filled store) no answer under an anchor or
 caller root is verified until a witness answers again: `NOT_SYNCED` and `NOT_WITNESSED` before the first advance,
@@ -498,7 +498,7 @@ compared.
 A day of blocks (720) above a pin, read through `open` on a disk store from a node serving the recorded capture to
 30,300 and blocks holding 30,300's transactions above it: with `ownNode`'s budget 2 steps and 2 commits, the advance
 0.34 to 0.39 s; with `local`'s source over the same `diskStore` (the loop's budget) 81 steps and 81 commits, 2.42 to
-2.45 s (three runs each, Node 26 on this host, 2026-11-21).
+2.45 s (three runs each, Node 26 on the maintainers' host, 2026-11-21).
 
 Limits: the pin's log loads in one step ("Pins" above). Revisit that when a first step takes over 5 s on a server or
 a browser store's transaction is found too large; the answer then is a resumable replay context and a log fetched by
@@ -583,7 +583,7 @@ cursor withholds it (no tuple, not compared) until the chain held is 12 above it
 `status().tuple` is the newest boundary whose state hash is known (the loop replays a boundary's state when it becomes
 deep within 24 epochs of the tip; an older one is replayed on demand), read from memory.
 `test/tuple-differential.test.ts` feeds one feed through this book and through the resolver's own (a test-only copy of
-its `src/tuple.ts` at cairnx `c89ab86`, unchanged since `a0d3f27`) and finds the same tuple at every boundary both hold:
+its `src/tuple.ts`) and finds the same tuple at every boundary both hold:
 the 2,905 of the recorded capture to 117,000, and across a reorg below and above kept boundaries, a refused scan and
 rollbacks that leave a boundary 1 to 11 blocks under the cursor; after each accepted scan both serve the same boundaries.
 While scans are refused the resolver withholds every tuple and this book serves the tuples it committed. If the chain
@@ -729,9 +729,9 @@ Measured on 2026-11-21, Chromium 153 headless on the maintainers' host, in the t
 with 1,512 synthetic Proposes, unpinned, under a caller root with a witness; the worker stopped and woken, the network
 refused: wake to the first verified read 86 ms (median of 7, 75 to 106), of which the open 34.2 ms and the read with
 its two replays 34.7 ms. Without a kept view (a browser start), the first verified answer waits for the refill. At the
-shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, the design pass measured 235 and 258 ms
-(medians of 7), three replays of about 36 ms each among them; the plan's 150 ms row for a worker restart is missed
-until cairnx-core's resumable replay lets one pass serve the bind and both views.
+shipped pin (143,340, 1,486 events, 8,640 blocks above) without a kept view, a measurement before this release gave 235 and 258 ms
+(medians of 7), three replays of about 36 ms each among them, until cairnx-core's resumable replay lets one pass serve
+the bind and both views.
 
 Under an anchor root, measured on 2026-11-21 in the same rig: `hosted({ pin, origin, witness, store: idbStore })` with
 the pin at 30,000 over the recorded chain to 30,300 (not the rig's synthetic chain: the anchor root verifies real

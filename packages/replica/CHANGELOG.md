@@ -10,7 +10,7 @@
   statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
   `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
   tip. The withhold rule is the server's, not the handlers'.
-- The resolver's five state reads, moved from the private CairnX resolver at 0c95ad2 with their code unchanged
+- The resolver's five state reads, moved from the private CairnX resolver with their code unchanged
   (`src/resolver/read.ts` as `src/handlers.ts`, and `src/nameview.ts`): `readState`, `readName`, `readResolve`,
   `readNameHistory`, `readProfile` over a `ReadSnapshot`, with `leaseInfo` and `nameDetailsOf`, exported from `.`;
   the resolver's purity guard moved with them (`test/handlers.test.ts`), and so did its nameview cases. `appliedIds` is
@@ -29,7 +29,7 @@
   cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back to it, as the hosted resolver's
   published state already drops; the store refills from the next scans. A final height that moves back under
   `verifyInclusion`, the indexer's tip unchanged, still rolls nothing back.
-- The tuple book and the comparison (design section 6): `status().tuple`, the newest boundary's tuple from the loop's
+- The tuple book and the comparison: `status().tuple`, the newest boundary's tuple from the loop's
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;
   the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED`; `./server`'s `open` takes `recount`,

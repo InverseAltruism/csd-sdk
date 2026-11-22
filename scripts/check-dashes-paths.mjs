@@ -46,6 +46,24 @@ export function offences(root) {
   return out;
 }
 
+/**
+ * The same two rules over a packed tarball's files (path -> bytes, as published-dist.mjs's `untar` gives them), every
+ * file of them, since the tarball is what a reader of the npm package gets: an em dash, or a sibling or host path as
+ * SIBLING matches it. One line per offence.
+ * @param {Map<string, Uint8Array>} files
+ * @returns {string[]}
+ */
+export function packedOffences(files) {
+  const out = [];
+  for (const [p, bytes] of files) {
+    const text = new TextDecoder().decode(bytes);
+    if (text.includes("\u2014")) out.push(`${p}: em dash (U+2014)`);
+    const sibling = text.match(SIBLING);
+    if (sibling) out.push(`${p}: a sibling or host path (${sibling[0]})`);
+  }
+  return out;
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const found = offences(resolve(process.argv[2] ?? "."));
   for (const line of found) console.error(line);

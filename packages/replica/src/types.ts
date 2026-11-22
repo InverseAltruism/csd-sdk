@@ -69,7 +69,7 @@ export type Step =
   | { readonly kind: "reorg"; readonly to: Cursor; readonly tip: TipView }
   | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null };
 
-/** A release's pin (design section 2): the log of `rule`'s events at or below `height`, an epoch boundary, as the UTF-8
+/** A release's pin: the log of `rule`'s events at or below `height`, an epoch boundary, as the UTF-8
  *  canonical JSON of the event list in the order of CONVENTION section 33.3, whose sha256 is `logSha256`, with the
  *  block hash, events hash and state hash at `height`, the gate table cut at `height` and the cairnx-core version
  *  that cut it (information only). `log` gives the log's bytes. */
