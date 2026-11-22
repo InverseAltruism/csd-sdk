@@ -5,7 +5,7 @@
 // resolve().
 import {
   nameCommit, nameCommitRecord, nameClaim, nameFinalize, epochOf, resolve,
-  REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, V25_HEIGHT, TREASURY_ADDR, nameRegFee, type ChainEvent,
+  NAME_GRACE_EPOCHS, REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, V25_HEIGHT, TREASURY_ADDR, nameRegFee, type ChainEvent,
 } from "@inversealtruism/cairnx-core";
 import { fixtures } from "../src/factories.js";
 import { leaseInfo, nameDetailsOf } from "../src/index.js";
@@ -42,6 +42,23 @@ console.log("after nfinalize:");
   ok("nameDetailsOf says pending false, leased true, and no finalizeBy", d.pending === false && d.leased === true && d.finalizeBy === undefined);
   const li = leaseInfo(n!, epochOf(tip));
   ok("leaseInfo of a leased name: leased, with its paid-through epoch", li.leased === true && typeof li.paidThroughEpoch === "number");
+}
+
+console.log("the lease at each epoch around its end:");
+{
+  const st = resolve(finalized(), finalizeH + 1), n = st.names[NAME]!, paid = n.paidThroughEpoch!, end = paid + NAME_GRACE_EPOCHS;
+  const at = (e: number, expired = false) => leaseInfo({ ...n, ...(expired ? { expired: true as const } : {}) }, e);
+  const want = (e: number, inGrace: boolean, lapsed: boolean) => ({ leased: true, paidThroughEpoch: paid, graceEndEpoch: end, epochsLeft: paid - e,
+    graceEpochsLeft: lapsed ? 0 : end - e, inGrace, lapsed });
+  const cases: [string, Record<string, unknown>, Record<string, unknown>][] = [
+    ["a paid epoch before the last", at(paid - 1), want(paid - 1, false, false)],
+    ["the last paid epoch: not in grace", at(paid), want(paid, false, false)],
+    ["the epoch after it: in grace", at(paid + 1), want(paid + 1, true, false)],
+    ["the grace's last epoch: in grace, 0 left", at(end), want(end, true, false)],
+    ["expired: lapsed, not in grace, no grace left", at(end + 1, true), want(end + 1, false, true)],
+  ];
+  for (const [what, got, exp] of cases) ok(`${what}`, JSON.stringify(got) === JSON.stringify(exp), JSON.stringify(got));
+  ok("a name with no paid-through epoch is not leased", JSON.stringify(leaseInfo({ ...n, paidThroughEpoch: undefined } as typeof n, paid)) === JSON.stringify({ leased: false }));
 }
 
 done("cairnx-replica nameview");

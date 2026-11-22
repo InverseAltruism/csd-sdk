@@ -362,6 +362,12 @@ console.log("the tip a step reports:");
   const s = await loop.advance();
   ok("the loop takes that tip", s.tip?.height === TIP && s.tip.time === timeAt(TIP) && s.cursor?.height === TIP);
   await loop.close();
+  const sig = new AbortController().signal, plainFeed = indexerFeed({ indexerUrl: "http://idx", fetch: base, pageSize: 3 });
+  ok("Source.tip() without inclusion: the indexer's tip with its time", JSON.stringify(await plainFeed.tip(sig)) === JSON.stringify({ height: TIP, hash: plain.hashAt(TIP), time: timeAt(TIP) }));
+  const incFeed = indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: TIP })), pageSize: 3, ...signed.verified({ verifiedTip: TIP }) });
+  const before = await incFeed.tip(sig), first = await next(incFeed, null, 100), after = await incFeed.tip(sig);
+  ok("Source.tip() with inclusion: null before the first step, then that step's tip, the final height", before === null && first.kind === "blocks" &&
+    JSON.stringify(after) === JSON.stringify(first.tip) && after?.height === TIP - 12, JSON.stringify(after));
 }
 {
   // Through open(): the verdict and notes of a feed without and with inclusion, the clock a minute after the tip block.
