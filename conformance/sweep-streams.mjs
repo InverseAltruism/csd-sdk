@@ -372,8 +372,10 @@ export function scribble(v) {
 /** A held context (R.newReplayContext) walked through `events`, answering at each tip of `tips` (ascending), and at
  *  `finalTip` too when given. Each advance takes the events not yet given that are not above the tip (upTo's rule: a
  *  height that is not a number goes in with the first). Each answer is compared with R.resolve over the same prefix
- *  at that tip (the typed text of the whole result). A refusal ends the walk and must be "domain" exactly when a
- *  height of that step or its tip fails R.isChainHeight; a throw from a handler must be resolve()'s throw. With
+ *  at that tip (the typed text of the whole result). A refusal ends the walk; a step must be refused "domain" exactly
+ *  when a height of it or its tip fails R.isChainHeight, else "order" exactly when its tip is below the context's
+ *  height or an event of it is at or below that height (a negative one, for a new context at -1), and must not be
+ *  refused otherwise; a throw from advance or stateAt must be resolve()'s throw. With
  *  `scribbleAnswers`, every answer is written over after it is compared (later answers must still equal resolve());
  *  without it, every answer is re-read at the end and must not have changed. `texts` maps each answered tip to its
  *  text. */
@@ -386,13 +388,14 @@ export function contextWalk(R, events, tips, { finalTip, scribbleAnswers = false
   for (const t of all) {
     const block = pending.filter((e) => !(e.height > t));
     pending = pending.filter((e) => e.height > t);
-    const outside = !R.isChainHeight(t) || block.some((e) => !R.isChainHeight(e.height));
+    const expected = !R.isChainHeight(t) || block.some((e) => !R.isChainHeight(e.height)) ? "domain"
+      : t < ctx.height || block.some((e) => e.height <= ctx.height) ? "order" : null;
     let refused = null, threw = null;
     try { ctx.advance(t, block); } catch (e) { if (e instanceof R.ReplayContextRefusal) refused = e.code; else threw = String(e?.message ?? e); }
+    if (refused !== expected) out.badRefusals.push(`${String(t)}: ${refused ?? (threw === null ? "answered" : "threw")} where ${expected ?? "an answer"} was due`);
     if (refused !== null) {
       out.refusals++;
       out.refusalCodes[refused] = (out.refusalCodes[refused] ?? 0) + 1;
-      if ((refused === "domain") !== outside) out.badRefusals.push(`${t}: ${refused}`);
       break;
     }
     let want;
@@ -401,7 +404,12 @@ export function contextWalk(R, events, tips, { finalTip, scribbleAnswers = false
       if (want === `THROW ${threw}`) out.threwAlike++; else out.threwDiff.push(t);
       break;
     }
-    const answer = ctx.stateAt(t), text = stringifyNumbers(answer);
+    let answer;
+    try { answer = ctx.stateAt(t); } catch (e) {
+      if (e instanceof R.ReplayContextRefusal || want !== `THROW ${e?.message ?? e}`) out.threwDiff.push(t); else out.threwAlike++;
+      break;
+    }
+    const text = stringifyNumbers(answer);
     out.answers++;
     out.texts.set(t, text);
     if (text !== want) out.diffs.push(t);

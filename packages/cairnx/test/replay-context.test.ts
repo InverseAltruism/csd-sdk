@@ -66,6 +66,7 @@ for (const s of sweepStreams(R).filter((x) => !malformed.has(x.key))) {
   old.stateAt(Number(s.tipHeight));
   const branch = [...s.events.filter((e) => e.height <= fork), ...s.events.filter((e) => e.height > fork).filter((_, i) => i % 2 === 0).map((e) => ({ ...e, height: e.height + 1 }))];
   const tip = Number(s.tipHeight) + 1, fresh = R.newReplayContext();
+  assert.throws(() => old.advance(tip, branch.filter((e) => e.height > fork)), (e: unknown) => e instanceof R.ReplayContextRefusal && e.code === "order", `${s.key}: the old context takes no block of the new branch`);
   fresh.advance(fork, branch.filter((e) => e.height <= fork));
   fresh.advance(tip, branch.filter((e) => e.height > fork));
   assert.equal(stringifyNumbers(fresh.stateAt(tip)), stringifyNumbers(R.resolve(branch, tip)), `${s.key}: the rebuilt context after a reorg at ${fork}`);
@@ -103,6 +104,14 @@ ok(reorgs === 8, "a context rebuilt after a reorg equals resolve() on the new br
   try { cy.advance(90_001, [...y.events]); } catch (e) { code = (e as R.ReplayContextRefusal).code; }
   ok(code === "domain" && cy.height === -1, "a stream with a string height is refused before any write");
   ok(R.stateHash(R.resolve(y.events, y.tipHeight)).slice(2, 18) === "39077cf82797df0b", "and the caller's resolve() over the same events gives the full replay's answer");
+  // a negative height is a safe integer, but a new context stands at -1, below the chain's first block: "order". The
+  // caller's resolve() skips it below activation, so the fallback gives the context's answer without it.
+  const neg = { ...s.events[0]!, height: -5 }, cn = R.newReplayContext();
+  let negCode: unknown;
+  try { cn.advance(Number(s.tipHeight), [neg, ...s.events]); } catch (e) { negCode = (e as R.ReplayContextRefusal).code; }
+  ok(negCode === "order" && cn.height === -1, "a negative event height is refused (order) by a new context before any write");
+  cn.advance(Number(s.tipHeight), [...s.events]);
+  ok(stringifyNumbers(R.resolve([neg, ...s.events], s.tipHeight)) === stringifyNumbers(cn.stateAt(Number(s.tipHeight))), "and the caller's resolve() with it equals the context's answer without it");
 }
 {
   // a handler that throws (a null proposer): resolve() throws over the same events, and the context is then broken
@@ -119,6 +128,29 @@ ok(reorgs === 8, "a context rebuilt after a reorg equals resolve() on the new br
     let got: unknown;
     try { call(); } catch (e) { got = e; }
     ok(got instanceof R.ReplayContextRefusal && got.code === "broken" && ctx.height === h, `"broken" refused, the height unchanged`);
+  }
+}
+
+{
+  // a throw at the tip: a getter read only by the last block's deferred cancel at the answer's flush (a test instrument;
+  // getters are outside the claim). stateAt throws it, and the context is then broken.
+  const s = sweepStreams(R).find((x) => x.key === "A")!;
+  const h = Number(s.tipHeight), first = s.events.find((e) => e.kind === "propose")!, rec = R.offerCancelAll({});
+  let armed = false;
+  const cancel = {
+    kind: "propose", proposer: first.proposer, uri: rec.uri, payloadHash: rec.payloadHash, expiresEpoch: first.expiresEpoch, height: h, pos: 99, paidTo: {},
+    get id() { if (armed) throw new Error("read at the tip"); return "0x" + "e7".repeat(32); },
+  } as unknown as ChainEvent;
+  const ctx = R.newReplayContext();
+  ctx.advance(h, [...s.events, cancel]);
+  armed = true;
+  let got = "";
+  try { ctx.stateAt(h); } catch (e) { got = String(e); }
+  ok(got === "Error: read at the tip", "a throw at the tip: stateAt throws it");
+  for (const call of [() => ctx.stateAt(h), () => ctx.advance(h + 1, [])]) {
+    let after: unknown;
+    try { call(); } catch (e) { after = e; }
+    ok(after instanceof R.ReplayContextRefusal && after.code === "broken" && ctx.height === h, `after a throw at the tip, "broken" refused`);
   }
 }
 

@@ -8,7 +8,8 @@ import { isChainHeight, type BidState, type CairnXState, type ChainEvent, type O
 export type ReplayContextRefusalCode = "domain" | "order" | "tip" | "broken" | "sloppy";
 
 /** A call the context does not take, thrown before it writes anything. "domain": a height or tip outside
- *  isChainHeight; "order": a target below the context's height, or an event at or below it or above the target;
+ *  isChainHeight; "order": a target below the context's height, or an event at or below it or above the target (a
+ *  negative height, for a new context);
  *  "tip": an answer asked off the context's height; "broken": any call after a handler threw inside advance;
  *  "sloppy": a context started where a write to a frozen object does not throw. */
 export class ReplayContextRefusal extends Error {
@@ -21,7 +22,7 @@ export class ReplayContextRefusal extends Error {
 }
 
 export interface ReplayContext {
-  /** Every event at or below this height has been given; -1 for a new context. */
+  /** Every event at or below this height has been given; -1, below the chain's first block, for a new context. */
   readonly height: number;
   /** Applies all events of the blocks in (height, toHeight], in apply order, and moves the height to toHeight. */
   advance(toHeight: number, events: readonly ChainEvent[]): void;
@@ -72,6 +73,9 @@ export function newReplayContext(): ReplayContext {
   };
 }
 
+// Stops at a frozen object, taking its parts as frozen: this function froze them with it. That holds in the claim's
+// scope (plain values as JSON carries them), where an object an event carries into the state (an id or a position that
+// is not a string or a number, say) arrives unfrozen; such an object is frozen in the caller's event too.
 const freezeDeep = (v: unknown): void => {
   if (v === null || typeof v !== "object" || Object.isFrozen(v)) return;
   Object.freeze(v);

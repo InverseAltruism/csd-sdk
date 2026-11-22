@@ -322,6 +322,16 @@ For inputs made of plain values (what JSON carries), a release that changes no r
 what the previous core returned and throws where it threw, and only event heights and a tip that are safe integers,
 as a chain produces them, are consensus, so check both before the call (`CONVENTION.md` section 5).
 
+A replica or a server that answers at each new block can hold the replay instead of rebuilding it: `const ctx =
+newReplayContext()`, then `ctx.advance(h, eventsOfTheBlocksUpTo(h))` and `ctx.stateAt(h)` at each new height `h`. In
+the scope above, its answer at a height is what `resolve()` returns over the same events there; a height or tip that
+`isChainHeight` rejects is refused with a `ReplayContextRefusal` before anything is written, and the caller replays
+with `resolve()`; a reorg that removes an applied block means a new context. A new context stands at height -1, below
+the chain's first block, so it refuses a negative height ("order"), which `resolve()` skips below activation. It
+refuses to start in a build that runs it in sloppy mode: it shares frozen parts with the answers it returns and relies
+on a write to a frozen part throwing, so that a write the replay makes there breaks the context instead of being
+dropped silently.
+
 ### What a resolver result proves
 
 - Display: an answer read from someone's API. It is worth the trust you place in that API.
