@@ -560,7 +560,8 @@ step(`resolve differential (w): a dense walk over the ${EXPIRY_N} sequences of (
 
 // A held context (newReplayContext), walked with conformance/sweep-streams.mjs's contextWalk: each answer must equal
 // the tree's resolve() over the same prefix at that tip, or the context must refuse ("domain" exactly when a height or
-// the tip is outside isChainHeight); a throw must be resolve()'s; no answer may change after it was returned. Tips:
+// the tip is outside isChainHeight or an event's position or id is outside applyOrder's domain); a throw must be
+// resolve()'s; no answer may change after it was returned. Tips:
 // each event height and the tip for the case files, the fuzz of (d) and the cases of (e); the dense tips of (w) for
 // (d2), (d3) and the sweep streams; for the growth streams at full size (one holds 20,000 open bids) their tips and 20
 // event heights spread over each.

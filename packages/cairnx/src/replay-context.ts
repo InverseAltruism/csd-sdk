@@ -1,17 +1,21 @@
 // A held replay context: the fold of resolve() kept between tips, fed whole blocks in order and answering in place at
-// the last height it was given (CONVENTION section 5). Inside the domain of isChainHeight its answer at t is what
-// resolve() returns over the same events at t; outside it the fold's sweeps would depend on where answers ran, so the
-// context refuses and the caller replays with resolve().
-import { applyOrder, createFold } from "./resolve.js";
+// the last height it was given (CONVENTION section 5). Its answer at t is what resolve() returns over the same events
+// at t for every event it takes. It takes an event whose height is a safe integer (isChainHeight), whose position is a
+// safe integer >= 0 and whose id is a string: outside the first the fold's sweeps would depend on where answers ran,
+// outside the other two applyOrder is no consistent order, so a sort of one block alone could order it differently
+// from resolve()'s sort of the whole stream. It refuses the rest, and the caller replays with resolve().
+import { isIndex } from "./events.js";
+import { applyOrder, createFold, eventId } from "./resolve.js";
 import { isChainHeight, type BidState, type CairnXState, type ChainEvent, type OfferState } from "./types.js";
 
 export type ReplayContextRefusalCode = "domain" | "order" | "tip" | "broken" | "sloppy";
 
-/** A call the context does not take, thrown before it writes anything. "domain": a height or tip outside
- *  isChainHeight; "order": a target below the context's height, or an event at or below it or above the target (a
- *  negative height, for a new context);
- *  "tip": an answer asked off the context's height; "broken": any call after a handler threw inside advance;
- *  "sloppy": a context started where a write to a frozen object does not throw. */
+/** A call the context does not take, thrown before it writes anything. "domain": a target height or an event height
+ *  outside isChainHeight, an event position that is not a safe integer >= 0, or an event id (a Propose's id, an
+ *  Attest's txid) that is not a string; "order": a target below the context's height, or an event at or below it or
+ *  above the target (a negative height, for a new context); "tip": an answer asked off the context's height;
+ *  "broken": any call after a handler threw inside advance or stateAt; "sloppy": a context started where a write to a
+ *  frozen object does not throw. */
 export class ReplayContextRefusal extends Error {
   readonly code: ReplayContextRefusalCode;
   constructor(code: ReplayContextRefusalCode, message: string) {
@@ -24,7 +28,9 @@ export class ReplayContextRefusal extends Error {
 export interface ReplayContext {
   /** Every event at or below this height has been given; -1, below the chain's first block, for a new context. */
   readonly height: number;
-  /** Applies all events of the blocks in (height, toHeight], in apply order, and moves the height to toHeight. */
+  /** Applies all events of the blocks in (height, toHeight], in apply order, and moves the height to toHeight. Reads
+   *  `events` once and keeps a copy of each event's own fields, so a later write into a fed event changes no later
+   *  answer. The copy is one level deep: `paidTo` stays the caller's object, read only during this call. */
   advance(toHeight: number, events: readonly ChainEvent[]): void;
   /** resolve() over the events given so far at tipHeight, which must equal the context's height. The result shares
    *  nothing a later advance writes; what it shares is frozen. */
@@ -40,20 +46,26 @@ export function newReplayContext(): ReplayContext {
   const fold = createFold();
   let height = -1;
   let broken = false;
-  const live = () => { if (broken) throw new ReplayContextRefusal("broken", "a handler threw inside advance; replay with resolve()"); };
+  const live = () => { if (broken) throw new ReplayContextRefusal("broken", "the replay threw inside advance or stateAt; replay with resolve()"); };
   return {
     get height() { return height; },
     advance(toHeight, events) {
       live();
       if (!isChainHeight(toHeight)) throw new ReplayContextRefusal("domain", `target height ${String(toHeight)} is not a safe integer`);
-      for (const e of events) if (!isChainHeight(e.height)) throw new ReplayContextRefusal("domain", `event height ${String(e.height)} is not a safe integer`);
+      // A block's deferred cancels read their event again at the next flush (its height, position and id).
+      const batch = [...events].map((e) => ({ ...e }));
+      for (const e of batch) {
+        if (!isChainHeight(e.height)) throw new ReplayContextRefusal("domain", `event height ${String(e.height)} is not a safe integer`);
+        if (!isIndex(e.pos)) throw new ReplayContextRefusal("domain", `event position ${String(e.pos)} is not a safe integer >= 0`);
+        if (typeof eventId(e) !== "string") throw new ReplayContextRefusal("domain", `an event id of type ${typeof eventId(e)}`);
+      }
       if (toHeight < height) throw new ReplayContextRefusal("order", `target ${toHeight} is below the context's height ${height}`);
-      for (const e of events) {
+      for (const e of batch) {
         if (e.height <= height || e.height > toHeight) throw new ReplayContextRefusal("order", `event height ${e.height} is outside (${height}, ${toHeight}]`);
       }
-      const sorted = [...events].sort(applyOrder);
+      batch.sort(applyOrder);
       try {
-        for (const e of sorted) fold.apply(e);
+        for (const e of batch) fold.apply(e);
       } catch (err) {
         broken = true;
         throw err;
@@ -73,9 +85,9 @@ export function newReplayContext(): ReplayContext {
   };
 }
 
-// Stops at a frozen object, taking its parts as frozen: this function froze them with it. That holds in the claim's
-// scope (plain values as JSON carries them), where an object an event carries into the state (an id or a position that
-// is not a string or a number, say) arrives unfrozen; such an object is frozen in the caller's event too.
+// Stops at a frozen object, taking its parts as frozen: this function froze them with it. That holds for plain values
+// as JSON carries them. The values an event carries into the state are its height, position, id, author and expiry,
+// each a number or a string where the context or the fold takes the event.
 const freezeDeep = (v: unknown): void => {
   if (v === null || typeof v !== "object" || Object.isFrozen(v)) return;
   Object.freeze(v);

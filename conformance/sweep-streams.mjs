@@ -373,7 +373,8 @@ export function scribble(v) {
  *  `finalTip` too when given. Each advance takes the events not yet given that are not above the tip (upTo's rule: a
  *  height that is not a number goes in with the first). Each answer is compared with R.resolve over the same prefix
  *  at that tip (the typed text of the whole result). A refusal ends the walk; a step must be refused "domain" exactly
- *  when a height of it or its tip fails R.isChainHeight, else "order" exactly when its tip is below the context's
+ *  when a height of it or its tip fails R.isChainHeight, a position of it is not a safe integer >= 0 or an id of it
+ *  (R.eventId) is not a string, else "order" exactly when its tip is below the context's
  *  height or an event of it is at or below that height (a negative one, for a new context at -1), and must not be
  *  refused otherwise; a throw from advance or stateAt must be resolve()'s throw. With
  *  `scribbleAnswers`, every answer is written over after it is compared (later answers must still equal resolve());
@@ -388,7 +389,8 @@ export function contextWalk(R, events, tips, { finalTip, scribbleAnswers = false
   for (const t of all) {
     const block = pending.filter((e) => !(e.height > t));
     pending = pending.filter((e) => e.height > t);
-    const expected = !R.isChainHeight(t) || block.some((e) => !R.isChainHeight(e.height)) ? "domain"
+    const outside = (e) => !R.isChainHeight(e.height) || !(Number.isSafeInteger(e.pos) && e.pos >= 0) || typeof R.eventId(e) !== "string";
+    const expected = !R.isChainHeight(t) || block.some(outside) ? "domain"
       : t < ctx.height || block.some((e) => e.height <= ctx.height) ? "order" : null;
     let refused = null, threw = null;
     try { ctx.advance(t, block); } catch (e) { if (e instanceof R.ReplayContextRefusal) refused = e.code; else threw = String(e?.message ?? e); }

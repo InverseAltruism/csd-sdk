@@ -323,14 +323,18 @@ what the previous core returned and throws where it threw, and only event height
 as a chain produces them, are consensus, so check both before the call (`CONVENTION.md` section 5).
 
 A replica or a server that answers at each new block can hold the replay instead of rebuilding it: `const ctx =
-newReplayContext()`, then `ctx.advance(h, eventsOfTheBlocksUpTo(h))` and `ctx.stateAt(h)` at each new height `h`. In
-the scope above, its answer at a height is what `resolve()` returns over the same events there; a height or tip that
-`isChainHeight` rejects is refused with a `ReplayContextRefusal` before anything is written, and the caller replays
-with `resolve()`; a reorg that removes an applied block means a new context. A new context stands at height -1, below
-the chain's first block, so it refuses a negative height ("order"), which `resolve()` skips below activation. It
-refuses to start in a build that runs it in sloppy mode: it shares frozen parts with the answers it returns and relies
-on a write to a frozen part throwing, so that a write the replay makes there breaks the context instead of being
-dropped silently.
+newReplayContext()`, then at each new height `h`, `ctx.advance(h, events)` with the events of the blocks above
+`ctx.height` up to `h` (only those: an event at or below `ctx.height` is refused), and `ctx.stateAt(h)`. In the scope
+above, its answer at a height is what `resolve()` returns over the same events there, for every event it takes: one
+whose height is a safe integer (`isChainHeight`), whose position is a safe integer >= 0 and whose id is a string, as
+the rule of `CONVENTION.md` section 33 builds them. It refuses any other event, and a height or tip that
+`isChainHeight` rejects, with a `ReplayContextRefusal` before anything is written, and the caller replays with
+`resolve()`. It keeps a copy of each event's own fields, so a later write into an event already given changes no
+answer. A reorg that removes an applied block means a new context. A new context stands at height -1, below the
+chain's first block, so it refuses a negative height ("order"), which `resolve()` skips below activation. It refuses
+to start in a build that runs it in sloppy mode: it shares frozen parts with the answers it returns and relies on a
+write to a frozen part throwing, so that a write the replay makes there breaks the context instead of being dropped
+silently.
 
 ### What a resolver result proves
 

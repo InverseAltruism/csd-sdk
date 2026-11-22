@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import vm from "node:vm";
 import { growthStreams } from "../../../conformance/growth-streams.mjs";
-import { contextWalk, denseTips, stringifyNumbers, sweepStreams, upTo, type ContextWalk } from "../../../conformance/sweep-streams.mjs";
+import { contextWalk, denseTips, scribble, stringifyNumbers, sweepStreams, upTo, type ContextWalk } from "../../../conformance/sweep-streams.mjs";
 import * as R from "../src/index.js";
 import type { ChainEvent } from "../src/index.js";
 
@@ -52,9 +52,19 @@ for (const s of sweepStreams(R)) {
   const w = walkAll(`sweep ${s.key}`, s.events, Number.isSafeInteger(tip) && tip - hs[0]! <= 20_000 ? range(hs[0]! - 2, tip) : denseTips(s.events, s.tipHeight, R.EPOCH_LEN), s.tipHeight);
   ok(malformed.has(s.key) ? w.refusals === 1 && w.refusalCodes.domain === 1 : w.refusals === 0, `sweep ${s.key}: ${malformed.has(s.key) ? "refused once, for the domain" : "answered at every tip"}`);
 }
+// a block holding a position outside applyOrder's domain: answered below it, refused there ("domain")
+{
+  const s = sweepStreams(R).find((x) => x.key === "A")!;
+  const hs = heightsOf(s.events), at = hs[Math.floor(hs.length / 2)]!, i = s.events.findIndex((e) => e.height === at);
+  const events = s.events.map((e, j) => (j === i ? { ...e, pos: Number.NaN } : e));
+  const w = contextWalk(R, events, [...hs, Number(s.tipHeight)]);
+  check("a NaN position", w);
+  ok(w.refusals === 1 && w.refusalCodes.domain === 1 && w.answers === hs.indexOf(at), "a block holding a NaN position: each block below it answered, refused there for the domain");
+}
 const corpus = JSON.parse(readFileSync(new URL("./vectors/replay-corpus.json", import.meta.url), "utf8")) as { events: ChainEvent[] };
 const pins = Object.keys(JSON.parse(readFileSync(new URL("./vectors/replay-hashes.json", import.meta.url), "utf8")).hashes).map(Number);
-walkAll("corpus", corpus.events, [...new Set([...heightsOf(corpus.events).flatMap((h) => [h - 1, h]), ...pins])].sort((a, b) => a - b), undefined, false);
+const corpusWalk = walkAll("corpus", corpus.events, [...new Set([...heightsOf(corpus.events).flatMap((h) => [h - 1, h]), ...pins])].sort((a, b) => a - b), undefined, false);
+ok(corpusWalk.refusals === 0 && corpusWalk.answers > 0, "the replay corpus (events as section 33 builds them) is answered at every tip, none refused");
 for (const s of growthStreams(R, 500)) walkAll(`growth ${s.key}`, s.events, [...new Set([...heightsOf(s.events), ...s.tips, s.tipHeight])].sort((a, b) => a - b));
 
 // ── a reorg: the context on the old branch is thrown away and a new one built on the new branch ──
@@ -89,6 +99,11 @@ ok(reorgs === 8, "a context rebuilt after a reorg equals resolve() on the new br
   const late = s.events.find((e) => e.height === h)!, next = s.events.find((e) => e.height > h)!;
   unchanged("domain", () => ctx.advance(h + 5, [{ ...next, height: "90005" as unknown as number }]));
   unchanged("domain", () => ctx.advance(Number.NaN, []));
+  // an event outside applyOrder's domain: a position that is not a safe integer >= 0, an id that is not a string
+  const nextPropose = s.events.find((e): e is R.ProposeEvent => e.height > h && e.kind === "propose")!;
+  for (const pos of [Number.NaN, undefined, "1", null, 1.5, -1, 2 ** 53]) unchanged("domain", () => ctx.advance(nextPropose.height, [{ ...nextPropose, pos: pos as number }]));
+  unchanged("domain", () => ctx.advance(nextPropose.height, [{ ...nextPropose, id: { a: 1 } as unknown as string }]));
+  unchanged("domain", () => ctx.advance(nextPropose.height, [{ ...nextPropose, kind: "attest", txid: 7 } as unknown as ChainEvent]));
   unchanged("order", () => ctx.advance(h - 1, []));
   unchanged("order", () => ctx.advance(next.height, [late]));
   unchanged("order", () => ctx.advance(next.height - 1, [next]));
@@ -112,6 +127,15 @@ ok(reorgs === 8, "a context rebuilt after a reorg equals resolve() on the new br
   ok(negCode === "order" && cn.height === -1, "a negative event height is refused (order) by a new context before any write");
   cn.advance(Number(s.tipHeight), [...s.events]);
   ok(stringifyNumbers(R.resolve([neg, ...s.events], s.tipHeight)) === stringifyNumbers(cn.stateAt(Number(s.tipHeight))), "and the caller's resolve() with it equals the context's answer without it");
+  // a throw while the call's events are read (they are not iterable) is resolve()'s throw, and the context stays usable
+  const cu = R.newReplayContext();
+  cu.advance(h, upTo(s.events, h));
+  let fromResolve = "", fromContext = "";
+  try { R.resolve(5 as unknown as ChainEvent[], h + 1); } catch (e) { fromResolve = String(e); }
+  try { cu.advance(h + 1, 5 as unknown as ChainEvent[]); } catch (e) { fromContext = String(e); }
+  ok(fromResolve !== "" && fromContext === fromResolve && !(fromContext.includes("ReplayContextRefusal")), "events that are not iterable: advance throws resolve()'s error");
+  cu.advance(Number(s.tipHeight), s.events.filter((e) => e.height > h));
+  ok(stringifyNumbers(cu.stateAt(Number(s.tipHeight))) === stringifyNumbers(R.resolve(s.events, Number(s.tipHeight))), "and the context, not broken, goes on to equal resolve() at the tip");
 }
 {
   // a handler that throws (a null proposer): resolve() throws over the same events, and the context is then broken
@@ -131,27 +155,63 @@ ok(reorgs === 8, "a context rebuilt after a reorg equals resolve() on the new br
   }
 }
 
-{
-  // a throw at the tip: a getter read only by the last block's deferred cancel at the answer's flush (a test instrument;
-  // getters are outside the claim). stateAt throws it, and the context is then broken.
+// An ocancel at the tip of stream A: V14 or above, so its effect and its log entry wait for the block's flush.
+const cancelAtTip = () => {
   const s = sweepStreams(R).find((x) => x.key === "A")!;
   const h = Number(s.tipHeight), first = s.events.find((e) => e.kind === "propose")!, rec = R.offerCancelAll({});
-  let armed = false;
-  const cancel = {
-    kind: "propose", proposer: first.proposer, uri: rec.uri, payloadHash: rec.payloadHash, expiresEpoch: first.expiresEpoch, height: h, pos: 99, paidTo: {},
-    get id() { if (armed) throw new Error("read at the tip"); return "0x" + "e7".repeat(32); },
-  } as unknown as ChainEvent;
+  const cancel: ChainEvent = { kind: "propose", id: "0x" + "e7".repeat(32), proposer: first.proposer, uri: rec.uri, payloadHash: rec.payloadHash, expiresEpoch: first.expiresEpoch, height: h, pos: 99, paidTo: {} };
+  return { s, h, cancel };
+};
+{
+  // a throw at the tip: the log write of the last block's deferred cancel, at the answer's flush, made to throw (a test
+  // instrument). stateAt throws it, and the context is then broken.
+  const { s, h, cancel } = cancelAtTip();
   const ctx = R.newReplayContext();
   ctx.advance(h, [...s.events, cancel]);
-  armed = true;
+  const push = Array.prototype.push;
   let got = "";
-  try { ctx.stateAt(h); } catch (e) { got = String(e); }
-  ok(got === "Error: read at the tip", "a throw at the tip: stateAt throws it");
+  Array.prototype.push = function (this: unknown[], ...xs: unknown[]) {
+    if (xs.some((x) => (x as { id?: unknown } | null)?.id === cancel.id)) throw new Error("thrown at the tip");
+    return push.apply(this, xs);
+  };
+  try { ctx.stateAt(h); } catch (e) { got = String(e); } finally { Array.prototype.push = push; }
+  ok(got === "Error: thrown at the tip", "a throw at the tip: stateAt throws it");
   for (const call of [() => ctx.stateAt(h), () => ctx.advance(h + 1, [])]) {
     let after: unknown;
     try { call(); } catch (e) { after = e; }
     ok(after instanceof R.ReplayContextRefusal && after.code === "broken" && ctx.height === h, `after a throw at the tip, "broken" refused`);
   }
+}
+{
+  // a fed event written over after advance: the deferred cancel reads its event again at the flush, from the context's
+  // copy, so the answer is resolve()'s over the events as they were given
+  const { s, h, cancel } = cancelAtTip();
+  const events = [...s.events, cancel], given = events.map((e) => ({ ...e }));
+  const ctx = R.newReplayContext();
+  ctx.advance(h, events);
+  Object.assign(cancel, { id: "0x" + "77".repeat(32), pos: 7 });
+  const answer = ctx.stateAt(h);
+  ok(answer.events.some((e) => e.id === "0x" + "e7".repeat(32) && e.pos === 99), "the deferred cancel's log entry is written at the flush");
+  ok(stringifyNumbers(answer) === stringifyNumbers(R.resolve(given, h)), "a write into a fed event after advance changes no later answer");
+}
+{
+  // a one-shot iterable is read once: each of its events applied
+  const s = sweepStreams(R).find((x) => x.key === "A")!, tip = Number(s.tipHeight), ctx = R.newReplayContext();
+  ctx.advance(tip, (function* () { yield* s.events; })() as unknown as ChainEvent[]);
+  ok(stringifyNumbers(ctx.stateAt(tip)) === stringifyNumbers(R.resolve(s.events, tip)), "events given as a generator: the answer equals resolve()");
+}
+{
+  // a name's profile in an answer is shared with the replay and frozen: the answer at the corpus's first height with a
+  // profile, written over, leaves the next block's answer equal to resolve()
+  const withProfile = (st: R.CairnXState) => Object.values(st.names).some((n) => n.profile !== undefined);
+  const hp = heightsOf(corpus.events).find((x) => corpus.events.some((e) => e.height === x && e.kind === "propose" && e.uri.includes('"t":"nprofile"')) && withProfile(R.resolve(upTo(corpus.events, x), x)))!;
+  const ctx = R.newReplayContext();
+  ctx.advance(hp, upTo(corpus.events, hp));
+  const answer = ctx.stateAt(hp);
+  ok(withProfile(answer), `the answer at ${hp} holds a name's profile`);
+  const w = scribble(answer);
+  ctx.advance(hp + 1, corpus.events.filter((e) => e.height === hp + 1));
+  ok(w.blocked > 0 && stringifyNumbers(ctx.stateAt(hp + 1)) === stringifyNumbers(R.resolve(upTo(corpus.events, hp + 1), hp + 1)), "a profile written over in an answer changes no later answer");
 }
 
 // ── constructed: a duplicate id across two advances at V29 or above (the growth edge streams hold the duplicated
