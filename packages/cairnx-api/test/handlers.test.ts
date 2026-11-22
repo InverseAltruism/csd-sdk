@@ -154,6 +154,24 @@ const queries = ["", "order=newest&limit=7", "status=held", `keys=${byNameFirst(
   ["events", "limit=7&after=44682:1"], ["holders", "ticker=CAIRN&limit=3"], ["offers", "kind=name&status=filled"]]);
 ok(`two views of equal input give byte-equal answers (${queries.length} reads)`, queries.every(([r, q]) => JSON.stringify(answer([view], r!, q!)) === JSON.stringify(answer([twin], r!, q!))));
 
+// The envelope's field names are part of the 1.0 contract; a rename in envelope.ts and answer.ts together type-checks,
+// so the bodies are pinned by name here. `total` is the one field sent whose presence is not promised.
+console.log("the envelope's fields:");
+const fields = (o: object) => show(Object.keys(o).sort());
+const p1 = answer([view], "names", "limit=1").body as Page<object>;
+ok("a page is { ok: true, level: 1, at, rows, next, total }, at is { height, hash, rev }", fields(p1) === show(["at", "level", "next", "ok", "rows", "total"])
+  && p1.ok === true && p1.level === 1 && fields(p1.at) === show(["hash", "height", "rev"]) && Array.isArray(p1.rows) && typeof p1.next === "string" && typeof p1.total === "number");
+for (const [code, held, route, q, body, error] of [
+  ["INVALID_QUERY", [view], "names", "limit=0", ["error", "ok"], ["code", "message", "param"]],
+  ["NOT_FOUND", [view], "tuple", "", ["error", "ok"], ["code", "message"]],
+  ["NOT_READY", [], "names", "", ["error", "ok"], ["code", "message"]],
+  ["SNAPSHOT_NOT_HELD", [view], "names", `at=${tipHeight}:${H2}`, ["at", "error", "ok"], ["code", "message"]],
+] as const) {
+  const r = refused(held, route, q);
+  ok(`the ${code} refusal is { ${body.join(", ")} } with error { ${error.join(", ")} }`, r.error.code === code && r.ok === false
+    && fields(answer(held, route, q).body) === show(body) && fields(r.error) === show(error) && (r.at === undefined || fields(r.at) === show(["hash", "height", "rev"])));
+}
+
 console.log("the largest page:");
 for (const route of ["names", "bids", "tokens", "events", "holders", "offers"] as const) {
   const max = route === "events" ? 500 : 200, q = `${route === "holders" ? "ticker=CAIRN&" : ""}limit=${max}`;
