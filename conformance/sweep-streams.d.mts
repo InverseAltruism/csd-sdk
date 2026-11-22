@@ -27,3 +27,9 @@ export declare const MALFORMED_TYPES: string[];
 export declare function stringifyNumbers(value: unknown): string;
 export declare function parseNumbers(text: string): unknown;
 export declare function malformedKinds(R: Core, events: readonly ChainEvent[], tip: unknown, state: CairnXState | null): MalformedKinds;
+export declare function scribble(v: unknown): { tried: number; blocked: number };
+export interface ContextWalk {
+  answers: number; diffs: number[]; refusals: number; refusalCodes: Record<string, number>; badRefusals: string[];
+  threwAlike: number; threwDiff: number[]; kept: number; changed: number; tried: number; blocked: number; texts: Map<number, string>;
+}
+export declare function contextWalk(R: Core, events: readonly ChainEvent[], tips: readonly number[], opts?: { finalTip?: unknown; scribbleAnswers?: boolean }): ContextWalk;

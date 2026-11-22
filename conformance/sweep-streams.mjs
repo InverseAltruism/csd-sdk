@@ -351,3 +351,62 @@ export function malformedKinds(R, events, tip, state) {
     .some((o) => Number.isNaN(o.height) && o.status === "open" && (o.expiresEpoch + 1) * R.EPOCH_LEN < R.V21_HEIGHT);
   return out;
 }
+
+/** Writes a sentinel into every own property of every object and array reachable from `v`, and pushes one onto every
+ *  array: what a holder of a result might do to it. Counts the writes tried and those a frozen object refused. */
+export function scribble(v) {
+  const seen = new Set();
+  let tried = 0, blocked = 0;
+  const attempt = (f) => { tried++; try { f(); } catch (e) { if (!(e instanceof TypeError)) throw e; blocked++; } };
+  const visit = (x) => {
+    if (x === null || typeof x !== "object" || seen.has(x)) return;
+    seen.add(x);
+    for (const k of Object.keys(x)) visit(x[k]);
+    for (const k of Object.keys(x)) attempt(() => { x[k] = "scribbled"; });
+    if (Array.isArray(x)) attempt(() => { x.push("scribbled"); });
+  };
+  visit(v);
+  return { tried, blocked };
+}
+
+/** A held context (R.newReplayContext) walked through `events`, answering at each tip of `tips` (ascending), and at
+ *  `finalTip` too when given. Each advance takes the events not yet given that are not above the tip (upTo's rule: a
+ *  height that is not a number goes in with the first). Each answer is compared with R.resolve over the same prefix
+ *  at that tip (the typed text of the whole result). A refusal ends the walk and must be "domain" exactly when a
+ *  height of that step or its tip fails R.isChainHeight; a throw from a handler must be resolve()'s throw. With
+ *  `scribbleAnswers`, every answer is written over after it is compared (later answers must still equal resolve());
+ *  without it, every answer is re-read at the end and must not have changed. `texts` maps each answered tip to its
+ *  text. */
+export function contextWalk(R, events, tips, { finalTip, scribbleAnswers = false } = {}) {
+  const out = { answers: 0, diffs: [], refusals: 0, refusalCodes: {}, badRefusals: [], threwAlike: 0, threwDiff: [], kept: 0, changed: 0, tried: 0, blocked: 0, texts: new Map() };
+  const ctx = R.newReplayContext();
+  const kept = [];
+  let pending = [...events];
+  const all = finalTip === undefined || tips.includes(finalTip) ? tips : [...tips, finalTip];
+  for (const t of all) {
+    const block = pending.filter((e) => !(e.height > t));
+    pending = pending.filter((e) => e.height > t);
+    const outside = !R.isChainHeight(t) || block.some((e) => !R.isChainHeight(e.height));
+    let refused = null, threw = null;
+    try { ctx.advance(t, block); } catch (e) { if (e instanceof R.ReplayContextRefusal) refused = e.code; else threw = String(e?.message ?? e); }
+    if (refused !== null) {
+      out.refusals++;
+      out.refusalCodes[refused] = (out.refusalCodes[refused] ?? 0) + 1;
+      if ((refused === "domain") !== outside) out.badRefusals.push(`${t}: ${refused}`);
+      break;
+    }
+    let want;
+    try { want = stringifyNumbers(R.resolve(upTo(events, t), t)); } catch (e) { want = `THROW ${e?.message ?? e}`; }
+    if (threw !== null) {
+      if (want === `THROW ${threw}`) out.threwAlike++; else out.threwDiff.push(t);
+      break;
+    }
+    const answer = ctx.stateAt(t), text = stringifyNumbers(answer);
+    out.answers++;
+    out.texts.set(t, text);
+    if (text !== want) out.diffs.push(t);
+    if (scribbleAnswers) { const w = scribble(answer); out.tried += w.tried; out.blocked += w.blocked; } else kept.push([answer, text]);
+  }
+  for (const [answer, text] of kept) { out.kept++; if (stringifyNumbers(answer) !== text) out.changed++; }
+  return out;
+}

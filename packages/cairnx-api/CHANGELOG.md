@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 0.1.3, a peer-only step: cairnx-core 0.2.10 is the exact peer; `rev` moves with the package version.
+
+## 0.1.2
+
 - 0.1.2, a peer-only step: cairnx-core 0.2.9 is the exact peer. No route, parameter, row, envelope field, error code or
   cursor grammar changed; `rev` moves with the package version.
 
