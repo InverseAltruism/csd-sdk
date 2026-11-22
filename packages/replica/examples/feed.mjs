@@ -1,7 +1,8 @@
 // Level 1, proof served: a .csd name from a csd-indexer's records, complete on the indexer's word (the README, "A
-// csd-indexer feed"). Nothing in the answer is proven to be on the chain.
+// csd-indexer feed"). Nothing in the answer is proven to be on the chain. A first sync reads every record's transaction,
+// thousands of requests: point it at one's own csd-indexer or a host without a request limit, not our front door.
 //   node feed.mjs <indexer base> <name>
-//   node feed.mjs https://cairn-substrate.com/explorer/api cairn
+//   node feed.mjs http://127.0.0.1:8793 cairn
 import { indexerFeed, open } from "@inversealtruism/cairnx-replica/server";
 
 const [indexerUrl, name] = process.argv.slice(2);

@@ -12,7 +12,8 @@ export const USAGE = `usage: cairnx-replica check <source> [--pin] [--reference 
   <source>, one of:
     --node <url>      one's own node (loopback, a private address or a host in CAIRNX_OWN_NODE_HOSTS)
     --hosted <origin> complete blocks from a front door, headers verified from --anchor <height>:<hash> or the pin
-    --feed <base>     a csd-indexer's records (level 1)
+    --feed <base>     a csd-indexer's records (level 1); a first sync is thousands of requests, so one's own
+                      indexer or a host without a request limit (against https://cairn-substrate.com use --hosted --pin)
   --pin               start from @inversealtruism/cairnx-pin (installed beside this package); not with --feed
   --reference <base>  a host of /cairnx/tuple/<height>[:<blockHash>] to compare with
   --expect <tuple>    <height>:<blockHash>:<eventsHash>:<stateHash> to compare with`;

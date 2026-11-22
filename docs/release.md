@@ -6,11 +6,15 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 
 ## What `scripts/check-lockstep.mjs` enforces
 
-- Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ever ships.
+- Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ships, but for one
+  peer (`RANGE_PEERS`): cairnx-pin uses cairnx-replica for its `Pin` type alone, so it peers on `workspace:^`, which
+  pnpm packs as `^<replica version>`, and check-lockstep refuses that peer in any other form, and the form on any other
+  inter-dep. A published pin must hold the workspace's replica in its range: a replica release inside the range needs
+  no pin release, one outside it (0.2.0 above `^0.1.0`) does. The exit check pins the shipped range.
   `test/check-lockstep.test.ts` covers this rule.
 - Published pins: every package version already on npm pins the current workspace versions of its deps and of its
-  exact peers (cairnx-core under cairnx-api and the replica, the replica under the pin), so a core bump needs a bump of
-  every package that peers on it, and a replica bump one of the pin. `test/check-lockstep.test.ts` covers the peer case.
+  exact peers (cairnx-core under cairnx-api and the replica), so a core bump needs a bump of every package that peers
+  on it. `test/check-lockstep.test.ts` covers the peer case.
 - Published dist: for a version already on npm, the registry tarball (sha512-verified) holds byte-identical `dist/`
   files to this tree's build, so a source change needs a version bump. It detects that accident (one version, two code
   states), not a hostile tarball crafted to extract differently under npm and not a newly published version. The
@@ -116,7 +120,7 @@ commit, besides the window's own checks:
   peer, cairnx-core, at the version HEAD names, is on npm already or in the same window, which orders it first.
 - cairnx-pin: the generator's `--check` against a node, by the releaser, for the pin the release ships
   (`packages/pin/README.md`, "Cutting the next pin"): the build and CI prove only that the repo's data gives
-  `pin.json`. Its exact peer, cairnx-replica, at the version HEAD names, on npm already or in the same window.
+  `pin.json`. Its peer, cairnx-replica, at a version inside its range, on npm already or in the same window.
 - csd-anchors: data, so a refresh is a release of that package alone and each consumer takes it in its own release. A
   table is due when its newest entry is 14 days old or when a consumer's release needs one;
   `packages/anchors/README.md` ("Cutting the next table") has the steps. The window's checks read no chain data and do
@@ -136,12 +140,13 @@ this tree's build; the exit check on the published versions, from a checkout at 
 ```bash
 pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm
 pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm --live --reference https://cairn-substrate.com/trade/api \
-  --indexer https://cairn-substrate.com/explorer/api --origin https://cairn-substrate.com [--node http://127.0.0.1:8789] [--full]
+  --origin https://cairn-substrate.com [--node http://127.0.0.1:8789] [--indexer <own csd-indexer>] [--full]
 ```
 
 The first runs the offline legs on the published packages; the second the live legs it is given, each compared with
-the reference (`--full` adds the legs that read from the activation height). Then the tags `cairnx-replica-<version>`,
-`cairnx-pin-<version>` and `csd-anchors-<version>` ("Release tags" below; `check-consumer-pins.mjs` reads the first two).
+the reference. The feed leg is for one's own csd-indexer: against our front door its first sync does not finish
+(the replica's README, "A csd-indexer feed") (`--full` adds the legs that read from the activation height). Then the tags `cairnx-replica-<version>`,
+`cairnx-pin-<version>` and `csd-anchors-<version>` ("Release tags" below; `check-consumer-pins.mjs` reads the first).
 
 ## Release tags
 
@@ -151,8 +156,8 @@ the window, as the existing tags do (`git tag -a cairnx-api-0.1.0 <commit> -m "c
 npm window from tarballs packed at this commit by scripts/npm-window.mjs"`), then pushes it.
 `scripts/check-consumer-pins.mjs` reads them: a `cairnx-core-<version>` tag to grade a lagging core pin, and a
 `cairnx-api-<version>` or `cairnx-replica-<version>` tag, whose manifest must name that version, for the cairnx-core
-version that package was packed against, and a `cairnx-pin-<version>` tag for its cairnx-replica. Without the tag
-every consumer's check reports that version as unknown and fails.
+version that package was packed against. Without the tag every consumer's check reports that version as unknown and
+fails.
 
 ## Versioning
 

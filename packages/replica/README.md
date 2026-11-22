@@ -35,7 +35,8 @@ ES modules loads every entry with it too, which the exit check runs on CI's Node
 | `examples/pinned.mjs` | 3, `pinned` | a name from the pin and hosted blocks above it, and the site its `contenthash` names |
 | `examples/deposits.ts` | 3, `pinned` | a server crediting deposits from its own node, its store on disk ("Transfers" below) |
 
-The examples are in the repository, https://github.com/InverseAltruism/csd-sdk/tree/master/packages/replica/examples,
+`feed.mjs` is for one's own csd-indexer: against our front door a feed's first sync does not finish ("A csd-indexer
+feed" below), and `pinned.mjs` is the example for it. The examples are in the repository, https://github.com/InverseAltruism/csd-sdk/tree/master/packages/replica/examples,
 and each takes its endpoints as arguments. CI installs this package, cairnx-pin and csd-anchors from their packed
 tarballs into an empty directory and runs the first three there against recorded answers, and type-checks the fourth
 against the installed types (`scripts/exit-check.ts`). `cairnx-replica check` ("Checking an installation" below) is
@@ -537,6 +538,12 @@ its hash, not steps.
 
 ## A csd-indexer feed
 
+A feed reads every record, and every record's transaction, by itself, one request each, so a first sync from the
+activation height is thousands of requests. It is meant for one's own csd-indexer or a host without a request limit.
+Against a host that limits requests, such as our front door, a first sync does not finish today: a scan that meets a
+429 starts over. Against `https://cairn-substrate.com` a replica starts from the pin and reads the hosted blocks above
+it instead (`hosted({ pin, origin })` in "Pins" below, `cairnx-replica check --hosted <origin> --pin`).
+
 `indexerFeed(options)`, in `./server` only, is a source over the CairnX resolver's Scanner, which reads the cairnx:v1
 proposals and attestations a csd-indexer serves; `options` are the Scanner's (`ScanOptions`: `indexerUrl`, `fetch`,
 `timeoutMs`, page sizes, and for `verifyInclusion` the header merkle, raw transaction and verified tip reads). Its
@@ -679,12 +686,12 @@ proof, the verdict's codes, the tuple at the newest final boundary and, when ask
 npx cairnx-replica check --node http://127.0.0.1:8789 --pin --reference https://cairn-substrate.com/trade/api
 npx cairnx-replica check --hosted https://cairn-substrate.com --pin
 npx cairnx-replica check --hosted https://cairn-substrate.com --anchor 29859:<hash> --expect <height>:<blockHash>:<eventsHash>:<stateHash>
-npx cairnx-replica check --feed https://cairn-substrate.com/explorer/api --json
+npx cairnx-replica check --feed http://127.0.0.1:8793 --json     # one's own csd-indexer ("A csd-indexer feed")
 ```
 
 The source is one of `--node <url>` (one's own node, under `./server`'s address rule), `--hosted <origin>` (complete
 blocks from a front door, its headers verified from `--anchor <height>:<hash>`, at or below the activation height less
-one, or from the pin) and `--feed <base>` (a csd-indexer, level 1). `--pin` starts from `@inversealtruism/cairnx-pin`,
+one, or from the pin) and `--feed <base>` (a csd-indexer, level 1: one's own, or a host without a request limit). `--pin` starts from `@inversealtruism/cairnx-pin`,
 which must be installed beside this package; a feed takes no pin. `--reference <base>` compares with a host's tuples
 as `open`'s `reference` does ("Tuples and a reference" above); `--expect` compares with a tuple written out. Either
 gives one result of `equal`, `branch`, `records`, `rules`, `missing` (the reference holds no such boundary, or the
