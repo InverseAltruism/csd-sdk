@@ -24,7 +24,8 @@ export interface TickerKey { ticker: string }
 export interface HolderKey { amount: bigint; address: string }
 export interface EventKey { height: number; pos: number }
 
-// Code-unit order; every key string is ASCII by its pattern, so this is the bytewise order.
+// Code-unit order; every key string is ASCII by its pattern, so this is the bytewise order. Not localeCompare or an
+// Intl.Collator: their order follows the runtime's locale (test/locale.test.ts).
 const asc = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const num = (a: number | bigint, b: number | bigint): number => (a < b ? -1 : a > b ? 1 : 0);
 
