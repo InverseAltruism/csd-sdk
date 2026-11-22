@@ -23,6 +23,8 @@ export interface VerdictInput {
   readonly unconfirmed: boolean;
   /** Under a pinned basis, the source's refusal of its pin (pinned.ts), which it repeats at every later step; else null. */
   readonly refused: "PIN_MISMATCH" | "PIN_OFF_CHAIN" | "RULES_DIFFER" | null;
+  /** Whether a reference holds the pin's block with another events hash at the pin's height (compare.ts). */
+  readonly disputed?: boolean;
 }
 
 /** The level condition, the first of the rule: null at level 3, else a feed's LEVEL_FEED or a display's LEVEL_DISPLAY.
@@ -34,6 +36,7 @@ export function verdict(v: VerdictInput): NotVerifiedCode[] {
   if (lv !== null) why.push(lv);
   if (v.rulesDiffer(v.synced?.tip.height ?? Number.POSITIVE_INFINITY) || v.refused === "RULES_DIFFER") why.push("RULES_DIFFER");
   if (v.refused === "PIN_MISMATCH" || v.refused === "PIN_OFF_CHAIN") why.push(v.refused);
+  if (v.disputed === true) why.push("PIN_DISPUTED");
   const s = v.synced;
   if (s === null) why.push("NOT_SYNCED");
   else {
