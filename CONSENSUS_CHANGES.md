@@ -97,20 +97,31 @@ came through a reservation, so recognising items kind by kind does not close the
 run only inside the domain they are proven for: every event height and the tip a safe integer. `resolve.ts` holds the
 one predicate, `inDomain`, applied to each event's height before its sweep and to the tip before the closing sweep;
 the first value outside ends the batches for the rest of the replay (`endSplit`), and from then on each sweep is the
-single batch, whose code is 0.2.8's sweep. Every other value that reaches a due test or a queue key is a safe integer
-already or follows from a height: an offer's `expiresEpoch` is refused unless a safe integer
-(`packages/cairnx/src/resolve/market.ts` :175, `Number.isSafeInteger(`), a bid's likewise (:77), and each `finalizeBy`
-is an event height plus `REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
+single batch, whose code is 0.2.8's sweep. By the lines cited here, every other value that reaches a due test or a
+queue key is a safe integer already or follows from a height: an offer's `expiresEpoch` is refused unless a safe
+integer (`packages/cairnx/src/resolve/market.ts` :175, `Number.isSafeInteger(`), a bid's likewise (:77), and each
+`finalizeBy` is an event height plus `REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
 (`packages/cairnx/src/resolve/names.ts` :86 and :120), from the reveal's height or a commit's (:32,
-`commits.set(rec.commit, ev.height)`). Inside the domain
-the NaN-height condition could not fire, so it is removed. Sweep streams X, X2, Y and Y2 pin the four cases against
-0.2.8, and the seal's step (d3) compares the sequences of `fuzz-resolve.mjs --malformed` (values of every type on
-every kind and on the tip) with 0.2.8. Check mode, whose index reads as the plain walk only inside the domain (0.2.8's
-own check mode throws on a string deadline), runs on the sequences inside it. Outside the domain the released versions
-already disagree: on a string deadline 0.2.7's indexes read differently from 0.2.6's walk (the tree before the store,
-a805573^, equals 0.2.4 on each of the nine widened sequences that show it, the 0.2.7 tag differs on each), and 0.2.8
-and this version follow 0.2.7. No chain produces such an input, so the seal's step (d3) compares with 0.2.8 alone and
-prints how many inputs 0.2.4 and 0.2.8 disagree on.
+`commits.set(rec.commit, ev.height)`). Inside the domain the NaN-height condition could not fire, so it is removed.
+Sweep streams X, X2, Y and Y2 pin the four cases against 0.2.8, and the seal's step (d3) compares the sequences of
+`fuzz-resolve.mjs --malformed` (values of every type on every kind and on the tip) with 0.2.8. Check mode, whose index
+reads as the plain walk only inside the domain (0.2.8's own check mode throws on a string deadline), runs on the
+sequences inside it. Outside the domain the released versions already disagree: on a string deadline 0.2.7's indexes
+read differently from 0.2.6's walk (the tree before the store, a805573^, equals 0.2.4 on each of the nine widened
+sequences that show it, the 0.2.7 tag differs on each), and 0.2.8 and this version follow 0.2.7. No chain produces
+such an input, so the seal's step (d3) compares with 0.2.8 alone and prints how many inputs 0.2.4 and 0.2.8 disagree
+on.
+
+What is claimed, and over what. For inputs made of plain values (what JSON carries) 0.2.9 returns what 0.2.8 returns
+and throws where 0.2.8 throws: 0.2.8 read each event's height and id in a pass before its first handler and 0.2.9
+reads each event when it applies it, which reaches the same first throw as long as each event is an object. Two inputs
+outside plain values are known to differ: an event whose `height` is a getter that answers differently on later reads
+(0.2.8 applies the event, 0.2.9 skips it, since the fold reads the height once more, in `inDomain`), and an events
+array with an `undefined` entry after an event whose handler throws (both throw a TypeError, the texts differ;
+`packages/cairnx/test/fold.test.ts`). An accessor or a conversion with side effects is outside the claim. Heights and
+the tip are consensus only as a chain produces them, non-negative integers below 2^53: outside that, released cores
+answer differently (0.2.4 and 0.2.7 on a string deadline, above) and the Python reference differs on NaN and the
+infinities, so a caller validates both before the call.
 
 The proof is `scripts/seal-differential.mjs cairnx-core-0.2.4 cairnx-core-0.2.8`, each baseline bound to npm:
 `canonicalState` byte-identical to 0.2.4 and the whole result identical to 0.2.8 including codes and moves over the 97

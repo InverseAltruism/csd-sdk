@@ -239,14 +239,18 @@ writes nothing (§40.1) changes no state: at most it adds a sweep at its height 
 block's deferred cancels (§16) that the next event at a new height would run before its own sweep; below activation,
 or repeated at V29 or above, it adds neither.
 
-`resolve()` takes heights and tips of any value, and outside that domain the heights at which sweeps run can
-matter: an offer whose event height is NaN has a NaN cap (§24) from V21 on, so it is due below V21 and at no height
-from V21 on, and a commit at the string height "90000" gives a reservation the deadline "90000820", which a sweep
-compares as text at a string height and as a number at a number one. cairnx-core from 0.2.9 applies each expiry at the
-first height it is due only while every event height and the tip it has read is a safe integer
-(`Number.isSafeInteger`). Inside that domain being due only grows with height, so batches at the due heights give the
-state of one batch per sweep; the first height or tip outside it ends the batches before any sweep reads it; from then
-on every sweep is the one before each event and at `tipHeight + 1`, as in 0.2.8.
+`resolve()` takes heights and tips of any value, and outside that domain the heights at which sweeps run can matter:
+an offer whose event height is NaN has a NaN cap (§24) from V21 on, so it is due below V21 and at no height from V21
+on, and a commit at the string height "90000" gives a reservation the deadline "90000820", which a sweep compares as
+text at a string height and as a number at a number one. cairnx-core from 0.2.9 applies each expiry at the first
+height it is due only while every event height and the tip it has read is a safe integer (`Number.isSafeInteger`).
+Inside that domain being due only grows with height, so batches at the due heights give the state of one batch per
+sweep; the first height or tip outside it ends the batches before any sweep reads it; from then on every sweep is the
+one before each event and at `tipHeight + 1`, as in 0.2.8. That gives the state 0.2.8 gives for inputs made of plain
+values (what JSON carries); a getter or a conversion with side effects, which the fold reads a different number of
+times, is outside that statement. Outside the domain the result is not consensus: released cores have answered
+differently (0.2.4 and 0.2.7 on a string height), so a caller checks that event heights and the tip are safe integers
+before the call.
 
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
