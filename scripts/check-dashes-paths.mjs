@@ -46,10 +46,12 @@ export function offences(root) {
   return out;
 }
 
+/** A pointer to a private design document, or to the maintainers' deploy host, which a package's reader cannot open. */
+export const PRIVATE_REF = /\bthe design's\b|\bdesign (?:section|note|pass)\b|\bdeploy host\b/i;
 /**
- * The same two rules over a packed tarball's files (path -> bytes, as published-dist.mjs's `untar` gives them), every
- * file of them, since the tarball is what a reader of the npm package gets: an em dash, or a sibling or host path as
- * SIBLING matches it. One line per offence.
+ * The same rules over a packed tarball's files (path -> bytes, as published-dist.mjs's `untar` gives them), every
+ * file of them, since the tarball is what a reader of the npm package gets: an em dash, a sibling or host path as
+ * SIBLING matches it, or a pointer to a private document a reader cannot open (PRIVATE_REF). One line per offence.
  * @param {Map<string, Uint8Array>} files
  * @returns {string[]}
  */
@@ -60,6 +62,8 @@ export function packedOffences(files) {
     if (text.includes("\u2014")) out.push(`${p}: em dash (U+2014)`);
     const sibling = text.match(SIBLING);
     if (sibling) out.push(`${p}: a sibling or host path (${sibling[0]})`);
+    const ref = text.match(PRIVATE_REF);
+    if (ref) out.push(`${p}: a pointer to a private document (${ref[0]})`);
   }
   return out;
 }

@@ -19,7 +19,7 @@ export const USAGE = `usage: cairnx-replica check <source> [--pin] [--reference 
   --reference <base>  a host of /cairnx/tuple/<height>[:<blockHash>] to compare with
   --expect <tuple>    <height>:<blockHash>:<eventsHash>:<stateHash> to compare with
   --timeout-ms <ms>   the deadline, 1 to 2147483647 (default 7200000)
-exit: 0 equal or held, 1 differs (branch, records, rules), 2 usage or configuration,
+exit: 0 the check passed (equal, held); 1 the sides differ (branch, records, rules); 2 usage or configuration;
       3 could not check (missing, unavailable, no-tuple, timeout)`;
 
 /** A one-shot read of the whole range: wide steps, since every commit is in memory. */

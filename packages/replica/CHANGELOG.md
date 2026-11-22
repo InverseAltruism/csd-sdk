@@ -6,7 +6,11 @@
   with `--anchor` or `--pin`, `--feed`), read to its tip, printing the level, the verdict, the tuple at the newest
   final boundary and the comparison with `--reference` or `--expect`; exit 0 only for `equal` (or `held` with neither),
   2 for a usage or configuration error. Progress, each source error and the deadline (result `timeout`, with what it
-  waited for) are printed to stderr; the deadline ends a step in flight.
+  waited for) are printed to stderr. Before the first publish: the exit codes are fixed (0 passed, 1 differs, 2 usage,
+  3 could not check, `EXIT_OF`); every printed line shows control and bidi characters escaped and source text cut at
+  400 characters; the feed's reads refuse redirects; `--feed` and `--reference` take the URL rule of the other sources;
+  a repeated flag, a malformed height, `--timeout-ms` out of range and `--pin` without cairnx-pin are usage errors; the
+  command exits 5 s after its deadline at the latest; a pinned `RULES_DIFFER` ends the run at once.
 - `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
   through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
   without it; an answer timed more than `MAX_FUTURE_DRIFT_SECS` after the clock, as one in milliseconds is, is
@@ -252,7 +256,7 @@
   and `verified: false` by type and construction, `why` led by `LEVEL_DISPLAY` from `levelCode`, the level condition
   now exported by `verdict.ts`; `SOURCE_UNAVAILABLE` for no answer or one out of form. It refuses every basis but a
   display. `http.ts` exports its capped JSON read and signal join for it. The minified bundle is pinned under 6 KB
-  gzip, not the design's 4 KB: any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
+  gzip, of which any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
 - `./display` after review: a 200 whose body is JSON `null` is out of form (no longer read as an absent record); an
   owner or address must be a lower-case address string; a 404 is an absent name or ticker only with the resolver's
   exact refusal for that read (`unregistered name`, `unknown ticker`), any other 404 `SOURCE_UNAVAILABLE`. The README

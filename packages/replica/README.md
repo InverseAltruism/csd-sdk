@@ -732,19 +732,32 @@ npx cairnx-replica check --feed http://127.0.0.1:8793 --json     # one's own csd
 
 The source is one of `--node <url>` (one's own node, under `./server`'s address rule), `--hosted <origin>` (complete
 blocks from a front door, its headers verified from `--anchor <height>:<hash>`, at or below the activation height less
-one, or from the pin) and `--feed <base>` (a csd-indexer, level 1: one's own, or a host without a request limit). `--pin` starts from `@inversealtruism/cairnx-pin`,
-which must be installed beside this package; a feed takes no pin. `--reference <base>` compares with a host's tuples
-as `open`'s `reference` does ("Tuples and a reference" above); `--expect` compares with a tuple written out. Either
-gives one result of `equal`, `branch`, `records`, `rules`, `missing` (the reference holds no such boundary, or the
-expected tuple is at another height than the newest final boundary held) or `unavailable`. With neither, the result is
-`held` once a tuple is held. `--json` prints the report as one JSON object; `--timeout-ms` bounds the run (default two
-hours). The exit
-code is 0 for `equal` and `held`, 1 for any other result (`no-tuple` when no final boundary was reached), and 2 for a
-usage or configuration error. A refusal the next step would repeat (`PIN_MISMATCH`, `PIN_OFF_CHAIN`, `BELOW_FLOOR`)
-ends the run at once. While it reads, the command prints to stderr a progress line (`syncing: cursor <h> of tip <h>`,
-the level, the proof and the codes) whenever one of those changes and every 30 s, and each new source error
-(`source error <code>: <reason>`); the deadline also ends a step in flight, prints `deadline: <ms> ms passed waiting
-for ...` with what it waited for and the last source error, and gives the result `timeout`. The command asks no host it was not given and holds nothing on disk (`test/cli.test.ts`).
+one, or from the pin) and `--feed <base>` (a csd-indexer, level 1: one's own, or a host without a request limit).
+`--pin` starts from `@inversealtruism/cairnx-pin`, which must be installed beside this package; a feed takes no pin.
+`--reference <base>` compares with a host's tuples as `open`'s `reference` does ("Tuples and a reference" above);
+`--expect` compares with a tuple written out. With neither, the result is `held` once a tuple is held. `--json` prints
+the report as one JSON object, its `result` and `exit` the table's; `--timeout-ms` is the deadline, 1 to 2147483647
+(default two hours).
+
+The exit codes are fixed from 0.1.0:
+
+| Exit | Result | Why |
+|---|---|---|
+| 0 | `equal`, `held` | the check passed: the tuple equals the reference or the expected one, or, with nothing to compare, one is held |
+| 1 | `branch`, `records`, `rules` | the check ran and the two sides differ: another block hash, another events hash, another state hash at that boundary; a pinned source's `PIN_OFF_CHAIN` is `branch` and its `RULES_DIFFER` (the pin's gate table is not the loaded core's) is `rules` |
+| 2 | (none) | a usage or configuration error, with one line saying what to fix: an unknown or repeated flag, a URL that is not http or https without credentials, query or fragment, a height not written as a whole decimal number, `--timeout-ms` out of range, `--pin` without `@inversealtruism/cairnx-pin` installed |
+| 3 | `missing`, `unavailable`, `no-tuple`, `timeout` | it could not check: the other side holds no tuple at that boundary (a reference keeps a bounded window, and an expected tuple may name another height than the newest final boundary held), the reference did not answer in form, no final boundary was reached (a pin whose log is not its descriptor's, `PIN_MISMATCH`, ends here), or the deadline passed. None of these contradicts the replica |
+
+A refusal the next step would repeat (a pinned source's `PIN_MISMATCH`, `PIN_OFF_CHAIN` and `RULES_DIFFER`, and
+`BELOW_FLOOR`) ends the run at once. While it reads, the command prints to stderr a progress line (`syncing: cursor <h>
+of tip <h>`, the level, the proof and the codes) whenever one of those changes and every 30 s, and each new source
+error (`source error <code>: <reason>`). At the deadline it stops waiting for the step in flight, prints `deadline: <ms>
+ms passed waiting for ...` with what it waited for and the last source error, and gives the result `timeout`; it then
+gives the source 5 s to stop and exits without it if it has not (a feed's scan takes no signal, so a request it has open
+is not ended by the deadline). Every line goes through one boundary: control characters (C0, DEL, C1) and the bidi
+and line separators (U+2028, U+2029, U+202A to U+202E, U+2066 to U+2069) are shown as `\uXXXX`, and text that came
+from a source, a reference or an error made from them is cut at 400 characters. The command asks no host it was not
+given (every request it makes refuses redirects) and holds nothing on disk (`test/cli.test.ts`).
 
 ## Known replicas
 

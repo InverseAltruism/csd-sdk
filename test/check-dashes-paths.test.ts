@@ -100,6 +100,10 @@ try {
   ok("packed: a clean tarball has no offence", clean.length === 0, clean.join("; "));
   const bad = packedOffences(new Map([["package/dist/index.d.ts", enc(`/** a ${EM} b */\n`)], ["package/dist/chunk.js", enc('const p = "/home/someone/x";\n')],
     ["package/README.md", enc("see ../cairn-wallet/src\n")]]));
+  const refs = packedOffences(new Map([["package/CHANGELOG.md", enc("not the design's 4 KB\n")], ["package/dist/a.js", enc("/** x (design section 2) */\n")],
+    ["package/README.md", enc("by hand on the deploy host\n")], ["package/README.md2", enc("that is the design, a recount does not settle it\n")]]));
+  ok("packed: a pointer to a private design document or the deploy host is refused, and plain use of the word design is not",
+    refs.length === 3 && !refs.some((l) => l.includes("README.md2")), refs.join("; "));
   ok("packed: an em dash in a .d.ts, a home path in a chunk and a sibling path in the README are each refused",
     bad.length === 3 && bad.some((l) => /index\.d\.ts: em dash/.test(l)) && bad.some((l) => /chunk\.js: a sibling or host path \(\/home\/\)/.test(l))
       && bad.some((l) => /README\.md: a sibling or host path \(\.\.\/cairn-wallet\)/.test(l)), bad.join("; "));

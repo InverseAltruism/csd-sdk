@@ -167,6 +167,7 @@ try {
     indexer: await up(captureIndexer(fx)),
   };
 
+  if (live) console.log("the worked examples: skipped (they run offline, against recorded answers)");
   if (!live) {
     console.log("the worked examples against recorded answers:");
     const examples: Record<string, string[]> = {
@@ -193,26 +194,40 @@ try {
   type Ref = { height: number; blockHash: string; eventsHash: string; stateHash: string };
   const ref = JSON.parse(readFileSync(REFERENCE, "utf8")) as Record<string, Ref>;
   const expect = (t: Ref | undefined) => ["--expect", `${t!.height}:${t!.blockHash}:${t!.eventsHash}:${t!.stateHash}`];
-  const legs: [string, string[]][] = live ? [
-    ...(arg("--indexer") ? [["feed", ["--feed", arg("--indexer")!]] as [string, string[]]] : []),
-    ...(arg("--origin") ? [["hosted, above the pin", ["--hosted", arg("--origin")!, "--pin"]] as [string, string[]]] : []),
-    ...(arg("--origin") && flag("--full") ? [["hosted, from the activation root", ["--hosted", arg("--origin")!, "--anchor", root]] as [string, string[]]] : []),
-    ...(arg("--node") ? [["own node, above the pin", ["--node", arg("--node")!, "--pin"]] as [string, string[]]] : []),
-    ...(arg("--node") && flag("--full") ? [["own node, from the activation height", ["--node", arg("--node")!]] as [string, string[]]] : []),
-  ].map(([l, a]) => [l, [...a, "--reference", arg("--reference")!, ...(arg("--timeout-ms") ? ["--timeout-ms", arg("--timeout-ms")!] : [])]] as [string, string[]]) : [
+  // Every live leg, with what it needs; one not given is named as skipped, so a run's output says what it did not check.
+  const liveLegs: [string, string | undefined, boolean, (u: string) => string[]][] = [
+    ["feed", "--indexer", true, (u) => ["--feed", u]],
+    ["hosted, above the pin", "--origin", true, (u) => ["--hosted", u, "--pin"]],
+    ["hosted, from the activation root", "--origin", flag("--full"), (u) => ["--hosted", u, "--anchor", root]],
+    ["own node, above the pin", "--node", true, (u) => ["--node", u, "--pin"]],
+    ["own node, from the activation height", "--node", flag("--full"), (u) => ["--node", u]],
+  ];
+  if (live) for (const [label, need, on] of liveLegs) if (arg(need!) === undefined || !on) console.log(`  skipped: ${label} (${arg(need!) === undefined ? `no ${need}` : "needs --full"})`);
+  const legs: [string, string[]][] = live ? liveLegs.filter(([, need, on]) => arg(need!) !== undefined && on)
+    .map(([l, need, , args]) => [l, [...args(arg(need!)!), "--reference", arg("--reference")!, ...(arg("--timeout-ms") ? ["--timeout-ms", arg("--timeout-ms")!] : [])]] as [string, string[]]) : [
     ["feed: a csd-indexer over cairnx-core's recorded blocks to 117,000", ["--feed", src.indexer, ...expect(ref.feed)]],
     ["own node: the recorded node to 30,300", ["--node", src.node, ...expect(ref.blocks)]],
     ["own node above the shipped pin: the recorded node to 143,356", ["--node", src.nodePin, "--pin", ...expect(ref.pin)]],
     ["hosted blocks from csd-anchors' activation root: the recorded front door to 30,300", ["--hosted", src.front, "--anchor", root, ...expect(ref.blocks)]],
     ["hosted blocks above the shipped pin: the recorded front door to 143,356", ["--hosted", src.frontPin, "--pin", ...expect(ref.pin)]],
   ];
+  // Offline, the two other exit codes from the install: a wrong expected tuple differs (1), a source that refuses
+  // every request cannot be checked (3).
+  if (!live) {
+    const wrong = { ...ref.blocks!, stateHash: `0x${"ab".repeat(32)}` };
+    const d = await child(bin, ["check", "--node", src.node, ...expect(wrong), "--json"], work);
+    const gone = await child(bin, ["check", "--node", "http://127.0.0.1:9", "--json", "--timeout-ms", "3000"], work);
+    const res = (o: string) => { try { return JSON.parse(o.trim().split("\n").at(-1) ?? "") as { result?: string; exit?: number }; } catch { return {}; } };
+    ok("a wrong expected state hash: result rules, exit 1", d.code === 1 && res(d.out).result === "rules" && res(d.out).exit === 1, `${d.code} ${d.out}`.slice(0, 600));
+    ok("a node that refuses every connection: result timeout, exit 3", gone.code === 3 && res(gone.out).result === "timeout" && res(gone.out).exit === 3, `${gone.code} ${gone.out}${gone.err}`.slice(0, 600));
+  }
   if (live && legs.length === 0) throw new Error("--live names no leg: give --indexer, --origin or --node");
   for (const [label, args] of legs) {
     const r = await child(bin, ["check", ...args, "--json"], work, live);
-    let report: { result?: string; level?: number; proof?: string; tuple?: Ref | null; why?: string[]; compare?: unknown } = {};
+    let report: { result?: string; exit?: number; level?: number; proof?: string; tuple?: Ref | null; why?: string[]; compare?: unknown } = {};
     try { report = JSON.parse(r.out.trim().split("\n").at(-1) ?? ""); } catch { report = {}; }
     console.log(`  ${label}: level ${report.level}, proof ${report.proof}, tuple ${JSON.stringify(report.tuple)}${live ? `, compare ${JSON.stringify(report.compare)}` : ""}`);
-    ok(`${label}: result equal, exit 0`, r.code === 0 && report.result === "equal", `exit ${r.code} ${r.out}${r.err}`.slice(0, 3_000));
+    ok(`${label}: result equal, exit 0, the report's exit the same`, r.code === 0 && report.result === "equal" && report.exit === 0, `exit ${r.code} ${r.out}${r.err}`.slice(0, 3_000));
   }
 } finally {
   for (const s of servers) s.close();
