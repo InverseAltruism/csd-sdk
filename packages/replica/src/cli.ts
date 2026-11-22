@@ -96,7 +96,9 @@ function against(ours: Tuple, want: Tuple): Result {
 
 /** How often a sync that has not changed prints its progress line again. */
 const PROGRESS_MS = 30_000;
-const caughtUp = (s: ReplicaStatus) => s.cursor !== null && s.at !== null && s.cursor.height >= s.at.tipHeight;
+// The tip a step reports is a header its root vouches for, under an anchor root the window's highest, not the server's:
+// a step refused part way leaves the cursor at that tip. So the run is caught up only when its last step settled.
+const caughtUp = (s: ReplicaStatus) => s.lastError === null && s.cursor !== null && s.at !== null && s.cursor.height >= s.at.tipHeight;
 const progressOf = (s: ReplicaStatus) =>
   `syncing: cursor ${s.cursor?.height ?? "none"} of tip ${s.at?.tipHeight ?? "unknown"}, level ${s.level}, proof ${s.proof}, why ${s.why.map((w) => w.code).join(",") || "none"}, notes ${s.notes.map((n) => n.code).join(",") || "none"}`;
 const errorOf = (e: NonNullable<ReplicaStatus["lastError"]>) => `${e.code}: ${e.reason}`;

@@ -126,6 +126,18 @@ console.log("a run that cannot finish says so while it waits and at its deadline
   ok("a source that answers an error forever: each error printed as it comes, then the deadline naming it, exit 1",
     e.code === 1 && e.report?.result === "timeout" && Date.now() - t0 < 8_000 && e.err.some((l) => /^source error SOURCE_UNAVAILABLE: /.test(l))
       && e.err.some((l) => /^deadline: 3000 ms passed waiting for the source's first step \(last error SOURCE_UNAVAILABLE: /.test(l)), [...e.err, ...e.lines].join("\n"));
+  // A front door that refuses a page with a 429 part way, twice, as ours does past its rate limit: the step that keeps
+  // the blocks before it settles with the cursor at the window's verified tip, which is not the server's, and the next
+  // step meets the 429 again.
+  let refused = 0;
+  const limited = front({ answers: all, fail: (path) => {
+    if (refused >= 2 || !/^\/api\/blocks\/30080\//.test(path)) return null;
+    refused++;
+    return new Response("{}", { status: 429, headers: { "retry-after": "1" } });
+  } }).f;
+  const rl = await run(["--hosted", ORIGIN, "--anchor", `${ANCHOR.height}:${ANCHOR.hash}`, "--expect", str(T30), "--json", "--timeout-ms", "60000"], limited);
+  ok("a 429 part way through hosted blocks: the run waits and reads on to the server's tip, the tuple at 30,270 equal, exit 0",
+    refused === 2 && rl.code === 0 && rl.report?.result === "equal" && rl.err.some((l) => /^source error SOURCE_RATE_LIMITED: /.test(l)), [...rl.err, ...rl.lines].join("\n"));
   const h = await run(["--node", NODE, "--json"], node({ answers: cap.answers }).f);
   ok("the honest run prints its progress, the cursor against the tip with the level and the codes, and no deadline line",
     h.code === 0 && h.err.some((l) => /^syncing: cursor 30300 of tip 30300, level 3, proof inclusion, why /.test(l)) && !h.err.some((l) => /^deadline/.test(l)), h.err.join("\n"));
