@@ -229,7 +229,7 @@ console.log("with inclusion, rollbacks to a shorter branch that leave a kept bou
   const inc = { indexerUrl: "http://idx", pageSize: 3, verifyInclusion: true,
     fetch: ((i: string | URL | Request, r?: RequestInit) => realOf(w.chain.indexer({ tip: w.tip }))(i, r)) as typeof fetch,
     headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerMerkleAt!(h), rawTxAt: (id: string) => w.chain.verified({ verifiedTip: w.tip }).rawTxAt!(id),
-    verifiedTipHeight: async () => w.tip };
+    verifiedTipHeight: async () => w.tip, headerAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerAt(h) };
   const loop = replicaLoop({ source: indexerFeed(inc), store: memoryStore(), ...WIDE });
   await loop.open();
   const fresh = async () => {

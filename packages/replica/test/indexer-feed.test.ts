@@ -4,12 +4,12 @@
 // events below the cursor changed rolls back to the last event block that agrees and resumes on the new branch; a record
 // below the activation height is left out, and so is an Attest on it; a verified tip that moves back rolls nothing
 // back; a block hash the store holds that the indexer no longer gives rolls back to the last one it does.
-import { ACTIVATION_HEIGHT, CAIRNX_EVENT_RULE, canonicalJson, mint, type ChainEvent } from "@inversealtruism/cairnx-core";
-import { levelOf, memoryStore, open, replicaLoop, type Cursor, type Loop, type Step } from "../src/index.js";
+import { ACTIVATION_HEIGHT, CAIRNX_EVENT_RULE, FINAL_DEPTH, canonicalJson, mint, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { ReplicaConfigError, levelOf, memoryStore, open, replicaLoop, type Cursor, type Loop, type Step } from "../src/index.js";
 import { applyOrder } from "../src/order.js";
-import { Scanner, indexerFeed } from "../src/server.js";
+import { Scanner, indexerFeed, replicaReads } from "../src/server.js";
 import { fixtureSource, type BlockFixture } from "../src/testing.js";
-import { done, ok } from "./check.js";
+import { done, ok, thrown } from "./check.js";
 import { corpus, fx, pinned } from "./core-files.js";
 import { captureIndexer } from "./indexer-capture.js";
 import { A, H0, KA, KB, KC, KEYS, buildChain, defaultSpecs, timeAt, type Spec } from "./scan/scan-chain.js";
@@ -235,7 +235,8 @@ console.log("the indexer's tip below the cursor, at a held boundary, at the floo
   let w = { chain: a, tip: B0 + 25 };
   const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(w.chain.indexer({ tip: w.tip }))(i, r)) as typeof fetch, pageSize: 3,
     verifyInclusion: true, headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerMerkleAt!(h),
-    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: w.tip }).rawTxAt!(id), verifiedTipHeight: async () => w.tip };
+    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: w.tip }).rawTxAt!(id), verifiedTipHeight: async () => w.tip,
+    headerAt: (h: number) => w.chain.verified({ verifiedTip: w.tip }).headerAt(h) };
   const loop = replicaLoop({ source: indexerFeed(opts), store: memoryStore(), ...WIDE });
   await loop.open();
   const s1 = await loop.advance();
@@ -266,22 +267,32 @@ console.log("the indexer's tip below the cursor, at a held boundary, at the floo
 }
 
 {
-  // With inclusion, the verified tip back under the floor's final depth while the indexer replaced the cursor's block:
-  // nothing above the floor can be compared, and the store rolls back to the floor, not below it.
-  const a = signed, b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "u", from: H0 + 20 }] });
-  let w = { chain: a, vt: H0 + 40 };
-  const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(w.chain.indexer({ tip: H0 + 40 }))(i, r)) as typeof fetch, pageSize: 3,
+  // With inclusion: the indexer's tip drops under the floor while the verified headers stay; the verified headers name
+  // the floor's block, so the store rolls back to the floor, not below it. Then the final height drops under the floor
+  // as well with the cursor's block replaced: no verified hash names a block to end on, and the step is idle.
+  const b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "u", from: H0 + 20 }] });
+  let w = { chain: signed, tip: H0 + 40, vt: H0 + 40 };
+  const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(w.chain.indexer({ tip: w.tip }))(i, r)) as typeof fetch, pageSize: 3,
     verifyInclusion: true, headerMerkleAt: (h: number) => w.chain.verified({ verifiedTip: H0 + 40 }).headerMerkleAt!(h),
-    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: H0 + 40 }).rawTxAt!(id), verifiedTipHeight: async () => w.vt };
+    rawTxAt: (id: string) => w.chain.verified({ verifiedTip: H0 + 40 }).rawTxAt!(id), verifiedTipHeight: async () => w.vt,
+    headerAt: (h: number) => w.chain.verified({ verifiedTip: w.vt }).headerAt(h) };
   const loop = replicaLoop({ source: indexerFeed(opts), store: memoryStore(), ...WIDE });
   await loop.open();
   const s1 = await loop.advance();
-  w = { chain: b, vt: 5 };
+  w = { chain: signed, tip: 100, vt: H0 + 40 };
   const s2 = await loop.advance();
-  ok("the cursor's block replaced, the final height under the floor: rolled back to the floor, no refusal",
-    s1.cursor?.height === H0 + 28 && s2.lastReorg?.to.height === ACTIVATION_HEIGHT - 1 && s2.cursor?.height === ACTIVATION_HEIGHT - 1 && s2.lastError === null,
-    JSON.stringify({ c: s2.cursor, r: s2.lastReorg, e: s2.lastError }));
-  await loop.close();
+  ok("with inclusion, the indexer's tip under the floor: rolled back to the floor with the verified hash there, no refusal",
+    s1.cursor?.height === H0 + 28 && s2.lastReorg?.to.height === ACTIVATION_HEIGHT - 1 && s2.cursor?.height === ACTIVATION_HEIGHT - 1 &&
+    s2.cursor.hash === signed.hashAt(ACTIVATION_HEIGHT - 1) && s2.lastError === null, JSON.stringify({ c: s2.cursor, r: s2.lastReorg, e: s2.lastError }));
+  const again = replicaLoop({ source: indexerFeed(opts), store: memoryStore(), ...WIDE });
+  w = { chain: signed, tip: H0 + 40, vt: H0 + 40 };
+  await again.open();
+  await again.advance();
+  w = { chain: b, tip: H0 + 40, vt: 5 };
+  const s3 = await again.advance();
+  ok("the final height under the floor, the cursor's block replaced: idle at genesis, below the cursor, no refusal",
+    s3.lastReorg === null && s3.cursor?.height === H0 + 28 && s3.tip?.height === 0 && s3.lastError === null, JSON.stringify({ c: s3.cursor, t: s3.tip, e: s3.lastError }));
+  await loop.close(); await again.close();
 }
 
 console.log("block hashes the indexer no longer gives:");
@@ -421,6 +432,73 @@ console.log("the tip a step reports:");
   const z = await next(indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: TIP })), pageSize: 3, ...signed.verified({ verifiedTip: TIP }) }), null, 2);
   ok("with inclusion, a step that stops short of the final height: its cursor below its tip, the final height, its reach",
     z.kind === "blocks" && z.cursor.height < final && z.tip.height === final && z.reach === final, JSON.stringify(z.kind === "blocks" ? { c: z.cursor, t: z.tip, r: z.reach } : z));
+}
+
+console.log("with inclusion the verified headers name the tip:");
+{
+  const T = H0 + 40, WIDE2 = { maxBlocks: 100_000, maxRequests: 100_000 };
+  const { headerAt: _, ...noHeader } = signed.verified({ verifiedTip: T });
+  const refused = thrown(() => indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), ...noHeader }));
+  ok("verifyInclusion without headerAt: ReplicaConfigError at construction, so open() never runs on it", refused instanceof ReplicaConfigError, String(refused));
+  ok("paired: with headerAt, and without inclusion and without headerAt, the feed is built",
+    thrown(() => indexerFeed({ indexerUrl: "http://idx", ...signed.verified({ verifiedTip: T }) })) === null && thrown(() => indexerFeed({ indexerUrl: "http://idx" })) === null);
+  // The indexer's tip is T; the verified final height is T + lag. The clock is a minute after the final block.
+  for (const [lag, status, behind] of [[20, 503, true], [5, 200, true], [0, 200, false]] as const) {
+    const final = T + lag, vt = final + FINAL_DEPTH;
+    const r = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), pageSize: 3, ...signed.verified({ verifiedTip: vt }) }),
+      clock: () => (timeAt(final) + 60) * 1000, step: WIDE2 });
+    const st = await r.advance(), why = st.why.map((w) => w.code).join(","), got = (await replicaReads(r)("/cairnx/state"))!;
+    ok(`the indexer ${lag} below the verified final height ${final}: ${behind ? "BEHIND" : "not behind"}, ${status}; the tip the verified header's`,
+      st.cursor?.height === T && st.at?.tipHeight === final && st.at.tipTime === timeAt(final) && why.includes("BEHIND") === behind && got.status === status &&
+      (got.status !== 200 || got.headers["x-cairnx-why"] === why), `why ${why} tip ${st.at?.tipHeight} cursor ${st.cursor?.height} status ${got.status}`);
+    await r.close();
+  }
+  // headerAt that throws or answers out of form.
+  for (const [what, answer, code] of [
+    ["throws", async () => { throw new Error("the header source is down"); }, "SOURCE_UNAVAILABLE"],
+    ["answers a hash out of form", async () => ({ hash: "0xzz", time: timeAt(T) }), "SOURCE_MALFORMED"],
+    ["answers no time", async (h: number) => ({ hash: signed.hashAt(h) }), "SOURCE_MALFORMED"],
+    ["answers a time that is not whole seconds", async (h: number) => ({ hash: signed.hashAt(h), time: 1.5 }), "SOURCE_MALFORMED"],
+    ["answers null", async () => null, "SOURCE_MALFORMED"],
+  ] as const) {
+    const st = await next(indexerFeed({ indexerUrl: "http://idx", fetch: real(signed.indexer({ tip: T })), pageSize: 3, ...signed.verified({ verifiedTip: T }),
+      headerAt: answer as never }), null, 100);
+    ok(`headerAt ${what}: ${code}`, st.kind === "cannot" && st.code === code, JSON.stringify(st));
+  }
+  // The verified final block 7 hours old while the indexer's /block answers name the time now: the verified time counts.
+  const nowS = timeAt(T - FINAL_DEPTH) + 7 * 3600;
+  const fresh = (async (i: string | URL | Request, r?: RequestInit) => {
+    const got = await real(signed.indexer({ tip: T }))(i, r);
+    if (!String(i).includes("/block/0x")) return got;
+    return Response.json({ ...((await got.json()) as Record<string, unknown>), time: nowS });
+  }) as typeof fetch;
+  let blockReads = 0;
+  const counted = (async (i: string | URL | Request, r?: RequestInit) => { if (String(i).includes("/block/0x")) blockReads++; return fresh(i, r); }) as typeof fetch;
+  const old = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: counted, pageSize: 3, ...signed.verified({ verifiedTip: T }) }), clock: () => nowS * 1000, step: WIDE2 });
+  const os = await old.advance(), og = (await replicaReads(old)("/cairnx/state"))!;
+  ok("the verified final block 7 hours old, the indexer saying now: TIP_STALE_LONG, 503, and no /block read under inclusion",
+    os.notes.some((n) => n.code === "TIP_STALE_LONG") && og.status === 503 && blockReads === 0, `${og.status} ${og.headers["x-cairnx-notes"]} reads ${blockReads}`);
+  await old.close();
+  const plainOld = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: fresh, pageSize: 3 }), clock: () => nowS * 1000, step: WIDE2 });
+  const ps = await plainOld.advance();
+  ok("paired, without inclusion: the indexer's /block time is the tip's, so the same clock reads fresh", ps.at?.tipTime === nowS && !ps.why.some((w) => w.code === "TIP_STALE"), JSON.stringify(ps.why));
+  await plainOld.close();
+}
+{
+  // The indexer on another branch than the verified headers: B from H0 + 20 while the verified headers are A's. It is
+  // served only up to the last boundary where it gives the verified hash, and the store holds the verified hashes.
+  const T = H0 + 40, b = buildChain(defaultSpecs({ A: KA, B: KB, C: KC }), { keys: KEYS, forks: [{ name: "x", from: H0 + 20 }] });
+  let idx = signed;
+  const opts = { indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => real(idx.indexer({ tip: T }))(i, r)) as typeof fetch, pageSize: 3,
+    ...signed.verified({ verifiedTip: T }) };
+  const r = await open({ source: indexerFeed(opts), clock: () => (timeAt(T - FINAL_DEPTH) + 60) * 1000, step: { maxBlocks: 100_000, maxRequests: 100_000 } });
+  const a1 = await r.advance();
+  idx = b;
+  const a2 = await r.advance(), got = (await replicaReads(r)("/cairnx/state"))!;
+  ok(`the indexer moved to another branch than the verified headers: rolled back to ${H0 + 10}, the last boundary it agrees on, BEHIND, 503`,
+    a1.cursor?.height === T - FINAL_DEPTH && a2.lastReorg?.to.height === H0 + 10 && a2.cursor?.height === H0 + 10 && a2.cursor.hash === signed.hashAt(H0 + 10) &&
+    a2.at?.tipHeight === T - FINAL_DEPTH && a2.why.some((w) => w.code === "BEHIND") && got.status === 503, JSON.stringify({ c: a2.cursor, r: a2.lastReorg, why: a2.why, s: got.status }));
+  await r.close();
 }
 
 done("cairnx-replica indexerFeed");

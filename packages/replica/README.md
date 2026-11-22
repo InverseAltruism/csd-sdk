@@ -512,11 +512,21 @@ its hash, not steps.
 ## A csd-indexer feed
 
 `indexerFeed(options)`, in `./server` only, is a source over the CairnX resolver's Scanner, which reads the cairnx:v1
-proposals and attestations a csd-indexer serves; `options` are the Scanner's (`ScanOptions`: `indexerUrl`, `fetch`,
-`timeoutMs`, page sizes, and for `verifyInclusion` the header merkle, raw transaction and verified tip reads). Its
-basis is a feed: level 1, or 2 with `verifyInclusion`, where each payment's transaction is bound to its txid and
-merkle-proven against the caller's header source and each record's fields and author come from the node's body. The
-Scanner checks no proof of work, so that level is as good as the header source the caller wires.
+proposals and attestations a csd-indexer serves. Its basis is a feed: level 1, or 2 with `verifyInclusion`, where each
+payment's transaction is bound to its txid and merkle-proven against the caller's header source and each record's
+fields and author come from the node's body. The Scanner checks no proof of work, so that level is as good as the
+header source the caller wires.
+
+| Option (`IndexerFeedOptions`) | What it is |
+|---|---|
+| `indexerUrl`, `fetch`, `timeoutMs`, `pageSize`, `attPageSize`, `feedPageSize`, `keptMax`, `keptRefresh` | the Scanner's (`ScanOptions`); `fetch` and `timeoutMs` also serve the feed's block-hash and block-time reads |
+| `verifyInclusion`, `confDepth` | inclusion on, and the depth of the final height below the verified tip (default 12) |
+| `headerMerkleAt(height)`, `rawTxAt(txid)`, `verifiedTipHeight()`, `merkleProofAt(txid)` | the Scanner's reads of the caller's verified side, for inclusion |
+| `headerAt(height)` | the feed's, required with `verifyInclusion`: `{ hash, time }` of the block at a height on the caller's verified headers (the same source as `headerMerkleAt` and `verifiedTipHeight`), asked at or below the final height; without it `indexerFeed` throws `ReplicaConfigError` |
+
+With `verifyInclusion` the feed trusts the caller's verified headers for the records' inclusion, for every block hash
+it holds and for the tip and its time; it trusts the indexer only for which records exist. The indexer can still
+withhold a record, which is why the level stays 2 and not 3.
 
 Each step is one scan. A scan whose tip block changed during the pull, or whose hash could not be read before and
 after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The rule's events are those at or above
@@ -533,14 +543,22 @@ cursor (the reader's `BRANCH_UNRESOLVED`), until its tip reaches the floor again
 the cursor with the cursor's block still the indexer's is no reorg: the step is idle until it passes the cursor
 again. The events above the cursor are
 the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
-the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
-with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step
-whose request or block budget runs out ends at the last boundary it read, with the tip as its reach. A step's tip is
-the block at the scan's top with its header time from the indexer's `/block/<hash>` (an answer that does not name
-that block at that height with a whole number of seconds is `SOURCE_MALFORMED`): the indexer's tip, or with
-`verifyInclusion` the final height, the highest block the Scanner emits for, so every answer carries the note
-`FINAL_VIEW` and `BEHIND` means behind what the feed can serve. `Source.tip()` reads the indexer's tip, or with
-`verifyInclusion` gives the last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
+of the chain the feed follows. Without `verifyInclusion` that chain is the indexer's: the hashes are its
+`/block-height`, the cursor ends at its tip, and the step's tip is its tip with the header time its `/block/<hash>`
+gives (an answer that does not name that block at that height with a whole number of seconds is `SOURCE_MALFORMED`).
+With `verifyInclusion` the chain is the caller's verified headers: every hash held is `headerAt`'s; the step's tip is the
+final height (the verified tip less `confDepth`) with `headerAt`'s hash and time, and the indexer's `/block` is not read;
+the cursor ends at the highest height at or below the lower of the indexer's tip and the final height where the
+indexer gives the verified hash (that height, else the last boundary where it does). So an indexer that lags reads as
+`BEHIND` by its distance from the final height, and one on another branch than the verified headers is served only up
+to where the two agree, rolled back to there when the cursor is above it, and reads as `BEHIND` from there (withheld
+by a server from 12). A `headerAt` answer whose hash is out of form or whose time is not whole seconds is
+`SOURCE_MALFORMED`; one that throws is `SOURCE_UNAVAILABLE`. Every answer under `verifyInclusion` carries the note
+`FINAL_VIEW`. A step whose request or block budget (the `headerAt` reads count with the indexer's requests) runs out
+ends at the last boundary it read, with the scan's top as its reach. With `verifyInclusion` and the final height under
+the floor, a cursor whose block is off the chain leaves the step idle at genesis, since no verified hash at or below
+the final height names a block to end on. `Source.tip()` reads the indexer's tip, or with `verifyInclusion` gives the
+last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
 whole domain the first time and the indexer's chain-order feeds after it; the scan is not cut short by the step's
 signal.
 

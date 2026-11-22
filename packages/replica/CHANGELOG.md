@@ -2,6 +2,12 @@
 
 ## 0.1.0 (unreleased)
 
+- `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
+  through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
+  without it): the tip is the final height with the verified hash and time, the indexer's `/block` is not read, and
+  the cursor ends where the indexer still gives the verified hash. An indexer that lags reads as `BEHIND` (it read as
+  synced at its own tip, so a server answered 200 for a state 20 blocks behind), and one on another branch than the
+  verified headers is served only up to where they agree. Without inclusion nothing changes.
 - A read starts an advance only when none runs and the last ended at least `READ_ADVANCE_MS` (15 s) before, so a burst
   of requests to a replica's server polls its source at most once in that time; `advance()` is unchanged.
 - `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a
