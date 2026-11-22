@@ -8,6 +8,10 @@ export const DOMAIN = "cairnx:v1";
 export const ACTIVATION_HEIGHT = 29_860;      // tokens went live here
 /** True below ACTIVATION_HEIGHT, where resolve() skips every event without a note. */
 export const beforeActivation = (height: number): boolean => height < ACTIVATION_HEIGHT;
+/** Whether an event height or a tip lies in the domain the replay's expiry batches are proven for (CONVENTION section
+ *  5): a safe integer. The chain produces non-negative ones; a negative one is skipped below activation. The fold's
+ *  split and a held context's refusal both read this one rule. */
+export const isChainHeight = (height: unknown): height is number => Number.isSafeInteger(height);
 export const V11_HEIGHT = 29_960;             // names + protocol fees activate here (non-retroactive)
 export const V12_HEIGHT = 30_300;             // token⇄token swaps + partial fills + bids (non-retroactive)
 // v1.3 = CSD-priced offers must be taker-bound (the open CSD-quoted fill race can lose a buyer

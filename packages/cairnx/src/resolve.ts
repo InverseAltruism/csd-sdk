@@ -9,7 +9,7 @@
 // protocol fees (deploy / name-reg / trade-taker) enforced by same-tx outputs to the treasury.
 import { explainRecord } from "./records.js";
 import {
-  TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, beforeActivation, epochOf,
+  TREASURY_ADDR, V15_HEIGHT, V19_HEIGHT, V25_HEIGHT, V29_HEIGHT, beforeActivation, epochOf, isChainHeight,
   type BalanceState, type BidState, type CairnXState, type ChainEvent, type NameState, type OfferState,
   type TokenState,
 } from "./types.js";
@@ -59,7 +59,8 @@ export function replay(events: ChainEvent[], tipHeight: number, opts: StoreOptio
 // The replay as a fold over events in apply order. apply() takes one event: the V29 drop, the flush of the previous
 // block's deferred cancels when the height changes, the sweep at the event's height, its handler. finish() is the end,
 // the only step that reads the tip: the last flush, the closing sweep at tipHeight + 1 and the materialized state.
-function createFold(opts: StoreOptions) {
+// Exported to replay-context.ts, which drives the same fold between tips; the package root does not export it.
+export function createFold(opts: StoreOptions = {}) {
   // v2.9 (§32, V29 / REBIND M4): drop a DUPLICATED event before apply. The ordering step above sorts but never
   // de-dupes, so a double-fed transaction (an overlapping scanner page: cairnx/src/scan.ts pushes pages verbatim)
   // applies twice and double-credits o.paid / o.delivered on the partial-fill path. A transaction has ONE identity
@@ -78,7 +79,7 @@ function createFold(opts: StoreOptions) {
   // The sweep's batches at due heights are proven for heights a chain produces: each event's height and the tip a safe
   // integer. Inside that domain being due only grows with height, so the batches give the state of one batch per sweep;
   // the first height outside it ends them before any sweep reads it; from then on every sweep is the batch 0.2.8 runs.
-  const inDomain = (height: unknown): void => { if (!Number.isSafeInteger(height)) store.endSplit(); };
+  const inDomain = (height: unknown): void => { if (!isChainHeight(height)) store.endSplit(); };
 
   const apply = (ev: ChainEvent): void => {
     inDomain(ev.height);

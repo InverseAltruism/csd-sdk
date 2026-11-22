@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.2.10
+
+- A held replay context: `newReplayContext()` keeps `resolve()`'s fold between tips. `advance(toHeight, events)`
+  applies the whole blocks above the context's height, in apply order; `stateAt(t)`, at that height, answers in place.
+  It takes an event whose height is a safe integer (`isChainHeight`), whose position is a safe integer >= 0 and whose
+  id is a string, as CONVENTION section 33 builds them. For inputs made of plain values (what JSON carries), its answer
+  at t is what `resolve()` returns over the same events at t, and an answer handed out earlier does not change later.
+  Any other event, and a height or tip outside `isChainHeight`, is refused with a `ReplayContextRefusal` ("domain")
+  and the caller replays with `resolve()`. `advance` reads its events once and keeps a one-level copy of each, so a
+  write into an event after the call changes no later answer. The other refusals, each thrown before any write:
+  "order" (a target below the height, an event at or below it or above the target; a new context stands at -1, so it
+  refuses a negative height, which `resolve()` skips below activation), "tip" (an answer off the height), "broken"
+  (any call after the replay threw inside `advance` or `stateAt`, where `resolve()` throws too), "sloppy" (a build
+  that runs the module in sloppy mode, where a write to a frozen shared part would be dropped instead of throwing). The
+  context keeps no earlier state: a reorg that removes an applied block costs one full replay.
+  `isChainHeight`, the one domain rule (`Number.isSafeInteger`), is exported and read by `resolve()`'s fold and by the
+  context. `resolve()` is unchanged: the seal against 0.2.9 finds its whole result identical over each input of
+  0.2.9's proof, and walks a held context through 26,303 of them, 1,270,287 answers each equal to `resolve()`
+  (`CONSENSUS_CHANGES.md`). `test/replay-context.test.ts` compares the context with `resolve()` at every height of the
+  sweep streams (D, over 284,000 blocks, at its dense tips; the malformed ones until refused), every event height of
+  the replay corpus and the growth streams at 500, with answers re-read after later advances and written over. On the
+  replay corpus (1,133 events in 774 blocks), advancing one block and answering at it, 774 times, took 2.81 percent of
+  the time of a `resolve()` per block (medians of five interleaved runs on a host at load 30 to 40; the build without
+  the copy and the position and id checks measured 4.41 percent in the same runs, and the runs' ranges overlap, so the
+  two figures do not rank the builds); those checks and the copy alone take 0.108 ms over the whole corpus.
+
+## 0.2.9
 
 - The replay runs as a fold (one step per event, an end at the tip that alone reads the tip) and its expiry sweep
   applies each expiry at the first height it is due, one batch per such height in ascending order, where 0.2.8 applied

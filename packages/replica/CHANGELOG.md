@@ -7,6 +7,21 @@
   final boundary and the comparison with `--reference` or `--expect`; exit 0 only for `equal` (or `held` with neither),
   2 for a usage or configuration error. Progress, each source error and the deadline (result `timeout`, with what it
   waited for) are printed to stderr; the deadline ends a step in flight.
+- `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
+  through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
+  without it; an answer timed more than `MAX_FUTURE_DRIFT_SECS` after the clock, as one in milliseconds is, is
+  `SOURCE_MALFORMED`): the tip is the final height with the verified hash and time, the indexer's `/block` is not
+  read, and the cursor ends where the indexer still gives the verified hash. An indexer that lags reads as `BEHIND`
+  (it read as synced at its own tip, so a server answered 200 for a state 20 blocks behind). One on another branch
+  than the verified headers is served only up to where they agree while that branch carries no record of its own;
+  when it does, every step fails as `SOURCE_UNAVAILABLE` and the last state stays served until the 6-hour cap
+  (`TIP_STALE_LONG`). Without inclusion nothing changes.
+- A read starts an advance only when none runs and the last ended at least `READ_ADVANCE_MS` (15 s) before, so a burst
+  of requests to a replica's server polls its source at most once in that time; `advance()` is unchanged.
+- `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a
+  witness's valid tip more than 12 above, more than 24 under `FINAL_VIEW`) and the new `TIP_STALE_LONG` (the tip older than `STALE_MAX_MS`, 6 hours); a
+  `TIP_STALE` tip alone and a peer up to that far ahead stay served. The notes reach a client in `x-cairnx-notes`, exposed
+  with the other two (`FINAL_VIEW` never reached the headers).
 - `replicaReads(reader)` in `./server`: the resolver's five state reads from `reader.snapshot()`, with the resolver's
   statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
   `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
@@ -24,12 +39,15 @@
   for (it was the indexer's tip, so every answer said `BEHIND`), and every answer carries the new note `FINAL_VIEW`;
   such a tip is stale only 12 target block times (24 minutes) after the 30 minutes. `Source.tip()` with
   `verifyInclusion` gives the last step's tip.
-- `indexerFeed`: a store cursor above the indexer's tip is a block the indexer's chain does not have, so a shorter
-  branch that changes only block hashes rolls back to the last boundary whose hash agrees and ends on the indexer's
-  tip (the cursor stayed above it, `BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was served). The
-  cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back to it, as the hosted resolver's
-  published state already drops; the store refills from the next scans. A final height that moves back under
-  `verifyInclusion`, the indexer's tip unchanged, still rolls nothing back.
+- `indexerFeed`: a store cursor whose block is off the indexer's chain (the indexer's tip below it, or another hash at
+  its height) rolls back to the lower of that block and the last held boundary whose hash the indexer gives, never
+  below the floor, and the next step reads on to the indexer's tip. A shorter branch that changes only block hashes
+  left the cursor above the indexer's tip (`BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was
+  served); after review, also a tip that lands on a held boundary, the floor, and a shorter branch above the final
+  height under `verifyInclusion`. The cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back
+  to it, as the hosted resolver's published state already drops; the store refills from the next scans. An indexer
+  whose tip is under the floor leaves the step idle at that tip, below the cursor. A final height that moves back with
+  the cursor's block still the indexer's rolls nothing back.
 - The tuple book and the comparison: `status().tuple`, the newest boundary's tuple from the loop's
   boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
   unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;

@@ -4,6 +4,14 @@
 // `at` is the cursor it was tried above, whatever the tip. A snapshot during a commit is commit.test.ts's.
 import { applyOrder, buildRecord, nameRegFee, resolve, stateHash, TREASURY_ADDR } from "@inversealtruism/cairnx-core";
 import { open, type Answer, type DryRunTx, type Snapshot, type Source, type Step } from "../src/index.js";
+import { READ_ADVANCE_MS } from "../src/reader.js";
+import { indexerFeed } from "../src/server.js";
+import { H0, buildChain, defaultSpecs, timeAt as chainTime } from "./scan/scan-chain.js";
+
+const realOf = (f: typeof fetch): typeof fetch => (async (input: string | URL | Request, init?: RequestInit) => {
+  const r = (await f(input, init)) as unknown as { status: number; json(): Promise<unknown> };
+  return r instanceof Response ? r : new Response(JSON.stringify(await r.json()), { status: r.status });
+}) as typeof fetch;
 import { fixtures } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus } from "./core-files.js";
@@ -78,6 +86,86 @@ console.log("events held above the view:");
   const a = await r.snapshot(), v = view(a);
   ok("the view at 30,295 holds the registration and not the record at 30,298", codes(a) === "BRANCH_UNRESOLVED" && v?.height === 30_295 &&
     v.events.length === 1 && v.events[0]!.height === 30_010 && v.state.names.alice?.addr === undefined, JSON.stringify(v?.events.map((e) => e.height)));
+  await r.close();
+}
+
+console.log("the snapshot follows the state: a new commit, and a refill to the same cursor:");
+{
+  // A source that commits to 30,295 and then to 30,300 with a record at 30,298: the second snapshot is a new object.
+  const AL = `0x${"a1".repeat(20)}`, f = fixtures({ lower: true });
+  const reg = f.prop({ v: 1, t: "name", name: "alice" }, { proposer: AL, height: 30_010, paidTo: { [TREASURY_ADDR]: String(nameRegFee("alice", 30_010)) } });
+  const set = f.prop({ v: 1, t: "nset", name: "alice", addr: AL }, { proposer: AL, height: 30_298 });
+  const tipAt = (h: number) => ({ height: h, hash: synth(h), time: now / 1000 });
+  let reach = 30_295;
+  const source: Source = { basis: OWN, floor: null, tip: async () => tipAt(reach), async next(ctx): Promise<Step> {
+    const at = ctx.cursor?.height ?? -1;
+    if (at >= reach) return { kind: "idle", tip: tipAt(reach) };
+    const blocks = [{ height: 30_010, hash: synth(30_010), events: [reg] }, { height: 30_298, hash: synth(30_298), events: [set] }].filter((b) => b.height > at && b.height <= reach);
+    return { kind: "blocks", blocks, cursor: { height: reach, hash: synth(reach) }, tip: tipAt(reach) };
+  } };
+  const r = await open({ source, clock });
+  await r.advance();
+  const a = view(await r.snapshot());
+  reach = 30_300;
+  await r.advance();
+  const b = view(await r.snapshot());
+  ok("after a commit to 30,300: a new snapshot with the record at 30,298", a !== null && b !== null && a !== b && a.height === 30_295 && b.height === 30_300 &&
+    a.state.names.alice?.addr === undefined && b.state.names.alice?.addr === AL, JSON.stringify([a?.height, b?.height]));
+  await r.close();
+}
+{
+  // An indexer that corrects a decoded row at a held block while every block hash stays: the store rolls back and
+  // refills to the same cursor height and hash, and the snapshot after it is not the one before it.
+  const chain = buildChain(defaultSpecs()), T = H0 + 40, target = chain.txs.find((x) => x.spec.kind === "propose" && x.height > H0 + 3)!;
+  let forge: Record<string, Record<string, unknown>> = {};
+  const feed = indexerFeed({ indexerUrl: "http://idx", fetch: ((i: string | URL | Request, r?: RequestInit) => realOf(chain.indexer({ tip: T, forge }))(i, r)) as typeof fetch, pageSize: 3, keptRefresh: 1 });
+  const r = await open({ source: feed, clock: () => (chainTime(T) + 60) * 1000, step: { maxBlocks: 100_000, maxRequests: 100_000 } });
+  await r.advance();
+  const s1 = view(await r.snapshot());
+  forge = { [target.txid]: { proposer: `0x${"ee".repeat(20)}` } };
+  await r.advance();
+  const s2 = view(await r.snapshot());
+  const proposer = (x: Snapshot | null) => { const e = x?.events.find((v) => v.kind === "propose" && v.id === target.txid); return e?.kind === "propose" ? e.proposer : null; };
+  ok("a refill to the same cursor: a new snapshot with the corrected record", s1 !== null && s2 !== null && s1 !== s2 && s1.key !== s2.key &&
+    s1.height === s2.height && r.status().lastReorg !== null && proposer(s2) === `0x${"ee".repeat(20)}` && proposer(s1) !== proposer(s2), `${s1?.key} ${s2?.key} ${proposer(s1)} ${proposer(s2)}`);
+  await r.close();
+}
+
+console.log("reads start advances at most once per READ_ADVANCE_MS:");
+{
+  let t = now, steps = 0;
+  const inner = nodeSource(), source: Source = { ...inner, next: (ctx) => { steps++; return inner.next(ctx); } };
+  const r = await open({ source, clock: () => t });
+  let advances = 0;
+  r.subscribe(() => { advances++; });
+  await Promise.all(Array.from({ length: 20 }, () => r.snapshot()));
+  await r.advance();
+  ok("20 reads before any advance: one advance, which they join", advances === 1, `${advances}`);
+  const ticks = async (n: number) => { for (let i = 0; i < n; i++) await new Promise((go) => setImmediate(go)); };
+  for (let i = 0; i < 20; i++) { t += 500; await r.snapshot(); }
+  await ticks(5);
+  ok(`20 reads over the next ${(20 * 500) / 1000} s: no advance`, advances === 1, `${advances}`);
+  t = now + READ_ADVANCE_MS + 1;
+  await Promise.all(Array.from({ length: 20 }, () => r.snapshot()));
+  await r.advance();
+  const after = advances, stepsAfter = steps;
+  for (let i = 0; i < 20; i++) { t += 100; await r.snapshot(); }
+  await ticks(5);
+  ok(`past ${READ_ADVANCE_MS} ms: one more advance for 20 reads, none for the 20 after it`, after === 2 && advances === 2 && steps === stepsAfter, `${after} ${advances}`);
+  // The next advance to end, or false after 3 s: no advance() call of the test's own may count.
+  const ended = () => new Promise<boolean>((go) => { const off = r.subscribe(() => { off(); clearTimeout(t3); go(true); }); const t3 = setTimeout(() => { off(); go(false); }, 3000); });
+  t = now + READ_ADVANCE_MS + 2_000;
+  const none = ended();
+  await r.snapshot();
+  ok("paired: a read inside the interval by a clock that moved forward starts none", (await none) === false && advances === 2, `${advances}`);
+  t = now - 60_000;
+  const one = ended();
+  await r.snapshot();
+  ok("a clock set back counts as the interval passed: the read starts an advance", (await one) === true && advances === 3, `${advances}`);
+  await ticks(2);   // the run that just ended clears after its listeners
+  const own = advances;
+  await r.advance();
+  ok("paired: advance() starts one whenever none runs", advances === own + 1);
   await r.close();
 }
 

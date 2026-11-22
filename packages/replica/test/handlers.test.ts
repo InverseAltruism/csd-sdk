@@ -9,13 +9,17 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { canonicalState, resolve, type CairnXState } from "@inversealtruism/cairnx-core";
+import { V25_HEIGHT, canonicalState, nameClaim, nameCommit, nameCommitRecord, resolve, type CairnXState } from "@inversealtruism/cairnx-core";
+import { fixtures } from "../src/factories.js";
 import { appliedIds, nameHistory, readName, readNameHistory, readProfile, readResolve, readState, type ReadSnapshot } from "../src/index.js";
 import { done, ok } from "./check.js";
 import { corpus } from "./core-files.js";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-// value imports and re-exports; `import type` and `export type` load nothing
+// value imports and re-exports; `import type` and `export type` load nothing. The walker reads the first import or
+// export at the start of each line, as the resolver's guard does: a second one after it on the same line is not
+// followed. The token-hash pins below catch any change to handlers.ts and nameview.ts, such an import included; a file
+// added to the closure later is followed only through its line-leading imports.
 const FROM = /^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s+)?["']([^"']+)["']/gm;
 const FORBIDDEN = [/\bimport\s*\(/, /["']node:(?:fs|child_process|http|https|net|os|worker_threads)["']/, /config\.js["']/, /\/home\//, /process\.env/, /Date\.now\(/, /\bfetch\(/, /\breadFileSync\(/];
 
@@ -79,6 +83,17 @@ console.log("the answers on resolve()'s states:");
     ok(`${route}: an unregistered name, and "constructor", answer 404 with ok false`, r.status === 404 && JSON.parse(r.body).ok === false && c.status === 404 && JSON.parse(c.body).ok === false);
   }
   ok(`${names.length} names in the corpus's state at ${tip}`, names.length > 0);
+}
+{
+  // A revealed, unfinalized registration: a pending reservation under its owner, not a registered name.
+  const A = "0x" + "a5".repeat(20), { prop } = fixtures(), NAME = "reserva", SALT = "a5cafe00b17e1234a5cafe00b17e1234", h = V25_HEIGHT + 10;
+  const events = [prop(nameCommitRecord({ commit: nameCommit(NAME, SALT, A) }).record, { proposer: A, height: h }), prop(nameClaim({ name: NAME, salt: SALT }).record, { proposer: A, height: h + 2 })];
+  const state = resolve(events, h + 3), snap: ReadSnapshot = { state, canonical: canonicalState, history: (s, n) => nameHistory(events, n, { tipHeight: s.tipHeight, fullRecord: s.names[n] }) };
+  const text = "name is reserved (pending finalize) - not yet registered";
+  const r = readResolve(snap, NAME), nh = readNameHistory(snap, NAME), nm = readName(snap, NAME);
+  ok("a pending reservation: resolve and name-history answer 404 saying it is reserved; name answers 200 with pending true",
+    state.names[NAME]?.pending === true && r.status === 404 && r.body === JSON.stringify({ ok: false, error: text, name: NAME }) &&
+    nh.status === 404 && nh.body === r.body && nm.status === 200 && JSON.parse(nm.body).pending === true, `${r.body} ${nh.body}`);
 }
 
 done("cairnx-replica handlers");

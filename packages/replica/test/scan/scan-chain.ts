@@ -196,8 +196,13 @@ export function buildChain(specs: Spec[], { keys = {} as Record<string, string>,
   };
 
   /** Scanner options with verifyInclusion on: the node knows every block up to `verifiedTip`. Merkle proofs
-   *  come from the indexer endpoint (the Scanner default), as in production. */
-  const verified = ({ verifiedTip, confDepth }: { verifiedTip: number; confDepth?: number }): Partial<ScanOptions> => ({
+   *  come from the indexer endpoint (the Scanner default), as in production. `headerAt` is indexerFeed's: this
+   *  chain's hash and time at a height up to `verifiedTip`. */
+  const verified = ({ verifiedTip, confDepth }: { verifiedTip: number; confDepth?: number }): Partial<ScanOptions> & { headerAt: (h: number) => Promise<{ hash: string; time: number }> } => ({
+    headerAt: async (h) => {
+      if (h > verifiedTip || h < 0) throw new Error(`node has no header at ${h}`);
+      return { hash: hashAt(h), time: timeAt(h) };
+    },
     verifyInclusion: true,
     ...(confDepth === undefined ? {} : { confDepth }),
     headerMerkleAt: async (h) => {

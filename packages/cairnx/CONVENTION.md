@@ -252,6 +252,11 @@ times, is outside that statement. Outside the domain the result is not consensus
 differently (0.2.4 and 0.2.7 on a string height), so a caller checks that event heights and the tip are safe integers
 before the call.
 
+A resolver may also hold its replay between tips and answer in place at the last height it applied, as cairnx-core's
+held context does from 0.2.10: inside the domain its answer at t equals a full replay to t, because the answer's sweep
+at `t + 1` is one more sweep height, and the next block's flush and sweep follow it as they would follow the block
+before; outside the domain the heights at which sweeps run matter, so such a resolver replays in full.
+
 **Canonical state (format 2, normative):** the canonical surface is
 `{tipHeight, tokens, balances, names, offers, bids, feesPaid}`: the event log is excluded.
 Serialization is **canonical JSON** in the state form of §5.1: object keys sorted in ordinal (code-unit) order at every

@@ -5,6 +5,7 @@
 - `names` takes `order=length`: shortest name first, names of one length bytewise. Its cursor is
   `<length>:<name>`; a cursor whose length is not its name's is refused as INVALID_QUERY on `after`. The default order
   stays `name`.
+- cairnx-core 0.2.10 is the exact peer; `rev` moves with the package version.
 
 ## 0.1.2
 

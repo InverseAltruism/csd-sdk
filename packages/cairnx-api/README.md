@@ -15,7 +15,7 @@ second core or runs this package on a core it was not built against.
   notice before a field or route is retired, start on the day the API's documentation is published, not with a
   package version.
 
-The rest of this file describes 0.1.3 as built: 0.1.0's API with `order=length` on `names`, on cairnx-core 0.2.9.
+The rest of this file describes 0.1.3 as built: 0.1.0's API with `order=length` on `names`, on cairnx-core 0.2.10.
 
 ## What an answer means
 

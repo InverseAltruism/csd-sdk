@@ -214,7 +214,9 @@ replayed on demand.
 `status()`, `subscribe(fn)`, `advance({ budgetMs?, signal? })` and `close()`. `openLog({ rule, ... })` is the same loop
 for another rule's events (CONVENTION section 35.2) and gives `events` and the status only, with no resolved state.
 `advance()` runs the loop until it is caught up and asks every witness for its tip meanwhile. A read starts an advance
-when none is running and waits for it at most `waitMs` (default 0: it answers from what is held); a call of
+when none is running and the last ended at least `READ_ADVANCE_MS` (15 seconds, the hosted resolver's default poll)
+before by `clock()`, a clock set back counting as that time passed, so a burst of reads polls the source at most once
+in it; it waits for the advance running at most `waitMs` (default 0: it answers from what is held); a call of
 `advance()` while a run is in flight joins that run, and the status it returns can then come from a round begun before
 the call. A read waits for the advance it started and for a step's commit in flight together at most `waitMs`
 (counted from the read, or until its signal aborts). It answers from the state the last whole commit left, or, while a
@@ -271,6 +273,9 @@ the boundary, the store's source disagrees with a recount and a reference that a
 `WITNESS_MALFORMED` (a witness answered its tip or its gate table out of form, and was taken as silent),
 `FINAL_VIEW` (the source serves final blocks only, so its tip is its final height, 12 below the chain tip it read,
 by design: a csd-indexer feed with `verifyInclusion`; `BEHIND` then counts from that tip),
+`PEER_FAR_AHEAD` (a witness named a tip more than 12 above the replica's whose header meets its own bits, more than 24
+under a `FINAL_VIEW`, whose tip is 12 below the chain tip by design; `TIP_BEHIND_PEER` is set with it), `TIP_STALE_LONG` (the tip's header time is more than `STALE_MAX_MS`, 6 hours, before the clock, plus
+the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
@@ -548,32 +553,56 @@ https://cairn-substrate.com/trade/api`, run from an install on the maintainers' 
 the tip at 147,403 in 12.65 s (`/usr/bin/time`) and found its tuple at 147,390 equal to the front door's.
 
 `indexerFeed(options)`, in `./server` only, is a source over the CairnX resolver's Scanner, which reads the cairnx:v1
-proposals and attestations a csd-indexer serves; `options` are the Scanner's (`ScanOptions`: `indexerUrl`, `fetch`,
-`timeoutMs`, page sizes, and for `verifyInclusion` the header merkle, raw transaction and verified tip reads). Its
-basis is a feed: level 1, or 2 with `verifyInclusion`, where each payment's transaction is bound to its txid and
-merkle-proven against the caller's header source and each record's fields and author come from the node's body. The
-Scanner checks no proof of work, so that level is as good as the header source the caller wires.
+proposals and attestations a csd-indexer serves. Its basis is a feed: level 1, or 2 with `verifyInclusion`, where each
+payment's transaction is bound to its txid and merkle-proven against the caller's header source and each record's
+fields and author come from the node's body. The Scanner checks no proof of work, so that level is as good as the
+header source the caller wires.
+
+| Option (`IndexerFeedOptions`) | What it is |
+|---|---|
+| `indexerUrl`, `fetch`, `timeoutMs`, `pageSize`, `attPageSize`, `feedPageSize`, `keptMax`, `keptRefresh` | the Scanner's (`ScanOptions`); `fetch` and `timeoutMs` also serve the feed's block-hash and block-time reads |
+| `verifyInclusion`, `confDepth` | inclusion on, and the depth of the final height below the verified tip (default 12) |
+| `headerMerkleAt(height)`, `rawTxAt(txid)`, `verifiedTipHeight()`, `merkleProofAt(txid)` | the Scanner's reads of the caller's verified side, for inclusion |
+| `headerAt(height)` | the feed's, required with `verifyInclusion`: `{ hash, time }` of the block at a height on the caller's verified headers (the same source as `headerMerkleAt` and `verifiedTipHeight`), asked at or below the final height; without it `indexerFeed` throws `ReplicaConfigError` |
+
+With `verifyInclusion` the feed trusts the caller's verified headers for the records' inclusion, for every block hash
+it holds and for the tip and its time; it trusts the indexer only for which records exist. The indexer can still
+withhold a record, which is why the level stays 2 and not 3.
 
 Each step is one scan. A scan whose tip block changed during the pull, or whose hash could not be read before and
 after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The rule's events are those at or above
 its activation, an Attest only on a Propose among them (CONVENTION section 33.1). Up to the lower of the cursor and the
-scan's top they are compared with the store by their events hash, and the block hashes the store holds there (the
-cursor's and its boundary rows', walked down until one agrees) with the indexer's; the step is a reorg to the lower of
-the last event block whose events hash agrees (section 34.3) and the last held hash the indexer still gives, and the
-next step reads the new branch above it. A verified tip that moves back below the cursor is no reorg: the step is idle
-until it passes the cursor again. A cursor above the indexer's own tip is a block the indexer's chain does not have:
-the step rolls back to the last held boundary whose hash the indexer gives and reads on to its tip, so a shorter branch
-that changes only block hashes is followed. An indexer whose tip drops on one chain (a rebuild) rolls the store back
-the same way, as the hosted resolver's published state drops with it. The events above the cursor are
+scan's top they are compared with the store by their events hash; where they differ the step is a reorg to the last
+event block whose events hash agrees (section 34.3). The cursor's block is off the indexer's chain when the indexer's
+tip is below the cursor or the indexer gives another hash at the cursor's height; then the step is a reorg to the lower
+of that block and the last held boundary whose hash the indexer gives, never below the floor, and the next step reads
+on to the indexer's tip. So a shorter branch that changes only block hashes is followed, at any tip, a held boundary's
+height included, and so is one above the final height under `verifyInclusion`; an indexer whose tip drops on one
+chain (a rebuild) rolls the store back the same way, as the hosted resolver's published state drops with it. An
+indexer whose tip is under the floor names no block a rollback could end on: the step is idle with that tip, below the
+cursor (the reader's `BRANCH_UNRESOLVED`), until its tip reaches the floor again. A final height that moves back below
+the cursor with the cursor's block still the indexer's is no reorg: the step is idle until it passes the cursor
+again. The events above the cursor are
 the step's blocks, by height in the order of section 33.3, with a row at each epoch boundary carrying the block hash
-the indexer's `/block-height` gives. The cursor is the last block the scan answered for whole: the indexer's tip, or
-with `verifyInclusion` the final height (the verified tip less `confDepth`; the Scanner emits nothing above it). A step
-whose request or block budget runs out ends at the last boundary it read, with the tip as its reach. A step's tip is
-the block at the scan's top with its header time from the indexer's `/block/<hash>` (an answer that does not name
-that block at that height with a whole number of seconds is `SOURCE_MALFORMED`): the indexer's tip, or with
-`verifyInclusion` the final height, the highest block the Scanner emits for, so every answer carries the note
-`FINAL_VIEW` and `BEHIND` means behind what the feed can serve. `Source.tip()` reads the indexer's tip, or with
-`verifyInclusion` gives the last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
+of the chain the feed follows. Without `verifyInclusion` that chain is the indexer's: the hashes are its
+`/block-height`, the cursor ends at its tip, and the step's tip is its tip with the header time its `/block/<hash>`
+gives (an answer that does not name that block at that height with a whole number of seconds is `SOURCE_MALFORMED`).
+With `verifyInclusion` the chain is the caller's verified headers: every hash held is `headerAt`'s; the step's tip is the
+final height (the verified tip less `confDepth`) with `headerAt`'s hash and time, and the indexer's `/block` is not read;
+the cursor ends at the highest height at or below the lower of the indexer's tip and the final height where the
+indexer gives the verified hash (that height, else the last boundary where it does). So an indexer that lags reads as
+`BEHIND` by its distance from the final height. One on another branch than the verified headers, while that branch
+carries no record of its own, is served only up to where the two agree, rolled back to there when the cursor is above
+it, and reads as `BEHIND` from there (withheld by a server from 12); when that branch carries a record of its own, the
+scan fails before the two are compared, every step fails as `SOURCE_UNAVAILABLE`, and the last state stays served,
+ageing, until the 6-hour cap (`TIP_STALE_LONG`). A `headerAt` answer whose hash is out of form, or whose time is not whole seconds or is more than
+`MAX_FUTURE_DRIFT_SECS` (2 hours, the chain's own bound) after the step's clock, as a time in milliseconds is, is
+`SOURCE_MALFORMED`; one that throws is `SOURCE_UNAVAILABLE`. Every answer under `verifyInclusion` carries the note
+`FINAL_VIEW`. A step whose request or block budget (the `headerAt` reads count with the indexer's requests) runs out
+ends at the last boundary it read, with the scan's top as its reach. With `verifyInclusion` and the final height under
+the floor, a cursor whose block is off the chain leaves the step idle at genesis, since no verified hash at or below
+the final height names a block to end on. `Source.tip()` reads the indexer's tip, or with `verifyInclusion` gives the
+last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
 whole domain the first time and the indexer's chain-order feeds after it; the scan is not cut short by the step's
 signal.
 
@@ -606,14 +635,23 @@ statuses and bodies are the resolver's (on cairnx-core's recorded fixture to 117
 state, 0 differ, `test/read-routes.test.ts`); the canonical state, the applied ids and each name's history (at most
 1,024) are kept while the snapshot's key holds. The headers are the resolver's (`content-type`
 `application/json; charset=utf-8`, `access-control-allow-origin: *`, `x-content-type-options: nosniff`) with the
-server's own verdict: `x-cairnx-at` (`<height>:<hash>` of the view's block) and `x-cairnx-why` (the verdict's codes,
-comma-separated, empty when verified), both named in `access-control-expose-headers` so a page on another origin can
-read them. The bodies carry no level: over HTTP every answer is level 1 to its reader. While the snapshot is not one to
+server's own verdict: `x-cairnx-at` (`<height>:<hash>` of the view's block), `x-cairnx-why` (the verdict's codes,
+comma-separated, empty when verified) and `x-cairnx-notes` (its notes' codes, comma-separated, empty when none), all
+three named in `access-control-expose-headers` so a page on another origin can read them, on a 503 too. The bodies carry no level: over HTTP every answer is level 1 to its reader. While the snapshot is not one to
 serve the answer is 503 `{ ok: false, error: "not ready: <codes>; retry shortly" }`, never a 404 (which a wallet takes
 as "not registered"): on `WITHHELD` (`NOT_SYNCED`, `STORE_UNCONFIRMED`, `PIN_DISPUTED`, `PIN_MISMATCH`,
 `PIN_OFF_CHAIN`, `RULES_DIFFER`, `BRANCH_UNRESOLVED`) and on `BEHIND` once the view is 12 or more below the tip (a
-catch-up; under that the resolver also answers between two polls). Every other code is served and named. The hosted
-resolver imports the five reads and keeps its own dispatch: only a replica's own server withholds.
+catch-up; under that the resolver also answers between two polls), and on the notes `WITHHELD_NOTES`:
+`SOURCES_DISAGREE` (a witness gave another block at a height the replica holds), `PEER_FAR_AHEAD` (a witness's valid tip
+is more than 12 above the replica's, more than 24 under `FINAL_VIEW`; a peer up to that is served with `TIP_BEHIND_PEER`) and `TIP_STALE_LONG`
+(the tip is more than 6 hours old; a tip stale by the 30 minutes of `TIP_STALE` alone is served, since a drought
+between blocks would otherwise make every replica refuse at once). Every other code and note is served and named:
+the codes in `x-cairnx-why`, the notes in `x-cairnx-notes`, both exposed. Under `FINAL_VIEW` a served answer is at
+most 23 blocks behind the chain tip its source read: 12 by design and fewer than 12 of `BEHIND`. The hosted resolver
+imports the five reads and keeps its own dispatch: only a replica's own server withholds. The host drives
+`advance()` itself, a poller calling it every `READ_ADVANCE_MS` or so: a server that only answers reads serves its
+last state until a read starts the next step, and that read and the ones before the step ends answer from the old
+state with no code saying so.
 
 ## Tuples and a reference
 
