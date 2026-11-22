@@ -61,6 +61,18 @@ for (const [what, at] of [["a wrong rev", `at=${tipHeight}:${H}:${"0".repeat(16)
   const r = refused(held, "names", at);
   ok(`${what} is 409 SNAPSHOT_NOT_HELD with the newest at`, r.status === 409 && r.error.code === "SNAPSHOT_NOT_HELD" && show(r.at) === show(view.at));
 }
+// rev is opaque: a token of another form, which a later server may emit, is a state this host does not hold, not a bad request.
+for (const token of ["0123456789abcdef0123456789abcdef", "v2-abc.def"]) {
+  const r = refused(held, "names", `at=${tipHeight}:${H}:${token}&after=a`);
+  ok(`a rev of another form (${token}) is 409 SNAPSHOT_NOT_HELD with the newest at, not 400`, r.status === 409 && r.error.code === "SNAPSHOT_NOT_HELD" && show(r.at) === show(view.at));
+}
+// Two states under one block (a republish at the same tip), newest first: at without rev answers from the newer, at with
+// the older rev from the older.
+const republished = prepareView(deepFreeze(structuredClone(state)), { ...src, input: "fp-1-before" });
+const sameBlock = [view, republished];
+ok("two held states under one block: at without rev is answered from the newest of them", show(page(sameBlock, "names", `at=${tipHeight}:${H}`).at) === show(view.at)
+  && republished.at.rev !== view.at.rev && show(republished.at) !== show(view.at));
+ok("and at with the older rev from the older one", show(page(sameBlock, "names", `at=${tipHeight}:${H}:${republished.at.rev}`).at) === show(republished.at));
 const rev = revOf("fp-1", "0.2.7", CAIRNX_API_VERSION);
 ok("rev is the first 16 hex digits of sha256(input, core, package version)", view.at.rev === rev && /^[0-9a-f]{16}$/.test(rev));
 ok("rev changes with the input, the core version and the package version", new Set([rev, revOf("fp-2", "0.2.7", CAIRNX_API_VERSION), revOf("fp-1", "0.2.8", CAIRNX_API_VERSION), revOf("fp-1", "0.2.7", `${CAIRNX_API_VERSION}-other`)]).size === 4);
@@ -92,6 +104,22 @@ for (const [what, cursor] of [["a name cursor", byNameFirst()], ["a newest curso
   const r = refused([view], "names", `order=length&after=${cursor}`);
   ok(`${what} on order=length is 400 INVALID_QUERY naming after`, r.status === 400 && r.error.code === "INVALID_QUERY" && r.error.param === "after");
 }
+
+// keys on the other lists: three keys that exist, asked last first, and one that does not, read the three rows in the
+// list's default order (the rows of a page), next null, total 3.
+for (const [route, base, key, absent] of [["tokens", "", "ticker", "ZZZZZZ"], ["bids", "", "id", H], ["offers", "", "id", H],
+  ["holders", "ticker=CAIRN&", "address", A]] as const) {
+  const all = page([view], route, `${base}limit=200`).rows, picked = [all[0]!, all[Math.floor(all.length / 2)]!, all.at(-1)!];
+  const asked = [...picked].reverse().map((r) => r[key] as string);
+  const got = page([view], route, `${base}keys=${[asked[0], absent, ...asked.slice(1)].join(",")}`);
+  ok(`${route}?keys= reads its ${picked.length} existing rows in the default order, the absent key left out, next null, total 3`,
+    all.length > 7 && show(got.rows) === show(picked) && got.next === null && got.total === 3, show(got.rows.map((r) => r[key])));
+}
+// A cursor belongs to the order that gave it: a length cursor fits the newest grammar and reads there as a position, below
+// every name's height, so the page is empty.
+const lengthCursor = page([view], "names", "order=length&limit=1").next!, foreign = page([view], "names", `order=newest&after=${lengthCursor}`);
+ok(`a length cursor (${lengthCursor}) sent to order=newest reads 200 with no rows and next null`, answer([view], "names", `order=newest&after=${lengthCursor}`).status === 200
+  && foreign.rows.length === 0 && foreign.next === null && foreign.total === rows.names.length);
 
 console.log("holders and offers:");
 const lists = view.lists.holders, listKeys = Object.keys(lists), viewText = show(view);
@@ -153,6 +181,24 @@ const twin = prepareView(deepFreeze(structuredClone(state)), { ...src });
 const queries = ["", "order=newest&limit=7", "status=held", `keys=${byNameFirst()}`].map((q) => ["names", q]).concat([["bids", "status=open"], ["tokens", "limit=2"],
   ["events", "limit=7&after=44682:1"], ["holders", "ticker=CAIRN&limit=3"], ["offers", "kind=name&status=filled"]]);
 ok(`two views of equal input give byte-equal answers (${queries.length} reads)`, queries.every(([r, q]) => JSON.stringify(answer([view], r!, q!)) === JSON.stringify(answer([twin], r!, q!))));
+
+// The envelope's field names are part of the 1.0 contract; a rename in envelope.ts and answer.ts together type-checks,
+// so the bodies are pinned by name here. `total` is the one field sent whose presence is not promised.
+console.log("the envelope's fields:");
+const fields = (o: object) => show(Object.keys(o).sort());
+const p1 = answer([view], "names", "limit=1").body as Page<object>;
+ok("a page is { ok: true, level: 1, at, rows, next, total }, at is { height, hash, rev }", fields(p1) === show(["at", "level", "next", "ok", "rows", "total"])
+  && p1.ok === true && p1.level === 1 && fields(p1.at) === show(["hash", "height", "rev"]) && Array.isArray(p1.rows) && typeof p1.next === "string" && typeof p1.total === "number");
+for (const [code, held, route, q, body, error] of [
+  ["INVALID_QUERY", [view], "names", "limit=0", ["error", "ok"], ["code", "message", "param"]],
+  ["NOT_FOUND", [view], "tuple", "", ["error", "ok"], ["code", "message"]],
+  ["NOT_READY", [], "names", "", ["error", "ok"], ["code", "message"]],
+  ["SNAPSHOT_NOT_HELD", [view], "names", `at=${tipHeight}:${H2}`, ["at", "error", "ok"], ["code", "message"]],
+] as const) {
+  const r = refused(held, route, q);
+  ok(`the ${code} refusal is { ${body.join(", ")} } with error { ${error.join(", ")} }`, r.error.code === code && r.ok === false
+    && fields(answer(held, route, q).body) === show(body) && fields(r.error) === show(error) && (r.at === undefined || fields(r.at) === show(["hash", "height", "rev"])));
+}
 
 console.log("the largest page:");
 for (const route of ["names", "bids", "tokens", "events", "holders", "offers"] as const) {

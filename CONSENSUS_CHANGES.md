@@ -59,7 +59,7 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## cairnx-core 0.2.10, cairnx-api 0.1.3 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
+## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
 No rule changes. New root exports: `newReplayContext`, the type `ReplayContext`, `ReplayContextRefusal` (with its code
 type) and `isChainHeight`. CONVENTION.md section 5 gains one paragraph: a resolver may hold its replay between tips and
@@ -112,8 +112,8 @@ new context; no answer that differs. Check mode is clean on 24,357 inputs, the t
 event height of the replay corpus with the heights below them and the pinned heights, and the growth streams at 500,
 with answers at seeded random steps against one step per block, answers written over, a reorg, each refusal with the
 context unchanged (positions and ids outside the domain among them), a fed event written over after `advance`, a
-generator as the events, an answer's name profile written over, and the sloppy-mode refusal. cairnx-api 0.1.3 adds `order=length` on `names` and takes this core as
-its exact peer.
+generator as the events, an answer's name profile written over, and the sloppy-mode refusal. cairnx-api 1.0.0 (0.1.3
+was never published) adds `order=length` on `names`, takes this core as its exact peer and is the read API's contract.
 
 ## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
 

@@ -3,7 +3,7 @@
 // line must be an error.
 import type { CairnXState } from "@inversealtruism/cairnx-core";
 import { answer, prepareView, type Answered, type View } from "@inversealtruism/cairnx-api/handlers";
-import { CURSORS, ERRORS, parseQuery, type Answer, type HolderKey, type NameRow, type OfferRow, type Query } from "@inversealtruism/cairnx-api";
+import { CURSORS, ERRORS, parseQuery, type Answer, type BidRow, type EventRow, type HolderKey, type NameRow, type OfferRow, type Query, type Refusal, type TokenRow } from "@inversealtruism/cairnx-api";
 
 const r = parseQuery("names", "order=newest&after=1:a");
 if (r.ok) {
@@ -32,6 +32,12 @@ const key: HolderKey = CURSORS.holder.of({ address: "0x", available: "1", locked
 const refusal: Answer<NameRow> = { ok: false, error: { code: "SOME_LATER_CODE", message: "a code from a newer server" } };
 const later: OfferRow["status"] = "a-status-added-at-a-later-gate";
 void later;
+// The other open sets: a value a newer server may send type-checks; and a 429 carries retryAfter.
+const laterBid: BidRow["status"] = "a-bid-status-added-later", laterMint: TokenRow["mint"] = "a-mint-mode-added-later";
+const laterCode: EventRow["code"] = "A_CODE_ADDED_LATER", laterKind: EventRow["kind"] = "a-record-type-added-later";
+const limited: Refusal = { ok: false, error: { code: "RATE_LIMITED", message: "rate limit exceeded", retryAfter: 60 } };
+const wait: number | undefined = limited.error.retryAfter;
+void [laterBid, laterMint, laterCode, laterKind, wait];
 // @ts-expect-error an offer row has no fills
 const fills: OfferRow["fills"] = [];
 void [status, key, refusal, fills];
