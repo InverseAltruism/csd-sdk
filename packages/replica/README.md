@@ -288,7 +288,8 @@ under a `FINAL_VIEW`, whose tip is 12 below the chain tip by design; `TIP_BEHIND
 the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it), `SOURCE_FAILING` (the source has been failing: its
 steps have failed, none settled, for more than `FAILING_MS`, 30 minutes, counted from the first failed step after the
 last that settled; its `detail` gives the minutes and the last error's code. A replica idle for longer whose next step
-fails once is not failing yet. A count of failures would fire inside one host's restart, since the backoff makes five
+fails once is not failing yet, and a step that its own deadline ended inside a pull is not a failed step: it records
+no error and no backoff (a feed's pull resumed over many short advances). A count of failures would fire inside one host's restart, since the backoff makes five
 in 31 s; a drought settles idle steps and does not reach it),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
@@ -637,20 +638,28 @@ equal reads, as an accepted scan's whole pull is), another refuses the pull as `
 
 Past the step's deadline no wait starts, in the scan or in the feed's own reads: a 429 or 503 then ends the step at
 once. Every step first moves forward by a unit, `STEP_UNIT` (16) new answers of the pull or boundaries of the
-feed's own reads, so each step progresses and a cold sync finishes under any budget (`test/feed-cold.test.ts`: advances
-of 1 ms against answers 2 ms late complete, their requests within 1.3 of an unlimited run's). A full pull past its
+feed's own reads, so each step progresses: a cold sync finishes under any budget against a host that admits, in one
+window of its limiter, a step's tip and anchor reads (up to four), a unit and its confirming read, at most 21 requests
+(`test/feed-cold.test.ts`: advances of 1 ms against answers 2 ms late complete, their requests within 1.3 of an
+unlimited run's; the front door admits 300 a minute). A limiter that admits fewer gets no cursor. A full pull past its
 deadline with its unit read stops at its next request, once one more read of its tip block confirms what it read; a
-429 waited out stops it after its wait the same way. A pull that stops (the deadline; the signal; a request's timeout; a 429 or 503 it does not
-wait out, which ends the step as `SOURCE_RATE_LIMITED` or `SOURCE_UNAVAILABLE` with the wait asked, the loop's
-backoff) keeps its confirmed answers, and the next scan resumes it at that tip, sending only what it has not read,
-unless the block there changed. Any other failure drops them. An incremental pull of the chain-order feeds keeps
+429 waited out stops it after its wait the same way. A pull that stops in transport (the deadline; the signal; a
+request's timeout; a fetch that rejects, as on a connection reset; a 502 or 504; a 429 or 503 it does not wait out,
+which ends the step as `SOURCE_RATE_LIMITED` or `SOURCE_UNAVAILABLE` with the wait asked, the loop's backoff) keeps its
+confirmed answers, and the next scan resumes it at that tip, sending only what it has not read, unless the block there
+changed. What the indexer answered drops them: any other status (a 500, a 404) or an answer out of form. Under
+`verifyInclusion` the answers kept include each transaction's bound info, so a resumed pull does not ask the caller's
+node again for what it verified before its stop. With `waitMaxMs`, a scan whose tip block cannot be read is refused at
+once (`BRANCH_MOVED`) rather than pulled with nothing to bind its answers to. An incremental pull of the chain-order feeds keeps
 none and runs to its end, starting no wait past the deadline. The feed's own reads end the step at its deadline once
 they have read their unit of boundaries, and a read refused then ends it at the last boundary read. So a step that
 began before its deadline outlasts it by at most one wait begun before it (`RETRY_WAIT_MAX_MS`, 60 s) and one
 request's timeout (`timeoutMs`, 10 s by default), 70 s at the defaults (`test/scan/scan-deadline.test.ts` measured
 1,296 ms past the deadline with a 1,000 ms wait and a 300 ms timeout), plus, when its unit was not yet read at the
-deadline, the rest of that unit; a step that begins past its deadline reads its unit, at most 16 requests and the one
-that confirms them, each within `timeoutMs`.
+deadline, the rest of that unit. A step that begins past its deadline sends its scan's tip and anchor reads (up to
+four), its unit (16) and the read that confirms it, or, reading a carried scan, the tip read and its unit of boundaries
+and the tip's time; each request within `timeoutMs`, and under `verifyInclusion` the caller's node reads of the
+unit's transactions besides.
 
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
 byte for byte apart from import paths, then cleaned under review; `appliedIds` (`.`) is the set of ids a replay

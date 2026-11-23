@@ -321,7 +321,8 @@ export function replicaLoop(o: LoopOptions): Loop {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }
     if (signal.aborted) return "stop";
-    if (s.kind === "cannot") return backOff(s.code, s.reason, s.retryAfterMs);
+    // A step its own deadline ended (a pull stopped, kept for the next step) is no failure: no error, no backoff.
+    if (s.kind === "cannot") return s.deadline === true ? "stop" : backOff(s.code, s.reason, s.retryAfterMs);
     if (s.kind === "idle") { settled(s.tip); return "stop"; }
     return exclusive(() => (s.kind === "reorg" ? onReorg(s) : onBlocks(s)));
   }

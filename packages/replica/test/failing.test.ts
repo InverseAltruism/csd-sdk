@@ -4,9 +4,11 @@
 // step right after a good one, failing for 29 minutes, and a good step after the note, each withhold nothing; a
 // resume() starts no failure clock.
 import type { Source } from "../src/index.js";
-import { memoryStore, open, replicaLoop, replicaReads } from "../src/server.js";
+import { indexerFeed, memoryStore, open, replicaLoop, replicaReads } from "../src/server.js";
 import { FAILING_MS } from "../src/verdict.js";
 import { done, ok } from "./check.js";
+import { fx } from "./core-files.js";
+import { CAPTURE_TIME, captureIndexer } from "./indexer-capture.js";
 import { cap } from "./node-harness.js";
 import { nodeSource, timeAt } from "./reader-harness.js";
 
@@ -54,6 +56,42 @@ down = true;
 await r.advance();
 ok("then one failed step: a new failure clock, no SOURCE_FAILING, served", r.status().lastError !== null && !notes().includes("SOURCE_FAILING") && (await resolve()).status === 200, notes().join(","));
 await r.close();
+
+console.log("a step its own deadline ends inside a pull is no failure:");
+{
+  // A synced feed, then the chain 30 blocks on and every request answered 12 s of the clock apart: each advance of 60 s
+  // stops its pull at the deadline and the next resumes it. Then the source really fails.
+  const T1 = 116_970;
+  let t = CAPTURE_TIME * 1000 + MIN, tick = 0, base = captureIndexer(fx, T1), broken = false, sent = 0;
+  const f: typeof fetch = async (input, init) => {
+    sent++; t += tick;
+    if (broken) throw new TypeError("fetch failed");
+    return base(input, init);
+  };
+  const rd = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: f }), clock: () => t, step: { maxBlocks: 512, maxRequests: 600 } });
+  const synced = await rd.advance();
+  ok("setup: the feed synced at 116,970", synced.cursor?.height === T1, JSON.stringify(synced.lastError));
+  base = captureIndexer(fx); tick = 12_000;
+  const start = t, stops: (string | null)[] = [];
+  while (t - start < 38 * MIN) { const st = await rd.advance({ budgetMs: 60_000 }); stops.push(st.lastError?.code ?? null); }
+  const at38 = (await replicaReads(rd)("/cairnx/state"))!;
+  ok(`${stops.length} advances of 60 s over 38 minutes, each stopped at its deadline: no error recorded, no SOURCE_FAILING, served`,
+    stops.length > 5 && stops.every((c) => c === null) && !rd.status().notes.some((n) => n.code === "SOURCE_FAILING") && at38.status === 200,
+    `${stops.join(",")} | ${at38.status} ${at38.headers["x-cairnx-notes"]}`);
+  tick = 0; broken = true;
+  await rd.advance();
+  const failedAt = t, n0 = sent;
+  t = failedAt + 500; await rd.advance();
+  const early = sent - n0;
+  t = failedAt + 1_001; await rd.advance();
+  ok("a real failure after them backs off 1 s: no request half a second later, one a second later", rd.status().lastError?.code === "SOURCE_UNAVAILABLE" && early === 0 && sent - n0 > 0,
+    `${early} then ${sent - n0} requests`);
+  for (let k = 0; k < 32; k++) { t += MIN; await rd.advance(); }
+  const down = (await replicaReads(rd)("/cairnx/state"))!;
+  ok("paired: the source then failing for 32 minutes is withheld, 503 SOURCE_FAILING", down.status === 503 && down.headers["x-cairnx-notes"]?.split(",").includes("SOURCE_FAILING") === true,
+    `${down.status} ${down.headers["x-cairnx-notes"]}`);
+  await rd.close();
+}
 
 console.log("resume() starts no failure clock:");
 {

@@ -129,6 +129,19 @@ console.log("late rows (a row at or below a height already replayed), against re
   }
 }
 
+console.log("a rollback that un-mines the tip block's record:");
+{
+  const rows = rowsOf(corpus.events), k = 300, top = rows[k]!, below = rows[k - 1]!;
+  for (const m of [heldReplay(), fullReplay()]) {
+    m.load(rows.slice(0, k + 1), top.height);
+    m.stateAt(top.height, 0);
+    m.rollback(below.height);
+    m.apply([], top.height);   // the new branch's block at that height carries no record
+    const want = resolve(rows.slice(0, k).flatMap((r) => r.events).sort(applyOrder), top.height);
+    ok(`after the rollback the state at that height is the new branch's (${"fallbacks" in m ? "held" : "full"})`, same(m.stateAt(top.height, 0), want));
+  }
+}
+
 console.log("a context that refuses falls back to resolve():");
 {
   const rows = rowsOf(corpus.events.filter((e) => e.height <= 30_400));

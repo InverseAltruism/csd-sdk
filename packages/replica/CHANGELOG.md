@@ -28,14 +28,23 @@ What a consumer receives:
   to a 1 s window) with advances shorter than the pull it completes within 5 percent of that, and no page, attestation
   list or transaction is answered twice (`test/feed-cold.test.ts`; it did not finish before).
 - Every step reads a unit (`STEP_UNIT`, 16 new answers of the pull or boundaries) before it honours its deadline, so a
-  budget shorter than one request still finishes a cold sync (advances of 1 ms against answers 2 ms late: complete,
-  requests within 1.3 of an unlimited run's, `test/feed-cold.test.ts`).
+  budget shorter than one request still finishes a cold sync against a host that admits, in one window, a step's tip
+  and anchor reads, a unit and its confirming read, at most 21 requests (advances of 1 ms against answers 2 ms late: complete,
+  requests within 1.3 of an unlimited run's, `test/feed-cold.test.ts`). A step that its own deadline ended inside a
+  pull is no failed step: no error, no backoff, no start of `SOURCE_FAILING`'s clock (`test/failing.test.ts`: 38
+  minutes of such stops are served; a real failure then backs off from 1 s).
+- What keeps the kept pull: transport (a fetch that rejects, a 502, a 504, a 503, a request's timeout, the signal);
+  what drops it: what the indexer answered (a 500, a 404, an answer out of form). Under `verifyInclusion` it keeps each
+  transaction's bound info, so a resumed pull asks the node once per transaction (advances of 1 ms: 240 `rawTxAt`, as
+  one advance; it was 3,006). With `waitMaxMs`, a scan whose tip block cannot be read is refused at once as
+  `BRANCH_MOVED` instead of a pull with no memo and no deadline.
 - The deadline: past a step's deadline no wait starts, in the scan, its confirming read or the feed's own reads; a full
   pull with its unit read stops at its next request after the deadline once a read of its tip block confirms what it
   read; a boundary read refused then ends the step at the last boundary read. A step that began before its deadline
   outlasts it by at most one wait begun before it and one request's timeout (70 s at the defaults; measured 1,296 ms
   with a 1,000 ms wait and a 300 ms timeout, `test/scan/scan-deadline.test.ts`), plus the rest of its unit when that
-  was not yet read; one that begins past it reads its unit, at most 16 requests and the confirming one.
+  was not yet read; one that begins past it sends its scan's tip and anchor reads, its unit and the confirming read (or
+  a carried scan's tip read, unit of boundaries and tip time), and under `verifyInclusion` the node reads of the unit.
 - `Scanner.scan(run?)` takes `{ signal, due }` (`ScanRun`, new, optional, typed from `./server`): the signal reaches
   both fetch sites, a chain-order feed page's body and every wait, so `advance({ signal })` aborted mid-scan ends at
   once, commits nothing, and the next step reads on (`test/feed-steps.test.ts`). Not reached: requests on Node 18 to

@@ -11,7 +11,7 @@ import { STEP_UNIT, Scanner, branchRefusal } from "../../src/scanner.js";
 import { done, ok } from "../check.js";
 import { fx } from "../core-files.js";
 import { captureIndexer } from "../indexer-capture.js";
-import { HASH_READ, host } from "./resume-host.js";
+import { HASH_READ, TIP, host } from "./resume-host.js";
 import { H0, buildChain, defaultSpecs } from "./scan-chain.js";
 
 const twice = (served: Map<string, number>) => [...served].filter(([p, n]) => n > 1 && !HASH_READ.test(p.split("?")[0]!));
@@ -78,6 +78,19 @@ console.log("a deadline that has passed before the scan begins:");
     scans > 1 && branchRefusal(r.anchor) === null && twice(h.served).length === 0, `${scans} stops, then ${String(last).slice(0, 80)}`);
 }
 
+console.log("a resumed scan closes its bracket on the indexer, not on its memo:");
+{
+  const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
+  h.refuseAt = 60;
+  await s.scan({ due: () => h.n > 60 }).catch(() => undefined);
+  // the tip block changes after the resumed scan has read it once (its anchor read)
+  let reads = 0;
+  const other = `0x${"ef".repeat(32)}`;
+  h.swap = (p) => (p === `/block-height/${TIP}` && ++reads >= 2 ? other : undefined);
+  const r = await s.scan();
+  ok("the tip block replaced during the resumed part: the scan is refused as moved", branchRefusal(r.anchor) !== null && r.anchor.branch === "moved", JSON.stringify(r.anchor));
+}
+
 console.log("a resumed pull names no event above its tip:");
 {
   // at 40,000 some proposals carry attestations mined above it
@@ -137,6 +150,30 @@ console.log("a failure of what the indexer answered drops the memo, the signal a
   const before = new Map(h.served), r = await s.scan();
   const again = [...h.served].filter(([p, n]) => /^\/tx\//.test(p) && n > (before.get(p) ?? 0) && (before.get(p) ?? 0) > 0 && (h.firstAt.get(p) ?? 0) < 61);
   ok("the next scan reads the confirmed part again: the memo was dropped", branchRefusal(r.anchor) === null && again.length > 0, `${again.length} confirmed answers read again`);
+}
+
+console.log("what keeps the pull: transport keeps it, what the indexer answered drops it:");
+for (const [what, kind, keeps] of [["a fetch that rejects", "reject", true], ["a 502", 502, true], ["a 504", 504, true], ["a 503 not waited out", 503, true],
+  ["a 500", 500, false], ["a 404", 404, false]] as const) {
+  const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
+  h.refuseAt = 60;   // waited out (0 s) and confirmed: the answers before the 61st request are kept
+  h.fail = (n) => (n === 80 ? kind : null);
+  const v = await s.scan().catch((e: unknown) => e);
+  h.fail = null;
+  const r = await s.scan();
+  const early = twice(h.served).filter(([p]) => (h.firstAt.get(p) ?? 0) < 61);
+  ok(`${what} at the 80th request: the scan ends, and the next ${keeps ? "reads nothing confirmed again (kept)" : "reads the confirmed part again (dropped)"}`,
+    v instanceof Error && branchRefusal(r.anchor) === null && (keeps ? early.length === 0 : early.length > 0), `${String(v)}; ${early.length} confirmed answers read again`);
+}
+{
+  const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
+  h.refuseAt = 60;
+  await s.scan({ due: () => h.n > 60 }).catch(() => undefined);
+  const before = h.n;
+  h.fail = (_n, p) => (p === `/block-height/${TIP}` ? 500 : null);
+  const v = await s.scan({ due: () => true }).catch((e: unknown) => e);
+  ok("a resumed scan whose tip block's read answers 500: it throws at once, no pull without a memo", v instanceof SourceError && v.code === "BRANCH_MOVED" && h.n - before <= 4,
+    `${String(v)}, ${h.n - before} requests`);
 }
 
 console.log("waitMaxMs where it enters:");

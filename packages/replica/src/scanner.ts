@@ -30,7 +30,7 @@
 import { MAX_TX_OUTPUTS, verifyMerkleProof, txid as codecTxid, type App, type Tx } from "@inversealtruism/csd-codec";
 import { authorOf } from "@inversealtruism/csd-crypto";
 import { ADDR_RE, DOMAIN, EPOCH_LEN, FINAL_DEPTH, paidToFromOutputs, type AttestEvent, type ChainEvent, type ProposeEvent } from "@inversealtruism/cairnx-core";
-import { SourceError } from "./errors.js";
+import { SourceError, messageOf } from "./errors.js";
 import { either, waitMaxOf, waitingOut } from "./http.js";
 import { KEPT_REFRESH_SCANS, MAX_KEPT_EVENTS, eventsOf, fullPullOrder, keptFrom, type Block, type ChainPos, type Kept } from "./kept.js";
 
@@ -164,8 +164,8 @@ export interface ScanOptions {
 export interface ScanRun { readonly signal?: AbortSignal; due?(): boolean }
 
 /** How many new answers of a full pull, or boundaries of a feed's step, a step reads before it honours its deadline:
- *  every step moves the pull forward, so a cold sync finishes under any budget, and past a deadline that had passed
- *  when the step began it reads at most this many requests and the one that confirms them. */
+ *  every step moves the pull forward, so a cold sync finishes under any budget against a host that admits a step's tip
+ *  and anchor reads, a unit and its confirming read in one window of its limiter. */
 export const STEP_UNIT = 16;
 
 /** A full pull's answers, by path, read at the tip `tip` whose block hash before the pull was `hash`; the first
@@ -272,7 +272,20 @@ export class Scanner {
       return this.f(`${this.base}${path}`, { signal: signal ? either(signal, t) : t, redirect: "error" });
     };
     if (this.waitMaxMs <= 0) return send();
-    return waitingOut(send, path, this.waitMaxMs, signal ?? new AbortController().signal, confirm ? () => this.confirm() : undefined, () => this.run.due?.() === true);
+    // With waitMaxMs, what fails in transport keeps the pull (transport()): a fetch that rejects for another reason than
+    // the signal or its timeout (a connection reset), and a gateway's 502 or 504, as a 503.
+    const sent = async () => {
+      try { return await send(); } catch (e) {
+        if (signal?.aborted === true || (e instanceof DOMException && e.name === "TimeoutError")) throw e;
+        throw new SourceError("SOURCE_UNAVAILABLE", `${path}: ${messageOf(e)}`);
+      }
+    };
+    return waitingOut(sent, path, this.waitMaxMs, signal ?? new AbortController().signal, confirm ? () => this.confirm() : undefined, () => this.run.due?.() === true)
+      .then(async (r) => {
+        if (r.status !== 502 && r.status !== 504) return r;
+        await r.body?.cancel();
+        throw new SourceError("SOURCE_UNAVAILABLE", `${path} answered ${r.status}`);
+      });
   }
 
   private async getJson<T>(path: string): Promise<T> {
@@ -281,7 +294,7 @@ export class Scanner {
     // A full pull past its deadline sends no more of its own requests: what it read is confirmed, and it stops.
     if (m !== null && this.fresh >= STEP_UNIT && this.run.due?.() === true) {
       await this.confirmMemo();
-      throw new SourceError("SOURCE_UNAVAILABLE", "the scan stopped at the step's deadline; the next scan resumes it", 0);
+      throw new SourceError("SOURCE_UNAVAILABLE", "the scan stopped at the step's deadline; the next scan resumes it", 0, true);
     }
     const r = await this.get(path);
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
@@ -307,7 +320,7 @@ export class Scanner {
   private async confirm(): Promise<void> {
     await this.confirmMemo();
     if ((this.memo === null || this.fresh >= STEP_UNIT) && this.run.due?.() === true) {
-      throw new SourceError("SOURCE_RATE_LIMITED", "the scan stopped at the step's deadline after a wait; the next scan resumes it", 0);
+      throw new SourceError("SOURCE_RATE_LIMITED", "the scan stopped at the step's deadline after a wait; the next scan resumes it", 0, true);
     }
   }
 
@@ -315,6 +328,10 @@ export class Scanner {
     const key = `${txid}:${height}`;
     const hit = this.txCache.get(key);
     if (hit) return hit;
+    // A full pull keeps each transaction's info, bound as txCache binds it, with its answers: a resumed pull does not
+    // read and verify again what it verified before its stop.
+    const m = this.memoOn ? this.memo : null, kept = m?.answers.get(`tx:${key}`) as TxInfo | undefined;
+    if (kept !== undefined) return this.cached(key, kept);
     const t = await this.getJson<{ pos: number; height: number; outputs: { addr: string; value: number }[] }>(`/tx/${txid}`);
     // Harden against a malicious/buggy indexer. Outputs feed fee/payment checks, so each is
     // tightly validated: value a NON-NEGATIVE SAFE INTEGER as a real number (NOT a hex/decimal
@@ -337,6 +354,12 @@ export class Scanner {
     let info: TxInfo = { pos: reqOrd(t.pos, "tx pos"), height: reqOrd(t.height, "tx height"), outputs };
     // When enabled, DON'T trust the indexer's decoded outputs, bind them to consensus.
     if (this.verifyInclusion) info = await this.verifyTx(txid, info.height, outputs);
+    m?.answers.set(`tx:${key}`, info);
+    return this.cached(key, info);
+  }
+
+  /** `info`, put in txCache when it is at or below the scan's tip (a block that lands during the pull sits above it). */
+  private cached(key: string, info: TxInfo): TxInfo {
     if (info.height <= this.tipHeight) {
       this.txCache.set(key, info);
       this.written?.tx.push(key);
@@ -784,6 +807,9 @@ export class Scanner {
       this.depthTip = tipHeight;
     }
     const blocks = await this.invalidateCacheOnReorg(tipHeight);
+    // With waitMaxMs, a pull whose tip block could not be read is not started: it would be refused as unread at its end
+    // and, holding no memo, could not stop at the step's deadline.
+    if (this.waitMaxMs > 0 && blocks.tip === null) throw new SourceError("BRANCH_MOVED", "the indexer's tip hash could not be read before the scan");
     // verifyInclusion on: verifyTx accepts a tx iff depthTip - height >= confDepth, so the highest final height is
     // depthTip - confDepth. A record above it is checked against the cutoff BEFORE tx() (whose verifyTx
     // would throw on it). A row that lies low is caught by eventHeight(); one that lies high only defers

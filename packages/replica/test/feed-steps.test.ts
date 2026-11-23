@@ -2,13 +2,14 @@
 // store as it was and the next advance reads on; a step that ends short of its scan's top hands the scan to the next
 // step, which reads it again only when the indexer no longer gives its tip hash; a step whose deadline passes ends
 // once it has read its unit of boundaries and starts no wait.
-import { CAIRNX_EVENT_RULE, DOMAIN } from "@inversealtruism/cairnx-core";
+import { CAIRNX_EVENT_RULE, DOMAIN, deploy, mint } from "@inversealtruism/cairnx-core";
 import { memoryStore, open, replicaLoop } from "../src/index.js";
 import { STEP_UNIT } from "../src/scanner.js";
 import { indexerFeed } from "../src/server.js";
 import { done, ok } from "./check.js";
 import { fx } from "./core-files.js";
 import { captureIndexer } from "./indexer-capture.js";
+import { H0, KA, KB, KC, KEYS, buildChain, type Spec } from "./scan/scan-chain.js";
 
 const WIDE = { maxBlocks: 100_000, maxRequests: 100_000 };
 const settle = (ms: number) => new Promise((x) => setTimeout(x, ms));
@@ -114,6 +115,59 @@ console.log("a boundary read refused and not waited out:");
   });
   ok("the step keeps what it read: it ends at the boundary before the refused one, the scan's top its reach", st.kind === "blocks" && st.cursor.height === 29_880 && st.reach === TIP,
     JSON.stringify(st.kind === "blocks" ? { cursor: st.cursor, reach: st.reach } : st));
+}
+
+console.log("the step's tip view after the tip block is replaced at its height:");
+{
+  let swapped = false;
+  const base = captureIndexer(fx, TIP), OTHER_TIP = `0x${"cd".repeat(32)}`;
+  const f: typeof fetch = async (input, init) => {
+    const p = new URL(String(input)).pathname;
+    if (swapped && p === `/block-height/${TIP}`) return Response.json(OTHER_TIP);
+    if (swapped && p === `/block/${OTHER_TIP}`) return Response.json({ height: TIP, hash: OTHER_TIP, time: 1_700_000_000 });
+    return base(input, init);
+  };
+  const src = indexerFeed({ indexerUrl: "http://idx", fetch: f });
+  const go = (cursor: { height: number; hash: string } | null) => src.next({
+    rule: CAIRNX_EVENT_RULE, cursor, sofar: { eventIds: new Set(), proposeIds: new Set() }, hashAt: () => null, eventsHashAt: () => null,
+    budget: { deadlineAt: Number.POSITIVE_INFINITY, maxRequests: 100_000, maxBlocks: 100_000 }, signal: new AbortController().signal, now: () => 1_700_000_000_000,
+  });
+  const first = await go(null);
+  swapped = true;
+  const second = first.kind === "blocks" ? await go({ height: first.cursor.height, hash: first.cursor.hash! }) : first;
+  ok("the second step's tip names the new block, not the last step's at that height", first.kind === "blocks" && second.kind !== "cannot" && second.tip.hash === OTHER_TIP,
+    JSON.stringify(second.kind === "cannot" ? second : second.tip));
+}
+
+console.log("a resumed pull under verifyInclusion verifies each transaction once:");
+{
+  const specs: Spec[] = [{ kind: "propose", rec: deploy({ ticker: "DUST", decimals: 2, supply: "100000000", mint: "open", mintLimit: "1000" }), proposer: KA, height: H0 } as Spec];
+  for (let i = 1; i < 120; i++) {
+    const h = H0 + 1 + Math.floor(i / 2);
+    specs.push((i % 5 === 0 ? { kind: "attest", of: 0, attester: [KB, KC][i % 2], score: i % 10, confidence: 100, height: h }
+      : { kind: "propose", rec: mint({ ticker: "DUST", amount: String(1 + (i % 900)) }), proposer: [KA, KB, KC][i % 3], height: h }) as Spec);
+  }
+  const chain = buildChain(specs, { keys: KEYS }), TOPC = H0 + 61, TIPC = TOPC + 40;
+  const sync = async (budgetMs: number | undefined) => {
+    let clock = 1_800_000_000_000, raw = 0;
+    const idx = chain.indexer({ tip: TIPC, feed: false });
+    const f: typeof fetch = async (input) => { clock += 5; const r = (await idx(String(input))) as unknown as { status: number; json(): Promise<unknown> }; return new Response(JSON.stringify(await r.json()), { status: r.status }); };
+    const v = chain.verified({ verifiedTip: TIPC });
+    const source = indexerFeed({ indexerUrl: "http://idx", fetch: f, ...v, rawTxAt: async (id: string) => { raw++; clock += 5; return v.rawTxAt!(id); } });
+    const loop = replicaLoop({ source, store: memoryStore(), clock: () => clock, maxBlocks: 512, maxRequests: 600 });
+    await loop.open();
+    let s = loop.status(), advances = 0;
+    for (; advances < 2_000; advances++) {
+      s = await loop.advance(budgetMs === undefined ? {} : { budgetMs });
+      if (s.cursor !== null && s.tip !== null && s.cursor.height >= s.tip.height && s.lastError === null) break;
+      clock += 1;
+    }
+    await loop.close();
+    return { raw, advances, cursor: s.cursor?.height ?? null, events: s.eventCount };
+  };
+  const once = await sync(undefined), short = await sync(1);
+  ok(`advances of 1 ms (${short.advances}) reach the same cursor and events as one advance, with rawTxAt ${short.raw} times against ${once.raw} (within 1.1)`,
+    short.advances > 1 && short.cursor === once.cursor && short.events === once.events && short.raw <= once.raw * 1.1, JSON.stringify({ once, short }));
 }
 
 console.log("a host that refuses every request:");

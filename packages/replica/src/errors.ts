@@ -8,10 +8,11 @@ export class ReplicaConfigError extends Error {
   constructor(message: string, readonly code: "BELOW_FLOOR" | "PIN_MISMATCH" | null = null) { super(message); }
 }
 
-/** What a source refuses, with the code a step reports and the wait a Retry-After asked for. `readBlocks` throws it. */
+/** What a source refuses, with the code a step reports and the wait a Retry-After asked for. `readBlocks` throws it.
+ *  `deadline`: the step's own deadline ended it, which is no failure of the source. */
 export class SourceError extends Error {
   override readonly name = "SourceError";
-  constructor(readonly code: SourceCode, reason: string, readonly retryAfterMs: number | null = null) { super(reason); }
+  constructor(readonly code: SourceCode, reason: string, readonly retryAfterMs: number | null = null, readonly deadline = false) { super(reason); }
 }
 
 /** The longest wait the loop backs off for, a Retry-After included. */
@@ -23,5 +24,6 @@ export const messageOf = (e: unknown): string => (e instanceof Error ? e.message
 export const codeOf = (e: unknown): unknown => (e as { code?: unknown } | null)?.code;
 
 /** The `cannot` step for what a source threw: its SourceError, else SOURCE_UNAVAILABLE. */
-export const cannotOf = (e: unknown): Step => e instanceof SourceError ? { kind: "cannot", code: e.code, reason: e.message, retryAfterMs: e.retryAfterMs }
+export const cannotOf = (e: unknown): Step => e instanceof SourceError
+  ? { kind: "cannot", code: e.code, reason: e.message, retryAfterMs: e.retryAfterMs, ...(e.deadline ? { deadline: true } : {}) }
   : { kind: "cannot", code: "SOURCE_UNAVAILABLE", reason: messageOf(e), retryAfterMs: null };
