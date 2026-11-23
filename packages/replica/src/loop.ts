@@ -45,6 +45,8 @@ export interface LoopStatus {
   readonly retryAt: number | null; readonly replayMs: number | null;
   /** Whether the store was reset as unconfirmed and the loop has not yet reached a step's tip since. */
   readonly unconfirmed: boolean;
+  /** When the last step settled (a commit, an idle step) or resume() took a tip, by the loop's clock; null before. */
+  readonly settledAt: number | null;
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
@@ -118,7 +120,7 @@ export function replicaLoop(o: LoopOptions): Loop {
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
   let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), unconfirmed = false;
-  let storeReason: StoreReason | null = null, storeError: string | null = null;
+  let storeReason: StoreReason | null = null, storeError: string | null = null, settledAt: number | null = null;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -236,7 +238,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     return "stop";
   }
   function settled(t: TipView): void {
-    tip = t; lastError = null; retryAt = null; failures = 0;
+    tip = t; lastError = null; retryAt = null; failures = 0; settledAt = clock();
     if ((cursor()?.height ?? -1) >= t.height) unconfirmed = false;
   }
 
@@ -338,7 +340,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   const status = (): LoopStatus => ({
     store: opened, storeReason, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
-    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed,
+    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed, settledAt,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };
   return {
@@ -350,7 +352,7 @@ export function replicaLoop(o: LoopOptions): Loop {
       // The record must be one committed under this source's basis: a store kept from an older pin has not yet been
       // bound to the new one (pinned.ts binds at the first step), so its view waits for that step.
       if (opened !== "open" || c === null || c.height !== t.height || c.hash !== t.hash || meta === null || !sameBasis(meta.basis, source.basis)) return false;
-      tip = t;
+      tip = t; settledAt = clock();
       return true;
     },
     hashAt: (h) => (opened === "open" ? hashAt(h) ?? recent.get(h) ?? null : null),
@@ -370,7 +372,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     },
     rebuild: () => queued(async () => {
       try { await store.reset(); } catch (e) { storeError = messageOf(e); storeReason = "io"; throw e; }
-      unconfirmed = true; tip = null;
+      unconfirmed = true; tip = null; settledAt = null;
       await read();
     }),
     boundary(h) {

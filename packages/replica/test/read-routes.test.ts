@@ -67,8 +67,8 @@ for (const code of WITHHOLD) {
     got.map((r) => r?.status).join(","));
 }
 // Written out here, not read from WITHHELD_NOTES.
-const WITHHOLD_NOTES: readonly NoteCode[] = ["SOURCES_DISAGREE", "PEER_FAR_AHEAD", "TIP_STALE_LONG"];
-ok("WITHHELD_NOTES is these three notes", JSON.stringify([...WITHHELD_NOTES].sort()) === JSON.stringify([...WITHHOLD_NOTES].sort()), WITHHELD_NOTES.join(","));
+const WITHHOLD_NOTES: readonly NoteCode[] = ["SOURCES_DISAGREE", "PEER_FAR_AHEAD", "TIP_STALE_LONG", "SOURCE_FAILING"];
+ok("WITHHELD_NOTES is these four notes", JSON.stringify([...WITHHELD_NOTES].sort()) === JSON.stringify([...WITHHOLD_NOTES].sort()), WITHHELD_NOTES.join(","));
 for (const code of WITHHOLD_NOTES) {
   const a: Answer<Snapshot> = { ...base, notes: [{ code }] }, reads = given(a), got = await Promise.all([...PATHS, ...UNREGISTERED].map((p) => reads(p)));
   ok(`the note ${code} on a verified snapshot: 503 on all nine paths, the note in x-cairnx-notes and in the error`, got.every((r) => r?.status === 503 &&

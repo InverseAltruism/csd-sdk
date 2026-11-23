@@ -59,17 +59,45 @@ export function ownNode(o: OwnNodeOptions): OpenOptions {
   return { source: local(rest).source, store: diskStore({ dir }), witnesses: witness === undefined ? [] : [witness], step: OWN_NODE_STEP };
 }
 
+/** The shortest and longest `pollMs` open() takes: a poll a second at most, and setTimeout's own limit. */
+const POLL_MS_RANGE = Object.freeze({ min: 1_000, max: 2 ** 31 - 1 });
+
+/** `reader` with a poller: advance() again `ms` after each advance ends, until close(). The timer does not keep the
+ *  process alive. An advance that rejects is let go as a read's own is (reader.ts): the load that refuses a store puts
+ *  its reason in status() (storeReason, storeError) before it throws, and the poller goes on. */
+function polled(reader: Reader, ms: number): Reader {
+  let timer: ReturnType<typeof setTimeout> | undefined, closed = false;
+  const poll = (): void => {
+    if (closed) return;
+    void reader.advance().catch(() => undefined).then(() => {
+      if (closed) return;
+      timer = setTimeout(poll, ms);
+      timer.unref?.();
+    });
+  };
+  poll();
+  return { ...reader, async close() { closed = true; clearTimeout(timer); await reader.close(); } };
+}
+
 /** open() with `recount`, a block source of the server's: when a reference's difference has started at one boundary
  *  for STREAK new boundaries, a separate loop over it in memory reads to its source's tip (RECOUNT_MS at most) and
  *  takes that boundary. Equal to the replica's own tuple, the difference is confirmed (the note DIVERGENCE_CONFIRMED)
  *  and the replica keeps answering; equal to the reference's, the store is rebuilt (STORE_UNCONFIRMED while it
  *  refills), up to REBUILDS times with no equal comparison between, then kept with STORE_UNCONFIRMED and the note
  *  SOURCES_DISAGREE. Without `recount` a difference is only reported. A `recount` whose basis is not complete blocks bound to
- *  headers throws ReplicaConfigError: a feed's word cannot settle a difference that leads to a rebuild. */
-export function open(o: OpenOptions & { readonly recount?: BlocksSource }): Promise<Reader> {
-  const { recount, ...rest } = o;
+ *  headers throws ReplicaConfigError: a feed's word cannot settle a difference that leads to a rebuild. `pollMs`, off by
+ *  default: the reader advances at once and again `pollMs` after each advance ends, until close(), so a server that
+ *  answers reads (replicaReads) does not serve a state older than a poll and a step; READ_ADVANCE_MS is the hosted
+ *  resolver's own interval. A host that drives advance() itself passes none. A `pollMs` that is not a whole number from
+ *  1,000 to 2,147,483,647 throws ReplicaConfigError. */
+export async function open(o: OpenOptions & { readonly recount?: BlocksSource; readonly pollMs?: number }): Promise<Reader> {
+  const { recount, pollMs, ...rest } = o;
   if (recount !== undefined && (recount as { basis?: { kind?: unknown } }).basis?.kind !== "blocks") {
-    return Promise.reject(new ReplicaConfigError(`open: recount must be a block source, not a ${String((recount as { basis?: { kind?: unknown } }).basis?.kind)} source`));
+    throw new ReplicaConfigError(`open: recount must be a block source, not a ${String((recount as { basis?: { kind?: unknown } }).basis?.kind)} source`);
   }
-  return openWith(rest, recount ?? null);
+  if (pollMs !== undefined && !(Number.isSafeInteger(pollMs) && pollMs >= POLL_MS_RANGE.min && pollMs <= POLL_MS_RANGE.max)) {
+    throw new ReplicaConfigError(`open: pollMs is a whole number of milliseconds from ${POLL_MS_RANGE.min} to ${POLL_MS_RANGE.max}`);
+  }
+  const reader = await openWith(rest, recount ?? null);
+  return pollMs === undefined ? reader : polled(reader, pollMs);
 }
