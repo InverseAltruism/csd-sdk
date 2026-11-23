@@ -97,6 +97,23 @@ console.log("a step past its deadline:");
   ok("paired: before its deadline the same step reads to the top", paired.kind === "blocks" && paired.cursor.height === TIP && paired.reach === undefined);
 }
 
+console.log("a boundary read refused and not waited out:");
+{
+  // waitMaxMs 0: no refusal is waited out; the feed's second own boundary read is refused
+  let own = 0;
+  const base = captureIndexer(fx, TIP);
+  const f: typeof fetch = async (input, init) => {
+    if (init?.cache === "no-store" && /\/block-height\//.test(String(input)) && ++own === 2) return new Response("{}", { status: 429, headers: { "retry-after": "1" } });
+    return base(input, init);
+  };
+  const st = await indexerFeed({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 0 }).next({
+    rule: CAIRNX_EVENT_RULE, cursor: null, sofar: { eventIds: new Set(), proposeIds: new Set() }, hashAt: () => null, eventsHashAt: () => null,
+    budget: { deadlineAt: Number.POSITIVE_INFINITY, maxRequests: 100_000, maxBlocks: 100_000 }, signal: new AbortController().signal, now: () => 1_700_000_000_000,
+  });
+  ok("the step keeps what it read: it ends at the boundary before the refused one, the scan's top its reach", st.kind === "blocks" && st.cursor.height === 29_880 && st.reach === TIP,
+    JSON.stringify(st.kind === "blocks" ? { cursor: st.cursor, reach: st.reach } : st));
+}
+
 console.log("a host that refuses every request:");
 {
   let sent = 0;

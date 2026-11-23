@@ -50,6 +50,9 @@ ok("failing for 31 minutes: SOURCE_FAILING with its detail, 503", note?.detail =
 down = false;
 await r.advance();
 ok("a good step after it: the note gone, served again", !notes().includes("SOURCE_FAILING") && (await resolve()).status === 200, notes().join(","));
+down = true;
+await r.advance();
+ok("then one failed step: a new failure clock, no SOURCE_FAILING, served", r.status().lastError !== null && !notes().includes("SOURCE_FAILING") && (await resolve()).status === 200, notes().join(","));
 await r.close();
 
 console.log("resume() starts no failure clock:");
