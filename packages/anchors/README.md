@@ -3,7 +3,11 @@
 The block-hash anchors of the CSD chain as data: one table of block hashes on a 4,096-block grid, the floor every header
 walk starts from, and the block at the CairnX activation root (height 29,859). The package has no runtime dependency and
 no dependent inside this repository, so a refresh is one publish of this package alone and each consumer takes it in
-its own release. Not yet released (private).
+its own release.
+
+```bash
+npm install @inversealtruism/csd-anchors
+```
 
 ```ts
 import { ANCHORS } from "@inversealtruism/csd-anchors";
@@ -28,13 +32,13 @@ the headers above a checkpoint it is given, so a table entry is the checkpoint, 
 
 ## How the table is made and checked
 
-`scripts/generate-anchors.mjs` makes the next table, by hand on the deploy host:
+`scripts/generate-anchors.mjs` makes the next table, by hand, on a host with a node of its own:
 
 ```bash
 node packages/anchors/scripts/generate-anchors.mjs <anchor.json> --headers <base> [--write]
 ```
 
-The input is the line cairn's `bump-swapguard-cp.mjs --emit-json --target <height>` prints: the height, its hash and the
+The input is one JSON line from the releaser's corroboration of the target height: the height, its hash and the
 answers of three sources (node, miner, third), checked rule for rule: every source answers yes, the third is routed to
 its primary, the margin is at least 1,000, the height is at least 1,000 below the tip, the hash is lowercase, the height
 is a chunk top at or above the first one. The generator walks the headers `<base>` serves from the committed floor
@@ -69,10 +73,11 @@ print `spvanchors.ts` and `spvnewest.ts` to stdout.
    age bound (the wallet's release check, the site's watchdog) stays that consumer's.
 2. Copy the published `anchors.json` to `test/previous-published.json`. From the second version on the package test
    requires that file and holds the new table to extend it entry for entry.
-3. On the deploy host, make the input with cairn's script for the target height, run the generator without and then with
+3. On a host with a node of its own, make the input for the target height, run the generator without and then with
    `--write`, then `pnpm build` and `pnpm test` in this package.
 4. Bump the version and add the CHANGELOG entry naming the newest entry and where the input came from.
-5. Run the `anchors-check` workflow with a headers source and a second RPC the deploy host does not control. It must be
+5. Run the `anchors-check` workflow with a headers source and a second RPC that the host which made the input does not
+   control. It must be
    green on the commit to be published, before the npm window.
 6. A consumer switches in its own release: the wallet renders its two files with `render-wallet.mjs` and the diff is the
    added entries.

@@ -6,16 +6,24 @@ built-in, so it runs in a browser. Its rows are `@inversealtruism/cairnx-core`'s
 exact peer dependency: install the cairnx-core version this package was published against; any other installs a
 second core or runs this package on a core it was not built against.
 
-## What 0.1.3 is
+## The 1.0 contract
 
-- The handlers and types the CairnX resolver, its first consumer, will mount to answer the six reads.
-- Not a live HTTP API: as of 0.1.3 no public route serves these reads.
-- Not the 1.0 contract: until 1.0.0, any release may change a route, a parameter, a row or envelope field, an error
-  code or a cursor grammar, and CHANGELOG.md names each change. What an answer of the public API promises, and the
-  notice before a field or route is retired, start on the day the API's documentation is published, not with a
-  package version.
+From 1.0.0 this package is the contract of version 1 of the read API that a host serves under `/api/cairnx/v1/`.
+Promised: the six routes; each parameter's name, grammar and meaning; each list's orders and cursor grammars; the
+envelope's fields; each row field's name and meaning; the error codes with their statuses; what an answer means and
+what `rev` promises. The `rev` in `at` is an opaque token of 1 to 64 ASCII letters, digits, `.`, `_` and `-`, which a
+client echoes unchanged; that grammar is promised, and the length and alphabet of the token a server emits inside it
+are not. A route, an optional parameter, a field, a value of an open set or a higher `limit` maximum may be added in
+any release. Refused today and open to a later release, so a client does not rely on the refusal: `order` on the five
+lists with one order, any parameter but `at` and a required filter beside `keys`, and more than 32 keys. Not
+promised: the `message` texts, the key order in the JSON, the default `limit`, the presence of `total` and which
+refusal answers a request wrong in several ways. A route or a field (of a row or of the envelope) is removed only
+after it has been marked deprecated, with the date, in CHANGELOG.md and the documentation, and served unchanged for
+six months from that date; a change of meaning is a new API version, `/api/cairnx/v2/`. The documentation states the
+date the promise runs from, with the limits and availability of the hosted servers:
+<https://cairn-substrate.com/docs#cairnx-v1-notice>.
 
-The rest of this file describes 0.1.3 as built: 0.1.0's API with `order=length` on `names`, on cairnx-core 0.2.9.
+The rest of this file describes 1.0.0, on cairnx-core 0.2.10.
 
 ## What an answer means
 
@@ -24,8 +32,9 @@ an answer over HTTP from someone else's process is display (CairnX `CONVENTION.m
 ran.
 
 From a 200 a caller may conclude: this server states that its replay of the records it read, up to block `at`, gives
-these rows. It may not conclude that `at` is on the chain with the most work or will stay there (it is the server's
-tip, depth 0); that the server read every record or bound every author (it replays a feed, complete only on its
+these rows. It may not conclude that `at` is on the chain with the most work or will stay there (the answer is the
+server's word as of `at`: without `at` in the request, its tip when it answered; with one, a block it still holds);
+that the server read every record or bound every author (it replays a feed, complete only on its
 word); or that a row holds after `at`. An answer may be a reason to refuse a signature or a credit and is never the
 reason to allow one. A missing row is never an error: `rows` is empty.
 
@@ -43,8 +52,9 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   - `BidRow.offerCount`: the number of offers anchored in response to the bid: offers whose record names this bid and
     that were created while the resolver held it.
 - `Open<T>`: a value of an open set, the known values and any other string. The offer and bid `status`, a token's
-  `mint`, an event's `code` and a refusal's `code` are open: a newer server may send a value this release does not
-  name, so a consumer must handle an unknown value (an unknown code by `applied` or by the HTTP status).
+  `mint`, an event's `code` and a refusal's `code` are open, and an event's `kind` is a plain string: a newer server
+  may send a value this release does not name, so a consumer must handle an unknown value (an unknown code by
+  `applied` or by the HTTP status).
 - `ERRORS`, `ERROR_CODES`, `statusOf`, `ErrorCode`: each refusal code with its one HTTP status and the side that
   answers it. A client treats a code it does not know by its status.
 
@@ -74,10 +84,12 @@ reason to allow one. A missing row is never an error: `rows` is empty.
   quotes no input. Pass the raw query string or `URL.searchParams`, never a record from a query parser, which merges
   a repeated parameter. Any other `query`, or a route outside the six, throws a `TypeError`.
 - `CURSORS`, `CursorCodec` and the key types: the cursor of each list order, with `encode`, `decode`, `compare` and
-  `of(row)`. A cursor is only a position: a cursor of another list or snapshot that fits the grammar is read as
-  one (`44682:2` is an `events` cursor and a `newest` names cursor alike). A cursor is meant for the order that
-  issued it: a foreign one is refused when it does not fit that order's grammar and is read as a position when it
-  does (a `newest` names cursor whose height equals its name's length reads as an `order=length` position).
+  `of(row)`. A cursor is only a position, and it belongs to the list and order that gave it. Sent to another, it
+  is refused when it does not fit that order's grammar and read as a position there when it does (`44682:2` is an
+  `events` cursor and a `newest` names cursor alike), which can read as an empty page: a `length` cursor such as
+  `5:alice` sent to `order=newest` seeks below every name's height. After a 409 a walk that must be consistent starts
+  again from the first page under the new `at`: a cursor carried over to a new `at` can repeat or miss rows. Carrying
+  a cursor forward is for following a list without `at`, each page from the server's newest state.
 
 ## Handlers (`./handlers`)
 
@@ -141,12 +153,16 @@ other filter's count, each `status` and `kind` of offers alone and together incl
 Every route takes `at`, `keys`, `after` and `limit`.
 
 - `at=<height>:<hash>[:<rev>]`: the height in its one decimal spelling, at most 15 digits, the block hash as
-  `0x` and 64 lowercase hex digits, `rev` as 16 lowercase hex digits. Upper-case hex is refused, never normalised.
+  `0x` and 64 lowercase hex digits (upper-case hex is refused, never normalised), and `rev` as the server sent it: a
+  token of 1 to 64 ASCII letters, digits, `.`, `_` and `-` (these handlers emit 16 lowercase hex digits). A
+  well-formed `rev` the server does not hold is 409 `SNAPSHOT_NOT_HELD`, whatever its form.
 - `limit`: 1 to 200 (1 to 500 on `events`); absent, 100; out of range is refused, never clamped.
 - `keys`: 1 to 32 distinct primary keys, comma-separated (names; ids for `offers` and `bids`; tickers; transaction ids
   for `events`; addresses for `holders`). With `keys`, every other parameter but `at` and the required `ticker` of
-  `holders` is refused.
-- `after`: the cursor of the list's order. A height or a position in it is at most 15 digits.
+  `holders` is refused today. A later release may accept more keys or more parameters beside them.
+- `after`: the cursor of the list's order. A height or a position in it is at most 15 digits, and the amount of a
+  `holders` cursor at most 2^96 - 1 (cairnx-core's `MAX_AMOUNT`).
+- `order`: on `names` only today, the one list with more than one order.
 
 | Route | Order and `after` | Filters |
 |---|---|---|

@@ -6,7 +6,11 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 
 ## What `scripts/check-lockstep.mjs` enforces
 
-- Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ever ships.
+- Intra-workspace deps are `workspace:*`; pnpm rewrites them to exact versions at pack time. No caret ships, but for one
+  peer (`RANGE_PEERS`): cairnx-pin uses cairnx-replica for its `Pin` type alone, so it peers on `workspace:^`, which
+  pnpm packs as `^<replica version>`, and check-lockstep refuses that peer in any other form, and the form on any other
+  inter-dep. A published pin must hold the workspace's replica in its range: a replica release inside the range needs
+  no pin release, one outside it (0.2.0 above `^0.1.0`) does. The exit check pins the shipped range.
   `test/check-lockstep.test.ts` covers this rule.
 - Published pins: every package version already on npm pins the current workspace versions of its deps and of its
   exact peers (cairnx-core under cairnx-api and the replica), so a core bump needs a bump of every package that peers
@@ -31,8 +35,9 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
 
 Check mode (the default, `node scripts/npm-window.mjs [--out <dir>]`) publishes nothing. It:
 
-- lists every workspace version the HEAD commit's manifests name that is not yet on npm, dependencies first; a
-  package whose manifest is marked `private` is never listed;
+- lists every workspace version the HEAD commit's manifests name that is not yet on npm, each after the workspace
+  packages it depends on or peers on; a package whose manifest is marked `private` is never planned, and the plan
+  names it ("not published, marked private"), so a package left private by mistake shows there;
 - packs each with `pnpm pack` (prepack builds dist/);
 - runs the publish guard on each (`pnpm run prepublishOnly`: lockstep, the package suite, test:crosslang for
   cairnx-core);
@@ -102,14 +107,46 @@ the window script copies it into a userconfig in a private temporary directory, 
 from npm's output and removes the userconfig on exit. The maintainer deletes the file and revokes the token after the
 window.
 
-## The anchors package
+## The replica, the pin and the anchors
 
-`packages/anchors` (csd-anchors) is data, so a refresh is a release of that package alone and each consumer takes it
-in its own release. A table is due when its newest entry is 14 days old or when a consumer's release needs one;
-`packages/anchors/README.md` ("Cutting the next table") has the steps. The window's checks read no chain data and do not
-show that an entry is on the chain, so before the window the `anchors-check` workflow (`workflow_dispatch` only) is run by
-hand with a headers source and a second RPC that the deploy host does not control, and it must be green on the release
-commit.
+`packages/replica` (cairnx-replica), `packages/pin` (cairnx-pin) and `packages/anchors` (csd-anchors) go through the
+window like every other package; nothing in it is specific to them. What each release of them requires on the release
+commit, besides the window's own checks:
+
+- cairnx-replica: CI green, which runs its suite with the browser store test (a window on a host without
+  `CHROME_PATH` skips that test by name) and the exit check from the packed tarballs
+  (`packages/replica/scripts/exit-check.ts`: every entry imported under ESM and `require`, the packed files read for
+  an em dash or a private path, the worked examples and `cairnx-replica check` against recorded answers). Its exact
+  peer, cairnx-core, at the version HEAD names, is on npm already or in the same window, which orders it first.
+- cairnx-pin: the generator's `--check` against a node, by the releaser, for the pin the release ships
+  (`packages/pin/README.md`, "Cutting the next pin"): the build and CI prove only that the repo's data gives
+  `pin.json`. Its peer, cairnx-replica, at a version inside its range, on npm already or in the same window.
+- csd-anchors: data, so a refresh is a release of that package alone and each consumer takes it in its own release. A
+  table is due when its newest entry is 14 days old or when a consumer's release needs one;
+  `packages/anchors/README.md` ("Cutting the next table") has the steps. The window's checks read no chain data and do
+  not show that an entry is on the chain, so before the window the `anchors-check` workflow (`workflow_dispatch` only)
+  is run by hand with a headers source and a second RPC that the deploy host does not control, and it must be green on
+  the release commit.
+
+`publishOrder` puts each package after every workspace package it depends on or peers on, ties by name: with
+cairnx-core and cairnx-api unpublished too, a window runs cairnx-core, cairnx-api, cairnx-replica, cairnx-pin,
+csd-anchors (`test/npm-window.test.ts` checks the replica after the core and the csd packages it uses, the pin after
+the replica, on this repo's manifests).
+
+After the window, in this order: the window's own compare of each registry `dist.shasum` and `dist.integrity` with
+the verified tarball; `node scripts/check-lockstep.mjs`, which then compares each new version's registry `dist/` with
+this tree's build; the exit check on the published versions, from a checkout at the release commit:
+
+```bash
+pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm
+pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm --live --reference https://cairn-substrate.com/trade/api \
+  --origin https://cairn-substrate.com [--node http://127.0.0.1:8789] [--indexer <own csd-indexer>] [--full]
+```
+
+The first runs the offline legs on the published packages; the second the live legs it is given, each compared with
+the reference. The feed leg is for one's own csd-indexer: against our front door its first sync is paced by the
+request limit, about 17 minutes over the recorded capture's range alone at 300 requests a minute (the replica's README, "A csd-indexer feed") (`--full` adds the legs that read from the activation height). Then the tags `cairnx-replica-<version>`,
+`cairnx-pin-<version>` and `csd-anchors-<version>` ("Release tags" below; `check-consumer-pins.mjs` reads the first).
 
 ## Release tags
 
@@ -118,8 +155,9 @@ After a window, the maintainer tags each published version at the release commit
 the window, as the existing tags do (`git tag -a cairnx-api-0.1.0 <commit> -m "cairnx-api-0.1.0: published <date> in the
 npm window from tarballs packed at this commit by scripts/npm-window.mjs"`), then pushes it.
 `scripts/check-consumer-pins.mjs` reads them: a `cairnx-core-<version>` tag to grade a lagging core pin, and a
-`cairnx-api-<version>` tag, whose cairnx-api manifest must name that version, for the cairnx-core version that
-cairnx-api was packed against. Without the tag every consumer's check reports that version as unknown and fails.
+`cairnx-api-<version>` or `cairnx-replica-<version>` tag, whose manifest must name that version, for the cairnx-core
+version that package was packed against. Without the tag every consumer's check reports that version as unknown and
+fails.
 
 ## Versioning
 

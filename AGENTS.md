@@ -25,6 +25,7 @@ pnpm test:crosslang              # full JS<->Python differential: the fork gate 
 pnpm run audit:all               # citation check (hard), audit self-tests, invariants, money-safety, race harness
 node scripts/check-lockstep.mjs  # workspace pins, published pins and dist, dist freshness (queries npm)
 node scripts/npm-window.mjs      # the npm window in check mode: pack, guard, verify-tarball; publishes nothing
+pnpm exec tsx packages/replica/scripts/exit-check.ts   # the replica, pin and anchors installed from packed tarballs, against recorded answers
 pnpm test:live                   # needs CSD_RPC: the oracle and the client and light live suites; never in CI
 node scripts/check-consumer-pins.mjs   # cross-repo pin coherence over sibling consumer checkouts; skips absent ones
 ```
@@ -115,11 +116,12 @@ Adoption-gate discipline:
 Packaging and publishing (what each script checks, and why, is in `docs/release.md`):
 
 - `scripts/check-lockstep.mjs` enforces: intra-workspace deps are `workspace:*` (pnpm rewrites them to exact versions
-  at pack time; no caret ever ships); every package version already on npm pins the current workspace versions of
+  at pack time; no caret ships, with one exception: cairnx-pin peers on cairnx-replica as `workspace:^`, packed as
+  `^<version>`, because it uses the replica for a type alone, `RANGE_PEERS` in the script); every package version already on npm pins the current workspace versions of
   its deps; for a version already on npm the registry tarball's `dist/` is byte-identical to this tree's build, so a
   source change needs a version bump; `dist/` is not older than `src/` for versions not yet on npm; a package with a
-  CHANGELOG.md lists it in `files`. `test/check-lockstep.test.ts` pins the `workspace:*` rule, the published peer
-  pin, the published dist compare and its integrity check.
+  CHANGELOG.md lists it in `files`. `test/check-lockstep.test.ts` pins the `workspace:*` rule, the one range
+  peer, the published peer pin, the published dist compare and its integrity check.
 - A window publishes through `scripts/npm-window.mjs`, never by hand. The run needs a clean tree whose HEAD is on
   the first-parent line of `origin/master` (a merge or direct commit on master, not a commit inside a pull request
   merged with a merge commit; a rebased or fast-forwarded branch's commits are on the line and are admitted) and a

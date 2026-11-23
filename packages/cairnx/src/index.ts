@@ -14,6 +14,7 @@
 export * from "./types.js";
 export * from "./records.js";
 export { resolve, canonicalState, ptAmt, applyOrder, eventId } from "./resolve.js";
+export { newReplayContext, ReplayContextRefusal, type ReplayContext, type ReplayContextRefusalCode } from "./replay-context.js";
 export * from "./client.js";
 // preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
 // requiredFillOutputs / buildFeeHeight); mirrors the resolver's fill + claim + freeze math so every

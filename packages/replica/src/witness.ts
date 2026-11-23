@@ -85,6 +85,7 @@ export function witnessBoard(witnesses: readonly Witness[], clock: () => number)
     disagree: (): boolean => disagree,
     malformed: (): boolean => [...heard.values()].some((a) => a.malformed),
     rulesDiffer: (own: Gates, tip: number): boolean => [...rules.values()].some((g) => gatesDiffer(g, own, tip)),
-    peerAhead: (tip: TipView): boolean => [...heard.values()].some((a) => a.tip != null && a.tip.height > tip.height && tipHeaderPowOk(a.tip.header, a.tip.hash)),
+    /** How far the highest witness tip whose header meets its own bits is above `tip`, in blocks; 0 when none is. */
+    peerLead: (tip: TipView): number => Math.max(0, ...[...heard.values()].flatMap((a) => (a.tip != null && a.tip.height > tip.height && tipHeaderPowOk(a.tip.header, a.tip.hash) ? [a.tip.height - tip.height] : []))),
   };
 }

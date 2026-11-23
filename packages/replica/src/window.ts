@@ -77,7 +77,7 @@ export class HeaderWindow {
   at(height: number): VerifiedHeader | undefined { return height >= this.lc.baseHeight ? this.lc.chain[height - this.lc.baseHeight] : undefined; }
   hashAt(height: number): string | null { return this.at(height)?.hash.toLowerCase() ?? null; }
 
-  /** The reseed rule (design section 2): a window seeded from the same headers replaces one whose work is `held`
+  /** The reseed rule: a window seeded from the same headers replaces one whose work is `held`
    *  only when its own exceeds it; a tie keeps the held chain. */
   outworks(held: bigint): boolean { return this.work > held; }
 

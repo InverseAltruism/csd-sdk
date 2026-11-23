@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
 let pass = 0, fail = 0;
-const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
+const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : `\n${detail}`}`); };
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "check-consumer-pins.mjs");
 const parent = mkdtempSync(join(tmpdir(), "consumer-pins-"));
@@ -107,6 +107,34 @@ try {
   pins("cairnx", "1.4.0", "0.2.0");
   r = run();
   ok("one core: both consumers on one core pass", r.code === 0 && /consumer-pin coherence OK \(2 npm-pinning consumers\)/.test(r.out));
+
+  // The same rule for cairnx-replica, an exact peer on cairnx-core: replica 0.1.0 is tagged where the core is 1.4.0,
+  // replica 0.2.0 where it is 1.5.0.
+  const setReplica = (version: string) => write(join(sdk, "packages/replica/package.json"),
+    JSON.stringify({ name: "@inversealtruism/cairnx-replica", version, peerDependencies: { "@inversealtruism/cairnx-core": "workspace:*" } }));
+  const deps = (repo: string, d: Record<string, string>) => write(join(parent, repo, "package.json"),
+    JSON.stringify({ dependencies: Object.fromEntries(Object.entries(d).map(([k, v]) => [`@inversealtruism/${k}`, v])) }));
+  setReplica("0.1.0");
+  git("add", "-A"); git("commit", "-qm", "replica 0.1.0"); git("tag", "cairnx-replica-0.1.0");
+  deps("cairn-sdk", { "cairnx-core": "1.4.0", "cairnx-replica": "0.1.0" });
+  r = run();
+  ok("one core: a consumer on the core its cairnx-replica was published against passes",
+    r.code === 0 && /cairn-sdk pins cairnx-replica 0\.1\.0 \(dependencies\) on its cairnx-core 1\.4\.0/.test(r.out), r.out);
+  write(join(sdk, "packages/cairnx/src/preflight.ts"), "export const preflight = 4;\n");
+  setCore("1.5.0"); setReplica("0.2.0");
+  git("commit", "-qam", "1.5.0, replica 0.2.0"); git("tag", "cairnx-replica-0.2.0");
+  pin("cairnx", "1.5.0");
+  deps("cairn-sdk", { "cairnx-core": "1.5.0", "cairnx-replica": "0.1.0" });
+  r = run();
+  ok("one core: a core pin under a cairnx-replica published against another core fails",
+    r.code === 1 && /cairn-sdk pins cairnx-core 1\.5\.0 but cairnx-replica 0\.1\.0 \(dependencies\) was published against cairnx-core 1\.4\.0: TWO CORES/.test(r.out), r.out);
+  deps("cairn-sdk", { "cairnx-core": "1.5.0", "cairnx-replica": "0.1.5" });
+  r = run();
+  ok("one core: a cairnx-replica version with no tag fails closed", r.code === 1 && /cairn-sdk pins cairnx-replica 0\.1\.5 \(dependencies\): UNKNOWN version/.test(r.out), r.out);
+  deps("cairn-sdk", { "cairnx-core": "1.5.0", "cairnx-replica": "0.2.0", "cairnx-pin": "0.1.0" });
+  r = run();
+  ok("one core: a consumer on the replica built on its core passes, a cairnx-pin pin beside it asks no tag",
+    r.code === 0 && /consumer-pin coherence OK \(2 npm-pinning consumers\)/.test(r.out) && !/cairnx-pin/.test(r.out), r.out);
 } finally {
   rmSync(parent, { recursive: true, force: true });
 }

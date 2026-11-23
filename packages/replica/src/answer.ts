@@ -1,8 +1,10 @@
 // What a reader answers (design section 5). `value` is null unless the answer is verified; the unverified value is in
 // `shown`. Every answer carries its level, the proof of its records and the basis that vouches for them.
-import type { NameView, TokenMove } from "@inversealtruism/cairnx-core";
+import type { CairnXState, ChainEvent, NameView, TokenMove } from "@inversealtruism/cairnx-core";
 import type { BlockHeader } from "@inversealtruism/csd-codec";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
+import type { CompareReport } from "./compare.js";
+import type { Tuple } from "./tuple.js";
 import type { StoreReason } from "./loop.js";
 import type { Basis, Cursor, RecordProof, TipView } from "./types.js";
 
@@ -34,6 +36,11 @@ export interface BalanceValue {
 /** A name as a reader shows it: cairnx-core's NameView (CONVENTION section 35.4). `state` is `held`, `pending`, `lapsed`,
  *  `free` (absent) or `reserved`; `addr` and `profile` are a held name's only. */
 export type NameValue = NameView;
+/** The tip view and the events held up to it, from one commit (Reader.snapshot): `height` is the view's height,
+ *  `key` names that state (two snapshots with one key are one object, frozen), `events` are in the rows' order. */
+export interface Snapshot {
+  readonly key: string; readonly height: number; readonly state: CairnXState; readonly events: readonly ChainEvent[];
+}
 /** The cursor of `events` and `transfers`, opaque to a caller: the height and transaction position of a page's last
  *  item, exclusive when it starts a page, with the replica's events hash at that height (CONVENTION section 34.2), which
  *  covers every event at or below it (cursor.ts). */
@@ -70,5 +77,5 @@ export interface ReplicaStatus extends AnswerMeta {
   readonly witnessed: { readonly height: number; readonly at: number } | null;
   readonly lastReorg: { readonly from: Cursor; readonly to: Cursor; readonly at: number } | null;
   readonly lastError: { readonly code: string; readonly reason: string; readonly at: number } | null;
-  readonly tuple: null; readonly compare: null; readonly replayMs: number | null;
+  readonly tuple: Tuple | null; readonly compare: CompareReport | null; readonly replayMs: number | null;
 }

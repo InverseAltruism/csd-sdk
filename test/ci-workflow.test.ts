@@ -52,6 +52,11 @@ const reached = LIVE_ONLY.filter((f) => (scripts(pkgOf(f))["test:live"] ?? "").i
 ok("every live-only suite runs from test:live, and the root test:live reaches the packages",
   reached.length === LIVE_ONLY.length && /--if-present run test:live/.test(root["test:live"] ?? ""), `reached: ${reached.join(", ")}`);
 
+// The exit check (packages/replica/scripts/exit-check.ts) runs in CI from the packed tarballs against recorded
+// sources only: its live legs and its install of the published versions are the maintainer's, after a window.
+const exitCheck = [...ci.matchAll(/^\s*- run: (.*exit-check\.ts.*)$/gm)].map((m) => m[1]!);
+ok("CI runs the exit check once, offline, from packed tarballs", exitCheck.length === 1 && exitCheck.every((r) => r.trim() === "pnpm exec tsx packages/replica/scripts/exit-check.ts"), exitCheck.join(" | "));
+
 // The block scripts read a node (the differential also the indexer) over a whole height range: maintainer tools,
 // run by hand, in no CI step and no package script.
 const LIVE_SCRIPTS = ["capture-events-fixture.mjs", "events-live-differential.mjs", "scan-repeated-txids.mjs"];

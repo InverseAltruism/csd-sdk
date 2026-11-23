@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1 (unreleased)
+
+- The peer range on cairnx-replica moves to `^0.2.0`, the replica's release that adds a note code; the pin, its log and
+  `pin.json` are unchanged.
+
+## 0.1.0 (2026-11-22)
 
 - `PIN` at 143,340 (block `0x...763c42`), generated from a node against the anchor
   `143359:0x0000000000003e6d8aa16bdc20ab58023bd58c92185bca427783f33985bf6007`, the newest entry of the anchor table

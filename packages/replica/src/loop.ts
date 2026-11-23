@@ -15,7 +15,7 @@ import { checkStep, reorgBreak } from "./contract.js";
 import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
 import { LOADED_GATES, gatesDiffer } from "./gates.js";
 import { Held, verifyRows } from "./held.js";
-import { fullReplay } from "./replay.js";
+import { heldReplay } from "./replay.js";
 import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, HeldWindow, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
@@ -45,12 +45,24 @@ export interface LoopStatus {
   readonly retryAt: number | null; readonly replayMs: number | null;
   /** Whether the store was reset as unconfirmed and the loop has not yet reached a step's tip since. */
   readonly unconfirmed: boolean;
+  /** When the steps began to fail: the first failed step after the last that settled (a commit, an idle step), by the
+   *  loop's clock; null while no step has failed since. An aborted step and resume() leave it as it is. */
+  readonly failingSince: number | null;
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
-  /** The held boundary at `height`, its state hash replayed once and memoized when it was stored without one; null when
-   *  no boundary is held there or the store is not open. */
+  /** The served boundary at `height`: its state hash as stored, or replayed once and memoized when it was stored
+   *  without one; null when no boundary is served there or the store is not open. A held boundary is served while it is
+   *  FINAL_DEPTH deep under the cursor: one a rollback left shallower is kept and served again once the chain held
+   *  grows back over it, as the resolver's book withdraws it. */
   boundary(height: number): Boundary | null;
+  /** The heights of the served boundaries, ascending; none while the store is not open. */
+  boundaryHeights(): number[];
+  /** The newest served boundary whose state hash is stored or was replayed already: nothing is replayed for it. */
+  newestBoundary(): Boundary | null;
+  /** Resets the store and reads it again empty, so the next advance refills it; until a step reaches its tip the
+   *  status says `unconfirmed`. Queued with open, advance and close. */
+  rebuild(): Promise<void>;
   open(): Promise<LoopOpen>;
   /** Runs steps until caught up, backed off, aborted or past `budgetMs`, and resolves after the last commit. */
   advance(o?: { budgetMs?: number; signal?: AbortSignal }): Promise<LoopStatus>;
@@ -100,16 +112,16 @@ function linked(a: AbortSignal, b: AbortSignal | undefined): { signal: AbortSign
   return { signal: c.signal, dispose: () => { a.removeEventListener("abort", stop); b?.removeEventListener("abort", stop); } };
 }
 
-/** Internal. A loop over one source and one store; the materializer defaults to fullReplay(). */
+/** Internal. A loop over one source and one store; the materializer defaults to heldReplay(). */
 export function replicaLoop(o: LoopOptions): Loop {
-  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? fullReplay(), clock = o.clock ?? Date.now;
+  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? heldReplay(), clock = o.clock ?? Date.now;
   const floor = source.floor?.height ?? rule.activationHeight - 1;
   const limits = { maxBlocks: o.maxBlocks ?? 64, maxRequests: o.maxRequests ?? 10 };
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
   let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), unconfirmed = false;
-  let storeReason: StoreReason | null = null, storeError: string | null = null;
+  let storeReason: StoreReason | null = null, storeError: string | null = null, failingSince: number | null = null;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -137,9 +149,18 @@ export function replicaLoop(o: LoopOptions): Loop {
   }
 
   const cursor = (): Cursor | null => meta?.cursor ?? null;
+  // A commit adds a boundary only once FINAL_DEPTH deep, so only a rollback leaves one shallower; its block and events
+  // are kept under the cursor, so it is withheld, not dropped.
+  const served = (): Boundary[] => {
+    const c = cursor();
+    return opened === "open" && c !== null ? bounds.filter((b) => b.height + FINAL_DEPTH <= c.height) : [];
+  };
   const hashAt = (h: number): string | null => hashIn(held, cursor(), h);
   const eventsHashAt = (h: number): string | null => eventsHashIn(held, cursor(), h);
-  // Replayed from the rows held: a boundary's stored state hash is never read here, since a store can hold a wrong one.
+  // Replayed from the rows held, not read from a stored boundary: a source checks a pin against the store with it
+  // (pinned.ts), so it must not take the store's own record of the value it checks. boundary() and newestBoundary() do
+  // serve a stored state hash as recorded: in the disk and browser stores the boundary chain their record names covers
+  // it, checked at open (store-format.ts); a memory store lives in the process.
   const stateHashAt = (h: number): string | null => {
     const c = cursor();
     if (c === null || h > c.height) return null;
@@ -211,6 +232,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   function backOff(code: SourceCode | "STORE_FAILED", reason: string, afterMs: number | null): "stop" {
     lastError = { code, reason, at: clock() };
+    failingSince ??= lastError.at;
     // A source's wait is taken up to BACKOFF_MAX_MS; one that is not a finite number >= 0 is treated as absent.
     const asked = afterMs !== null && Number.isFinite(afterMs) && afterMs >= 0 ? Math.min(afterMs, BACKOFF_MAX_MS) : null;
     retryAt = clock() + (asked ?? Math.min(BACKOFF_FIRST_MS * 2 ** failures, BACKOFF_MAX_MS));
@@ -218,7 +240,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     return "stop";
   }
   function settled(t: TipView): void {
-    tip = t; lastError = null; retryAt = null; failures = 0;
+    tip = t; lastError = null; retryAt = null; failures = 0; failingSince = null;
     if ((cursor()?.height ?? -1) >= t.height) unconfirmed = false;
   }
 
@@ -299,7 +321,8 @@ export function replicaLoop(o: LoopOptions): Loop {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }
     if (signal.aborted) return "stop";
-    if (s.kind === "cannot") return backOff(s.code, s.reason, s.retryAfterMs);
+    // A step its own deadline ended (a pull stopped, kept for the next step) is no failure: no error, no backoff.
+    if (s.kind === "cannot") return s.deadline === true ? "stop" : backOff(s.code, s.reason, s.retryAfterMs);
     if (s.kind === "idle") { settled(s.tip); return "stop"; }
     return exclusive(() => (s.kind === "reorg" ? onReorg(s) : onBlocks(s)));
   }
@@ -320,7 +343,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   const status = (): LoopStatus => ({
     store: opened, storeReason, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
-    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed,
+    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed, failingSince,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };
   return {
@@ -341,8 +364,22 @@ export function replicaLoop(o: LoopOptions): Loop {
     async quiet() { while (busy !== null) await busy; },
     rows: (from) => (opened === "open" ? held.rows.filter((r) => r.height >= from) : []),
     stateAt: (t, d) => (opened === "open" ? m.stateAt(t, d) : null),
+    boundaryHeights: () => served().map((b) => b.height),
+    newestBoundary() {
+      const bs = served();
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const b = bs[i]!, hash = b.stateHash ?? filled.get(b.height) ?? null;
+        if (hash !== null) return { ...b, stateHash: hash };
+      }
+      return null;
+    },
+    rebuild: () => queued(async () => {
+      try { await store.reset(); } catch (e) { storeError = messageOf(e); storeReason = "io"; throw e; }
+      unconfirmed = true; tip = null; failingSince = null;
+      await read();
+    }),
     boundary(h) {
-      const b = opened === "open" ? bounds.find((x) => x.height === h) : undefined;
+      const b = served().find((x) => x.height === h);
       if (b === undefined || b.stateHash !== null) return b ?? null;
       let hash = filled.get(h);
       if (hash === undefined) {

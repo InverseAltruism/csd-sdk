@@ -1,0 +1,74 @@
+{
+  "feed": {
+    "name": "cairn",
+    "level": 1,
+    "proof": "served",
+    "verified": false,
+    "why": [
+      "LEVEL_FEED",
+      "TIP_STALE"
+    ],
+    "at": {
+      "height": 116988,
+      "tipHeight": 117000
+    },
+    "record": {
+      "name": "cairn",
+      "state": "held",
+      "owner": "0x44d92872a5b65d37d60ed532f41efe7c5aed59ec",
+      "addr": "0x44d92872a5b65d37d60ed532f41efe7c5aed59ec",
+      "profile": {},
+      "paidThroughEpoch": 9826
+    }
+  },
+  "own-node": {
+    "ticker": "CAIRN",
+    "address": "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016",
+    "level": 3,
+    "proof": "inclusion",
+    "verified": false,
+    "why": [
+      "TIP_STALE"
+    ],
+    "at": {
+      "height": 30288,
+      "tipHeight": 30300
+    },
+    "balance": {
+      "ticker": "CAIRN",
+      "address": "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016",
+      "deployId": "0xdf7113afc41319b700c26f26ba657c8267533a3dd511cc59776601a9aba03517",
+      "available": "500000000000000",
+      "locked": "0"
+    }
+  },
+  "pinned": {
+    "name": "m",
+    "level": 3,
+    "proof": "pinned",
+    "verified": false,
+    "why": [
+      "TIP_STALE",
+      "NOT_WITNESSED"
+    ],
+    "at": {
+      "height": 143344,
+      "tipHeight": 143356
+    },
+    "record": {
+      "name": "m",
+      "state": "held",
+      "owner": "0xb0fdacdb2f1cd3717ac5f0e937eaa996133bb97e",
+      "addr": "0xb0fdacdb2f1cd3717ac5f0e937eaa996133bb97e",
+      "profile": {
+        "avatar": "https://simple.wikipedia.org/wiki/Black#/media/File:Solid_black.svg",
+        "com.discord": "_mits",
+        "com.github": "mitss1",
+        "display": "Mits",
+        "header": "https://simple.wikipedia.org/wiki/Black#/media/File:Solid_black.svg"
+      },
+      "paidThroughEpoch": 10416
+    },
+    "site": null
+  }
+}

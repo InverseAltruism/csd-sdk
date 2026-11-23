@@ -3,10 +3,12 @@
 // (comma-separated, parsed strictly by parseHosts), read once from the process environment and from nowhere else.
 import type { Witness } from "./answer.js";
 import { diskStore } from "./disk-store.js";
+import { ReplicaConfigError } from "./errors.js";
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
 import { localOf } from "./presets.js";
-import type { OpenOptions } from "./reader.js";
+import { POLL_MS_RANGE, polled } from "./poll.js";
+import { openWith, type OpenOptions, type Reader } from "./reader.js";
 import type { BlocksSource, Pin } from "./types.js";
 
 export * from "./index.js";
@@ -18,8 +20,11 @@ export { hosted, type HostedOptions } from "./presets.js";
 export { derivePin } from "./derive-pin.js";
 export { diskStore } from "./disk-store.js";
 /** The resolver's indexer Scanner, served from this entry only: test/bundle.test.ts checks `.` and `./browser` carry none of it. */
-export { Scanner, branchRefusal, type ScanAnchor, type ScanOptions } from "./scanner.js";
-export { indexerFeed } from "./indexer-feed.js";
+export { Scanner, branchRefusal, type ScanAnchor, type ScanOptions, type ScanRun } from "./scanner.js";
+export { indexerFeed, type IndexerFeedOptions } from "./indexer-feed.js";
+export { RETRY_WAIT_MAX_MS } from "./http.js";
+export { STEP_UNIT } from "./scanner.js";
+export { READ_HEADERS, WITHHELD, WITHHELD_NOTES, replicaReads, withheldBy, type ReadResponse } from "./read-routes.js";
 /** Internal, for the pin generator: the gate table this package was built against, and the compare open() makes. */
 export { BUILT_GATES, gatesDiffer, gatesOf } from "./gates.js";
 
@@ -55,4 +60,27 @@ const OWN_NODE_STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 export function ownNode(o: OwnNodeOptions): OpenOptions {
   const { dir, witness, ...rest } = o;
   return { source: local(rest).source, store: diskStore({ dir }), witnesses: witness === undefined ? [] : [witness], step: OWN_NODE_STEP };
+}
+
+/** open() with `recount`, a block source of the server's: when a reference's difference has started at one boundary
+ *  for STREAK new boundaries, a separate loop over it in memory reads to its source's tip (RECOUNT_MS at most) and
+ *  takes that boundary. Equal to the replica's own tuple, the difference is confirmed (the note DIVERGENCE_CONFIRMED)
+ *  and the replica keeps answering; equal to the reference's, the store is rebuilt (STORE_UNCONFIRMED while it
+ *  refills), up to REBUILDS times with no equal comparison between, then kept with STORE_UNCONFIRMED and the note
+ *  SOURCES_DISAGREE. Without `recount` a difference is only reported. A `recount` whose basis is not complete blocks bound to
+ *  headers throws ReplicaConfigError: a feed's word cannot settle a difference that leads to a rebuild. `pollMs`, off by
+ *  default: the reader advances at once and again `pollMs` after each advance ends, until close(), so a server that
+ *  answers reads (replicaReads) does not serve a state older than a poll and a step; READ_ADVANCE_MS is the hosted
+ *  resolver's own interval. A host that drives advance() itself passes none. A `pollMs` that is not a whole number from
+ *  1,000 to 2,147,483,647 throws ReplicaConfigError. */
+export async function open(o: OpenOptions & { readonly recount?: BlocksSource; readonly pollMs?: number }): Promise<Reader> {
+  const { recount, pollMs, ...rest } = o;
+  if (recount !== undefined && (recount as { basis?: { kind?: unknown } }).basis?.kind !== "blocks") {
+    throw new ReplicaConfigError(`open: recount must be a block source, not a ${String((recount as { basis?: { kind?: unknown } }).basis?.kind)} source`);
+  }
+  if (pollMs !== undefined && !(Number.isSafeInteger(pollMs) && pollMs >= POLL_MS_RANGE.min && pollMs <= POLL_MS_RANGE.max)) {
+    throw new ReplicaConfigError(`open: pollMs is a whole number of milliseconds from ${POLL_MS_RANGE.min} to ${POLL_MS_RANGE.max}`);
+  }
+  const reader = await openWith(rest, recount ?? null);
+  return pollMs === undefined ? reader : polled(reader, pollMs);
 }

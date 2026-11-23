@@ -39,11 +39,15 @@ function blocksOf(events: readonly ChainEvent[], pin: Cursor): BlockEvents[] {
 
 /** A source of `pin`'s log, then `then`'s complete blocks above the pin. Throws ReplicaConfigError for a pin out of
  *  form or a `then` whose basis cannot sit above it. */
+/** The codes a pinned source refuses with; a refusal is the answer to every later step of that source. */
+export const PIN_REFUSALS = Object.freeze(["PIN_MISMATCH", "PIN_OFF_CHAIN", "RULES_DIFFER"] as const);
+type PinRefusal = (typeof PIN_REFUSALS)[number];
+
 export function pinned(o: { readonly pin: Pin; readonly then: BlocksSource }): Source {
   const pin = checkPin(o.pin), at: Cursor = { height: pin.height, hash: pin.blockHash }, then = o.then;
   const basis = checkBasis({ kind: "pinned", pin: at, logSha256: pin.logSha256, above: then.basis });
   let refused: Step | null = null, logged: Promise<Logged | Step> | null = null, bound = false;
-  const refuse = (code: SourceCode, reason: string): Step => (refused = cannot(code, reason));
+  const refuse = (code: PinRefusal, reason: string): Step => (refused = cannot(code, reason));
 
   async function load(rule: EventRule): Promise<Logged | Step> {
     if (!sameRule(pin.rule, rule)) return refuse("PIN_MISMATCH", `the pin is of ${pin.rule.domain} from ${pin.rule.activationHeight}, the store's rule is not`);

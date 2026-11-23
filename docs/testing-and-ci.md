@@ -70,7 +70,17 @@ money-safety corpus and the race harness.
   release scripts, the citation check, the profile budget, the workflow, the lint config and the dependency pins
   (`test/*.test.ts`). The per-package step sets `CHROME_PATH` to the runner's Chrome for the replica's browser store
   test (`packages/replica/test/browser/idb-store.test.ts`: an MV3 extension loaded over the DevTools pipe, its worker
-  stopped and woken), which fails under CI without it and skips with that reason elsewhere.
+  stopped and woken), which fails under CI without it and skips with that reason elsewhere. After the package tests, the exit check
+  (`packages/replica/scripts/exit-check.ts`) installs cairnx-replica, cairnx-pin and csd-anchors from tarballs packed
+  from the tree (`pnpm pack` with scripts off, so it needs the built dist) into an empty directory outside the repo
+  with npm, which reads the public registry for their third-party dependencies, and from that install imports every
+  exports entry under ESM and `require`, reads every packed file for an em dash or a sibling or host path
+  (`check-dashes-paths.mjs` `packedOffences`), type-checks `examples/deposits.ts` against the installed types, runs the
+  worked examples against `examples/answers.json` and runs `cairnx-replica check` five ways against loopback servers
+  over the recorded captures, each compared with `scripts/exit-reference.json` (held to cairnx-core's corpus and the
+  shipped pin by `test/cli.test.ts`). `--write-answers` records the examples' answers again; the diff is the review.
+  Its `--from npm` and `--live` modes are the maintainer's after a window (`docs/release.md`); `test/ci-workflow.test.ts`
+  pins that CI runs it once with neither.
 - The `conformance` job runs Python 3.12 + test:crosslang + `audit:all` as its own independently enforced job (audit
   findings stay report-only; a failed self-test, stale citation or JS/Python divergence fails it).
 - The `secrets` job runs gitleaks over the full history (release binary, sha256 checked).

@@ -1,14 +1,142 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.1 (unreleased)
 
 - `nameHistory` with `check` no longer serves an address or profile record that a later one supersedes: of a name's
   `nset` records the scoped replay applies only the last stays, and none when an applied `nxfer` or a fill of the
   name's offer follows it (each writes the field whole or clears it); the same for `nprofile`, which replaces the
   whole profile. Each hint costs a wallet two serial reads. On cairnx-core's replay corpus at 117,000, 8 of 114 names
   lose a hint (388 hints in all, now 378). The prune guard still has the last word: when it rejects this prune, the
-  earlier prune (of the records neither replay applied) is tried before the whole selection. The selector's apply order is cairnx-core's `applyOrder` over the records' own ids, as resolve()
-  orders them (a block's proposals before its attests, and the raw id, not the lowercased one, as the tie-break).
+  earlier prune (of the records neither replay applied) is tried before the whole selection. The selector's apply
+  order is cairnx-core's `applyOrder` over the records' own ids, as resolve() orders them (a block's proposals before
+  its attests, and the raw id, not the lowercased one, as the tie-break).
+
+## 0.2.0 (2026-11-23)
+
+A minor version because `NoteCode` grows: 0.1.0's types declare `NOTE_CODES` as a closed tuple of 13 codes and its
+README says nothing of additions, so a consumer's exhaustive `Record<NoteCode, ...>` or `switch` would break under a
+patch. From this release the README and `codes.ts` state that note codes may be added in a minor version and that a
+client treats a note it does not know as one that withholds nothing, unless the server withholds. No export's
+signature, existing note's meaning, result name or exit code changes. cairnx-pin 0.1.1 moves its peer range to it.
+
+What a consumer receives:
+- `NoteCode` gains `SOURCE_FAILING`: the source has been failing, its steps failed with none settled for more than 30
+  minutes (`FAILING_MS`, the verdict's `FRESH_MS`) from the first failed step after the last that settled. A replica
+  idle for longer whose next step fails once is not failing; `resume()` starts no clock. `replicaReads` withholds it
+  (`WITHHELD_NOTES`); before, such a state was served as it aged until the 6-hour `TIP_STALE_LONG`
+  (`test/failing.test.ts`). Internal: `LoopStatus.failingSince`.
+- A feed waits on 429 and 503: `indexerFeed`'s `next()` and `Source.tip()` wait out a `Retry-After` of up to
+  `RETRY_WAIT_MAX_MS` (60 s, our front door's window) and send the same request again, three refusals of one request
+  in a row at most, where 0.1.0 failed the step at once. `ScanOptions.waitMaxMs` (new): a whole number from 0 (no wait)
+  to 300,000, else `ReplicaConfigError`; the Scanner's default 0 throws on a 429 as before.
+- A feed's first sync against a limited host completes. A full pull keeps its answers bound to its tip block,
+  confirmed by a read of that block after each wait (another hash refuses the pull as `BRANCH_MOVED`); a pull that
+  stops (the deadline, the signal, a request's timeout, a refusal it does not wait out) keeps its confirmed answers,
+  and the next scan resumes it there, sending only what it has not read; any other failure drops them, the signal
+  aborted or not. A step that ended short of its scan's top hands that scan to the next step, read again only when the
+  indexer no longer gives its tip hash, and reuses the last step's tip time for the same block. Over the recorded
+  capture a cold sync went from 8,347 requests to 4,980 unlimited; behind a limiter of the front door's shape (scaled
+  to a 1 s window) with advances shorter than the pull it completes within 5 percent of that, and no page, attestation
+  list or transaction is answered twice (`test/feed-cold.test.ts`; it did not finish before).
+- Every step reads a unit (`STEP_UNIT`, 16 new answers of the pull or boundaries) before it honours its deadline, so a
+  budget shorter than one request still finishes a cold sync against a host that admits, in one window, a step's tip
+  and anchor reads, a unit and its confirming read, at most 21 requests (advances of 1 ms against answers 2 ms late: complete,
+  requests within 1.3 of an unlimited run's, `test/feed-cold.test.ts`). A step that its own deadline ended inside a
+  pull is no failed step: no error, no backoff, no start of `SOURCE_FAILING`'s clock (`test/failing.test.ts`: 38
+  minutes of such stops are served; a real failure then backs off from 1 s).
+- What keeps the kept pull: transport (a fetch that rejects, a 502, a 504, a 503, a request's timeout, the signal);
+  what drops it: what the indexer answered (a 500, a 404, an answer out of form). Under `verifyInclusion` it keeps each
+  transaction's bound info, so a resumed pull asks the node once per transaction (advances of 1 ms: 240 `rawTxAt`, as
+  one advance; it was 3,006). With `waitMaxMs`, a scan whose tip block cannot be read is refused at once as
+  `BRANCH_MOVED` instead of a pull with no memo and no deadline.
+- The deadline: past a step's deadline no wait starts, in the scan, its confirming read or the feed's own reads; a full
+  pull with its unit read stops at its next request after the deadline once a read of its tip block confirms what it
+  read; a boundary read refused then ends the step at the last boundary read. A step that began before its deadline
+  outlasts it by at most one wait begun before it and one request's timeout (70 s at the defaults; measured 1,296 ms
+  with a 1,000 ms wait and a 300 ms timeout, `test/scan/scan-deadline.test.ts`), plus the rest of its unit when that
+  was not yet read; one that begins past it sends its scan's tip and anchor reads, its unit and the confirming read (or
+  a carried scan's tip read, unit of boundaries and tip time), and under `verifyInclusion` the node reads of the unit.
+- `Scanner.scan(run?)` takes `{ signal, due }` (`ScanRun`, new, optional, typed from `./server`): the signal reaches
+  both fetch sites, a chain-order feed page's body and every wait, so `advance({ signal })` aborted mid-scan ends at
+  once, commits nothing, and the next step reads on (`test/feed-steps.test.ts`). Not reached: requests on Node 18 to
+  20.2 (no `AbortSignal.any`; each keeps its timeout) and the caller's own reads under `verifyInclusion`. The command's
+  5 s grace after its deadline stays as a backstop.
+- A pull resumed from its memo names no event above its tip (it could name attestations mined after it began). A fresh
+  full pull can still name records of blocks mined while it runs, as in 0.1.0: `indexerFeed` drops them, and a direct
+  caller of `Scanner.scan()` filters to the tip it was given. On slice 11's differential (11,450 paths) nothing changed.
+- `open()` in `./server` takes `pollMs` (new, off by default): the reader advances at once and again `pollMs` after
+  each advance ends, until `close()`; an advance that rejects does not stop it (`test/poll.test.ts`).
+- `heldReplay()` (new), over cairnx-core 0.2.10's held replay contexts, is the reader's and the loop's default
+  materializer: a step replays only its new events; a row applied at or below a context's height lets go every
+  context at or above it; `fallbacks` counts the heights a refusing context left to `resolve()`. Over the replay
+  corpus every state the loop asks, and over the capture all 2,904 boundary tuples, equal `fullReplay()`'s, which
+  stays exported (`test/held-replay.test.ts`).
+- Exported: `READ_ADVANCE_MS`, `FAILING_MS` and `STALE_MAX_MS` from `.`, `RETRY_WAIT_MAX_MS` and `STEP_UNIT` from `./server`.
+
+## 0.1.0 (2026-11-22)
+
+- The command `cairnx-replica check` (`bin`, `src/cli.ts`): a replica in memory on one source (`--node`, `--hosted`
+  with `--anchor` or `--pin`, `--feed`), read to its tip, printing the level, the verdict, the tuple at the newest
+  final boundary and the comparison with `--reference` or `--expect`; exit 0 only for `equal` (or `held` with neither),
+  2 for a usage or configuration error. Progress, each source error and the deadline (result `timeout`, with what it
+  waited for) are printed to stderr. Before the first publish: the exit codes are fixed (0 passed, 1 differs, 2 usage,
+  3 could not check, `EXIT_OF`); every printed line shows control and bidi characters escaped and source text cut at
+  400 characters; the feed's reads refuse redirects; `--feed` and `--reference` take the URL rule of the other sources;
+  a repeated flag, a malformed height, `--timeout-ms` out of range and `--pin` without cairnx-pin are usage errors; the
+  command exits 5 s after its deadline at the latest; a pinned `RULES_DIFFER` ends the run at once.
+- `indexerFeed` with `verifyInclusion` takes its tip and every block hash it holds from the caller's verified headers
+  through the new option `headerAt(height)` (`IndexerFeedOptions`), required with inclusion (`ReplicaConfigError`
+  without it; an answer timed more than `MAX_FUTURE_DRIFT_SECS` after the clock, as one in milliseconds is, is
+  `SOURCE_MALFORMED`): the tip is the final height with the verified hash and time, the indexer's `/block` is not
+  read, and the cursor ends where the indexer still gives the verified hash. An indexer that lags reads as `BEHIND`
+  (it read as synced at its own tip, so a server answered 200 for a state 20 blocks behind). One on another branch
+  than the verified headers is served only up to where they agree while that branch carries no record of its own;
+  when it does, every step fails as `SOURCE_UNAVAILABLE` and the last state stays served until the 6-hour cap
+  (`TIP_STALE_LONG`). Without inclusion nothing changes.
+- A read starts an advance only when none runs and the last ended at least `READ_ADVANCE_MS` (15 s) before, so a burst
+  of requests to a replica's server polls its source at most once in that time; `advance()` is unchanged.
+- `replicaReads`, after review: 503 also on the notes `WITHHELD_NOTES`: `SOURCES_DISAGREE`, the new `PEER_FAR_AHEAD` (a
+  witness's valid tip more than 12 above, more than 24 under `FINAL_VIEW`) and the new `TIP_STALE_LONG` (the tip older than `STALE_MAX_MS`, 6 hours); a
+  `TIP_STALE` tip alone and a peer up to that far ahead stay served. The notes reach a client in `x-cairnx-notes`, exposed
+  with the other two (`FINAL_VIEW` never reached the headers).
+- `replicaReads(reader)` in `./server`: the resolver's five state reads from `reader.snapshot()`, with the resolver's
+  statuses, bodies and headers (equal on the recorded fixture to 117,000), the verdict in `x-cairnx-at` and
+  `x-cairnx-why` (exposed to other origins), and 503, never 404, on `WITHHELD` and on `BEHIND` 12 or more below the
+  tip. The withhold rule is the server's, not the handlers'.
+- The resolver's five state reads, moved from the private CairnX resolver with their code unchanged
+  (`src/resolver/read.ts` as `src/handlers.ts`, and `src/nameview.ts`): `readState`, `readName`, `readResolve`,
+  `readNameHistory`, `readProfile` over a `ReadSnapshot`, with `leaseInfo` and `nameDetailsOf`, exported from `.`;
+  the resolver's purity guard moved with them (`test/handlers.test.ts`), and so did its nameview cases. `appliedIds` is
+  exported from `.`. `scripts/move-residual.mjs` lists both files and reports "code identical" for a TypeScript
+  file whose tokens equal the resolver's.
+- `Reader.snapshot()`: the tip view and the events held up to it from one commit, frozen, one object per state
+  (`Snapshot`). `dryRun`'s `at` is the cursor it was tried above (it named the tip, also while behind it or above it).
+- `indexerFeed`: a step's tip carries its header time, read from the indexer's `/block/<hash>` (it was 0, so every
+  answer said `TIP_STALE`); with `verifyInclusion` the tip is the final height, the highest block the Scanner emits
+  for (it was the indexer's tip, so every answer said `BEHIND`), and every answer carries the new note `FINAL_VIEW`;
+  such a tip is stale only 12 target block times (24 minutes) after the 30 minutes. `Source.tip()` with
+  `verifyInclusion` gives the last step's tip.
+- `indexerFeed`: a store cursor whose block is off the indexer's chain (the indexer's tip below it, or another hash at
+  its height) rolls back to the lower of that block and the last held boundary whose hash the indexer gives, never
+  below the floor, and the next step reads on to the indexer's tip. A shorter branch that changes only block hashes
+  left the cursor above the indexer's tip (`BRANCH_UNRESOLVED`, and a boundary 11 deep on the indexer's chain was
+  served); after review, also a tip that lands on a held boundary, the floor, and a shorter branch above the final
+  height under `verifyInclusion`. The cost: an indexer whose tip drops on one chain (a rebuild) rolls the store back
+  to it, as the hosted resolver's published state already drops; the store refills from the next scans. An indexer
+  whose tip is under the floor leaves the step idle at that tip, below the cursor. A final height that moves back with
+  the cursor's block still the indexer's rolls nothing back.
+- The tuple book and the comparison: `status().tuple`, the newest boundary's tuple from the loop's
+  boundaries; `OpenOptions.reference` and `status().compare` (`CompareReport`: equal, branch, records, rules, missing,
+  unavailable, with the first differing boundary, `lastAgreeing`, `streak`, `sameOrigin`); `PIN_DISPUTED` at a pin;
+  the notes `TUPLE_BRANCH`, `TUPLE_RECORDS`, `TUPLE_RULES`, `DIVERGENCE_CONFIRMED`; `./server`'s `open` takes `recount`,
+  which settles a difference held for `STREAK` new boundaries (confirmed, or the store rebuilt). After review: the pin
+  is read again at each new boundary until an equal answer; reads do not wait on the reference; a recount ends with the
+  advance's signal or `close()`; `recount` must be a block source; a failed reset keeps `STORE_UNCONFIRMED` and is
+  retried. The resolver's `tuple.ts` is not moved: a differential against a test-only copy of it finds the same tuple
+  at every boundary both serve. After the second review: a boundary a rollback leaves under 12 deep is withheld
+  until the chain grows back over it; at most `REBUILDS` (2) rebuilds with no equal comparison between, then
+  `STORE_UNCONFIRMED` and `SOURCES_DISAGREE`; an answer refused by its `Content-Length` has its body cancelled, so its
+  connection is not held until a garbage collection.
 - `indexerFeed(options)` in `./server`: a feed source over the resolver's Scanner (level 1, or 2 with
   `verifyInclusion`); a scan whose tip block moved is `BRANCH_MOVED`, changed events below the cursor roll back to the
   last event block that agrees, and the cursor is the tip, or with `verifyInclusion` the final height, or the last
@@ -201,7 +329,7 @@
   and `verified: false` by type and construction, `why` led by `LEVEL_DISPLAY` from `levelCode`, the level condition
   now exported by `verdict.ts`; `SOURCE_UNAVAILABLE` for no answer or one out of form. It refuses every basis but a
   display. `http.ts` exports its capped JSON read and signal join for it. The minified bundle is pinned under 6 KB
-  gzip, not the design's 4 KB: any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
+  gzip, of which any import from cairnx-core costs 2,290 bytes (measured 2026-11-21).
 - `./display` after review: a 200 whose body is JSON `null` is out of form (no longer read as an absent record); an
   owner or address must be a lower-case address string; a 404 is an absent name or ticker only with the resolver's
   exact refusal for that read (`unregistered name`, `unknown ticker`), any other 404 `SOURCE_UNAVAILABLE`. The README
