@@ -13,9 +13,9 @@ import { DOMAIN, EPOCH_LEN, EVENTS_HASH_START, HASH_RE, eventsHashStep, type Cha
 import { MAX_FUTURE_DRIFT_SECS } from "@inversealtruism/csd-codec";
 import { floorOf } from "./contract.js";
 import { ReplicaConfigError, SourceError, cannotOf } from "./errors.js";
-import { httpSessions, type Session } from "./http.js";
+import { RETRY_WAIT_MAX_MS, httpSessions, type Session } from "./http.js";
 import { applyOrder } from "./order.js";
-import { Scanner, branchRefusal, type ScanOptions } from "./scanner.js";
+import { Scanner, branchRefusal, type ScanAnchor, type ScanOptions } from "./scanner.js";
 import type { BlockEvents, Cursor, Source, Step, StepContext, TipView } from "./types.js";
 
 /** A block hash as csd-indexer's /block-height answers it, 0x and lowercase; anything else is SOURCE_MALFORMED. */
@@ -85,7 +85,10 @@ export interface IndexerFeedOptions extends ScanOptions {
 }
 
 /** `indexerUrl` and the rest of the Scanner's options: one Scanner serves every step, so its caches and kept events carry
- *  over. `fetch` and `timeoutMs` also serve the block-hash and block-time reads. Without verifyInclusion the chain is the
+ *  over. `fetch`, `timeoutMs` and `waitMaxMs` (default RETRY_WAIT_MAX_MS here) also serve the block-hash and block-time
+ *  reads. A step's scan takes the step's signal, and stops at the first Retry-After wait after the step's deadline,
+ *  kept for the next step to resume; a step that ends short of its scan's top (a budget, the deadline) hands that scan
+ *  to the next step while the indexer still gives its tip hash. Without verifyInclusion the chain is the
  *  indexer's: a step's tip is its tip with the time its /block/<hash> gives, and block hashes are its /block-height.
  *  With verifyInclusion the chain is the caller's verified headers: the tip is the final height with `headerAt`'s hash
  *  and time, every block hash held is `headerAt`'s, the indexer serves up to the highest height at or below the lower
@@ -96,13 +99,16 @@ export interface IndexerFeedOptions extends ScanOptions {
 export function indexerFeed(o: IndexerFeedOptions): Source {
   const inclusion = o.verifyInclusion === true, headerAt = o.headerAt;
   if (inclusion && headerAt === undefined) throw new ReplicaConfigError("indexerFeed: verifyInclusion needs headerAt, the verified header at a height, to name its tip");
-  const scanner = new Scanner(o);
+  const waitMaxMs = o.waitMaxMs ?? RETRY_WAIT_MAX_MS, scanner = new Scanner({ ...o, waitMaxMs });
   const base = o.indexerUrl.replace(/\/$/, "");
-  const session = httpSessions(base, { ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.timeoutMs === undefined ? {} : { timeoutMs: o.timeoutMs }) });
+  const session = httpSessions(base, { ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.timeoutMs === undefined ? {} : { timeoutMs: o.timeoutMs }), waitMaxMs });
   const hashOf = async (s: Session, h: number) => blockHash(await s.json(`/block-height/${h}`, false), h);
   // The tip's hash is the one the scan read before and after its pull: a later read of that height may name another.
   const hashIn = (s: Session, tip: { height: number; hash: string }) => (h: number) => (h === tip.height ? Promise.resolve(tip.hash) : hashOf(s, h));
   let last: TipView | null = null;
+  // The scan of a step that ended short of its top, and the cursor that step returned: the next step reads on from it.
+  type Scan = { readonly events: ChainEvent[]; readonly tipHeight: number; readonly anchor: ScanAnchor };
+  let carried: { r: Scan; final: number; cursor: Cursor } | null = null;
 
   /** The verified header at `h`, read once a step: a hash in a form blockHash takes and a whole number of seconds at
    *  most MAX_FUTURE_DRIFT_SECS after the clock, the chain's own bound (a time in milliseconds is far above it), else
@@ -125,14 +131,26 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
     return { at, reads: () => seen.size };
   }
 
-  async function step(s: Session, ctx: StepContext): Promise<Step> {
-    if (ctx.rule.domain !== DOMAIN) throw new SourceError("RULES_DIFFER", `the Scanner reads ${DOMAIN}, not ${ctx.rule.domain}`);
-    const r = await scanner.scan();
+  /** The scan a step reads: the one carried, when the store's cursor is the one its step returned and the indexer still
+   *  gives its tip hash (so every block under it is the scan's), else a new one. */
+  async function scanFor(s: Session, ctx: StepContext): Promise<{ r: Scan; final: number }> {
+    const c = carried, at = ctx.cursor;
+    carried = null;
+    if (c !== null && at !== null && at.height === c.cursor.height && at.hash === c.cursor.hash) {
+      const tip = blockHash(c.r.anchor.hashAfter, c.r.tipHeight);
+      if (blockHash(await s.json(`/block-height/${c.r.tipHeight}`, false), c.r.tipHeight) === tip) return c;
+    }
+    const r = await scanner.scan({ signal: ctx.signal, due: () => ctx.now() >= ctx.budget.deadlineAt });
     const moved = branchRefusal(r.anchor);
     if (moved !== null) throw new SourceError("BRANCH_MOVED", moved);
+    return { r, final: inclusion ? scanner.finalHeight! : r.tipHeight };
+  }
+
+  async function step(s: Session, ctx: StepContext): Promise<Step> {
+    if (ctx.rule.domain !== DOMAIN) throw new SourceError("RULES_DIFFER", `the Scanner reads ${DOMAIN}, not ${ctx.rule.domain}`);
+    const { r, final } = await scanFor(s, ctx);
     const floor = floorOf(ctx), blocks = byHeight(ruleEvents(r.events, ctx.rule.activationHeight));
     const indexer = hashIn(s, { height: r.tipHeight, hash: blockHash(r.anchor.hashAfter, r.tipHeight) }), v = verifiedHeaders(ctx.now);
-    const final = inclusion ? scanner.finalHeight! : r.tipHeight;
     // `chain`: the block hash at a height on the chain this feed follows. `serve`: the highest height the indexer gives on
     // it, at most the final height. `top`: the highest the step reads, the same.
     const chain = inclusion ? async (h: number) => (await v.at(h)).hash : indexer;
@@ -173,21 +191,23 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
     const heights = new Set<number>();
     for (const h of blocks.keys()) if (h > after && h <= top) heights.add(h);
     for (let b = (Math.floor(after / EPOCH_LEN) + 1) * EPOCH_LEN; b <= top; b += EPOCH_LEN) heights.add(b);
-    // Every boundary row carries its hash; once the budget's requests (the indexer's and the verified headers') or blocks
-    // are spent the step ends at the last boundary it read, whose hash the cursor needs.
+    // Every boundary row carries its hash; once the budget's requests (the indexer's and the verified headers'), its
+    // blocks or its time are spent the step ends at the last boundary it read, whose hash the cursor needs.
     const reads = Math.max(1, ctx.budget.maxRequests - 1), most = Math.max(1, ctx.budget.maxBlocks), out: BlockEvents[] = [];
     let cursor: Cursor | null = null;
     for (const h of [...heights].sort((a, b) => a - b)) {
       let hash: string | null = null;
       if (h % EPOCH_LEN === 0) {
-        if (cursor !== null && (s.requests() + v.reads() >= reads || out.length >= most)) break;
+        if (cursor !== null && (s.requests() + v.reads() >= reads || out.length >= most || ctx.now() >= ctx.budget.deadlineAt)) break;
         hash = await chain(h);
         cursor = { height: h, hash };
       }
       out.push({ height: h, hash, events: blocks.get(h) ?? [] });
     }
     if (cursor !== null && out.length < heights.size) {
-      return { kind: "blocks", blocks: out.filter((b) => b.height <= cursor!.height), cursor, tip: await tipOf(), reach: top };
+      const short: Step = { kind: "blocks", blocks: out.filter((b) => b.height <= cursor!.height), cursor, tip: await tipOf(), reach: top };
+      carried = { r, final, cursor };
+      return short;
     }
     const end = cursor?.height === top ? cursor : { height: top, hash: await chain(top) };
     return { kind: "blocks", blocks: out, cursor: end, tip: await tipOf(end.hash) };

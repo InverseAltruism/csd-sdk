@@ -25,12 +25,39 @@ export function retryAfterMs(v: string | null, now: number): number | null {
   return Number.isFinite(ms) ? Math.min(Math.max(0, ms), BACKOFF_MAX_MS) : null;
 }
 
-const pause = (ms: number, signal: AbortSignal): Promise<void> => new Promise((go, stop) => {
+/** A wait of `ms` that the signal ends at once, rejecting with its reason. */
+export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Promise((go, stop) => {
+  if (signal.aborted) { stop(signal.reason); return; }
   const done = () => { signal.removeEventListener("abort", quit); go(); };
   const quit = () => { clearTimeout(t); stop(signal.reason); };
   const t = setTimeout(done, ms);
   signal.addEventListener("abort", quit, { once: true });
 });
+
+/** The longest Retry-After a feed waits out before it sends the same request again: our front door's limiter is a
+ *  fixed one-minute window whose Retry-After is the seconds to its reset. */
+export const RETRY_WAIT_MAX_MS = 60_000;
+/** How many refusals of one request in a row are waited out; the next ends the wait. */
+export const RETRY_TRIES = 3;
+
+/** `send()`, sent again after each 429 or 503 whose Retry-After asks at most `maxMs` (RETRY_TRIES times in a row at
+ *  most), with `waited()` run after each wait and before the request goes again; any other answer is returned. A
+ *  refusal it does not wait out (no Retry-After, one out of form or over `maxMs`, or one refusal too many; a `maxMs`
+ *  below 0 waits out none) throws SourceError SOURCE_RATE_LIMITED for a 429 and SOURCE_UNAVAILABLE for a 503, with the
+ *  wait asked. The signal ends a wait at once. */
+export async function waitingOut(send: () => Promise<Response>, what: string, maxMs: number, signal: AbortSignal, waited?: () => Promise<void>): Promise<Response> {
+  for (let tries = 0; ; tries++) {
+    const r = await send();
+    if (r.status !== 429 && r.status !== 503) return r;
+    const ms = retryAfterMs(r.headers.get("retry-after"), Date.now());
+    await r.body?.cancel();
+    if (ms === null || ms > maxMs || tries >= RETRY_TRIES) {
+      throw new SourceError(r.status === 429 ? "SOURCE_RATE_LIMITED" : "SOURCE_UNAVAILABLE", `${what} answered ${r.status}`, ms);
+    }
+    await pause(ms, signal);
+    await waited?.();
+  }
+}
 // Without AbortSignal.any (Node before 20.3) a request keeps only its timeout, and an abort waits for that.
 export const either = (a: AbortSignal, b: AbortSignal): AbortSignal => (typeof AbortSignal.any === "function" ? AbortSignal.any([a, b]) : b);
 // csd-client's own timeout would start before the pace wait, so it is set past any wait and ours is used instead.
@@ -64,8 +91,9 @@ export async function cappedJson(r: Response, what: string, max = MAX_BYTES): Pr
   return parse(new TextDecoder().decode(all));
 }
 
-/** A factory of sessions over `base`, the client's paths below `base + rpc`; the pace holds across them. */
-export function httpSessions(base: string, o: HttpOptions, rpc = ""): (signal: AbortSignal) => Session {
+/** A factory of sessions over `base`, the client's paths below `base + rpc`; the pace holds across them. `waitMaxMs`
+ *  (internal, a feed's) is the longest Retry-After waited out (waitingOut); without it every 429 and 503 throws. */
+export function httpSessions(base: string, o: HttpOptions & { readonly waitMaxMs?: number }, rpc = ""): (signal: AbortSignal) => Session {
   const f = o.fetch ?? globalThis.fetch.bind(globalThis), paceMs = o.paceMs ?? 0, timeoutMs = o.timeoutMs ?? 10_000;
   let nextAt = 0, fresh = 0;
   return (signal) => {
@@ -75,12 +103,8 @@ export function httpSessions(base: string, o: HttpOptions, rpc = ""): (signal: A
       const now = Date.now(), wait = nextAt - now;
       nextAt = Math.max(nextAt, now) + paceMs;
       if (wait > 0) await pause(wait, signal);
-      n++;
-      const r = await f(input, { ...init, cache: "no-store", redirect: "error", signal: either(signal, AbortSignal.timeout(timeoutMs)) });
-      const after = () => retryAfterMs(r.headers.get("retry-after"), Date.now());
-      if (r.status === 429) throw new SourceError("SOURCE_RATE_LIMITED", `${String(input)} answered 429`, after());
-      if (r.status === 503) throw new SourceError("SOURCE_UNAVAILABLE", `${String(input)} answered 503`, after());
-      return r;
+      const send = () => { n++; return f(input, { ...init, cache: "no-store", redirect: "error", signal: either(signal, AbortSignal.timeout(timeoutMs)) }); };
+      return waitingOut(send, String(input), o.waitMaxMs ?? -1, signal);
     };
     const json = async (path: string, bypass: boolean): Promise<unknown> => {
       const url = `${base}${path}${bypass ? `?fresh=${Date.now().toString(36)}.${(fresh++).toString(36)}` : ""}`, r = await paced(url);
