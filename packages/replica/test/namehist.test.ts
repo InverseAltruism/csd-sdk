@@ -17,6 +17,7 @@ import {
   type CairnXRecord, type ChainEvent, type ProposeEvent,
 } from "@inversealtruism/cairnx-core";
 import { fixtures } from "../src/factories.js";
+import { supersededHints } from "./namehist-oracle.js";
 
 let pass = 0, fail = 0;
 const ok = (name: string, cond: boolean) => { cond ? pass++ : fail++; console.log(`  ${cond ? "✓" : "✗"} ${name}`); };
@@ -42,12 +43,19 @@ function equiv(full: ChainEvent[], name: string, tip: number): boolean {
 }
 
 // the same property for what check mode serves (the pruned hints): when it says sufficient, replaying exactly its
-// hints gives the full chain's record
+// hints gives the full chain's record, and no served nset or nprofile is superseded in that replay (so the prune
+// guard did not fall back to the whole selection over one)
 let servedPruned = 0;   // check-mode calls that dropped at least one candidate
+let servedSuperseded = 0;   // check-mode calls whose unpruned selection held a superseded nset or nprofile
+let supersededLeft = 0;     // check-mode calls that served one
 function equivServed(full: ChainEvent[], name: string, tip: number): boolean {
   const h = nameHistory(full, name, { tipHeight: tip });
   if (!h.scopedReplaySufficient) return false;
-  if (h.events.length < nameHistory(full, name).events.length) servedPruned++;
+  const unpruned = nameHistory(full, name).events;
+  if (h.events.length < unpruned.length) servedPruned++;
+  if (supersededHints(full, tip, name, unpruned.map((e) => e.txid)).length) servedSuperseded++;
+  const left = supersededHints(full, tip, name, h.events.map((e) => e.txid));
+  if (left.length) { supersededLeft++; console.log(`    SERVED A SUPERSEDED RECORD on "${name}": ${left.join(", ")}`); return false; }
   const ids = new Set(h.events.map((e) => e.txid));
   const b = resolve(full.filter((e) => ids.has((e.kind === "propose" ? e.id : e.txid).toLowerCase())), tip).names[name];
   try { assert.deepEqual(b, resolve(full, tip).names[name]); return true; }
@@ -304,6 +312,7 @@ for (let trial = 0; trial < PTRIALS; trial++) {
   if (!allEq && pDiverge <= 3) console.log(`    ↑ v1.9 trial ${trial} diverged (${ev.length} events)`);
 }
 ok(`v1.9 fuzz: ${pPass}/${PTRIALS}: scoped == full and the served hints replay to it with nprofile interleaved (${sawProfile} live profiles seen, 0 diverged)`, pDiverge === 0 && sawProfile > 0);
+ok(`both fuzzes: ${servedSuperseded} served histories had a superseded nset or nprofile in the unpruned selection, and ${supersededLeft} served one`, servedSuperseded > 0 && supersededLeft === 0);
 
 // ── The open-lane claim-fill exception the taker-bound fuzz can't reach ──
 console.log("\nOpen-lane claim-to-fill (the documented sufficiency EXCEPTION, scoped replay is insufficient):");
@@ -355,6 +364,14 @@ console.log("\nName-for-token fill (scoped-insufficient via out-of-scope buyer t
   ok("token want: sufficiency BREAKS (scoped != full), DIVERGE log expected", !equiv(full, "tokname", tip));
   ok("token want: nameHistory flags scopedReplaySufficient=FALSE even though the offer is TAKER-BOUND", nameHistory(full, "tokname").scopedReplaySufficient === false);
   ok("token want: check mode (the service's) flags it too: the full chain applied the fill", nameHistory(full, "tokname", { tipHeight: tip }).scopedReplaySufficient === false);
+  // The seller's later bare ocancel closes the offer only in the scoped replay (the fill closed it in the full one), so
+  // a prune without it leaves the name locked there: the guard rejects every prune and serves the whole selection,
+  // a stranger's refused nset included.
+  const withCancel = [...full, prop({ v: 1, t: "nset", name: "tokname", addr: D } as CairnXRecord, { proposer: D, height: H + 8 }),
+    prop({ v: 1, t: "ocancel" } as CairnXRecord, { proposer: A, height: H + 10 })];
+  const served = nameHistory(withCancel, "tokname", { tipHeight: tip });
+  ok("token want: a later ocancel by the seller reaches the guard's fallback: the whole selection is served, flagged",
+    JSON.stringify(served.events) === JSON.stringify(nameHistory(withCancel, "tokname").events) && served.events.length === 5 && served.scopedReplaySufficient === false);
 }
 
 // ── The MAX_PENDING_REG reservation-cap scoping gap, closed by the

@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.1 (unreleased)
+
+- `nameHistory` with `check` no longer serves an address or profile record that a later one supersedes: of a name's
+  `nset` records the scoped replay applies only the last stays, and none when an applied `nxfer` or a fill of the
+  name's offer follows it (each writes the field whole or clears it); the same for `nprofile`, which replaces the
+  whole profile. Each hint costs a wallet two serial reads. On cairnx-core's replay corpus at 117,000, 8 of 114 names
+  lose a hint (388 hints in all, now 378). The prune guard still has the last word: when it rejects this prune, the
+  earlier prune (of the records neither replay applied) is tried before the whole selection. The selector's apply
+  order is cairnx-core's `applyOrder` over the records' own ids, as resolve() orders them (a block's proposals before
+  its attests, and the raw id, not the lowercased one, as the tie-break).
+
+## 0.2.0 (2026-11-23)
 
 A minor version because `NoteCode` grows: 0.1.0's types declare `NOTE_CODES` as a closed tuple of 13 codes and its
 README says nothing of additions, so a consumer's exhaustive `Record<NoteCode, ...>` or `switch` would break under a
