@@ -7,6 +7,7 @@ import { ReplicaConfigError } from "./errors.js";
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
 import { localOf } from "./presets.js";
+import { POLL_MS_RANGE, polled } from "./poll.js";
 import { openWith, type OpenOptions, type Reader } from "./reader.js";
 import type { BlocksSource, Pin } from "./types.js";
 
@@ -57,26 +58,6 @@ const OWN_NODE_STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 export function ownNode(o: OwnNodeOptions): OpenOptions {
   const { dir, witness, ...rest } = o;
   return { source: local(rest).source, store: diskStore({ dir }), witnesses: witness === undefined ? [] : [witness], step: OWN_NODE_STEP };
-}
-
-/** The shortest and longest `pollMs` open() takes: a poll a second at most, and setTimeout's own limit. */
-const POLL_MS_RANGE = Object.freeze({ min: 1_000, max: 2 ** 31 - 1 });
-
-/** `reader` with a poller: advance() again `ms` after each advance ends, until close(). The timer does not keep the
- *  process alive. An advance that rejects is let go as a read's own is (reader.ts): the load that refuses a store puts
- *  its reason in status() (storeReason, storeError) before it throws, and the poller goes on. */
-function polled(reader: Reader, ms: number): Reader {
-  let timer: ReturnType<typeof setTimeout> | undefined, closed = false;
-  const poll = (): void => {
-    if (closed) return;
-    void reader.advance().catch(() => undefined).then(() => {
-      if (closed) return;
-      timer = setTimeout(poll, ms);
-      timer.unref?.();
-    });
-  };
-  poll();
-  return { ...reader, async close() { closed = true; clearTimeout(timer); await reader.close(); } };
 }
 
 /** open() with `recount`, a block source of the server's: when a reference's difference has started at one boundary

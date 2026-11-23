@@ -60,9 +60,10 @@ const CONTEXTS = 2;
  *  past CONTEXTS). The loop asks ascending heights between commits (the boundaries it makes deep, then the deep view,
  *  then the tip view), so a commit's states cost only its new events. A rollback lets go every context above it, a
  *  load all of them. A context that refuses (ReplayContextRefusal) is let go and that height replayed with resolve(),
- *  as cairnx-core says to; a replay that throws inside the fold throws, as resolve() does there. */
-export function heldReplay(o: { now?: () => number } = {}): Materializer {
-  let held: { ctx: ReplayContext; used: number }[] = [], uses = 0;
+ *  as cairnx-core says to, and counted in `fallbacks`; a replay that throws inside the fold throws, as resolve() does
+ *  there. */
+export function heldReplay(o: { now?: () => number } = {}): Materializer & { readonly fallbacks: number } {
+  let held: { ctx: ReplayContext; used: number }[] = [], uses = 0, fallbacks = 0;
   const replay = (events: readonly ChainEvent[], h: number): CairnXState => {
     let best: { ctx: ReplayContext; used: number } | undefined;
     for (const c of held) if (c.ctx.height <= h && (best === undefined || c.ctx.height > best.ctx.height)) best = c;
@@ -78,12 +79,14 @@ export function heldReplay(o: { now?: () => number } = {}): Materializer {
     } catch (e) {
       held = held.filter((c) => c !== best);
       if (!(e instanceof ReplayContextRefusal)) throw e;
+      fallbacks++;
       return resolve(events.filter((x) => x.height <= h), h);
     }
   };
-  return materializer(replay, {
+  const m = materializer(replay, {
     ...o,
     onLoad: () => { held = []; },
     onRollback: (to) => { held = held.filter((c) => c.ctx.height <= to); },
   });
+  return Object.defineProperty(m, "fallbacks", { get: () => fallbacks, enumerable: true }) as Materializer & { readonly fallbacks: number };
 }

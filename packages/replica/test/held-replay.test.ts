@@ -33,18 +33,26 @@ console.log("every prefix of the replay corpus, asked as the loop asks:");
   }
   ok(`${rows.length} blocks, ${corpus.events.length} events, ${asks} states asked: every one equal to resolve()'s`, differ.length === 0 && asks > rows.length * 2, differ.slice(0, 5).join(","));
 
-  // Rollbacks to each tenth block and a refill to the end, then a load from the rows.
+  ok("no state of the sweep was answered by the fallback to resolve()", held.fallbacks === 0, `${held.fallbacks} fallbacks`);
+
+  // Rollbacks to each tenth block, each refilled first with another branch (the block above the rollback left out) and
+  // then with the recorded one, then a load from the rows.
   differ = []; asks = 0;
+  const end = rows.at(-1)!.height;
   for (let k = rows.length - 1; k > 0; k -= Math.max(1, Math.floor(rows.length / 10))) {
     const to = rows[k - 1]!.height;
     for (const m of [held, full]) m.rollback(to);
     ask(to, 0); ask(to, FINAL_DEPTH);
-    for (const m of [held, full]) m.apply(rows.slice(k), rows.at(-1)!.height);
-    ask(rows.at(-1)!.height, FINAL_DEPTH); ask(rows.at(-1)!.height, 0);
+    for (const m of [held, full]) m.apply(rows.slice(k + 1), end);
+    ask(end, FINAL_DEPTH); ask(end, 0);
+    for (const m of [held, full]) m.rollback(to);
+    for (const m of [held, full]) m.apply(rows.slice(k), end);
+    ask(end, FINAL_DEPTH); ask(end, 0);
   }
   for (const m of [held, full]) m.load(rows.slice(0, 300), rows[299]!.height);
   ask(rows[299]!.height, 0); ask(rows[200]!.height, 0); ask(rows[299]!.height, 0);
-  ok(`after rollbacks to each tenth block, refills and a load: ${asks} states, every one equal`, differ.length === 0, differ.slice(0, 5).join(","));
+  ok(`after rollbacks to each tenth block, refills on two branches and a load: ${asks} states, every one equal, none by the fallback`,
+    differ.length === 0 && held.fallbacks === 0, `${differ.slice(0, 5).join(",")} ${held.fallbacks} fallbacks`);
 }
 
 console.log("the tuples of a loop over the recorded capture (29,860 to 117,000):");
@@ -71,8 +79,9 @@ console.log("a context that refuses falls back to resolve():");
   const odd = { ...rows[3]!, events: [{ ...rows[3]!.events[0]!, pos: 2 ** 53 }] };
   const bad = [...rows.slice(0, 3), odd, ...rows.slice(4)], top = rows.at(-1)!.height;
   const outcome = (m: Materializer) => { try { m.load(bad, top); const s = m.stateAt(top, 0); return s === null ? "null" : stateHash(s); } catch (e) { return `threw ${(e as Error).message}`; } };
-  const h = outcome(heldReplay()), f = outcome(fullReplay());
-  ok("an event at position 2^53: the held replay answers what resolve() answers", h === f && h.startsWith("0x"), `${h} | ${f}`);
+  const m = heldReplay(), h = outcome(m), f = outcome(fullReplay());
+  ok("an event at position 2^53: the context refuses it and the held replay answers what resolve() answers", h === f && h.startsWith("0x") && m.fallbacks === 1,
+    `${h} | ${f} | ${m.fallbacks} fallbacks`);
 }
 
 done("held-replay");

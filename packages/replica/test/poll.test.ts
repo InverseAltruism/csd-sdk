@@ -2,6 +2,7 @@
 // read and no caller's advance, and stops at close(); without it nothing advances on its own (a 0.1.0 host that
 // drives advance() is unchanged). A pollMs outside 1,000 to 2^31 - 1 or not whole is ReplicaConfigError.
 import { ReplicaConfigError, type Source } from "../src/index.js";
+import { polled } from "../src/poll.js";
 import { open, replicaReads } from "../src/server.js";
 import { done, ok } from "./check.js";
 import { cap } from "./node-harness.js";
@@ -27,6 +28,21 @@ console.log("with pollMs 1,000:");
   const closed = c.steps();
   await settle(1_300);
   ok("close() stops it: no step after it", c.steps() === closed, `${closed} then ${c.steps()}`);
+}
+
+console.log("the poller itself: no advance after close()");
+{
+  // A reader whose advance() counts its calls: one closed reader's advance() returns at once, so only this shows a
+  // poller left running.
+  let calls = 0;
+  const inner = await open({ source: nodeSource(), clock });
+  const fake = { ...inner, advance: () => { calls++; return Promise.resolve(inner.status()); } };
+  const r = polled(fake, 1_000);
+  await settle(2_200);
+  const before = calls;
+  await r.close();
+  await settle(1_300);
+  ok(`it advanced (${before} calls) and none after close()`, before >= 2 && calls === before, `${before} then ${calls}`);
 }
 
 console.log("paired, without pollMs:");

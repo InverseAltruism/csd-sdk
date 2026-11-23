@@ -210,7 +210,7 @@ The states come from `heldReplay()`, the default materializer: at most two of ca
 (`newReplayContext`), each fed only the events of the blocks above its height, so a step costs its new events rather
 than a replay of all of them. A state at a height comes from the nearest context at or below it, or from a new one; a
 rollback lets go the contexts above it. A context that refuses an event is let go and that height is replayed with
-`resolve()`, as cairnx-core says to. `fullReplay()`, `resolve()` over every held event, stays exported; over the replay
+`resolve()`, as cairnx-core says to; the materializer's `fallbacks` counts those. `fullReplay()`, `resolve()` over every held event, stays exported; over the replay
 corpus every state the loop asks, and over the recorded capture every boundary's tuple, is the same from both
 (`test/held-replay.test.ts`).
 
