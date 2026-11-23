@@ -74,4 +74,16 @@ console.log("a step past its deadline:");
   ok("paired: before its deadline the same step reads to the top", paired.kind === "blocks" && paired.cursor.height === TIP && paired.reach === undefined);
 }
 
+console.log("a host that refuses every request:");
+{
+  let sent = 0;
+  const refusing: typeof fetch = async () => { sent++; return new Response("{}", { status: 429, headers: { "retry-after": "0" } }); };
+  const st = await indexerFeed({ indexerUrl: "http://idx", fetch: refusing }).next({
+    rule: CAIRNX_EVENT_RULE, cursor: null, sofar: { eventIds: new Set(), proposeIds: new Set() }, hashAt: () => null, eventsHashAt: () => null,
+    budget: { deadlineAt: Number.POSITIVE_INFINITY, maxRequests: 100, maxBlocks: 100 }, signal: new AbortController().signal, now: () => 1_700_000_000_000,
+  });
+  ok("each Retry-After 0: one request sent four times (three refusals waited out), then the step ends as SOURCE_RATE_LIMITED",
+    st.kind === "cannot" && st.code === "SOURCE_RATE_LIMITED" && st.retryAfterMs === 0 && sent === 4, `${JSON.stringify(st)} after ${sent} requests`);
+}
+
 done("feed-steps");

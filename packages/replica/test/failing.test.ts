@@ -22,6 +22,9 @@ const resolve = async () => (await reads("/cairnx/state"))!;
 const good = await r.advance();
 ok("setup: synced at the recorded tip, served", good.cursor?.height === TIP && good.lastError === null && (await resolve()).status === 200);
 
+now += 31 * MIN;
+ok("no step for 31 minutes and none failed (nothing advanced): no SOURCE_FAILING", r.status().lastError === null && !notes().includes("SOURCE_FAILING"), notes().join(","));
+await r.advance();
 down = true;
 await r.advance();
 ok("a failed step right after a good one: no SOURCE_FAILING, served", r.status().lastError?.code === "SOURCE_UNAVAILABLE" && !notes().includes("SOURCE_FAILING") && (await resolve()).status === 200);
