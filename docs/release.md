@@ -144,8 +144,8 @@ pnpm exec tsx packages/replica/scripts/exit-check.ts --from npm --live --referen
 ```
 
 The first runs the offline legs on the published packages; the second the live legs it is given, each compared with
-the reference. The feed leg is for one's own csd-indexer: against our front door its first sync does not finish
-(the replica's README, "A csd-indexer feed") (`--full` adds the legs that read from the activation height). Then the tags `cairnx-replica-<version>`,
+the reference. The feed leg is for one's own csd-indexer: against our front door its first sync is paced by the
+request limit, about 17 minutes over the recorded capture's range alone at 300 requests a minute (the replica's README, "A csd-indexer feed") (`--full` adds the legs that read from the activation height). Then the tags `cairnx-replica-<version>`,
 `cairnx-pin-<version>` and `csd-anchors-<version>` ("Release tags" below; `check-consumer-pins.mjs` reads the first).
 
 ## Release tags

@@ -117,7 +117,7 @@ for (const [name, kept] of BROKEN) ok(`${name}: not kept`, kept === false);
 console.log("code tables:");
 const upper = (codes: readonly string[]) => codes.every((c) => /^[A-Z]+(?:_[A-Z]+)*$/.test(c)) && new Set(codes).size === codes.length;
 ok("19 not-verified codes, distinct", NOT_VERIFIED_CODES.length === 19 && upper(NOT_VERIFIED_CODES) && Object.isFrozen(NOT_VERIFIED_CODES));
-ok("13 note codes, distinct, none a not-verified code", NOTE_CODES.length === 13 && upper(NOTE_CODES) && Object.isFrozen(NOTE_CODES) &&
+ok("14 note codes, distinct, none a not-verified code", NOTE_CODES.length === 14 && upper(NOTE_CODES) && Object.isFrozen(NOTE_CODES) &&
   NOTE_CODES.every((c) => !(NOT_VERIFIED_CODES as readonly string[]).includes(c)));
 
 console.log("compile-time refusal:");

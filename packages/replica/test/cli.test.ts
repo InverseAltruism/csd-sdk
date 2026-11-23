@@ -212,6 +212,14 @@ console.log("frozen with 0.1.0: the arguments, the hosts asked, the text shown, 
   const took = Date.now() - t0;
   ok("a feed that never answers: the deadline at 1 s, the command back within its 5 s grace, exit 3, the line saying the source did not stop",
     st.code === 3 && st.report?.result === "timeout" && took < 1_000 + 5_000 + 1_500 && st.err.some((l) => /did not stop within 5000 ms of the deadline/.test(l)), `took ${took} ms\n${st.err.join("\n")}`);
+  // Paired: a feed whose requests hang until their abort, as a real one's do. The deadline ends its scan, so the
+  // command is back within 1.5 s of it without the grace.
+  const slow: typeof fetch = (_input, init) => new Promise((_, no) => init?.signal?.addEventListener("abort", () => no(init.signal!.reason), { once: true }));
+  const tSlow = Date.now();
+  const sl = await run(["--feed", "http://idx", "--json", "--timeout-ms", "1000"], slow);
+  const tookSlow = Date.now() - tSlow;
+  ok("a feed whose requests end on their abort: timeout at 1 s, back within 1.5 s of it, no line saying the source did not stop, exit 3",
+    sl.code === 3 && sl.report?.result === "timeout" && tookSlow < 1_000 + 1_500 && !sl.err.some((l) => /did not stop/.test(l)), `took ${tookSlow} ms\n${sl.err.join("\n")}`);
 
   // A pinned gate mismatch is sticky, as pinned.ts keeps it: the run ends at once, result rules, exit 1.
   const upTo = (to: number): BlockFixture => ({ ...fx, to, toHash: hashAt(to), blocks: fx.blocks.filter((x) => x.height <= to) });

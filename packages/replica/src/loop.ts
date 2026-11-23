@@ -15,7 +15,7 @@ import { checkStep, reorgBreak } from "./contract.js";
 import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
 import { LOADED_GATES, gatesDiffer } from "./gates.js";
 import { Held, verifyRows } from "./held.js";
-import { fullReplay } from "./replay.js";
+import { heldReplay } from "./replay.js";
 import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, HeldWindow, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
@@ -45,6 +45,9 @@ export interface LoopStatus {
   readonly retryAt: number | null; readonly replayMs: number | null;
   /** Whether the store was reset as unconfirmed and the loop has not yet reached a step's tip since. */
   readonly unconfirmed: boolean;
+  /** When the steps began to fail: the first failed step after the last that settled (a commit, an idle step), by the
+   *  loop's clock; null while no step has failed since. An aborted step and resume() leave it as it is. */
+  readonly failingSince: number | null;
 }
 /** Internal. Calls to open, advance and close run one after another. */
 export interface Loop {
@@ -109,16 +112,16 @@ function linked(a: AbortSignal, b: AbortSignal | undefined): { signal: AbortSign
   return { signal: c.signal, dispose: () => { a.removeEventListener("abort", stop); b?.removeEventListener("abort", stop); } };
 }
 
-/** Internal. A loop over one source and one store; the materializer defaults to fullReplay(). */
+/** Internal. A loop over one source and one store; the materializer defaults to heldReplay(). */
 export function replicaLoop(o: LoopOptions): Loop {
-  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? fullReplay(), clock = o.clock ?? Date.now;
+  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? heldReplay(), clock = o.clock ?? Date.now;
   const floor = source.floor?.height ?? rule.activationHeight - 1;
   const limits = { maxBlocks: o.maxBlocks ?? 64, maxRequests: o.maxRequests ?? 10 };
   const closing = new AbortController();
   let opened: LoopStatus["store"] = null, meta: StoreMeta | null = null, held = new Held(), bounds: Boundary[] = [];
   let tip: TipView | null = null, lastReorg: LoopStatus["lastReorg"] = null, lastError: LoopStatus["lastError"] = null;
   let retryAt: number | null = null, failures = 0, queue: Promise<unknown> = Promise.resolve(), unconfirmed = false;
-  let storeReason: StoreReason | null = null, storeError: string | null = null;
+  let storeReason: StoreReason | null = null, storeError: string | null = null, failingSince: number | null = null;
   const filled = new Map<number, string>();   // state hashes replayed on demand for boundaries stored without one
   let generation = 0, busy: Promise<void> | null = null;
   // The hashes of the blocks at the cursor and the FINAL_DEPTH heights below it, as this generation's steps carried
@@ -229,6 +232,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   function backOff(code: SourceCode | "STORE_FAILED", reason: string, afterMs: number | null): "stop" {
     lastError = { code, reason, at: clock() };
+    failingSince ??= lastError.at;
     // A source's wait is taken up to BACKOFF_MAX_MS; one that is not a finite number >= 0 is treated as absent.
     const asked = afterMs !== null && Number.isFinite(afterMs) && afterMs >= 0 ? Math.min(afterMs, BACKOFF_MAX_MS) : null;
     retryAt = clock() + (asked ?? Math.min(BACKOFF_FIRST_MS * 2 ** failures, BACKOFF_MAX_MS));
@@ -236,7 +240,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     return "stop";
   }
   function settled(t: TipView): void {
-    tip = t; lastError = null; retryAt = null; failures = 0;
+    tip = t; lastError = null; retryAt = null; failures = 0; failingSince = null;
     if ((cursor()?.height ?? -1) >= t.height) unconfirmed = false;
   }
 
@@ -317,7 +321,8 @@ export function replicaLoop(o: LoopOptions): Loop {
       return signal.aborted ? "stop" : backOff("SOURCE_UNAVAILABLE", messageOf(e), null);
     }
     if (signal.aborted) return "stop";
-    if (s.kind === "cannot") return backOff(s.code, s.reason, s.retryAfterMs);
+    // A step its own deadline ended (a pull stopped, kept for the next step) is no failure: no error, no backoff.
+    if (s.kind === "cannot") return s.deadline === true ? "stop" : backOff(s.code, s.reason, s.retryAfterMs);
     if (s.kind === "idle") { settled(s.tip); return "stop"; }
     return exclusive(() => (s.kind === "reorg" ? onReorg(s) : onBlocks(s)));
   }
@@ -338,7 +343,7 @@ export function replicaLoop(o: LoopOptions): Loop {
 
   const status = (): LoopStatus => ({
     store: opened, storeReason, storeError, cursor: cursor(), eventsHash: meta?.eventsHash ?? EVENTS_HASH_START, eventCount: meta?.eventCount ?? 0,
-    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed,
+    tip, lastReorg, lastError, retryAt, replayMs: m.replayMs, unconfirmed, failingSince,
   });
   const queued = <T>(f: () => Promise<T>): Promise<T> => { const run = queue.then(f); queue = run.catch(() => undefined); return run; };
   return {
@@ -370,7 +375,7 @@ export function replicaLoop(o: LoopOptions): Loop {
     },
     rebuild: () => queued(async () => {
       try { await store.reset(); } catch (e) { storeError = messageOf(e); storeReason = "io"; throw e; }
-      unconfirmed = true; tip = null;
+      unconfirmed = true; tip = null; failingSince = null;
       await read();
     }),
     boundary(h) {

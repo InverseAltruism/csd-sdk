@@ -30,6 +30,8 @@
 import { MAX_TX_OUTPUTS, verifyMerkleProof, txid as codecTxid, type App, type Tx } from "@inversealtruism/csd-codec";
 import { authorOf } from "@inversealtruism/csd-crypto";
 import { ADDR_RE, DOMAIN, EPOCH_LEN, FINAL_DEPTH, paidToFromOutputs, type AttestEvent, type ChainEvent, type ProposeEvent } from "@inversealtruism/cairnx-core";
+import { SourceError, messageOf } from "./errors.js";
+import { either, waitMaxOf, waitingOut } from "./http.js";
 import { KEPT_REFRESH_SCANS, MAX_KEPT_EVENTS, eventsOf, fullPullOrder, keptFrom, type Block, type ChainPos, type Kept } from "./kept.js";
 
 // A consensus-order scalar (block height / tx pos) from an indexer row MUST be a real non-negative safe
@@ -150,7 +152,25 @@ export interface ScanOptions {
   verifiedTipHeight?: () => Promise<number>;
   // Min confirmations a tx needs before its outputs feed a payment/fee check. Default 12.
   confDepth?: number;
+  // The longest Retry-After (ms) a 429 or 503 is waited out before the same request goes again (http.ts waitingOut);
+  // a full pull then keeps what it read across a stop (scan()). A whole number from 0 to 300,000, else
+  // ReplicaConfigError. Default 0: a 429 or 503 throws, as any other status.
+  waitMaxMs?: number;
 }
+
+/** What one scan() call takes: `signal` ends its requests and waits, rejecting with its reason; `due()` is a step's
+ *  deadline: once it is true no wait starts, and a full pull stops at its next request, after one read that confirms
+ *  what it read (scan()). */
+export interface ScanRun { readonly signal?: AbortSignal; due?(): boolean }
+
+/** How many new answers of a full pull, or boundaries of a feed's step, a step reads before it honours its deadline:
+ *  every step moves the pull forward, so a cold sync finishes under any budget against a host that admits a step's tip
+ *  and anchor reads, a unit and its confirming read in one window of its limiter. */
+export const STEP_UNIT = 16;
+
+/** A full pull's answers, by path, read at the tip `tip` whose block hash before the pull was `hash`; the first
+ *  `confirmed` were read before a later read of that hash gave it again. */
+interface Memo { readonly tip: number; readonly hash: string; answers: Map<string, unknown>; confirmed: number }
 
 /** `body` is set only with verifyInclusion on: the node's txid-bound app payload and the author of its raw tx. */
 interface TxInfo { pos: number; height: number; outputs: { addr: string; value: number }[]; body?: { app: App; signer: string } }
@@ -203,6 +223,14 @@ export class Scanner {
   private merkleProofAt: (txid: string) => Promise<{ block_height: number; pos: number; merkle: string[]; merkle_root: string }>;
   private verifiedTipHeight?: () => Promise<number>;
   private confDepth: number;
+  private waitMaxMs: number;
+  private run: ScanRun = {};
+  /** The full pull in progress, or one a stop suspended, which the next scan resumes (scan()). */
+  private memo: Memo | null = null;
+  /** Whether getJson reads through the memo: only inside pullAll, whose answers at one tip are what the memo holds. */
+  private memoOn = false;
+  /** The answers of the pull this scan() call read from the indexer, not from the memo. */
+  private fresh = 0;
   private tipHeight = 0;          // set per scan (indexer-fed): attCache freeze horizon + fallback tip
   private depthTip = 0;           // set per scan (verifiedTipHeight with verifyInclusion on, else the indexer tip): the conf-depth reference
   private lastFinal: number | null = null;
@@ -231,20 +259,79 @@ export class Scanner {
     this.merkleProofAt = opts.merkleProofAt ?? ((txid) => this.getJson(`/tx/${txid}/merkle-proof`));
     this.verifiedTipHeight = opts.verifiedTipHeight;
     this.confDepth = opts.confDepth ?? Scanner.FINALITY;
+    this.waitMaxMs = waitMaxOf(opts.waitMaxMs ?? 0, "Scanner");
     if (this.verifyInclusion && (!this.headerMerkleAt || !this.rawTxAt || !this.verifiedTipHeight))
       throw new Error("scan: verifyInclusion requires headerMerkleAt (header merkle source) + rawTxAt (raw tx for txid recompute) + verifiedTipHeight (depth reference)");
   }
 
+  /** One GET below the base, with the run's signal and the request timeout; with waitMaxMs, a 429 or 503 is waited out
+   *  and the memo's pull confirmed after each wait (`confirm` false for the confirming read itself). */
+  private get(path: string, confirm = true): Promise<Response> {
+    const signal = this.run.signal, send = () => {
+      const t = AbortSignal.timeout(this.timeoutMs);
+      return this.f(`${this.base}${path}`, { signal: signal ? either(signal, t) : t, redirect: "error" });
+    };
+    if (this.waitMaxMs <= 0) return send();
+    // With waitMaxMs, what fails in transport keeps the pull (transport()): a fetch that rejects for another reason than
+    // the signal or its timeout (a connection reset), and a gateway's 502 or 504, as a 503.
+    const sent = async () => {
+      try { return await send(); } catch (e) {
+        if (signal?.aborted === true || (e instanceof DOMException && e.name === "TimeoutError")) throw e;
+        throw new SourceError("SOURCE_UNAVAILABLE", `${path}: ${messageOf(e)}`);
+      }
+    };
+    return waitingOut(sent, path, this.waitMaxMs, signal ?? new AbortController().signal, confirm ? () => this.confirm() : undefined, () => this.run.due?.() === true)
+      .then(async (r) => {
+        if (r.status !== 502 && r.status !== 504) return r;
+        await r.body?.cancel();
+        throw new SourceError("SOURCE_UNAVAILABLE", `${path} answered ${r.status}`);
+      });
+  }
+
   private async getJson<T>(path: string): Promise<T> {
-    const r = await this.f(`${this.base}${path}`, { signal: AbortSignal.timeout(this.timeoutMs), redirect: "error" });
+    const m = this.memoOn ? this.memo : null;
+    if (m?.answers.has(path)) return m.answers.get(path) as T;
+    // A full pull past its deadline sends no more of its own requests: what it read is confirmed, and it stops.
+    if (m !== null && this.fresh >= STEP_UNIT && this.run.due?.() === true) {
+      await this.confirmMemo();
+      throw new SourceError("SOURCE_UNAVAILABLE", "the scan stopped at the step's deadline; the next scan resumes it", 0, true);
+    }
+    const r = await this.get(path);
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
-    return (await r.json()) as T;
+    const v = (await r.json()) as T;
+    if (m !== null) { m.answers.set(path, v); this.fresh++; }
+    return v;
+  }
+
+  /** With a pull in the memo, the block at its tip read again (a refusal of that read past the deadline is not waited
+   *  out). The same hash confirms every answer the memo holds (read between two equal reads, the rule an accepted scan
+   *  uses); another is a reorg, and the pull is refused. */
+  private async confirmMemo(): Promise<void> {
+    const m = this.memo;
+    if (m === null) return;
+    const r = await this.get(`/block-height/${m.tip}`, false);
+    if (!r.ok) throw new Error(`/block-height/${m.tip} -> ${r.status}`);
+    if ((await r.json()) !== m.hash) throw new SourceError("BRANCH_MOVED", "the block at the indexer's tip changed during the scan (a reorg)");
+    m.confirmed = m.answers.size;
+  }
+
+  /** After a wait: the memo confirmed, then a due run stops here, with nothing of it unconfirmed, once the pull has read
+   *  its unit (STEP_UNIT) in this scan. */
+  private async confirm(): Promise<void> {
+    await this.confirmMemo();
+    if ((this.memo === null || this.fresh >= STEP_UNIT) && this.run.due?.() === true) {
+      throw new SourceError("SOURCE_RATE_LIMITED", "the scan stopped at the step's deadline after a wait; the next scan resumes it", 0, true);
+    }
   }
 
   private async tx(txid: string, height: number): Promise<TxInfo> {
     const key = `${txid}:${height}`;
     const hit = this.txCache.get(key);
     if (hit) return hit;
+    // A full pull keeps each transaction's info, bound as txCache binds it, with its answers: a resumed pull does not
+    // read and verify again what it verified before its stop.
+    const m = this.memoOn ? this.memo : null, kept = m?.answers.get(`tx:${key}`) as TxInfo | undefined;
+    if (kept !== undefined) return this.cached(key, kept);
     const t = await this.getJson<{ pos: number; height: number; outputs: { addr: string; value: number }[] }>(`/tx/${txid}`);
     // Harden against a malicious/buggy indexer. Outputs feed fee/payment checks, so each is
     // tightly validated: value a NON-NEGATIVE SAFE INTEGER as a real number (NOT a hex/decimal
@@ -267,6 +354,12 @@ export class Scanner {
     let info: TxInfo = { pos: reqOrd(t.pos, "tx pos"), height: reqOrd(t.height, "tx height"), outputs };
     // When enabled, DON'T trust the indexer's decoded outputs, bind them to consensus.
     if (this.verifyInclusion) info = await this.verifyTx(txid, info.height, outputs);
+    m?.answers.set(`tx:${key}`, info);
+    return this.cached(key, info);
+  }
+
+  /** `info`, put in txCache when it is at or below the scan's tip (a block that lands during the pull sits above it). */
+  private cached(key: string, info: TxInfo): TxInfo {
     if (info.height <= this.tipHeight) {
       this.txCache.set(key, info);
       this.written?.tx.push(key);
@@ -410,10 +503,10 @@ export class Scanner {
     let cur = after;
     for (let guard = 0; guard < 10_000; guard++) {
       const q = `/${kind}?domain=${encodeURIComponent(DOMAIN)}&at=${tip.h}:${tip.hash}&limit=${this.feedPageSize}${cur ? `&after=${cur.height}:${cur.pos}` : ""}`;
-      const r = await this.f(`${this.base}${q}`, { signal: AbortSignal.timeout(this.timeoutMs), redirect: "error" });
+      const r = await this.get(q);
       if (!r.ok) return null;
       let page: { at?: { height?: unknown; hash?: unknown }; rows?: unknown; next?: unknown } | null;
-      try { page = (await r.json()) as typeof page; } catch { return null; }
+      try { page = (await r.json()) as typeof page; } catch (e) { if (this.stops(e)) throw e; return null; }
       if (!page || !Array.isArray(page.rows) || page.at?.height !== tip.h || String(page.at.hash).toLowerCase() !== tip.hash.toLowerCase()) return null;
       for (const row of page.rows as Record<string, unknown>[]) {
         const height = feedOrd(row?.height), pos = feedOrd(row?.pos);
@@ -590,7 +683,7 @@ export class Scanner {
     // This scan's own anchor is sampled first, so the hash read after the pull brackets this cache check as well as
     // the pull: a branch switch after this read shows in the check or as a moved tip (test/scan/scan-anchor-bracket.test.ts).
     let anchor: string;
-    try { anchor = await this.getJson<string>(`/block-height/${tipHeight}`); } catch { anchor = "!unconfirmed-tip"; }
+    try { anchor = await this.getJson<string>(`/block-height/${tipHeight}`); } catch (e) { if (this.stops(e)) throw e; anchor = "!unconfirmed-tip"; }
     // every hash read here, so check (3) reads none of them twice
     const read = new Map<number, string | null>([[tipHeight, anchor.startsWith("!") ? null : anchor]]);
     // (1) shallow: did the block at the previous scan's tip height change identity? (the anchor itself when the
@@ -599,14 +692,14 @@ export class Scanner {
     if (pt) {
       let nowHash: string | null = null;
       if (pt.h === tipHeight) nowHash = anchor.startsWith("!") ? null : anchor;
-      else { try { nowHash = await this.getJson<string>(`/block-height/${pt.h}`); } catch { nowHash = null; } read.set(pt.h, nowHash); }
+      else { try { nowHash = await this.getJson<string>(`/block-height/${pt.h}`); } catch (e) { if (this.stops(e)) throw e; nowHash = null; } read.set(pt.h, nowHash); }
       if (nowHash !== pt.hash) { this.attCache.clear(); this.txCache.clear(); this.reorgClears++; }   // mismatch OR unconfirmable → clear
     }
     // (2) deep: freeze-horizon anchor (keeps-on-error to preserve the long-lived closed-window cache)
     const prev = this.reorgAnchor;
     if (prev) {
       let nowHash: string | null = null;
-      try { nowHash = await this.getJson<string>(`/block-height/${prev.h}`); } catch { nowHash = null; }
+      try { nowHash = await this.getJson<string>(`/block-height/${prev.h}`); } catch (e) { if (this.stops(e)) throw e; nowHash = null; }
       if (!read.has(prev.h)) read.set(prev.h, nowHash);
       if (nowHash !== null && nowHash !== prev.hash) { this.attCache.clear(); this.txCache.clear(); this.reorgClears++; }
     }
@@ -617,7 +710,7 @@ export class Scanner {
         const known = read.get(h);
         if (known !== undefined) return known;
         let v: string | null = null;
-        try { v = await this.getJson<string>(`/block-height/${h}`); } catch { v = null; }
+        try { v = await this.getJson<string>(`/block-height/${h}`); } catch (e) { if (this.stops(e)) throw e; v = null; }
         read.set(h, v);
         return v;
       };
@@ -631,28 +724,54 @@ export class Scanner {
     const h = Math.max(0, tipHeight - Scanner.FINALITY);
     let deep: Block | null = null;
     try { deep = { h, hash: await this.getJson<string>(`/block-height/${h}`) }; this.reorgAnchor = deep; }
-    catch { /* indexer can't answer → keep the prior anchor for the next scan */ }
+    catch (e) { if (this.stops(e)) throw e; /* indexer can't answer → keep the prior anchor for the next scan */ }
     return { tip: anchor.startsWith("!") ? null : { h: tipHeight, hash: anchor }, deep };
   }
 
   /** One scan: all CairnX events + the indexer tip. A scan that ends off one branch, or throws, may have cached
    *  rows of a branch the chain later leaves, and the next scan's reorg check compares against the hash sampled before
    *  this pull, so it would keep them: such a scan takes back out every row it cached and nothing an accepted scan
-   *  cached (test/scan/scan-refused-cache.test.ts), and keeps no events of its own. The original error is rethrown. */
-  async scan(): Promise<{ events: ChainEvent[]; tipHeight: number; anchor: ScanAnchor }> {
+   *  cached (test/scan/scan-refused-cache.test.ts), and keeps no events of its own. The original error is rethrown.
+   *  With waitMaxMs, a full pull that stops for transport (`run.signal`, or a 429 or 503 it does not wait out, a
+   *  due run among them) keeps the answers its memo confirmed, and the next scan resumes it while the block at its tip
+   *  is unchanged, sending only what it has not read (test/scan/scan-resume.test.ts); every other end drops them. */
+  async scan(run: ScanRun = {}): Promise<{ events: ChainEvent[]; tipHeight: number; anchor: ScanAnchor }> {
+    this.run = run;
     this.written = { tx: [], att: [] };
+    this.fresh = 0;
     this.nextKept = null;
-    let accepted = false;
+    let accepted = false, resumable = false;
     try {
       const r = await this.pull();
       accepted = r.anchor.branch === "one";
       return r;
+    } catch (e) {
+      resumable = this.transport(e);
+      throw e;
     } finally {
+      this.memoOn = false;
+      const m = this.memo;
+      this.memo = resumable && m !== null && m.confirmed > 0 ? { ...m, answers: new Map([...m.answers].slice(0, m.confirmed)) } : null;
       if (!accepted) this.takeBack({ tx: 0, att: 0 });
       this.written = null;
       if (accepted) this.kept = this.nextKept;
       this.nextKept = null;
+      this.run = {};
     }
+  }
+
+  /** Whether `e` ended the scan for transport, not for what the indexer answered: the run's signal (its own reason), a
+   *  request's timeout, or a refusal waitingOut did not wait out (a due run's stop among them). */
+  private transport(e: unknown): boolean {
+    const signal = this.run.signal;
+    return (signal?.aborted === true && e === signal.reason) || (e instanceof DOMException && e.name === "TimeoutError") ||
+      (e instanceof SourceError && (e.code === "SOURCE_RATE_LIMITED" || e.code === "SOURCE_UNAVAILABLE"));
+  }
+
+  /** Whether `e` ends the scan rather than a read that a fallback absorbs: the run's signal, or a SourceError, which only
+   *  waitingOut (a refusal it does not wait out) and confirm (a moved tip, a due run) throw here. */
+  private stops(e: unknown): boolean {
+    return this.run.signal?.aborted === true || e instanceof SourceError;
   }
 
   /** Takes the cache rows the scan in progress wrote since `from` (counts of its `written` lists) back out of the caches;
@@ -670,7 +789,9 @@ export class Scanner {
     // (closedBelowEpoch); a string/NaN/negative tip would NaN the gate and collapse the freeze to 0
     // (refetch-everything regression). Fail loud, like the pullProposals saturation guard, rather than
     // resolve from a garbage tip. Honest data is unchanged (the indexer returns a JSON integer).
-    const rawTip = await this.getJson<unknown>("/blocks/tip/height");
+    // A pull a stop suspended resumes at its own tip; its memo is dropped below unless the block there is unchanged.
+    const resume = this.memo !== null;
+    const rawTip = resume ? this.memo!.tip : await this.getJson<unknown>("/blocks/tip/height");
     // Number() reads null, "", [] and false as 0 and [7] as 7 (test/scan/scan-tip-guard.test.ts)
     const tipHeight = typeof rawTip === "number" || (typeof rawTip === "string" && /^[0-9]+$/.test(rawTip)) ? Number(rawTip) : NaN;
     if (!Number.isSafeInteger(tipHeight) || tipHeight < 0)
@@ -686,6 +807,9 @@ export class Scanner {
       this.depthTip = tipHeight;
     }
     const blocks = await this.invalidateCacheOnReorg(tipHeight);
+    // With waitMaxMs, a pull whose tip block could not be read is not started: it would be refused as unread at its end
+    // and, holding no memo, could not stop at the step's deadline.
+    if (this.waitMaxMs > 0 && blocks.tip === null) throw new SourceError("BRANCH_MOVED", "the indexer's tip hash could not be read before the scan");
     // verifyInclusion on: verifyTx accepts a tx iff depthTip - height >= confDepth, so the highest final height is
     // depthTip - confDepth. A record above it is checked against the cutoff BEFORE tx() (whose verifyTx
     // would throw on it). A row that lies low is caught by eventHeight(); one that lies high only defers
@@ -701,14 +825,27 @@ export class Scanner {
     const k = this.kept;
     // a feed read the scan does not take keeps nothing it cached: the full pull reads those transactions again
     const mark = { tx: this.written?.tx.length ?? 0, att: this.written?.att.length ?? 0 };
-    const next = blocks.tip && k && k.upTo <= tipHeight && k.scans < this.keptRefresh ? await this.pullNew(k, blocks.tip, blocks.deep, upTo) : null;
+    const next = !resume && blocks.tip && k && k.upTo <= tipHeight && k.scans < this.keptRefresh ? await this.pullNew(k, blocks.tip, blocks.deep, upTo) : null;
     if (!next) this.takeBack(mark);
     let events: ChainEvent[];
     if (next) {
       events = eventsOf(next, this.verifyInclusion ? finalHeight : null);
       this.nextKept = next.ids.size <= this.keptMax ? next : null;
     } else {
+      // The memo holds the answers of one pull at one tip block: a resumed pull's while the block there, read again
+      // above, is unchanged; else a new one's (with waitMaxMs, and the block's hash read). A resumed pull whose block
+      // changed is pulled again in full at that height.
+      const hash = blocks.tip?.hash ?? null, m = this.memo;
+      if (m !== null && (m.tip !== tipHeight || m.hash !== hash)) this.memo = null;
+      const resumed = this.memo !== null;
+      if (this.memo === null && this.waitMaxMs > 0 && hash !== null) this.memo = { tip: tipHeight, hash, answers: new Map(), confirmed: 0 };
+      this.memoOn = true;
       events = await this.pullAll(tipHeight, finalHeight);
+      this.memoOn = false;
+      // A resumed pull took its proposals from the memo and may have read attestation lists that have grown since: a
+      // record above its tip is left for a later scan (test/scan/scan-deadline.test.ts). An unresumed pull keeps the
+      // records of blocks that landed during it, as before (test/scan/scan-cache-band.test.ts reads one).
+      if (resumed) events = events.filter((e) => e.height <= tipHeight);
       this.nextKept = blocks.tip ? keptFrom(events, upTo, blocks.tip, blocks.deep, this.keptMax) : null;
     }
     // The block hash at the declared tip, read BEFORE the pull (recorded by
@@ -717,7 +854,7 @@ export class Scanner {
     // entirely inside one pull is not seen here: a residual the clients' own fill replays bound.
     const hashBefore = this.prevTip && this.prevTip.h === tipHeight && !String(this.prevTip.hash).startsWith("!") ? this.prevTip.hash : null;
     let read: unknown = null;
-    try { read = await this.getJson<unknown>(`/block-height/${tipHeight}`); } catch { read = null; }
+    try { read = await this.getJson<unknown>(`/block-height/${tipHeight}`); } catch (e) { if (this.stops(e)) throw e; read = null; }
     const hashAfter = typeof read === "string" ? read : null;
     const branch = !hashBefore || !hashAfter ? "unread" : hashBefore === hashAfter ? "one" : "moved";
     return { events, tipHeight, anchor: { height: tipHeight, hashBefore, hashAfter, branch } };

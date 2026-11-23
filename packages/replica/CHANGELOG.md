@@ -1,6 +1,68 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+A minor version because `NoteCode` grows: 0.1.0's types declare `NOTE_CODES` as a closed tuple of 13 codes and its
+README says nothing of additions, so a consumer's exhaustive `Record<NoteCode, ...>` or `switch` would break under a
+patch. From this release the README and `codes.ts` state that note codes may be added in a minor version and that a
+client treats a note it does not know as one that withholds nothing, unless the server withholds. No export's
+signature, existing note's meaning, result name or exit code changes. cairnx-pin 0.1.1 moves its peer range to it.
+
+What a consumer receives:
+- `NoteCode` gains `SOURCE_FAILING`: the source has been failing, its steps failed with none settled for more than 30
+  minutes (`FAILING_MS`, the verdict's `FRESH_MS`) from the first failed step after the last that settled. A replica
+  idle for longer whose next step fails once is not failing; `resume()` starts no clock. `replicaReads` withholds it
+  (`WITHHELD_NOTES`); before, such a state was served as it aged until the 6-hour `TIP_STALE_LONG`
+  (`test/failing.test.ts`). Internal: `LoopStatus.failingSince`.
+- A feed waits on 429 and 503: `indexerFeed`'s `next()` and `Source.tip()` wait out a `Retry-After` of up to
+  `RETRY_WAIT_MAX_MS` (60 s, our front door's window) and send the same request again, three refusals of one request
+  in a row at most, where 0.1.0 failed the step at once. `ScanOptions.waitMaxMs` (new): a whole number from 0 (no wait)
+  to 300,000, else `ReplicaConfigError`; the Scanner's default 0 throws on a 429 as before.
+- A feed's first sync against a limited host completes. A full pull keeps its answers bound to its tip block,
+  confirmed by a read of that block after each wait (another hash refuses the pull as `BRANCH_MOVED`); a pull that
+  stops (the deadline, the signal, a request's timeout, a refusal it does not wait out) keeps its confirmed answers,
+  and the next scan resumes it there, sending only what it has not read; any other failure drops them, the signal
+  aborted or not. A step that ended short of its scan's top hands that scan to the next step, read again only when the
+  indexer no longer gives its tip hash, and reuses the last step's tip time for the same block. Over the recorded
+  capture a cold sync went from 8,347 requests to 4,980 unlimited; behind a limiter of the front door's shape (scaled
+  to a 1 s window) with advances shorter than the pull it completes within 5 percent of that, and no page, attestation
+  list or transaction is answered twice (`test/feed-cold.test.ts`; it did not finish before).
+- Every step reads a unit (`STEP_UNIT`, 16 new answers of the pull or boundaries) before it honours its deadline, so a
+  budget shorter than one request still finishes a cold sync against a host that admits, in one window, a step's tip
+  and anchor reads, a unit and its confirming read, at most 21 requests (advances of 1 ms against answers 2 ms late: complete,
+  requests within 1.3 of an unlimited run's, `test/feed-cold.test.ts`). A step that its own deadline ended inside a
+  pull is no failed step: no error, no backoff, no start of `SOURCE_FAILING`'s clock (`test/failing.test.ts`: 38
+  minutes of such stops are served; a real failure then backs off from 1 s).
+- What keeps the kept pull: transport (a fetch that rejects, a 502, a 504, a 503, a request's timeout, the signal);
+  what drops it: what the indexer answered (a 500, a 404, an answer out of form). Under `verifyInclusion` it keeps each
+  transaction's bound info, so a resumed pull asks the node once per transaction (advances of 1 ms: 240 `rawTxAt`, as
+  one advance; it was 3,006). With `waitMaxMs`, a scan whose tip block cannot be read is refused at once as
+  `BRANCH_MOVED` instead of a pull with no memo and no deadline.
+- The deadline: past a step's deadline no wait starts, in the scan, its confirming read or the feed's own reads; a full
+  pull with its unit read stops at its next request after the deadline once a read of its tip block confirms what it
+  read; a boundary read refused then ends the step at the last boundary read. A step that began before its deadline
+  outlasts it by at most one wait begun before it and one request's timeout (70 s at the defaults; measured 1,296 ms
+  with a 1,000 ms wait and a 300 ms timeout, `test/scan/scan-deadline.test.ts`), plus the rest of its unit when that
+  was not yet read; one that begins past it sends its scan's tip and anchor reads, its unit and the confirming read (or
+  a carried scan's tip read, unit of boundaries and tip time), and under `verifyInclusion` the node reads of the unit.
+- `Scanner.scan(run?)` takes `{ signal, due }` (`ScanRun`, new, optional, typed from `./server`): the signal reaches
+  both fetch sites, a chain-order feed page's body and every wait, so `advance({ signal })` aborted mid-scan ends at
+  once, commits nothing, and the next step reads on (`test/feed-steps.test.ts`). Not reached: requests on Node 18 to
+  20.2 (no `AbortSignal.any`; each keeps its timeout) and the caller's own reads under `verifyInclusion`. The command's
+  5 s grace after its deadline stays as a backstop.
+- A pull resumed from its memo names no event above its tip (it could name attestations mined after it began). A fresh
+  full pull can still name records of blocks mined while it runs, as in 0.1.0: `indexerFeed` drops them, and a direct
+  caller of `Scanner.scan()` filters to the tip it was given. On slice 11's differential (11,450 paths) nothing changed.
+- `open()` in `./server` takes `pollMs` (new, off by default): the reader advances at once and again `pollMs` after
+  each advance ends, until `close()`; an advance that rejects does not stop it (`test/poll.test.ts`).
+- `heldReplay()` (new), over cairnx-core 0.2.10's held replay contexts, is the reader's and the loop's default
+  materializer: a step replays only its new events; a row applied at or below a context's height lets go every
+  context at or above it; `fallbacks` counts the heights a refusing context left to `resolve()`. Over the replay
+  corpus every state the loop asks, and over the capture all 2,904 boundary tuples, equal `fullReplay()`'s, which
+  stays exported (`test/held-replay.test.ts`).
+- Exported: `READ_ADVANCE_MS`, `FAILING_MS` and `STALE_MAX_MS` from `.`, `RETRY_WAIT_MAX_MS` and `STEP_UNIT` from `./server`.
+
+## 0.1.0 (2026-11-22)
 
 - The command `cairnx-replica check` (`bin`, `src/cli.ts`): a replica in memory on one source (`--node`, `--hosted`
   with `--anchor` or `--pin`, `--feed`), read to its tip, printing the level, the verdict, the tuple at the newest

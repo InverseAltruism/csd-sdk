@@ -67,7 +67,7 @@ export type Step =
       readonly tip: TipView; readonly reach?: number }
   | { readonly kind: "idle"; readonly tip: TipView }
   | { readonly kind: "reorg"; readonly to: Cursor; readonly tip: TipView }
-  | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null };
+  | { readonly kind: "cannot"; readonly code: SourceCode; readonly reason: string; readonly retryAfterMs: number | null; readonly deadline?: boolean };
 
 /** A release's pin: the log of `rule`'s events at or below `height`, an epoch boundary, as the UTF-8
  *  canonical JSON of the event list in the order of CONVENTION section 33.3, whose sha256 is `logSha256`, with the
