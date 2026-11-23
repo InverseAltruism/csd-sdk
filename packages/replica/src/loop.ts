@@ -15,7 +15,7 @@ import { checkStep, reorgBreak } from "./contract.js";
 import { BACKOFF_MAX_MS, ReplicaConfigError, messageOf } from "./errors.js";
 import { LOADED_GATES, gatesDiffer } from "./gates.js";
 import { Held, verifyRows } from "./held.js";
-import { fullReplay } from "./replay.js";
+import { heldReplay } from "./replay.js";
 import { keptHeight } from "./store-rules.js";
 import type { BlockRow, Boundary, Commit, Cursor, HeldWindow, Materializer, Source, SourceCode, Step, Store, StoreMeta, TipView } from "./types.js";
 
@@ -111,9 +111,9 @@ function linked(a: AbortSignal, b: AbortSignal | undefined): { signal: AbortSign
   return { signal: c.signal, dispose: () => { a.removeEventListener("abort", stop); b?.removeEventListener("abort", stop); } };
 }
 
-/** Internal. A loop over one source and one store; the materializer defaults to fullReplay(). */
+/** Internal. A loop over one source and one store; the materializer defaults to heldReplay(). */
 export function replicaLoop(o: LoopOptions): Loop {
-  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? fullReplay(), clock = o.clock ?? Date.now;
+  const { source, store } = o, rule = o.rule ?? CAIRNX_EVENT_RULE, m = o.materializer ?? heldReplay(), clock = o.clock ?? Date.now;
   const floor = source.floor?.height ?? rule.activationHeight - 1;
   const limits = { maxBlocks: o.maxBlocks ?? 64, maxRequests: o.maxRequests ?? 10 };
   const closing = new AbortController();

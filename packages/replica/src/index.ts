@@ -9,7 +9,7 @@ export { basisKey, checkBasis, checkPin, levelOf, proofOf } from "./basis.js";
 export { pinned } from "./pinned.js";
 export { memoryStore } from "./memory-store.js";
 export { readBlocks } from "./read-blocks.js";
-export { fullReplay } from "./replay.js";
+export { fullReplay, heldReplay } from "./replay.js";
 export { replicaLoop, type Loop, type LoopOpen, type LoopOptions, type LoopStatus } from "./loop.js";
 export { open, openLog, type DryRunTx, type EventLog, type OpenOptions, type Reader } from "./reader.js";
 export { REBUILDS, STREAK, type CompareKind, type CompareReport, type TupleReference } from "./compare.js";

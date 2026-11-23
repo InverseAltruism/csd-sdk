@@ -17,7 +17,7 @@ import { either } from "./http.js";
 import { coreCheck, LOADED_GATES, type CoreModule } from "./gates.js";
 import { replicaLoop, type StoreReason } from "./loop.js";
 import { memoryStore } from "./memory-store.js";
-import { fullReplay } from "./replay.js";
+import { heldReplay } from "./replay.js";
 import { movesPage } from "./transfers.js";
 import { tupleOf, type Tuple } from "./tuple.js";
 import type { Basis, Cursor, HeaderRoot, KeptView, Materializer, Source, Store } from "./types.js";
@@ -351,7 +351,7 @@ export function open(o: OpenOptions): Promise<Reader> {
 
 /** Internal: open() with a recount source, which ./server's open() takes. */
 export async function openWith(o: OpenOptions, recount: Source | null): Promise<Reader> {
-  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, fullReplay(), recount, true);
+  const { log, read, loop, pagedChain } = await start(o, CAIRNX_EVENT_RULE, heldReplay(), recount, true);
   // The last snapshot, kept while its key names the state the loop holds: one copy per commit, however many reads.
   let snap: { key: string; value: Snapshot } | null = null;
   return {
