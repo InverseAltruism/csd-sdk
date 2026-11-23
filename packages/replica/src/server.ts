@@ -23,6 +23,7 @@ export { diskStore } from "./disk-store.js";
 export { Scanner, branchRefusal, type ScanAnchor, type ScanOptions, type ScanRun } from "./scanner.js";
 export { indexerFeed, type IndexerFeedOptions } from "./indexer-feed.js";
 export { RETRY_WAIT_MAX_MS } from "./http.js";
+export { STEP_UNIT } from "./scanner.js";
 export { READ_HEADERS, WITHHELD, WITHHELD_NOTES, replicaReads, withheldBy, type ReadResponse } from "./read-routes.js";
 /** Internal, for the pin generator: the gate table this package was built against, and the compare open() makes. */
 export { BUILT_GATES, gatesDiffer, gatesOf } from "./gates.js";

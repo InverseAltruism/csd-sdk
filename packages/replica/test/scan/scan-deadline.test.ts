@@ -7,7 +7,7 @@ import { DOMAIN } from "@inversealtruism/cairnx-core";
 import { ReplicaConfigError, SourceError } from "../../src/errors.js";
 import { httpSessions } from "../../src/http.js";
 import { indexerFeed } from "../../src/indexer-feed.js";
-import { Scanner, branchRefusal } from "../../src/scanner.js";
+import { STEP_UNIT, Scanner, branchRefusal } from "../../src/scanner.js";
 import { done, ok } from "../check.js";
 import { fx } from "../core-files.js";
 import { captureIndexer } from "../indexer-capture.js";
@@ -63,6 +63,19 @@ console.log("a pull that meets no 429 stops at the deadline:");
   const r = await s.scan();
   ok("the next scan resumes: a fresh scanner's events, nothing it read before the deadline read twice", branchRefusal(r.anchor) === null && twice(h.served).length === 0,
     JSON.stringify(twice(h.served).slice(0, 3)));
+}
+
+console.log("a deadline that has passed before the scan begins:");
+{
+  const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
+  let scans = 0, last: unknown = null;
+  for (; scans < 40; scans++) {
+    last = await s.scan({ due: () => true }).catch((e: unknown) => e);
+    if (!(last instanceof SourceError)) break;
+  }
+  const r = last as { events?: unknown[]; anchor?: Parameters<typeof branchRefusal>[0] };
+  ok(`each scan reads its unit (${STEP_UNIT} new answers) before it stops, so the pull finishes in ${scans + 1} scans, nothing read twice`,
+    scans > 1 && branchRefusal(r.anchor) === null && twice(h.served).length === 0, `${scans} stops, then ${String(last).slice(0, 80)}`);
 }
 
 console.log("a resumed pull names no event above its tip:");

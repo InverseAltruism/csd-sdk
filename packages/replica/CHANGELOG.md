@@ -27,18 +27,23 @@ What a consumer receives:
   capture a cold sync went from 8,347 requests to 4,980 unlimited; behind a limiter of the front door's shape (scaled
   to a 1 s window) with advances shorter than the pull it completes within 5 percent of that, and no page, attestation
   list or transaction is answered twice (`test/feed-cold.test.ts`; it did not finish before).
+- Every step reads a unit (`STEP_UNIT`, 16 new answers of the pull or boundaries) before it honours its deadline, so a
+  budget shorter than one request still finishes a cold sync (advances of 1 ms against answers 2 ms late: complete,
+  requests within 1.3 of an unlimited run's, `test/feed-cold.test.ts`).
 - The deadline: past a step's deadline no wait starts, in the scan, its confirming read or the feed's own reads; a full
-  pull stops at its next request after the deadline once a read of its tip block confirms what it read; a boundary
-  read refused then ends the step at the last boundary read. A step outlasts its deadline by at most one wait begun
-  before it and one request's timeout (70 s at the defaults; measured 1,296 ms with a 1,000 ms wait and a 300 ms
-  timeout, `test/scan/scan-deadline.test.ts`).
+  pull with its unit read stops at its next request after the deadline once a read of its tip block confirms what it
+  read; a boundary read refused then ends the step at the last boundary read. A step that began before its deadline
+  outlasts it by at most one wait begun before it and one request's timeout (70 s at the defaults; measured 1,296 ms
+  with a 1,000 ms wait and a 300 ms timeout, `test/scan/scan-deadline.test.ts`), plus the rest of its unit when that
+  was not yet read; one that begins past it reads its unit, at most 16 requests and the confirming one.
 - `Scanner.scan(run?)` takes `{ signal, due }` (`ScanRun`, new, optional, typed from `./server`): the signal reaches
   both fetch sites, a chain-order feed page's body and every wait, so `advance({ signal })` aborted mid-scan ends at
   once, commits nothing, and the next step reads on (`test/feed-steps.test.ts`). Not reached: requests on Node 18 to
   20.2 (no `AbortSignal.any`; each keeps its timeout) and the caller's own reads under `verifyInclusion`. The command's
   5 s grace after its deadline stays as a backstop.
-- A full pull's events lie at or below the tip it names, a resumed one's too (it could name attestations mined after
-  its start). On slice 11's differential (11,450 paths) nothing changed.
+- A pull resumed from its memo names no event above its tip (it could name attestations mined after it began). A fresh
+  full pull can still name records of blocks mined while it runs, as in 0.1.0: `indexerFeed` drops them, and a direct
+  caller of `Scanner.scan()` filters to the tip it was given. On slice 11's differential (11,450 paths) nothing changed.
 - `open()` in `./server` takes `pollMs` (new, off by default): the reader advances at once and again `pollMs` after
   each advance ends, until `close()`; an advance that rejects does not stop it (`test/poll.test.ts`).
 - `heldReplay()` (new), over cairnx-core 0.2.10's held replay contexts, is the reader's and the loop's default
@@ -46,7 +51,7 @@ What a consumer receives:
   context at or above it; `fallbacks` counts the heights a refusing context left to `resolve()`. Over the replay
   corpus every state the loop asks, and over the capture all 2,904 boundary tuples, equal `fullReplay()`'s, which
   stays exported (`test/held-replay.test.ts`).
-- Exported: `READ_ADVANCE_MS`, `FAILING_MS` and `STALE_MAX_MS` from `.`, `RETRY_WAIT_MAX_MS` from `./server`.
+- Exported: `READ_ADVANCE_MS`, `FAILING_MS` and `STALE_MAX_MS` from `.`, `RETRY_WAIT_MAX_MS` and `STEP_UNIT` from `./server`.
 
 ## 0.1.0 (2026-11-22)
 

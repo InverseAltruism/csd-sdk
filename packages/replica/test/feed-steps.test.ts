@@ -1,9 +1,10 @@
 // indexerFeed across steps: an advance aborted while the scan waits on the indexer ends at once as aborted, leaves the
 // store as it was and the next advance reads on; a step that ends short of its scan's top hands the scan to the next
-// step, which reads it again only when the indexer no longer gives its tip hash; a step whose deadline passes ends at
-// the first boundary it read and starts no wait.
+// step, which reads it again only when the indexer no longer gives its tip hash; a step whose deadline passes ends
+// once it has read its unit of boundaries and starts no wait.
 import { CAIRNX_EVENT_RULE, DOMAIN } from "@inversealtruism/cairnx-core";
 import { memoryStore, open, replicaLoop } from "../src/index.js";
+import { STEP_UNIT } from "../src/scanner.js";
 import { indexerFeed } from "../src/server.js";
 import { done, ok } from "./check.js";
 import { fx } from "./core-files.js";
@@ -83,7 +84,8 @@ console.log("a step past its deadline:");
     budget: { deadlineAt, maxRequests: 100_000, maxBlocks: 100_000 }, signal: new AbortController().signal, now,
   });
   const after = await at(1);
-  ok("the deadline passing after the scan: the step ends at the first boundary it read, the scan's top its reach", after.kind === "blocks" && after.cursor.height === 29_880 && after.reach === TIP,
+  ok(`the deadline passing after the scan: the step ends at the ${STEP_UNIT}th boundary it read (its unit), the scan's top its reach`,
+    after.kind === "blocks" && after.cursor.height === 29_880 + (STEP_UNIT - 1) * 30 && after.reach === TIP,
     JSON.stringify(after.kind === "blocks" ? after.cursor : after));
   late = false; refuse = true;
   const t0 = Date.now(), refused = await at(1), ms = Date.now() - t0;
@@ -91,7 +93,7 @@ console.log("a step past its deadline:");
     `${JSON.stringify(refused)} after ${ms} ms`);
   refuse = false;
   const before = await at(0, () => 1);
-  ok("a step past its deadline before its scan: the scan stops at its first pull request, nothing read beyond", before.kind === "cannot" && before.code === "SOURCE_UNAVAILABLE",
+  ok(`a step past its deadline before its scan: the scan stops once it has read its unit (${STEP_UNIT} answers)`, before.kind === "cannot" && before.code === "SOURCE_UNAVAILABLE",
     JSON.stringify(before));
   const paired = await at(Number.POSITIVE_INFINITY);
   ok("paired: before its deadline the same step reads to the top", paired.kind === "blocks" && paired.cursor.height === TIP && paired.reach === undefined);

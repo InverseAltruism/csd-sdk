@@ -163,6 +163,11 @@ export interface ScanOptions {
  *  what it read (scan()). */
 export interface ScanRun { readonly signal?: AbortSignal; due?(): boolean }
 
+/** How many new answers of a full pull, or boundaries of a feed's step, a step reads before it honours its deadline:
+ *  every step moves the pull forward, so a cold sync finishes under any budget, and past a deadline that had passed
+ *  when the step began it reads at most this many requests and the one that confirms them. */
+export const STEP_UNIT = 16;
+
 /** A full pull's answers, by path, read at the tip `tip` whose block hash before the pull was `hash`; the first
  *  `confirmed` were read before a later read of that hash gave it again. */
 interface Memo { readonly tip: number; readonly hash: string; answers: Map<string, unknown>; confirmed: number }
@@ -224,6 +229,8 @@ export class Scanner {
   private memo: Memo | null = null;
   /** Whether getJson reads through the memo: only inside pullAll, whose answers at one tip are what the memo holds. */
   private memoOn = false;
+  /** The answers of the pull this scan() call read from the indexer, not from the memo. */
+  private fresh = 0;
   private tipHeight = 0;          // set per scan (indexer-fed): attCache freeze horizon + fallback tip
   private depthTip = 0;           // set per scan (verifiedTipHeight with verifyInclusion on, else the indexer tip): the conf-depth reference
   private lastFinal: number | null = null;
@@ -272,14 +279,14 @@ export class Scanner {
     const m = this.memoOn ? this.memo : null;
     if (m?.answers.has(path)) return m.answers.get(path) as T;
     // A full pull past its deadline sends no more of its own requests: what it read is confirmed, and it stops.
-    if (m !== null && this.run.due?.() === true) {
+    if (m !== null && this.fresh >= STEP_UNIT && this.run.due?.() === true) {
       await this.confirmMemo();
       throw new SourceError("SOURCE_UNAVAILABLE", "the scan stopped at the step's deadline; the next scan resumes it", 0);
     }
     const r = await this.get(path);
     if (!r.ok) throw new Error(`${path} -> ${r.status}`);
     const v = (await r.json()) as T;
-    m?.answers.set(path, v);
+    if (m !== null) { m.answers.set(path, v); this.fresh++; }
     return v;
   }
 
@@ -295,10 +302,13 @@ export class Scanner {
     m.confirmed = m.answers.size;
   }
 
-  /** After a wait: the memo confirmed, then a due run stops here, with nothing of it unconfirmed. */
+  /** After a wait: the memo confirmed, then a due run stops here, with nothing of it unconfirmed, once the pull has read
+   *  its unit (STEP_UNIT) in this scan. */
   private async confirm(): Promise<void> {
     await this.confirmMemo();
-    if (this.run.due?.() === true) throw new SourceError("SOURCE_RATE_LIMITED", "the scan stopped at the step's deadline after a wait; the next scan resumes it", 0);
+    if ((this.memo === null || this.fresh >= STEP_UNIT) && this.run.due?.() === true) {
+      throw new SourceError("SOURCE_RATE_LIMITED", "the scan stopped at the step's deadline after a wait; the next scan resumes it", 0);
+    }
   }
 
   private async tx(txid: string, height: number): Promise<TxInfo> {
@@ -705,6 +715,7 @@ export class Scanner {
   async scan(run: ScanRun = {}): Promise<{ events: ChainEvent[]; tipHeight: number; anchor: ScanAnchor }> {
     this.run = run;
     this.written = { tx: [], att: [] };
+    this.fresh = 0;
     this.nextKept = null;
     let accepted = false, resumable = false;
     try {

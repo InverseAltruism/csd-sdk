@@ -2,7 +2,7 @@
 // recorded log, the states each gives at the heights the loop asks (the boundaries made deep, the deep view, the tip
 // view, and heights between blocks), through rollbacks and loads, and the tuple at every boundary of a loop over the
 // recorded capture. A context that refuses an event falls back to resolve().
-import { EPOCH_LEN, FINAL_DEPTH, applyOrder, canonicalJson, stateHash, type CairnXState, type ChainEvent } from "@inversealtruism/cairnx-core";
+import { EPOCH_LEN, FINAL_DEPTH, applyOrder, canonicalJson, resolve, stateHash, type CairnXState, type ChainEvent } from "@inversealtruism/cairnx-core";
 import { fullReplay, heldReplay, memoryStore, replicaLoop, type BlockRow, type Materializer } from "../src/index.js";
 import { indexerFeed } from "../src/server.js";
 import { done, ok } from "./check.js";
@@ -93,6 +93,40 @@ console.log("a load and a split block, against held contexts:");
   for (const m of [h2, f2]) m.apply([rest], block.height + 5);
   ok(`a block (${block.height}, ${block.events.length} events) fed in two calls: the state above it is the full replay's`,
     same(h2.stateAt(block.height + 5, 0), f2.stateAt(block.height + 5, 0)) && h2.fallbacks === 0, `${h2.fallbacks} fallbacks`);
+}
+
+console.log("late rows (a row at or below a height already replayed), against resolve() over the events given:");
+{
+  // Both materializers share one memo, so each is checked against an independent resolve() of the events it was given.
+  const rows = rowsOf(corpus.events), k = 400, H = rows[k]!.height;
+  const late = (src: BlockRow, h: number): BlockRow => ({ ...src, height: h, events: src.events.map((e) => ({ ...e, height: h })) });
+  const oracle = (given: readonly BlockRow[], at: number) => resolve(given.flatMap((r) => r.events).filter((e) => e.height <= at).sort(applyOrder), at);
+  const cases: [string, (m: Materializer) => { given: BlockRow[]; at: number }][] = [
+    // the tip view replayed, then a row below it: the memoized state at the tip must not be served again
+    ["the state at the tip asked again", (m) => {
+      const base = rows.slice(0, k + 1), row = late(rows[k + 1]!, rows[k - 5]!.height);
+      m.load(base, H); m.stateAt(H, 0); m.apply([row], H);
+      return { given: [...base, row], at: H };
+    }],
+    // a row below the last one held, then a height between the two: its events must be found though they came last
+    ["a height between the late row and the tip", (m) => {
+      const base = rows.slice(0, k + 1), row = late(rows[k + 1]!, rows[k - 10]!.height);
+      m.load(base, H); m.stateAt(rows[k - 20]!.height, 0); m.apply([row], H);
+      return { given: [...base, row], at: rows[k - 5]!.height };
+    }],
+    // a context at the late row's height: it must be let go, or the row is skipped
+    ["a context at the late row's height", (m) => {
+      const base = rows.slice(0, k + 1), row = late(rows[k + 1]!, rows[k - 10]!.height);
+      m.load(base, H); m.stateAt(rows[k - 10]!.height, 0); m.apply([row], H);
+      return { given: [...base, row], at: H };
+    }],
+  ];
+  for (const [name, run] of cases) {
+    const held = heldReplay(), full = fullReplay();
+    const h = run(held), f = run(full);
+    const want = oracle(h.given, h.at);
+    ok(`${name}: the held and the full replay each equal resolve() of what they were given`, same(held.stateAt(h.at, 0), want) && same(full.stateAt(f.at, 0), want));
+  }
 }
 
 console.log("a context that refuses falls back to resolve():");

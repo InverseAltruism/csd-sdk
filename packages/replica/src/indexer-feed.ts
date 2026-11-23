@@ -15,7 +15,7 @@ import { floorOf } from "./contract.js";
 import { ReplicaConfigError, SourceError, cannotOf } from "./errors.js";
 import { RETRY_WAIT_MAX_MS, httpSessions, waitMaxOf, type Session } from "./http.js";
 import { applyOrder } from "./order.js";
-import { Scanner, branchRefusal, type ScanAnchor, type ScanOptions } from "./scanner.js";
+import { STEP_UNIT, Scanner, branchRefusal, type ScanAnchor, type ScanOptions } from "./scanner.js";
 import type { BlockEvents, Cursor, Source, Step, StepContext, TipView } from "./types.js";
 
 /** A block hash as csd-indexer's /block-height answers it, 0x and lowercase; anything else is SOURCE_MALFORMED. */
@@ -196,17 +196,18 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
     // Every boundary row carries its hash; once the budget's requests (the indexer's and the verified headers'), its
     // blocks or its time are spent the step ends at the last boundary it read, whose hash the cursor needs.
     const reads = Math.max(1, ctx.budget.maxRequests - 1), most = Math.max(1, ctx.budget.maxBlocks), out: BlockEvents[] = [];
-    let cursor: Cursor | null = null;
+    let cursor: Cursor | null = null, read = 0;
     for (const h of [...heights].sort((a, b) => a - b)) {
       let hash: string | null = null;
       if (h % EPOCH_LEN === 0) {
-        if (cursor !== null && (s.requests() + v.reads() >= reads || out.length >= most || ctx.now() >= ctx.budget.deadlineAt)) break;
+        if (cursor !== null && (s.requests() + v.reads() >= reads || out.length >= most || (read >= STEP_UNIT && ctx.now() >= ctx.budget.deadlineAt))) break;
         try { hash = await chain(h); } catch (e) {
           // a refusal not waited out (past the deadline, or a wait too long) ends the step at the last boundary read
           if (cursor !== null && e instanceof SourceError && (e.code === "SOURCE_RATE_LIMITED" || e.code === "SOURCE_UNAVAILABLE")) break;
           throw e;
         }
         cursor = { height: h, hash };
+        read++;
       }
       out.push({ height: h, hash, events: blocks.get(h) ?? [] });
     }

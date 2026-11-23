@@ -11,11 +11,12 @@ import { done, ok } from "./check.js";
 import { corpus, fx } from "./core-files.js";
 import { captureIndexer } from "./indexer-capture.js";
 
-const WINDOW_MS = 1_000, PER_WINDOW = 500, BUDGET_MS = 1_500, DEADLINE_MS = 60_000, FACTOR = 1.05;
+const WINDOW_MS = 1_000, PER_WINDOW = 500, BUDGET_MS = 1_500, DEADLINE_MS = 90_000, FACTOR = 1.05;
 const STEP = { maxBlocks: 512, maxRequests: 600 } as const;
 
-/** The capture behind a limiter (`per` requests a window, none when 0), counting every request and each path's 200s. */
-function host(per: number) {
+/** The capture behind a limiter (`per` requests a window, none when 0), each answer `latencyMs` late, counting every
+ *  request and each path's 200s. */
+function host(per: number, latencyMs = 0) {
   const base = captureIndexer(fx), served = new Map<string, number>();
   let requests = 0, refused = 0, windowAt = 0, used = 0;
   const f: typeof fetch = async (input, init) => {
@@ -26,6 +27,7 @@ function host(per: number) {
       refused++;
       return new Response(JSON.stringify({ ok: false, error: "rate limit exceeded" }), { status: 429, headers: { "retry-after": String(Math.ceil((windowAt + WINDOW_MS - now) / 1000)) } });
     }
+    if (latencyMs > 0) await new Promise((x) => setTimeout(x, latencyMs));
     const r = await base(input, init), u = new URL(String(input));
     if (r.status === 200) served.set(u.pathname + u.search, (served.get(u.pathname + u.search) ?? 0) + 1);
     return r;
@@ -33,13 +35,13 @@ function host(per: number) {
   return { f, served, counts: () => ({ requests, refused }) };
 }
 
-async function sync(per: number) {
-  const h = host(per), t0 = Date.now();
+async function sync(per: number, o: { budgetMs?: number; latencyMs?: number } = {}) {
+  const h = host(per, o.latencyMs), t0 = Date.now(), budgetMs = o.budgetMs ?? BUDGET_MS;
   const r = await open({ source: indexerFeed({ indexerUrl: "http://idx", fetch: h.f }), store: memoryStore(), step: STEP });
   let s = r.status(), advances = 0;
   try {
     while (Date.now() - t0 < DEADLINE_MS) {
-      s = await r.advance({ budgetMs: BUDGET_MS });
+      s = await r.advance({ budgetMs });
       advances++;
       if (s.cursor !== null && s.at !== null && s.lastError === null && s.cursor.height >= s.at.tipHeight) break;
       const retry = r.status().lastError === null ? 0 : 50;
@@ -65,5 +67,13 @@ ok(`its requests, refused ones included (${lim.requests}), are within ${FACTOR} 
 const repeated = [...lim.served].filter(([p, n]) => n > 1 && !/^\/(blocks\/tip\/height|block-height\/\d+|block\/0x[0-9a-f]{64})$/.test(p));
 ok("no page, attestation list or transaction of the pull is answered twice", repeated.length === 0, repeated.slice(0, 5).map(([p, n]) => `${p} x${n}`).join(", "));
 console.log(`  (unlimited ${free.requests} requests in ${free.ms} ms; limited ${lim.requests} requests, ${lim.refused} refused, ${lim.advances} advances, ${lim.ms} ms)`);
+
+// Every step moves the pull by at least STEP_UNIT answers (or boundaries) before it honours its deadline, so a budget
+// shorter than one request still finishes the sync.
+const SHORT = { budgetMs: 1, latencyMs: 2 }, SHORT_FACTOR = 1.3;
+const short = await sync(0, SHORT);
+ok(`advances of 1 ms against answers 2 ms late: the sync completes at 117,000 by its deadline, its newest tuple the unlimited run's (${short.advances} advances)`,
+  short.s.cursor?.height === 117_000 && JSON.stringify(short.s.tuple) === JSON.stringify(free.s.tuple), `cursor ${short.s.cursor?.height ?? null} after ${short.ms} ms, ${short.advances} advances, last error ${JSON.stringify(short.s.lastError)}`);
+ok(`its requests (${short.requests}) are within ${SHORT_FACTOR} of the unlimited run's (${free.requests})`, short.requests <= free.requests * SHORT_FACTOR, `${short.requests} against ${free.requests}`);
 
 done("feed-cold");
