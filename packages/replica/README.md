@@ -35,8 +35,8 @@ ES modules loads every entry with it too, which the exit check runs on CI's Node
 | `examples/pinned.mjs` | 3, `pinned` | a name from the pin and hosted blocks above it, and the site its `contenthash` names |
 | `examples/deposits.ts` | 3, `pinned` | a server crediting deposits from its own node, its store on disk ("Transfers" below) |
 
-`feed.mjs` is for one's own csd-indexer: against our front door a feed's first sync does not finish ("A csd-indexer
-feed" below), and `pinned.mjs` is the example for it. The examples are in the repository, https://github.com/InverseAltruism/csd-sdk/tree/master/packages/replica/examples,
+`feed.mjs` is for one's own csd-indexer: against our front door a feed's first sync is paced by its request limit
+("A csd-indexer feed" below), and `pinned.mjs` is the example for it. The examples are in the repository, https://github.com/InverseAltruism/csd-sdk/tree/master/packages/replica/examples,
 and each takes its endpoints as arguments. CI installs this package, cairnx-pin and csd-anchors from their packed
 tarballs into an empty directory and runs the first three there against recorded answers, and type-checks the fourth
 against the installed types (`scripts/exit-check.ts`). `cairnx-replica check` ("Checking an installation" below) is
@@ -187,7 +187,7 @@ the same read as one command.
   `test/fixtures/events-blocks.json` in this repository, and the event factories `fixtures()`.
 
 The interfaces documented as internal (`Source`, `Step`, `StepContext`, `Store`, `Commit`, `Materializer`, the store
-records) and the loop (`replicaLoop`, `fullReplay`) are unstable and outside semver.
+records) and the loop (`replicaLoop`, `fullReplay`, `heldReplay`) are unstable and outside semver.
 
 ## The loop
 
@@ -206,6 +206,14 @@ is computed only for a boundary at most 720 blocks (24 epochs) below the tip whe
 that holds still replays at most 24 boundaries, then one per epoch as the tip moves. An older boundary's state hash is
 replayed on demand.
 
+The states come from `heldReplay()`, the default materializer: at most two of cairnx-core's held replay contexts
+(`newReplayContext`), each fed only the events of the blocks above its height, so a step costs its new events rather
+than a replay of all of them. A state at a height comes from the nearest context at or below it, or from a new one; a
+rollback lets go the contexts above it. A context that refuses an event is let go and that height is replayed with
+`resolve()`, as cairnx-core says to. `fullReplay()`, `resolve()` over every held event, stays exported; over the replay
+corpus every state the loop asks, and over the recorded capture every boundary's tuple, is the same from both
+(`test/held-replay.test.ts`).
+
 ## Reading
 
 `open({ source, store?, witnesses?, core?, clock? })` returns a `Reader` over one source and one store (default
@@ -223,7 +231,7 @@ the call. A read waits for the advance it started and for a step's commit in fli
 commit is still in flight when that bound passes, `NOT_SYNCED` with the detail "a step's commit is in flight" and
 nothing shown; `status()` answers the same during a commit. A store whose commit never settles leaves `advance()`
 pending: that is the store's failure, and reads still answer within their bound. Nothing runs on a timer: the caller
-drives `advance()` or reads.
+drives `advance()` or reads, or opens through `./server`'s `open` with `pollMs` ("The resolver's reads").
 
 Each answer is `{ verified: true, value }` or `{ verified: false, value: null, shown }`, with `why` (the codes below),
 `notes`, `level`, `proof`, `vouch` (the basis) and `at` (the tip, the deep height `tip - minDepth` the value is read
@@ -275,7 +283,10 @@ the boundary, the store's source disagrees with a recount and a reference that a
 by design: a csd-indexer feed with `verifyInclusion`; `BEHIND` then counts from that tip),
 `PEER_FAR_AHEAD` (a witness named a tip more than 12 above the replica's whose header meets its own bits, more than 24
 under a `FINAL_VIEW`, whose tip is 12 below the chain tip by design; `TIP_BEHIND_PEER` is set with it), `TIP_STALE_LONG` (the tip's header time is more than `STALE_MAX_MS`, 6 hours, before the clock, plus
-the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it),
+the 24 minutes of a `FINAL_VIEW`; `TIP_STALE` is set with it), `SOURCE_FAILING` (the loop's last step failed and none
+has settled for more than `FAILING_MS`, 30 minutes; its `detail` gives the minutes and the last error's code. A count
+of failures would fire inside one host's restart, since the backoff makes five in 31 s; a drought settles idle steps
+and does not reach it),
 `CURSOR_ABOVE_TIP` (an `events` or
 `transfers` cursor above the replica's), `STORE_UNAVAILABLE` (the store threw at open, or another process or context
 holds it; the note's `detail` names why from a fixed list: another process or context holds it, it refuses its
@@ -544,10 +555,15 @@ its hash, not steps.
 ## A csd-indexer feed
 
 A feed reads every record, and every record's transaction, by itself, one request each, so a first sync from the
-activation height is thousands of requests. It is meant for one's own csd-indexer or a host without a request limit.
-Against a host that limits requests, such as our front door, a first sync does not finish today: a scan that meets a
-429 starts over. Against `https://cairn-substrate.com` a replica starts from the pin and reads the hosted blocks above
-it instead (`hosted({ pin, origin })` in "Pins" below, `cairnx-replica check --hosted <origin> --pin`). On 2026-11-22
+activation height is thousands of requests: over the recorded capture (29,860 to 117,000), 4,980 in
+`test/feed-cold.test.ts`'s unlimited run on 2026-11-23, block-hash reads included. It is meant for one's own
+csd-indexer. Against a host that limits requests, such as our front door (300 a minute a client, a fixed window, 429
+with `Retry-After` the seconds to its reset), the sync is paced by the limit: the feed waits out each `Retry-After` of
+up to `RETRY_WAIT_MAX_MS` (60 s) and sends the same request again, and a full pull that stops keeps what it read
+(below), so the capture's sync takes about 17 minutes there. The test runs it behind a limiter of that
+shape scaled to a 1 s window, with advances shorter than the pull: it completes, with its requests, refused ones
+included, within 5 percent of the unlimited run's, and no page, attestation list or transaction answered twice.
+Against `https://cairn-substrate.com` a replica starts from the pin and reads the hosted blocks above it instead (`hosted({ pin, origin })` in "Pins" below, `cairnx-replica check --hosted <origin> --pin`). On 2026-11-22
 at 16:58Z, `cairnx-replica check --hosted https://cairn-substrate.com --pin --reference
 https://cairn-substrate.com/trade/api`, run from an install on the maintainers' host, read from the pin at 143,340 to
 the tip at 147,403 in 12.65 s (`/usr/bin/time`) and found its tuple at 147,390 equal to the front door's.
@@ -561,6 +577,7 @@ header source the caller wires.
 | Option (`IndexerFeedOptions`) | What it is |
 |---|---|
 | `indexerUrl`, `fetch`, `timeoutMs`, `pageSize`, `attPageSize`, `feedPageSize`, `keptMax`, `keptRefresh` | the Scanner's (`ScanOptions`); `fetch` and `timeoutMs` also serve the feed's block-hash and block-time reads |
+| `waitMaxMs` | the Scanner's: the longest `Retry-After` of a 429 or 503 waited out before the same request goes again, three refusals of one request in a row at most; the Scanner's default is 0 (a 429 or 503 throws), the feed's `RETRY_WAIT_MAX_MS`, 60 s; it also serves the feed's own reads |
 | `verifyInclusion`, `confDepth` | inclusion on, and the depth of the final height below the verified tip (default 12) |
 | `headerMerkleAt(height)`, `rawTxAt(txid)`, `verifiedTipHeight()`, `merkleProofAt(txid)` | the Scanner's reads of the caller's verified side, for inclusion |
 | `headerAt(height)` | the feed's, required with `verifyInclusion`: `{ hash, time }` of the block at a height on the caller's verified headers (the same source as `headerMerkleAt` and `verifiedTipHeight`), asked at or below the final height; without it `indexerFeed` throws `ReplicaConfigError` |
@@ -569,7 +586,9 @@ With `verifyInclusion` the feed trusts the caller's verified headers for the rec
 it holds and for the tip and its time; it trusts the indexer only for which records exist. The indexer can still
 withhold a record, which is why the level stays 2 and not 3.
 
-Each step is one scan. A scan whose tip block changed during the pull, or whose hash could not be read before and
+Each step reads one scan: a new one, or the scan of the step before when that step ended short of the scan's top (its
+budget, or its deadline) and the store's cursor is the one it returned, after one read that the indexer still gives
+the scan's tip hash (else a new scan). So a catch-up over many steps scans once. A scan whose tip block changed during the pull, or whose hash could not be read before and
 after it, is `BRANCH_MOVED` (`branchRefusal`), tried again at the next step. The rule's events are those at or above
 its activation, an Attest only on a Propose among them (CONVENTION section 33.1). Up to the lower of the cursor and the
 scan's top they are compared with the store by their events hash; where they differ the step is a reorg to the last
@@ -595,16 +614,23 @@ indexer gives the verified hash (that height, else the last boundary where it do
 carries no record of its own, is served only up to where the two agree, rolled back to there when the cursor is above
 it, and reads as `BEHIND` from there (withheld by a server from 12); when that branch carries a record of its own, the
 scan fails before the two are compared, every step fails as `SOURCE_UNAVAILABLE`, and the last state stays served,
-ageing, until the 6-hour cap (`TIP_STALE_LONG`). A `headerAt` answer whose hash is out of form, or whose time is not whole seconds or is more than
+ageing, until 30 minutes after the last step that settled (`SOURCE_FAILING`, withheld by a server). A `headerAt` answer whose hash is out of form, or whose time is not whole seconds or is more than
 `MAX_FUTURE_DRIFT_SECS` (2 hours, the chain's own bound) after the step's clock, as a time in milliseconds is, is
 `SOURCE_MALFORMED`; one that throws is `SOURCE_UNAVAILABLE`. Every answer under `verifyInclusion` carries the note
 `FINAL_VIEW`. A step whose request or block budget (the `headerAt` reads count with the indexer's requests) runs out
 ends at the last boundary it read, with the scan's top as its reach. With `verifyInclusion` and the final height under
 the floor, a cursor whose block is off the chain leaves the step idle at genesis, since no verified hash at or below
 the final height names a block to end on. `Source.tip()` reads the indexer's tip, or with `verifyInclusion` gives the
-last step's. Neither changes the level, which a feed caps at 2. Each step's scan reads the
-whole domain the first time and the indexer's chain-order feeds after it; the scan is not cut short by the step's
-signal.
+last step's. Neither changes the level, which a feed caps at 2. A scan reads the
+whole domain the first time and the indexer's chain-order feeds after it. It takes the step's signal, which ends its
+requests and waits at once (the step then ends as aborted, nothing committed). A full pull keeps every answer it
+read, bound to its tip block: after each `Retry-After` wait it reads that block again, and the same hash confirms
+what it read so far (read between two equal reads, as an accepted scan's whole pull is), another refuses the pull
+as `BRANCH_MOVED`. A pull that stops (the signal; a 429 or 503 it does not wait out, which ends the step as
+`SOURCE_RATE_LIMITED` or `SOURCE_UNAVAILABLE` with the wait asked, the loop's backoff; or the step's deadline, at the
+first wait after it) keeps its confirmed answers, and the next scan resumes it at that tip, sending only what it has
+not read, unless the block there changed. Any other failure drops them. A step can so outlast its deadline by one
+wait, 60 s at most. The step's own reads also end it at its deadline once it holds a boundary, as a block source's do.
 
 The Scanner and `nameHistory`, the resolver's name-history selector (`.`), come from the private CairnX resolver
 byte for byte apart from import paths, then cleaned under review; `appliedIds` (`.`) is the set of ids a replay
@@ -643,15 +669,22 @@ as "not registered"): on `WITHHELD` (`NOT_SYNCED`, `STORE_UNCONFIRMED`, `PIN_DIS
 `PIN_OFF_CHAIN`, `RULES_DIFFER`, `BRANCH_UNRESOLVED`) and on `BEHIND` once the view is 12 or more below the tip (a
 catch-up; under that the resolver also answers between two polls), and on the notes `WITHHELD_NOTES`:
 `SOURCES_DISAGREE` (a witness gave another block at a height the replica holds), `PEER_FAR_AHEAD` (a witness's valid tip
-is more than 12 above the replica's, more than 24 under `FINAL_VIEW`; a peer up to that is served with `TIP_BEHIND_PEER`) and `TIP_STALE_LONG`
+is more than 12 above the replica's, more than 24 under `FINAL_VIEW`; a peer up to that is served with `TIP_BEHIND_PEER`), `TIP_STALE_LONG`
 (the tip is more than 6 hours old; a tip stale by the 30 minutes of `TIP_STALE` alone is served, since a drought
-between blocks would otherwise make every replica refuse at once). Every other code and note is served and named:
+between blocks would otherwise make every replica refuse at once) and `SOURCE_FAILING` (the steps fail and none has
+settled for 30 minutes; one failed step, or failures for less than that, is served). Every other code and note is served and named:
 the codes in `x-cairnx-why`, the notes in `x-cairnx-notes`, both exposed. Under `FINAL_VIEW` a served answer is at
 most 23 blocks behind the chain tip its source read: 12 by design and fewer than 12 of `BEHIND`. The hosted resolver
-imports the five reads and keeps its own dispatch: only a replica's own server withholds. The host drives
-`advance()` itself, a poller calling it every `READ_ADVANCE_MS` or so: a server that only answers reads serves its
-last state until a read starts the next step, and that read and the ones before the step ends answer from the old
-state with no code saying so.
+imports the five reads and keeps its own dispatch: only a replica's own server withholds.
+
+A server that only answers reads serves its last state until a read starts the next step, and that read and the
+ones before the step ends answer from the old state with no code saying so. So the server opens its replica through
+`./server`'s `open({ ..., pollMs })`: the reader advances at once and again `pollMs` after each advance ends, until
+`close()`, with a timer that does not hold the process; `READ_ADVANCE_MS` (15 s) is the hosted resolver's own poll.
+A `pollMs` that is not a whole number from 1,000 to 2,147,483,647 throws `ReplicaConfigError`. Without `pollMs`
+nothing advances on its own, and a host that drives `advance()` itself is unchanged (`test/poll.test.ts`). A poll
+rather than a wait in a read: a wait would put a step's time on the first read after a gap, a user's request, and
+still answer from the old state when the step is slower than the wait.
 
 ## Tuples and a reference
 
@@ -752,9 +785,9 @@ A refusal the next step would repeat (a pinned source's `PIN_MISMATCH`, `PIN_OFF
 `BELOW_FLOOR`) ends the run at once. While it reads, the command prints to stderr a progress line (`syncing: cursor <h>
 of tip <h>`, the level, the proof and the codes) whenever one of those changes and every 30 s, and each new source
 error (`source error <code>: <reason>`). At the deadline it stops waiting for the step in flight, prints `deadline: <ms>
-ms passed waiting for ...` with what it waited for and the last source error, and gives the result `timeout`; it then
-gives the source 5 s to stop and exits without it if it has not (a feed's scan takes no signal, so a request it has open
-is not ended by the deadline). Every line goes through one boundary: control characters (C0, DEL, C1) and the bidi
+ms passed waiting for ...` with what it waited for and the last source error, and gives the result `timeout`. The
+deadline also ends the step in flight, a feed's scan included, which takes the step's signal; the command then gives
+the source 5 s to stop, as a backstop for a source that does not, and exits without it if it has not. Every line goes through one boundary: control characters (C0, DEL, C1) and the bidi
 and line separators (U+2028, U+2029, U+202A to U+202E, U+2066 to U+2069) are shown as `\uXXXX`, and text that came
 from a source, a reference or an error made from them is cut at 400 characters. The command asks no host it was not
 given (every request it makes refuses redirects) and holds nothing on disk (`test/cli.test.ts`).

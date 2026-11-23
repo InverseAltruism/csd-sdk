@@ -28,8 +28,9 @@ const STEP = { maxBlocks: 512, maxRequests: 600 } as const;
  *  the floor stays there), so waiting longer changes nothing. */
 const STICKY = new Set<string>([...PIN_REFUSALS, "BELOW_FLOOR"]);
 const PIN_PACKAGE = "@inversealtruism/cairnx-pin";
-/** How long, after the deadline, the command waits for the source to stop before it exits without it: a feed's scan
- *  takes no signal, so a request it has open is not ended by the deadline. */
+/** How long, after the deadline, the command waits for the source to stop before it exits without it. Every source,
+ *  a feed's scan included, ends its step with the deadline's signal; this is the backstop for a request that does not
+ *  settle on its abort. */
 export const CLOSE_GRACE_MS = 5_000;
 /** The longest text from a source, a reference or an error made from their bytes that a line shows, in UTF-16 units. */
 export const SHOWN_MAX = 400;
