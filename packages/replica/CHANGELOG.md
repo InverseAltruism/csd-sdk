@@ -19,7 +19,7 @@ code and one function, so the release sits inside cairnx-pin's `^0.1.0` peer ran
   that, and no page, attestation list or transaction is answered twice (`test/feed-cold.test.ts`; it did not finish
   before). `test/scan/scan-resume.test.ts` pins the stop, the resume, a changed tip, a moved confirmation, a malformed
   answer and the signal.
-- `Scanner.scan(run?)` takes `{ signal, due }` (new, optional): the signal reaches both fetch sites and every wait, so
+- `Scanner.scan(run?)` takes `{ signal, due }` (`ScanRun`, new, optional, typed from `./server`): the signal reaches both fetch sites and every wait, so
   `advance({ signal })` aborted mid-scan ends at once, commits nothing, and the next step reads on
   (`test/feed-steps.test.ts`). The command's 5 s grace after its deadline stays as a backstop; the README says again
   that the deadline ends the step in flight.
