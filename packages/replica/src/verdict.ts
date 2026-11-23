@@ -14,13 +14,14 @@ export const FRESH_MS = 30 * 60_000;
 /** How old a tip header may be before a replica's server withholds its answers (the note TIP_STALE_LONG): 6 hours, 180
  *  target block times, long against a drought between blocks and short against a source that is syncing or stopped. */
 export const STALE_MAX_MS = 6 * 60 * 60_000;
-/** How long a replica may go without a settled step while its steps fail before its server withholds its answers (the
- *  note SOURCE_FAILING): FRESH_MS. The loop's backoff doubles from 1 s to 300 s, so a count of failures would fire
- *  within a host's restart (five in 31 s), and a drought does not reach it, since steps settle idle there. */
+/** How long a replica's steps may fail, with none settled, before its server withholds its answers (the note
+ *  SOURCE_FAILING): FRESH_MS, from the first failed step. The loop's backoff doubles from 1 s to 300 s, so a count of
+ *  failures would fire within a host's restart (five in 31 s), and a drought does not reach it, since steps settle idle
+ *  there. */
 export const FAILING_MS = FRESH_MS;
-/** Whether a loop whose last step failed (`failed`) has settled no step for more than FAILING_MS at `now` (ms):
- *  `settledAt` is when the last one settled, null when none has. */
-export const failing = (now: number, settledAt: number | null, failed: boolean): boolean => failed && settledAt !== null && now - settledAt > FAILING_MS;
+/** Whether a loop's steps have failed for more than FAILING_MS at `now` (ms): `since` is the first failed step after
+ *  the last that settled (LoopStatus.failingSince), null when none has failed since. */
+export const failing = (now: number, since: number | null): boolean => since !== null && now - since > FAILING_MS;
 const FINAL_AGE_S = FINAL_DEPTH * TARGET_BLOCK_SECS;
 /** Whether a tip of header time `tipTime` (seconds) is older than `ms` at `now` (ms), with a final-only source's
  *  allowance. */

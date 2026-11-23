@@ -178,8 +178,8 @@ async function start(o: OpenOptions, rule: EventRule, m: Materializer, recount: 
       ...(board.disagree() ? [{ code: "SOURCES_DISAGREE" as const }] : []), ...(board.malformed() ? [{ code: "WITNESS_MALFORMED" as const }] : []), ...compareNotes(),
       ...(farAhead(lead, finalOnly) ? [{ code: "PEER_FAR_AHEAD" as const, detail: `a witness's tip ${lead} blocks above` }] : []),
       ...(synced !== null && olderThan(now, synced.tip.time, STALE_MAX_MS, finalOnly) ? [{ code: "TIP_STALE_LONG" as const }] : []),
-      ...(failing(now, s.settledAt, s.lastError !== null)
-        ? [{ code: "SOURCE_FAILING" as const, detail: `no step settled for ${Math.floor((now - s.settledAt!) / 60_000)} minutes; the last error ${s.lastError!.code}` }] : [])];
+      ...(failing(now, s.failingSince) && s.lastError !== null
+        ? [{ code: "SOURCE_FAILING" as const, detail: `steps failing for ${Math.floor((now - s.failingSince!) / 60_000)} minutes; the last error ${s.lastError.code}` }] : [])];
     const deep = synced === null ? 0 : synced.tip.height - minDepth;
     const at: At | null = synced === null ? null
       : { height: deep, hash: loop.hashAt(deep), deepHeight: deep, depth: minDepth, tipHeight: synced.tip.height, tipTime: synced.tip.time };

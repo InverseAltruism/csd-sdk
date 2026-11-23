@@ -13,7 +13,7 @@ import { DOMAIN, EPOCH_LEN, EVENTS_HASH_START, HASH_RE, eventsHashStep, type Cha
 import { MAX_FUTURE_DRIFT_SECS } from "@inversealtruism/csd-codec";
 import { floorOf } from "./contract.js";
 import { ReplicaConfigError, SourceError, cannotOf } from "./errors.js";
-import { RETRY_WAIT_MAX_MS, httpSessions, type Session } from "./http.js";
+import { RETRY_WAIT_MAX_MS, httpSessions, waitMaxOf, type Session } from "./http.js";
 import { applyOrder } from "./order.js";
 import { Scanner, branchRefusal, type ScanAnchor, type ScanOptions } from "./scanner.js";
 import type { BlockEvents, Cursor, Source, Step, StepContext, TipView } from "./types.js";
@@ -99,7 +99,7 @@ export interface IndexerFeedOptions extends ScanOptions {
 export function indexerFeed(o: IndexerFeedOptions): Source {
   const inclusion = o.verifyInclusion === true, headerAt = o.headerAt;
   if (inclusion && headerAt === undefined) throw new ReplicaConfigError("indexerFeed: verifyInclusion needs headerAt, the verified header at a height, to name its tip");
-  const waitMaxMs = o.waitMaxMs ?? RETRY_WAIT_MAX_MS, scanner = new Scanner({ ...o, waitMaxMs });
+  const waitMaxMs = waitMaxOf(o.waitMaxMs ?? RETRY_WAIT_MAX_MS, "indexerFeed"), scanner = new Scanner({ ...o, waitMaxMs });
   const base = o.indexerUrl.replace(/\/$/, "");
   const session = httpSessions(base, { ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.timeoutMs === undefined ? {} : { timeoutMs: o.timeoutMs }), waitMaxMs });
   const hashOf = async (s: Session, h: number) => blockHash(await s.json(`/block-height/${h}`, false), h);
@@ -169,6 +169,8 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
       const height = Math.max(0, final);
       if (inclusion) { const h = await v.at(height); return { height, hash: h.hash, time: h.time }; }
       const hash = known ?? (await indexer(height));
+      // the last step's tip, when it is this block, needs no read of its time (a carried scan's steps share one tip)
+      if (last !== null && last.height === height && last.hash === hash) return last;
       return { height, hash, time: await timeOf(s, height, hash) };
     };
     if (ctx.cursor !== null) {
@@ -199,7 +201,11 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
       let hash: string | null = null;
       if (h % EPOCH_LEN === 0) {
         if (cursor !== null && (s.requests() + v.reads() >= reads || out.length >= most || ctx.now() >= ctx.budget.deadlineAt)) break;
-        hash = await chain(h);
+        try { hash = await chain(h); } catch (e) {
+          // a refusal not waited out (past the deadline, or a wait too long) ends the step at the last boundary read
+          if (cursor !== null && e instanceof SourceError && (e.code === "SOURCE_RATE_LIMITED" || e.code === "SOURCE_UNAVAILABLE")) break;
+          throw e;
+        }
         cursor = { height: h, hash };
       }
       out.push({ height: h, hash, events: blocks.get(h) ?? [] });
@@ -218,7 +224,7 @@ export function indexerFeed(o: IndexerFeedOptions): Source {
     floor: null,
     async next(ctx) {
       try {
-        const s = await step(session(ctx.signal), ctx);
+        const s = await step(session(ctx.signal, () => ctx.now() >= ctx.budget.deadlineAt), ctx);
         ctx.signal.throwIfAborted();
         if (s.kind !== "cannot") last = s.tip;
         return s;

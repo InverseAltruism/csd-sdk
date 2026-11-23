@@ -45,6 +45,20 @@ console.log("the poller itself: no advance after close()");
   ok(`it advanced (${before} calls) and none after close()`, before >= 2 && calls === before, `${before} then ${calls}`);
 }
 
+console.log("an advance that rejects:");
+{
+  let calls = 0, unhandled = 0;
+  const count = () => { unhandled++; };
+  process.on("unhandledRejection", count);
+  const inner = await open({ source: nodeSource(), clock });
+  const fake = { ...inner, advance: () => { calls++; return Promise.reject(new Error("the store refused its directory")); } };
+  const r = polled(fake, 1_000);
+  await settle(2_200);
+  await r.close();
+  process.off("unhandledRejection", count);
+  ok(`the poller goes on after each rejection (${calls} calls), with no unhandled rejection`, calls >= 2 && unhandled === 0, `${calls} calls, ${unhandled} unhandled`);
+}
+
 console.log("paired, without pollMs:");
 {
   const c = counted(), r = await open({ source: c.source, clock });

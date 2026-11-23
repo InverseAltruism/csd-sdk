@@ -1,4 +1,5 @@
-// The codes an answer carries. A code is stable: never renamed, reused or removed.
+// The codes an answer carries. A code is stable: never renamed, reused or removed. A note code may be added in a minor
+// version; a client treats a note it does not know as one that withholds nothing.
 
 /** Why an answer is not verified. */
 export const NOT_VERIFIED_CODES = Object.freeze([

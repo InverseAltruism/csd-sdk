@@ -1,7 +1,7 @@
 // indexerFeed across steps: an advance aborted while the scan waits on the indexer ends at once as aborted, leaves the
 // store as it was and the next advance reads on; a step that ends short of its scan's top hands the scan to the next
-// step, which reads it again only when the indexer no longer gives its tip hash; a step past its deadline ends at the
-// first boundary it read.
+// step, which reads it again only when the indexer no longer gives its tip hash; a step whose deadline passes ends at
+// the first boundary it read and starts no wait.
 import { CAIRNX_EVENT_RULE, DOMAIN } from "@inversealtruism/cairnx-core";
 import { memoryStore, open, replicaLoop } from "../src/index.js";
 import { indexerFeed } from "../src/server.js";
@@ -50,7 +50,10 @@ for (const moved of [false, true]) {
     if (swap && p === `/block/${OTHER}`) return Response.json({ height: TIP, hash: OTHER, time: 1_700_000_000 });
     return base(input, init);
   };
-  const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: f }), store: memoryStore(), maxBlocks: 100_000, maxRequests: 10 });
+  // The loop's clock passes the first advance's deadline at the feed's first own read (cache no-store), after the scan.
+  let late = false;
+  const g: typeof fetch = (input, init) => { if (init?.cache === "no-store") late = true; return f(input, init); };
+  const loop = replicaLoop({ source: indexerFeed({ indexerUrl: "http://idx", fetch: g }), store: memoryStore(), maxBlocks: 100_000, maxRequests: 10, clock: () => (late ? 10 : 0) });
   await loop.open();
   const first = await loop.advance({ budgetMs: 1 });
   if (first.cursor === null || first.cursor.height >= TIP) { ok("setup: the first advance ends short of the scan's top", false, JSON.stringify(first.cursor)); continue; }
@@ -63,13 +66,33 @@ for (const moved of [false, true]) {
 
 console.log("a step past its deadline:");
 {
-  const src = indexerFeed({ indexerUrl: "http://idx", fetch: captureIndexer(fx, TIP) });
-  const at = (deadlineAt: number) => src.next({
+  // `late` turns true at the feed's first own read (its session sends cache no-store; the Scanner does not), so the
+  // deadline passes after the scan; `refuse` answers that read 429 with a 1 s wait.
+  let late = false, refuse = false;
+  const base = captureIndexer(fx, TIP);
+  const f: typeof fetch = async (input, init) => {
+    if (init?.cache === "no-store") {
+      late = true;
+      if (refuse) return new Response("{}", { status: 429, headers: { "retry-after": "1" } });
+    }
+    return base(input, init);
+  };
+  const src = indexerFeed({ indexerUrl: "http://idx", fetch: f });
+  const at = (deadlineAt: number, now = () => (late ? 1 : 0)) => src.next({
     rule: CAIRNX_EVENT_RULE, cursor: null, sofar: { eventIds: new Set(), proposeIds: new Set() }, hashAt: () => null, eventsHashAt: () => null,
-    budget: { deadlineAt, maxRequests: 100_000, maxBlocks: 100_000 }, signal: new AbortController().signal, now: () => 1_700_000_000_000,
+    budget: { deadlineAt, maxRequests: 100_000, maxBlocks: 100_000 }, signal: new AbortController().signal, now,
   });
-  const late = await at(0);
-  ok("ends at the first boundary it read, the scan's top its reach", late.kind === "blocks" && late.cursor.height === 29_880 && late.reach === TIP, JSON.stringify(late.kind === "blocks" ? late.cursor : late));
+  const after = await at(1);
+  ok("the deadline passing after the scan: the step ends at the first boundary it read, the scan's top its reach", after.kind === "blocks" && after.cursor.height === 29_880 && after.reach === TIP,
+    JSON.stringify(after.kind === "blocks" ? after.cursor : after));
+  late = false; refuse = true;
+  const t0 = Date.now(), refused = await at(1), ms = Date.now() - t0;
+  ok("its first own read refused past the deadline: no wait, the step ends at once as SOURCE_RATE_LIMITED", refused.kind === "cannot" && refused.code === "SOURCE_RATE_LIMITED" && ms < 300,
+    `${JSON.stringify(refused)} after ${ms} ms`);
+  refuse = false;
+  const before = await at(0, () => 1);
+  ok("a step past its deadline before its scan: the scan stops at its first pull request, nothing read beyond", before.kind === "cannot" && before.code === "SOURCE_UNAVAILABLE",
+    JSON.stringify(before));
   const paired = await at(Number.POSITIVE_INFINITY);
   ok("paired: before its deadline the same step reads to the top", paired.kind === "blocks" && paired.cursor.height === TIP && paired.reach === undefined);
 }

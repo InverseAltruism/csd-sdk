@@ -73,6 +73,28 @@ console.log("the tuples of a loop over the recorded capture (29,860 to 117,000):
   console.log(`  (the sync and every boundary's state: held ${heldMs.toFixed(0)} ms, full ${fullMs.toFixed(0)} ms)`);
 }
 
+console.log("a load and a split block, against held contexts:");
+{
+  const rows = rowsOf(corpus.events), held = heldReplay(), full = fullReplay(), top = rows.at(-1)!.height;
+  for (const m of [held, full]) m.load(rows, top);
+  held.stateAt(top, 0); held.stateAt(top, FINAL_DEPTH);
+  // a load of rows that differ at and below both contexts' heights: every second block left out
+  const other = rows.filter((_, i) => i % 2 === 0), otherTop = other.at(-1)!.height;
+  for (const m of [held, full]) m.load(other, top);
+  ok("a load that changes events below the held contexts: the states are the full replay's", same(held.stateAt(top, 0), full.stateAt(top, 0)) && same(held.stateAt(top, FINAL_DEPTH), full.stateAt(top, FINAL_DEPTH)) && otherTop <= top);
+
+  // one block's events in two apply() calls: the context at that height is let go when the second comes
+  const block = rows.find((r) => r.events.length >= 2)!, before = rows.filter((r) => r.height < block.height);
+  const first = { ...block, events: block.events.slice(0, 1) }, rest = { ...block, events: block.events.slice(1) };
+  const h2 = heldReplay(), f2 = fullReplay();
+  for (const m of [h2, f2]) m.load(before, before.at(-1)!.height);
+  for (const m of [h2, f2]) m.apply([first], block.height);
+  h2.stateAt(block.height, 0); f2.stateAt(block.height, 0);
+  for (const m of [h2, f2]) m.apply([rest], block.height + 5);
+  ok(`a block (${block.height}, ${block.events.length} events) fed in two calls: the state above it is the full replay's`,
+    same(h2.stateAt(block.height + 5, 0), f2.stateAt(block.height + 5, 0)) && h2.fallbacks === 0, `${h2.fallbacks} fallbacks`);
+}
+
 console.log("a context that refuses falls back to resolve():");
 {
   const rows = rowsOf(corpus.events.filter((e) => e.height <= 30_400));

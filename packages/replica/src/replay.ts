@@ -15,7 +15,8 @@ function between(events: readonly ChainEvent[], from: number, to: number): Chain
 
 /** The shared part of both materializers: the held events, the cursor's height, the last two states replayed (a tip's
  *  two views, all events, `depth` 0, and those at or below `tip - minDepth`) and the time of the last replay. */
-function materializer(replay: (events: readonly ChainEvent[], at: number) => CairnXState, o: { now?: () => number; onLoad?: () => void; onRollback?: (to: number) => void }): Materializer {
+function materializer(replay: (events: readonly ChainEvent[], at: number) => CairnXState,
+  o: { now?: () => number; onLoad?: () => void; onRollback?: (to: number) => void; onApply?: (from: number) => void }): Materializer {
   const now = o.now ?? (() => performance.now());
   let events: ChainEvent[] = [], height: number | null = null, replayMs: number | null = null;
   const memo = new Map<number, CairnXState>();
@@ -31,8 +32,19 @@ function materializer(replay: (events: readonly ChainEvent[], at: number) => Cai
   };
   return {
     load(rows, h) { events = rows.flatMap((r) => r.events); height = h; memo.clear(); o.onLoad?.(); },
-    // Rows applied lie above `height`, and no state above `height` was replayed, so every memoized state stays exact.
-    apply(rows, h) { for (const r of rows) events.push(...r.events); height = h; },
+    // The loop applies rows above `height` only, and no state above `height` was replayed, so every memoized state stays
+    // exact; a direct caller's row at or below a height already replayed lets go every state at or above it.
+    apply(rows, h) {
+      const low = Math.min(...rows.map((r) => r.height)), sorted = events.length === 0 || low >= events.at(-1)!.height;
+      for (const r of rows) events.push(...r.events);
+      // between() needs the events by height; a stable sort keeps each block's apply order
+      if (!sorted) events.sort((a, b) => a.height - b.height);
+      height = h;
+      if (rows.length > 0) {
+        for (const k of [...memo.keys()]) if (k >= low) memo.delete(k);
+        o.onApply?.(low);
+      }
+    },
     rollback(to) {
       events = events.filter((e) => e.height <= to); height = to;
       for (const k of [...memo.keys()]) if (k > to) memo.delete(k);
@@ -87,6 +99,8 @@ export function heldReplay(o: { now?: () => number } = {}): Materializer & { rea
     ...o,
     onLoad: () => { held = []; },
     onRollback: (to) => { held = held.filter((c) => c.ctx.height <= to); },
+    // a row at or below a context's height would be skipped by its next advance (between() starts above it)
+    onApply: (from) => { held = held.filter((c) => c.ctx.height < from); },
   });
   return Object.defineProperty(m, "fallbacks", { get: () => fallbacks, enumerable: true }) as Materializer & { readonly fallbacks: number };
 }

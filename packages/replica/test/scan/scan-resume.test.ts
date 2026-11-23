@@ -10,26 +10,8 @@ import { done, ok } from "../check.js";
 import { fx } from "../core-files.js";
 import { captureIndexer } from "../indexer-capture.js";
 
-const TIP = 31_000;   // the capture to 31,000: a pull of some hundred requests
-const HASH_READ = /^\/(blocks\/tip\/height|block-height\/\d+)$/;
+import { HASH_READ, TIP, host } from "./resume-host.js";
 
-/** The capture to TIP, which refuses the `refuseAt`-th request with 429 `retry-after` (once), counting each path's
- *  200s; `swap` replaces an answer; from the `hangFrom`-th request on, none is answered until its signal aborts. */
-function host() {
-  const base = captureIndexer(fx, TIP), served = new Map<string, number>(), firstAt = new Map<string, number>();
-  const h = { refuseAt: 0, retryAfter: "0", n: 0, swap: null as ((path: string) => unknown) | null, served, firstAt, hangFrom: 0 };
-  const f: typeof fetch = async (input, init) => {
-    h.n++;
-    if (h.n === h.refuseAt) return new Response("{}", { status: 429, headers: { "retry-after": h.retryAfter } });
-    const u = new URL(String(input));
-    if (h.hangFrom > 0 && h.n >= h.hangFrom) return new Promise<Response>((_, no) => init?.signal?.addEventListener("abort", () => no(init.signal!.reason), { once: true }));
-    const swapped = h.swap?.(u.pathname);
-    const r = swapped === undefined ? await base(input, init) : Response.json(swapped);
-    if (r.status === 200) { const k = u.pathname + u.search; served.set(k, (served.get(k) ?? 0) + 1); if (!firstAt.has(k)) firstAt.set(k, h.n); }
-    return r;
-  };
-  return { h, f };
-}
 const twice = (served: Map<string, number>) => [...served].filter(([p, n]) => n > 1 && !HASH_READ.test(p.split("?")[0]!));
 const sameEvents = (a: { events: unknown[] }, b: { events: unknown[] }) => JSON.stringify(a.events) === JSON.stringify(b.events);
 const fresh = await new Scanner({ indexerUrl: "http://idx", fetch: captureIndexer(fx, TIP) }).scan();
@@ -39,8 +21,8 @@ console.log("a stop after a confirmed wait, then a resume:");
 {
   const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
   h.refuseAt = 60;
-  const e = await s.scan({ due: () => true }).catch((x: unknown) => x);
-  ok("the scan due at its first wait stops there as SOURCE_RATE_LIMITED", e instanceof SourceError && e.code === "SOURCE_RATE_LIMITED", String(e));
+  const e = await s.scan({ due: () => h.n > 60 }).catch((x: unknown) => x);
+  ok("the scan whose deadline passes during its first wait stops after it as SOURCE_RATE_LIMITED", e instanceof SourceError && e.code === "SOURCE_RATE_LIMITED", String(e));
   const r = await s.scan();
   ok("the next scan is accepted with a fresh scanner's events", branchRefusal(r.anchor) === null && sameEvents(r, fresh));
   ok("no page, attestation list or transaction is answered twice across the two", twice(h.served).length === 0, JSON.stringify(twice(h.served).slice(0, 3)));
@@ -50,7 +32,7 @@ console.log("paired, without waitMaxMs: a 429 throws as before, and the next sca
 {
   const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f });
   h.refuseAt = 60;
-  const e = await s.scan({ due: () => true }).catch((x: unknown) => x);
+  const e = await s.scan({ due: () => h.n > 60 }).catch((x: unknown) => x);
   ok("the 429 throws `-> 429`, no SourceError", e instanceof Error && !(e instanceof SourceError) && / -> 429$/.test(e.message), String(e));
   const r = await s.scan();
   ok("the next scan is a fresh scanner's and reads again what the first read", sameEvents(r, fresh) && twice(h.served).length > 0);
@@ -60,7 +42,7 @@ console.log("a resumed pull whose tip block changed is pulled again in full:");
 {
   const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
   h.refuseAt = 60;
-  await s.scan({ due: () => true }).catch(() => undefined);
+  await s.scan({ due: () => h.n > 60 }).catch(() => undefined);
   const other = `0x${"ab".repeat(32)}`;
   h.swap = (p) => (p === `/block-height/${TIP}` ? other : undefined);
   const r = await s.scan();
@@ -85,7 +67,7 @@ console.log("a pull that fails on what the indexer answered is dropped:");
 {
   const { h, f } = host(), s = new Scanner({ indexerUrl: "http://idx", fetch: f, waitMaxMs: 60_000 });
   h.refuseAt = 60;
-  await s.scan({ due: () => true }).catch(() => undefined);
+  await s.scan({ due: () => h.n > 60 }).catch(() => undefined);
   h.swap = (p) => (p === `/domain/${DOMAIN}/proposals` ? undefined : /^\/proposal\//.test(p) ? { not: "a list" } : undefined);
   const e = await s.scan().catch((x: unknown) => x);
   ok("the resumed pull meets a malformed attestation list and throws", e instanceof Error && /non-array attestations page/.test((e as Error).message), String(e));
