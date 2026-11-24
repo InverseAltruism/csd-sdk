@@ -10,7 +10,8 @@ consensus-touching release and for a new gate or fee tier are at the bottom of `
   peer (`RANGE_PEERS`): cairnx-pin uses cairnx-replica for its `Pin` type alone, so it peers on `workspace:^`, which
   pnpm packs as `^<replica version>`, and check-lockstep refuses that peer in any other form, and the form on any other
   inter-dep. A published pin must hold the workspace's replica in its range: a replica release inside the range needs
-  no pin release, one outside it (0.2.0 above `^0.1.0`) does. The exit check pins the shipped range.
+  no pin release, one outside it (0.2.0 above `^0.1.0`) does. The exit check asserts that the installed replica is
+  inside the installed pin's range (`caretAllows`, `scripts/workspace.mjs`, the one rule both scripts apply).
   `test/check-lockstep.test.ts` covers this rule.
 - Published pins: every package version already on npm pins the current workspace versions of its deps and of its
   exact peers (cairnx-core under cairnx-api and the replica), so a core bump needs a bump of every package that peers

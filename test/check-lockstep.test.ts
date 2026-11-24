@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { caretAllows } from "../scripts/workspace.mjs";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, detail = "") => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}${c || !detail ? "" : `\n      ${detail}`}`); };
@@ -104,6 +105,10 @@ try {
   const stale = run(pinAt("0.1.0")).out;
   ok("a published pin with an exact replica peer behind the workspace fails (an exact spec is no range)", /cairnx-pin@0\.1\.0 is published with the peer range @inversealtruism\/cairnx-replica@0\.1\.0, which the workspace's 0\.1\.3 is outside/.test(stale), stale);
   for (const d of ["pin", "replica"]) rmSync(join(root, "packages", d), { recursive: true, force: true });
+  // The replica's exit check asks the same of the installed pair (packages/replica/scripts/exit-check.ts): a replica
+  // released without the pin, as on 2026-11-23 (the published pin at ^0.2.0, the replica at 0.2.1), is inside.
+  ok("caretAllows: ^0.2.0 holds 0.2.0 and 0.2.1, not 0.1.9 or 0.3.0; ^0.2.1 does not hold 0.2.0",
+    caretAllows("^0.2.0", "0.2.0") && caretAllows("^0.2.0", "0.2.1") && !caretAllows("^0.2.0", "0.1.9") && !caretAllows("^0.2.0", "0.3.0") && !caretAllows("^0.2.1", "0.2.0"));
 
   console.log("check-lockstep published dist:");
   const same = run(core(CORE_DIST));

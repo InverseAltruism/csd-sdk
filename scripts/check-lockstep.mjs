@@ -18,7 +18,7 @@
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { publishedDistDiff } from "./published-dist.mjs";
-import { registryVersion, workspacePackages } from "./workspace.mjs";
+import { caretAllows, registryVersion, workspacePackages } from "./workspace.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const pkgsDir = join(root, "packages");
@@ -58,14 +58,6 @@ for (const p of pkgs) {
 // Every other inter-dep is `workspace:*`, packed exact.
 const RANGE_PEERS = new Map([["@inversealtruism/cairnx-pin", new Set(["@inversealtruism/cairnx-replica"])]]);
 const rangePeer = (name, field, dep) => field === "peerDependencies" && RANGE_PEERS.get(name)?.has(dep) === true;
-/** Whether `version` lies in `range`, a caret range `^X.Y.Z` as npm reads one; any other form is no range. */
-function caretAllows(range, version) {
-  const r = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(String(range)), v = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version));
-  if (!r || !v) return false;
-  const [a, b, c] = r.slice(1).map(Number), [x, y, z] = v.slice(1).map(Number);
-  const atLeast = x > a || (x === a && (y > b || (y === b && z >= c)));
-  return atLeast && (a > 0 ? x === a : b > 0 ? x === 0 && y === b : x === 0 && y === 0 && z === c);
-}
 
 const ours = new Set(pkgs.map((p) => p.name));
 for (const p of pkgs) {
