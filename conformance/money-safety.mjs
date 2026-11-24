@@ -68,7 +68,7 @@ function corpus() {
   const out = [];
   const push = (label, expect, events, tipHeight, note) => out.push({ label, expect, events, tipHeight, note });
 
-  // 1. REGISTER RACE, pre-V25 (reachable at any tip < 51000). A registers "test" and wins; B reveals the
+  // 1. REGISTER RACE, pre-V25 (reachable at any tip below V25_HEIGHT, 46,440). A registers "test" and wins; B reveals the
   //    same name two blocks later, paying the full reg fee, and is rejected "name taken" → B burns 6.7 CSD.
   //    This is the W2 "test" @h44662 incident, reproduced. Closed for registrations at height ≥ V25.
   {
@@ -311,7 +311,7 @@ function corpus() {
 
 // ── structural note on recapture (finding #1 from the go-live race audit) ────────────────────────────
 // The recapture-premium burn (a lost lapsed-name reclaim burning up to ~300 CSD) was real pre-V26. With
-// V26 staged at height 51200 it is now STRUCTURALLY unreachable: a lease can only lapse term+grace after
+// V26 at height 46,480 it is now STRUCTURALLY unreachable: a lease can only lapse term+grace after
 // its earliest possible registration (V11), which is far above V26. Report the arithmetic so the closure
 // is auditable rather than assumed.
 function recaptureClosureNote() {

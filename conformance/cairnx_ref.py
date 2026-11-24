@@ -125,7 +125,7 @@ DEPLOY_FEE = 100_000_000
 COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN
 # v2.5 sealed-reservation registration (payment-free reveal + winner-only nfinalize). Registration ONLY
 # (lapsed recapture is a later V26). Non-retroactive + emit-gated -> pre-V25 byte-identical. HARD ADOPTION
-# GATE (V24-class). ACTIVE at height 51000. MUST match types.ts/helpers.js/wallet.
+# GATE (V24-class). ACTIVE at V25_HEIGHT, below. MUST match types.ts/helpers.js/wallet.
 V25_HEIGHT = 46440
 REG_COMMIT_MAX_BLOCKS = 8       # register commit->reveal window AND the displacement freeze (one value, both roles)
 REG_FINALIZE_GRACE_BLOCKS = 20  # winner's window to land nfinalize before the reservation auto-expires (~36 min headroom)
@@ -134,7 +134,7 @@ FINALIZE_TIP_MARGIN = 2         # wallet-side band (mirrors V17 claimBlocksLeft 
 # v2.6: the SAME sealed-reservation cure for lapsed-name RECAPTURE (the up-to-~300 CSD premium burn). A `name`
 # reveal on a LAPSED name is PAYMENT-FREE -> an internal `recaptures` reservation (the lapsed record stays
 # UNTOUCHED, premium basis preserved); the decaying premium moves to the winner-only nfinalize. Internal map ->
-# not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). ACTIVE at height 51200.
+# not materialized -> pre-V26 byte-identical. Independent gate (V26 >= V25 by design). ACTIVE at V26_HEIGHT, below.
 V26_HEIGHT = 46480
 # v2.7: shrink the young-name SALE embargo from COMMIT_MAX_BLOCKS (~8h) to REG_COMMIT_MAX_BLOCKS (~16 min)
 # for events >= V27. Redundant under the sealed model (a finalized name is displacement-immune by the freeze

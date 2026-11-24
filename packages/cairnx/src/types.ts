@@ -248,7 +248,7 @@ export const COMMIT_MAX_BLOCKS = 8 * EPOCH_LEN; // a name commit must be reveale
 // hash is byte-identical, so a mixed-version fleet does NOT fork below the gate. HARD ADOPTION GATE (like V24):
 // a stale wallet crossing V25 attaches a fee the fresh resolver IGNORES on the payment-free reveal (burn), so
 // EVERY replayer AND the wallet must run the V25 core BEFORE the tip crosses V25_HEIGHT.
-// ACTIVE at height 51_000 (set 2026-07-01 for wallet CWS adoption before the sealed-reservation gate).
+// ACTIVE at V25_HEIGHT, below.
 // MUST match cairnx_ref.py + helpers.js + the vendored UI/wallet bundles + cli.
 export const V25_HEIGHT = 46_440;   // pulled in 2026-07-03 (was 51,000), same coordinated re-pin
 export const REG_COMMIT_MAX_BLOCKS = 8;       // register commit->reveal window AND the displacement freeze
@@ -275,7 +275,7 @@ export const FINALIZE_TIP_MARGIN = 2;         // wallet-side band (mirrors the V
 // Non-retroactive + the recaptures map is INTERNAL (not materialized), so every pre-V26 canonical hash is
 // byte-identical. Independent gate from V25 (recapture is latent ~1yr; the operator may activate it later). Same
 // HARD-ADOPTION-GATE discipline as V25 (a stale wallet crossing V26 attaches a premium the fresh resolver ignores
-// -> burn). ACTIVE at height 51_200 (2 blocks past V25). MUST match cairnx_ref.py + helpers.js + wallet.
+// -> burn). ACTIVE at V26_HEIGHT, below, 40 blocks past V25. MUST match cairnx_ref.py + helpers.js + wallet.
 export const V26_HEIGHT = 46_480;   // pulled in 2026-07-03 (was 51,200), same coordinated re-pin
 
 // v2.7 = shrink the young-name SALE embargo. Under the V25 sealed model a name is only sellable once

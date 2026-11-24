@@ -90,7 +90,7 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
     // NOTE: this pay-now reclaim (the pre-V26 rule) is UNREACHABLE under production constants: the
     // earliest a lease can be `lapsed` is epoch > paidThrough + NAME_GRACE_EPOCHS, and the minimum
     // paidThrough (V15_EPOCH + NAME_TERM_EPOCHS) puts the first possible lapse near height ~316k, far
-    // past V26 (51,200), so `v26` above is always true whenever `lapsed()` holds here. It is the
+    // past V26 (46,480), so `v26` above is always true whenever `lapsed()` holds here. It is the
     // correct historical rule (mirrored in Python, kept for replay integrity), but no production event
     // sequence executes it, so no vector/fuzz can cover it.
     const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
