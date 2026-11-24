@@ -35,6 +35,7 @@ import {
   tradeFee, makerRebate, claimGraceOf, isNameGive, isTokenWant,
   type OfferState, type NameState,
 } from "./types.js";
+import { LEGACY_HOLD_SUNSET_HEIGHT } from "./holdcount.js";
 
 /** What a payment of `pay` (base units of CSD, the seller-paid amount to `want.payto`) would DELIVER
  *  against a CSD-priced offer, computed with the resolver's exact expressions. Returns the delivered
@@ -253,7 +254,8 @@ export function fillIsSafe(offer: OfferState, me: string, pay: bigint | string |
 /** B6b (REBIND W10): the DISCRIMINATED successor to fillIsSafe. Three verdicts, and consuming them
  *  correctly is part of the contract:
  *    "endorsed"       - every deterministic gate a payer can verify at signing time passes (status, taker,
- *                       open-lane holdership, deliverability, and - NEW - the v2.8 fill-target routing).
+ *                       open-lane holdership, deliverability, the v2.8 fill-target routing, and from
+ *                       LEGACY_HOLD_SUNSET_HEIGHT the routing of an open CSD offer through a reservation).
  *    "refused"        - the chain WILL reject this fill after the payment moved. Do not sign.
  *    "not-endorsable" - a TOKEN-priced want: deliverability is the attester's token balance, which this
  *                       pure predicate cannot see. This is HONEST NON-ENDORSEMENT, not refusal: proceed
@@ -292,6 +294,9 @@ export function fillEndorsement(
   } else if (holdRouted) {
     return refuse("v2.8: a live fclaim hold routes this fill - pass opts.fillTargetId (use fillTargetId(offer, tip)) so the endorsement can verify what your attest targets"); // MUTATE_END_TARGET_REQUIRED
   }
+  // From LEGACY_HOLD_SUNSET_HEIGHT no pre-V28 claim hold is live, so resolve() refuses every fill of an open CSD offer
+  // that attests the offer id (openFillReject, src/resolve/attest.ts), whatever claim the served offer shows.
+  if (tip >= LEGACY_HOLD_SUNSET_HEIGHT && isOpenClaimLane(offer, tip) && !holdRouted) return refuse(`from block ${LEGACY_HOLD_SUNSET_HEIGHT} an open CSD offer is filled only through a reservation: an attest on the offer id is chain-rejected after the payment moved (reserve the offer and attest the fclaim txid)`); // MUTATE_END_LEGACY_SUNSET
   if (isTokenWant(offer.want))
     return { verdict: "not-endorsable", reason: "token-priced want - deliverability is the attester's token balance, which a pure record predicate cannot see; NOT an endorsement and NOT a refusal (verify your token balance + proven terms, then proceed)", preview };
   if (!preview.deliverable) {

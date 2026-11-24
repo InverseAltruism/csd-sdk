@@ -10,6 +10,17 @@
   one commit height and one position the lower id holds the reservation, in both orders of mining. Both the
   TypeScript resolver and the Python reference replay them (`test/vectors.test.ts`, `conformance/crosscheck-resolve.mjs`).
   `test/preflight.test.ts` compares `previewFill` with the resolver at such a tail. The rules are unchanged.
+- `fillEndorsement` refuses, at a tip at or above `LEGACY_HOLD_SUNSET_HEIGHT` (60,044), a fill of an open CSD offer
+  whose target is the offer id. From that height no claim hold made before V28 is live, so `resolve()` refuses every
+  such fill (`FILL_WRONG_TARGET` or `FILL_NO_LIVE_CLAIM`) after the payment moved, while `fillEndorsement` endorsed it
+  when the served offer showed a hold by the caller without a reservation. Only the answer on fills the chain
+  refuses changes: over the 54 cases of cairn-sdk 0.9.1's review (offer shapes at the sunset and at 148,000, a
+  reservation's fclaim target with ids in either case, taker-bound offers and a maker's RFQ answer, token wants, a
+  name sale, a partial offer's second fill, the last legacy claim below the sunset, and 24 served lies), 16 verdicts
+  change, each from endorsed to refused on a fill `resolve()` refuses, and none on a fill it applies
+  (`test/preflight.test.ts` checks the rule against `resolve()` at both tips and below the sunset). Consumers that
+  carry this rule themselves (cairn-sdk 0.9.1's `preverifyOffer`, the wallet's fill preflight) may drop it once they
+  take this version. The deprecated `fillIsSafe` keeps its frozen verdicts.
 
 ## 0.2.10
 
