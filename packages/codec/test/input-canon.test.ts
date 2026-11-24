@@ -1,7 +1,7 @@
 // Input canon of the codec: hostile or malformed input is refused, and every honest input encodes to the
 // same bytes as before (the golden vectors in codec.test.ts and csd-vectors pin those bytes).
 import assert from "node:assert/strict";
-import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, canonicalJson, payloadHash, verifyContentBytes, type Tx } from "../src/index.js";
+import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, canonicalJson, payloadHash, verifyContentBytes, sha256d, hx, MAX_BLOCK_TXS, type Tx } from "../src/index.js";
 import { runInNewContext } from "node:vm";
 import { GOLDEN_PROPOSE_TX } from "@inversealtruism/csd-vectors";
 
@@ -76,6 +76,53 @@ console.log("verifyMerkleProof: every node is exactly 32 bytes");
   });
   check("a single-tx block (empty branch, root == txid) still verifies", () => {
     assert.equal(verifyMerkleProof(leaves[0]!, 0, [], merkleRoot([leaves[0]!])), true);
+  });
+}
+
+console.log("verifyMerkleProof: the position is proven");
+{
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => hx(sha256d(new Uint8Array([i & 0xff, i >> 8, n & 0xff, n >> 8]))));
+  const t6 = ids(6), r6 = merkleRoot(t6), b4 = merkleBranch(t6, 4);
+  check("in a block of 6 the tx at 4 verifies at 4 and not at 6 (its odd row's duplicate read from the right)", () => {
+    assert.equal(verifyMerkleProof(t6[4]!, 4, b4, r6), true);
+    assert.equal(verifyMerkleProof(t6[4]!, 6, b4, r6), false);
+    assert.equal(verifyMerkleProof(t6[5]!, 7, merkleBranch(t6, 5), r6), false);
+  });
+  check("a position that is not a safe integer in [0, 2^levels) is refused", () => {
+    for (const p of [4 + 8, 4 + 2 ** 32, -4, -2, 4.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53 + 4])
+      assert.equal(verifyMerkleProof(t6[4]!, p, b4, r6), false, String(p));
+    assert.equal(verifyMerkleProof(t6[4]!, "4" as unknown as number, b4, r6), false);
+    assert.equal(verifyMerkleProof(t6[0]!, 0, merkleBranch(t6, 0), r6), true);
+  });
+  check("every tx of blocks of 1 to 40 verifies at its position and at no other below 2^levels", () => {
+    let honest = 0, refused = 0;
+    for (let n = 1; n <= 40; n++) {
+      const t = ids(n), root = merkleRoot(t);
+      for (let pos = 0; pos < n; pos++) {
+        const br = merkleBranch(t, pos);
+        assert.equal(verifyMerkleProof(t[pos]!, pos, br, root), true, `${n} txs, pos ${pos}`);
+        honest++;
+        for (let p = 0; p < 2 ** br.length; p++) {
+          if (p === pos) continue;
+          assert.equal(verifyMerkleProof(t[pos]!, p, br, root), false, `${n} txs, tx ${pos} at ${p}`);
+          refused++;
+        }
+      }
+    }
+    assert.equal(honest, 820);
+    console.log(`    ${honest} honest proofs verify, ${refused} other positions refused`);
+  });
+  check(`a block of MAX_BLOCK_TXS (${MAX_BLOCK_TXS}) verifies at 11 levels; a 12-level branch is refused`, () => {
+    const t = ids(MAX_BLOCK_TXS), root = merkleRoot(t);
+    const sample = [0, 1, 2, 1023, 1024, 1999, ...Array.from({ length: 48 }, (_, i) => 1952 + i)];
+    for (const pos of sample) {
+      const br = merkleBranch(t, pos);
+      assert.equal(br.length, 11);
+      assert.equal(verifyMerkleProof(t[pos]!, pos, br, root), true, `pos ${pos}`);
+    }
+    const big = ids(MAX_BLOCK_TXS + 49), bigBr = merkleBranch(big, 3);
+    assert.equal(bigBr.length, 12);
+    assert.equal(verifyMerkleProof(big[3]!, 3, bigBr, merkleRoot(big)), false);
   });
 }
 

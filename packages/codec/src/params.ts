@@ -1,4 +1,4 @@
-// Compute Substrate consensus constants — frozen, lifted from
+// Compute Substrate consensus constants, frozen, lifted from
 // /opt/substrate_miner/src/compute-substrate/src/params/mod.rs. These are NOT tunable;
 // they define the chain. Verified against the node's golden vectors.
 import { hexToBytes } from "@noble/hashes/utils";
@@ -6,7 +6,7 @@ import { hexToBytes } from "@noble/hashes/utils";
 /** CHAIN_ID = "compute-substrate-mainnet". */
 export const CHAIN_ID = "compute-substrate-mainnet";
 
-/** sha256(CHAIN_ID) — domain-separation tail in the sighash preimage. */
+/** sha256(CHAIN_ID): domain-separation tail in the sighash preimage. */
 export const CHAIN_ID_HASH: Uint8Array = hexToBytes("1b17c7b04d05394674ca2c8e24f7433e251a1973cac2000c7b60966546e0b875");
 
 /** Genesis block header hash (the chain's anchor; pin this in the light client). */
@@ -35,7 +35,8 @@ export const MAX_HALVINGS = 64;
 export const MIN_FEE_PROPOSE = 25_000_000; // 0.25 CSD
 export const MIN_FEE_ATTEST = 5_000_000; // 0.05 CSD
 
-/** Consensus tx limits. */
+/** Consensus block and tx limits. */
+export const MAX_BLOCK_TXS = 2_000; // node params: MAX_BLOCK_TXS
 export const MAX_TX_BYTES = 100_000; // 100 KB (node params: MAX_TX_BYTES)
 export const MAX_TX_INPUTS = 512;
 export const MAX_TX_OUTPUTS = 512;
@@ -45,10 +46,10 @@ export const MAX_TX_OUTPUTS = 512;
 export const MAX_DOMAIN_BYTES = 128;
 export const MAX_URI_BYTES = 512;
 
-/** Largest u128 — the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
+/** Largest u128: the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
 export const MAX_U128 = (1n << 128n) - 1n;
 
-/** block_reward(height) — INITIAL_REWARD halved every HALVING_INTERVAL, 0 after MAX_HALVINGS. */
+/** block_reward(height): INITIAL_REWARD halved every HALVING_INTERVAL, 0 after MAX_HALVINGS. */
 export function blockReward(height: number): number {
   const halvings = Math.floor(height / HALVING_INTERVAL);
   if (halvings >= MAX_HALVINGS) return 0;
