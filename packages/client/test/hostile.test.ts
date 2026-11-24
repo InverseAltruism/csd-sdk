@@ -82,7 +82,7 @@ console.log("a non-2xx answer: the thrown error carries the status and the cappe
   ok("a body that is not UTF-8: decoded with U+FFFD for each invalid byte, never parsed", eBytes?.status === 400 && eBytes.body === "{\uFFFD\uFFFDA\uFFFD");
   const broken = new ReadableStream<Uint8Array>({ start(c) { c.error(new Error("connection reset")); } });
   const eBroken = await errOf(mk(scripted(() => new Response(broken, { status: 502 }))).tip());
-  ok("a body that cannot be read: status 502, body empty, the same error", eBroken?.status === 502 && eBroken.body === "" && eBroken.message === "GET /tip → HTTP 502");
+  ok("a body that cannot be read: status 502, no body, the same error", eBroken?.status === 502 && !("body" in eBroken) && eBroken.message === "GET /tip → HTTP 502");
   let pulls = 0, cancelled = false;
   const long = new ReadableStream<Uint8Array>({   // 1 MiB in 1 KiB chunks, one per pull
     pull(c) { if (++pulls > 1024) c.close(); else c.enqueue(new Uint8Array(1024).fill(0x61)); },
@@ -94,8 +94,24 @@ console.log("a non-2xx answer: the thrown error carries the status and the cappe
   const noStream = { ok: false, status: 429, headers: new Headers(), body: null, text: async () => "slow down" } as unknown as Response;
   const eNoStream = await errOf(mk(scripted(() => noStream)).tip());
   ok("a runtime without a streaming body: the text, capped the same way", eNoStream?.status === 429 && eNoStream.body === "slow down");
-  const t = await mk(scripted(() => json({ tip: "0x" + "0".repeat(64), height: 7, chainwork: "1" }))).tip();
-  ok("paired: a 200 answer still resolves to its parsed body", t.height === 7);
+  // A refusal is not slower for its body: a body that has not arrived within 1 s (or the request's remaining time)
+  // is not waited for. The error then carries what it carried before, its message and `terminal`, plus `status`.
+  const stalled = () => new Response(new ReadableStream<Uint8Array>({ start() { /* never sends a byte */ } }), { status: 503 });
+  const timed = async <T,>(p: Promise<T>) => { const t0 = Date.now(); const v = await p; return { v, ms: Date.now() - t0 }; };
+  const s1 = await timed(errOf(mk(scripted(stalled), { timeoutMs: 10_000 }).tip()));
+  ok(`a 503 whose body stalls, request timeout 10 s: thrown after ${s1.ms} ms (within the 1 s bound), message, terminal and status only`,
+    s1.ms >= 900 && s1.ms < 2_000 && s1.v?.message === "GET /tip → HTTP 503" && JSON.stringify(Object.keys(s1.v ?? {})) === '["terminal","status"]' && s1.v?.status === 503);
+  const s2 = await timed(errOf(mk(scripted(stalled), { timeoutMs: 300 }).tip()));
+  ok(`a stalled body with 300 ms of the request left: thrown after ${s2.ms} ms, no body`, s2.ms < 800 && s2.v?.status === 503 && !("body" in (s2.v ?? {})));
+  const slow = () => new Response(new ReadableStream<Uint8Array>({ start(c) { setTimeout(() => { c.enqueue(new TextEncoder().encode("busy")); c.close(); }, 200); } }), { status: 503 });
+  const s3 = await timed(errOf(mk(scripted(slow)).tip()));
+  ok(`a body that arrives after 200 ms is attached (${s3.ms} ms)`, s3.v?.body === "busy" && s3.ms < 900);
+  const fRetry = scripted(stalled, () => json({ tip: "0x" + "0".repeat(64), height: 8, chainwork: "1" }));
+  const s4 = await timed(mk(fRetry, { retries: 1 }).tip());
+  ok(`a 5xx within the retry budget is retried without reading its body: 2 requests, ${s4.ms} ms`, s4.v.height === 8 && fRetry.calls === 2 && s4.ms < 900);
+  const f200 = scripted(() => json({ tip: "0x" + "0".repeat(64), height: 7, chainwork: "1" }));
+  const t = await timed(mk(f200).tip());
+  ok(`paired: a 200 answer still resolves to its parsed body, one request, ${t.ms} ms`, t.v.height === 7 && f200.calls === 1 && t.ms < 500);
 }
 
 console.log("readCapped byte ceiling:");
