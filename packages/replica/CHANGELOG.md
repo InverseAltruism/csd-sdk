@@ -15,6 +15,11 @@
 - `cairnx-replica check` prints its usage one line per line; the whole text passed the print boundary as one line,
   which wrote every newline as a literal `\u000a`. The README's and cairnx-pin's install lines no longer carry an
   `@<version>` placeholder, which a shell reads as a redirection.
+- `engines.node` is `>=22`, as csd-client's and csd-light's: exact 64-bit parsing of a node body needs `JSON.parse`
+  to hand its reviver the source text, which Node 18 and 20 lack. On an older Node a block holding an integer above
+  2^53 - 1 (a Propose's `expires_epoch`, which the node does not bound) fails closed: its read is `SOURCE_MALFORMED`,
+  so the replica does not step past that block and serves its last state until the source is withheld as failing.
+  npm only warns about `engines` (unless the consumer sets `engine-strict`); the README says Node 22 or later.
 
 ## 0.2.1 (2026-11-23)
 

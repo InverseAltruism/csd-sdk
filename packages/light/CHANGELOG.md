@@ -9,6 +9,12 @@ Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
   counted solvetime, so a sole header source can serve a valid branch with less work. The source comments that said a
   server "cannot feed a low-difficulty fork" say this instead. The README no longer names a "verified-RPC facade",
   which the package does not export. No code changes.
+- `engines.node` is `>=22`, as csd-client's. A block body is read with csd-client's `parseJsonExact`, which keeps an
+  integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text (Node 22 and later here; 18
+  and 20 lack it). On an older Node a block holding such a value (a Propose's `expires_epoch`, which the node does
+  not bound, or an output value) fails closed: `bindBlockBody` refuses it as `malformed`, and `verifyTxInclusion`
+  refuses every transaction in it. npm only warns about `engines` (unless the consumer sets `engine-strict`), so the
+  install still succeeds there.
 
 ## 0.1.27
 

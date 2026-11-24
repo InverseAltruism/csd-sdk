@@ -33,6 +33,9 @@ block. What exists around it:
 - cairnx-replica compares the chain it holds with independent witnesses and marks its state `NOT_WITNESSED` until one
   confirms it.
 
+Node 22 or later (`engines`): see csd-client's README for the exact 64-bit parsing a block body needs; on an older
+Node a block holding an integer above 2^53 - 1 fails to bind (`malformed`).
+
 ## Block bodies
 
 `bindBlockBody` and `bindBlockTxs` bind a served block body to a header you verified: every txid is re-derived from

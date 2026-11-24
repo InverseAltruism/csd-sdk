@@ -97,6 +97,12 @@ message, its `terminal` flag and the retry rules are unchanged: a 5xx within the
 reading its body. A body that is late or cannot be read is not waited for further and leaves no `body`, so a refusal
 is thrown at most 1 second later than its status arrived.
 
+csd-client, csd-light and cairnx-replica declare `engines.node` `>=22` (the others keep `>=18`). `parseJsonExact`
+keeps an integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text, which Node 18 and 20
+lack; there such a value comes back rounded, so a block holding one (a Propose's `expires_epoch`, which the node does
+not bound) fails closed: csd-light refuses to bind it (`malformed`) and the replica does not step past it. npm only
+warns about `engines` unless the consumer sets `engine-strict`.
+
 ## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
 No rule changes. New root exports: `newReplayContext`, the type `ReplayContext`, `ReplayContextRefusal` (with its code
