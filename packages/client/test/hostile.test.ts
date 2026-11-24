@@ -83,6 +83,14 @@ console.log("a non-2xx answer: the thrown error carries the status and the cappe
   const broken = new ReadableStream<Uint8Array>({ start(c) { c.error(new Error("connection reset")); } });
   const eBroken = await errOf(mk(scripted(() => new Response(broken, { status: 502 }))).tip());
   ok("a body that cannot be read: status 502, body empty, the same error", eBroken?.status === 502 && eBroken.body === "" && eBroken.message === "GET /tip → HTTP 502");
+  let pulls = 0, cancelled = false;
+  const long = new ReadableStream<Uint8Array>({   // 1 MiB in 1 KiB chunks, one per pull
+    pull(c) { if (++pulls > 1024) c.close(); else c.enqueue(new Uint8Array(1024).fill(0x61)); },
+    cancel() { cancelled = true; },
+  });
+  const eLong = await errOf(mk(scripted(() => new Response(long, { status: 502 }))).tip());
+  ok("a 1 MiB error body: read only to the cap, then the stream is cancelled",
+    eLong?.body === "a".repeat(ERROR_BODY_MAX_BYTES) && cancelled && pulls <= ERROR_BODY_MAX_BYTES / 1024 + 2);
   const noStream = { ok: false, status: 429, headers: new Headers(), body: null, text: async () => "slow down" } as unknown as Response;
   const eNoStream = await errOf(mk(scripted(() => noStream)).tip());
   ok("a runtime without a streaming body: the text, capped the same way", eNoStream?.status === 429 && eNoStream.body === "slow down");
