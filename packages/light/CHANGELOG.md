@@ -2,6 +2,14 @@
 
 Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
 
+## Unreleased
+
+- Docs: the README says what the client checks for every header and what it does not establish alone, that the
+  chain it holds is the heaviest one that exists: the LWMA rule lowers the difficulty of a branch timed at its longest
+  counted solvetime, so a sole header source can serve a valid branch with less work. The source comments that said a
+  server "cannot feed a low-difficulty fork" say this instead. The README no longer names a "verified-RPC facade",
+  which the package does not export. No code changes.
+
 ## 0.1.27
 
 - `bindBlockTxs`, and with it `bindBlockBody` and `LightClient.verifyTxInclusion`, refuses as `body-mismatch` a

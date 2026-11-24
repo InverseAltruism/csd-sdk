@@ -1,6 +1,6 @@
-// LWMA difficulty re-derivation — a faithful port of pow.rs `expected_bits_strict`. The light
-// client re-derives every header's `bits` from the preceding window so a server cannot feed a
-// low-difficulty fork (the header chain alone, with PoW + LWMA + max-chainwork, is the trust root).
+// LWMA difficulty re-derivation, a faithful port of pow.rs `expected_bits_strict`. The light client re-derives every
+// header's `bits` from the preceding window, so it takes no header at a difficulty the rule does not demand. The rule
+// itself lowers the difficulty of a branch timed slowly, so this does not show a branch is the heaviest (README.md).
 import {
   type BlockHeader, bitsToTarget, targetToBigInt, bigIntToTarget, targetToBits,
   INITIAL_BITS, POW_LIMIT_BITS, LWMA_WINDOW, LWMA_SOLVETIME_MAX_FACTOR, TARGET_BLOCK_SECS,
@@ -11,7 +11,7 @@ import {
 // the u32 `bits`, and LWMA windows slide one header at a time, so a linear sync/restore re-converts
 // the SAME header's bits in up to LWMA_WINDOW consecutive windows (~45x each; measured ~85% of a
 // LightClient.fromSnapshot restore). Every invalid compact encoding (exp 0, mant 0, sign bit,
-// exp>32, overflow) decodes to the all-zero target, i.e. 0n — callers treat a 0n result as invalid,
+// exp>32, overflow) decodes to the all-zero target, i.e. 0n; callers treat a 0n result as invalid,
 // which is byte-identical to the old `tb.every(b => b === 0)` check. The map is capped: real chains
 // add at most ~1 new bits value per block, but a hostile snapshot could feed arbitrary distinct
 // values; clear-at-cap keeps it bounded, and the 45-header window locality restores a ~98% hit rate
@@ -30,7 +30,7 @@ function bitsToTargetBigInt(bits: number): bigint {
 
 const POW_LIMIT_TARGET = bitsToTargetBigInt(POW_LIMIT_BITS);
 
-/** Same cap / clear-at-cap policy as targetMemo — work is a pure function of bits. */
+/** Same cap / clear-at-cap policy as targetMemo: work is a pure function of bits. */
 const workMemo = new Map<number, bigint>();
 
 /**
@@ -64,7 +64,7 @@ export function workForBitsMemo(bits: number): bigint {
 
 /**
  * Expected `bits` for the block at `height`, given the CHRONOLOGICAL window of the (up to
- * LWMA_WINDOW) headers immediately preceding it — `window[last]` is the parent (height-1).
+ * LWMA_WINDOW) headers immediately preceding it; `window[last]` is the parent (height-1).
  * This is the core; works for any height with only a 45-header window (cheap spot-checks /
  * checkpoint-start, no full chain needed). Mirrors expected_bits_strict exactly.
  */

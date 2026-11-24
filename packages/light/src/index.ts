@@ -1,14 +1,16 @@
 // @inversealtruism/csd-light: Compute Substrate light client.
 //
-// Trust model (honest): the PoW header chain is the root of trust. We verify, for every header:
+// Trust model: the PoW header chain is the root of trust. We verify, for every header:
 //   1. it links to its parent (prev == headerHash(parent))
-//   2. its PoW is valid (sha256d(header) ≤ target(bits))
-//   3. its `bits` is exactly what the LWMA mandates (re-derived locally from the window), so a
-//      server cannot feed a low-difficulty fork
-// and we follow the MAX-CHAINWORK chain (reorg-aware: a higher-work branch replaces ours). What
-// we CANNOT prove from headers alone: that an output is still UNSPENT (no UTXO commitment in the
+//   2. its time follows the node's rules (min spacing, median time past, future drift)
+//   3. its `bits` is exactly what the LWMA mandates (re-derived locally from the window)
+//   4. its PoW is valid (sha256d(header) ≤ target(bits), within the pow limit)
+// and of the branches we are given we follow the one with the most chainwork (tryReorg). That a branch is the heaviest
+// that exists is not shown by one source's headers: the LWMA lowers the difficulty of a branch timed at its solvetime
+// clamp, so a sole header source can serve a valid branch with less work (README.md, "What the client checks").
+// What we CANNOT prove from headers alone: that an output is still UNSPENT (no UTXO commitment in the
 // header), so balances are `rpc-trusted` unless backed by a block scan. Every read carries a
-// `trustLevel`. (See ROADMAP §honest-limits.)
+// `trustLevel`.
 //
 // Two start modes:
 //   • sync(to):                full verification from GENESIS (chainwork is absolute).
@@ -214,8 +216,8 @@ export class LightClient {
     } else {
       if (!parent) throw new Error(`no parent context for height ${height}`);
       if (header.prev.toLowerCase() !== parent.hash.toLowerCase()) throw new Error(`broken prev link at ${height}`);
-      // Timestamp consensus rules (H3): mirror chain/index.rs (min-spacing, MTP, future-drift) so a
-      // crafted-timestamp fork cannot steer the LWMA difficulty down. Enforced BEFORE bits/PoW, as the node does.
+      // Timestamp consensus rules: mirror chain/index.rs (min-spacing, MTP, future-drift). A branch timed slowly to steer
+      // the LWMA difficulty down must then fork far enough back (README.md). Enforced BEFORE bits/PoW, as the node does.
       this.checkTimeRules(height, header, window, parent);
       const exp = expectedBitsFromWindow(window, height);
       if (header.bits !== exp) throw new Error(`bad bits at ${height}: header ${header.bits.toString(16)} != LWMA ${exp.toString(16)}`);
@@ -231,8 +233,9 @@ export class LightClient {
    *   • MTP:          time > median of the last MTP_WINDOW header times ending at parent (inclusive)
    *   • future drift: time ≤ now() + MAX_FUTURE_DRIFT_SECS   (wall-clock, as the node does)
    * `window` is the chronological run preceding `height`; its last element IS the parent, so its
-   * tail of MTP_WINDOW headers is exactly the node's MTP walk. Without these, an attacker could grind
-   * timestamps to drive the LWMA toward POW_LIMIT.
+   * tail of MTP_WINDOW headers is exactly the node's MTP walk. Without these, a branch's times could run ahead of the
+   * clock; with them a branch timed at the LWMA's solvetime clamp, which lowers its difficulty, must fork far enough
+   * back to stay within MAX_FUTURE_DRIFT_SECS (README.md).
    *
    * Edge (safe-direction): right after a checkpoint seed shorter than MTP_WINDOW, the available window
    * can be shorter than the node's full MTP walk (which would reach below baseHeight). A truncated
