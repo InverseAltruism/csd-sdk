@@ -24,8 +24,8 @@ npm install @inversealtruism/cairnx-pin        # for a replica that starts from 
 
 `@inversealtruism/cairnx-core` is an exact peer dependency, so that a process runs one `resolve()`: the version this
 package's `peerDependencies` name (`npm view @inversealtruism/cairnx-replica peerDependencies`), which npm 7 or later
-installs with it; with another package manager install that version beside it. Node 18 or later, or a browser. ESM only: a Node whose `require` loads
-ES modules loads every entry with it too, which the exit check runs on CI's Node 22.
+installs with it; with another package manager install that version beside it. Node 18 or later, or a browser. ESM
+only: a Node whose `require` loads ES modules loads every entry with it too, which the exit check runs on CI's Node 22.
 
 ## One example per level
 
