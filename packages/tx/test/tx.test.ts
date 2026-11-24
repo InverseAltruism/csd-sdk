@@ -151,14 +151,14 @@ console.log("\nM1: buildSendVerified exclude-and-retry (a poison coin is exclude
   const r = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, good], priv: PRIV, verify });
   ok("a poison coin is EXCLUDED and the spend still builds (not bricked)", r.ok === true && calls >= 2);
   ok("the good coin funded it (verified total excludes the poison)", r.ok === true && r.inTotal === 2_000_000_000);
-  // bounded, NON-VACUOUS (Fable M1 QC): FOUR coins each large enough that selection can never fail,
+  // bounded, NON-VACUOUS: FOUR coins each large enough that selection can never fail,
   // so the ROUND CAP is the only exit. Assert exactly MAX_SELECT_ROUNDS verify calls + the cap's
   // message (the old 2-UTXO version exited via selection failure and passed pre-fix with n===1).
   let n = 0;
   const coins = [0, 1, 2, 3].map((i) => ({ txid: "0x" + String(i).padStart(2, "0").repeat(32), vout: 0, value: 5_000_000_000, confirmations: 6, coinbase: false }));
   const rb = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: coins, priv: PRIV, verify: async (inp) => { n++; return { ok: false as const, total: 0, badInput: inp[0]! }; } });
   ok("bounded: always-bad inputs fail closed at EXACTLY MAX_SELECT_ROUNDS (the cap, not selection failure)", rb.ok === false && n === 3 && /could not verify/.test(String(rb.error)));
-  // the exclusion-aware shortfall message (Fable M1 QC): a remainder shortfall after exclusions must
+  // the exclusion-aware shortfall message: a remainder shortfall after exclusions must
   // say WHY: a bare "insufficient confirmed balance" contradicts the user's displayed balance.
   const dust = { txid: "0x" + "dd".repeat(32), vout: 0, value: 100, confirmations: 6, coinbase: false };
   const rs = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, dust], priv: PRIV, verify: async (inp) => inp.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase()) ? { ok: false as const, total: 0, badInput: { txid: poison.txid, vout: poison.vout } } : { ok: true as const, total: (inp as Utxo[]).reduce((a, i) => a + i.value, 0) } });

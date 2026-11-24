@@ -119,7 +119,7 @@ export const NAME_FEE_V18 = 300_000_000n;         // 3 CSD — names ≥ 5 chars
 // (oldFee < newFee); a STALE wallet/clarvis ACCEPTS it (oldFee still satisfies the old `feeToTreasury >= oldFee`),
 // then the attacker nsets it — so every un-updated wallet resolves that name to the attacker and a third party
 // paying it is MISDIRECTED. (The "overpay satisfies the old check" property only covers HONEST overpayers; the
-// attacker pays EXACTLY the old fee, which ONLY a stale verifier accepts.) So EVERY replayer (Granus resolver,
+// attacker pays EXACTLY the old fee, which ONLY a stale verifier accepts.) So EVERY replayer (the reference resolver,
 // website bundle, cli, clarvis, Python oracle) AND the wallet (CWS — adoption-gated, not just published) MUST be
 // on the V24 bundle BEFORE the tip crosses V24; set the height with runway for wallet adoption, like V23. (Honest
 // registration is unaffected — the website builds the fee, the wallet only clear-signs it.) Height-pure / det.
@@ -164,20 +164,20 @@ export const MAX_OFFER_EPOCHS = 168;          // 7 days (1 epoch = EPOCH_LEN blo
 // may rest until its raw expiresEpoch, bounded only by the Number.isSafeInteger fork-guard in `applyOffer` / `applyBid` (src/resolve/market.ts).
 // RELAXATION (the HARD fork direction): keyed on the OFFER's ANCHOR height (ev.height), NOT the sweep height,
 // so every pre-V21 hash AND all of [V21,V22) stay BYTE-IDENTICAL (offers anchored < V22 keep the exact V21
-// behavior; only offers anchored >= V22 are un-capped). Every replayer (Granus cairnx, clarvis, the
+// behavior; only offers anchored >= V22 are un-capped). Every replayer (the reference resolver, clarvis, the
 // indexer-fed resolver, the wallet SPV bundle, cli) MUST upgrade BEFORE the tip crosses V22 — relaxation
 // INVERTS the failure mode (a stale replayer REJECTS what a fresh one ACCEPTS, and the accepted long offer
 // becomes load-bearing state the stale host lacks). The cold-sync backstop the cap used to provide moves to
 // the light client (a bounded checkpoint window; offers older than it are simply not in-browser-fillable).
 // PREREQUISITE: the indexer must store expires_epoch type-honestly (no clamp) so the isSafeInteger guard fires
-// identically on Granus and SPV (GRX-WIRE-CLAMP-1, fixed in csd-indexer). FAST-ACTIVATION (operator, 2026-06-26):
+// identically on the resolver host and in SPV (GRX-WIRE-CLAMP-1, fixed in csd-indexer). FAST-ACTIVATION (operator, 2026-06-26):
 // set near the tip. SAFE to activate before full wallet adoption because the relaxation is DORMANT under the UI's
 // 1-week cap — no UI-created offer ever exceeds the old 168-epoch cap, so fresh and stale replayers compute
 // IDENTICAL state until someone DELIBERATELY posts an over-cap offer via raw API. The residual fork surface is a
 // deliberately-crafted over-cap offer (anchored >=V22) that gets FILLED → forks not-yet-updated wallets fail-soft
 // (no theft); such an offer also stops being in-browser-fillable once it ages past the SPV checkpoint window
 // (~16 days, NOT immediately) — "their issue". Operator MUST still deploy the
-// SERVER-SIDE mirrors (Granus cairnx + cairnx-mm, clarvis, website, cli) BEFORE the tip crosses this height.
+// SERVER-SIDE mirrors (the resolver and the market maker, clarvis, website, cli) BEFORE the tip crosses this height.
 // MUST match cairnx_ref.py + the UI/vendored mirrors.
 export const V22_HEIGHT = 41_300;   // set 2026-06-26 at tip ~41145 (+155, safe lockstep margin ≈ 90 min at the current rate; later activation is harmless — V22 is dormant under the UI cap). Below the gate 0.1.20 ≡ 0.1.19, so a mixed-version fleet does NOT fork during the deploy; the only requirement is ALL replayers on 0.1.20 BEFORE the tip reaches this height.
 // v2.3 nset-clear ("unset"): at EVENT height >= V23_HEIGHT an `nset` whose addr is the ZERO address CLEARS

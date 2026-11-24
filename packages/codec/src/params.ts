@@ -1,5 +1,5 @@
-// Compute Substrate consensus constants, frozen, lifted from
-// /opt/substrate_miner/src/compute-substrate/src/params/mod.rs. These are NOT tunable;
+// Compute Substrate consensus constants, frozen, lifted from the node's src/params/mod.rs
+// (compute-substrate). These are NOT tunable;
 // they define the chain. Verified against the node's golden vectors.
 import { hexToBytes } from "@noble/hashes/utils";
 

@@ -1,5 +1,5 @@
 // Reverse / primary name (ENS-style addr→name), DERIVED from the existing nset round-trip with NO new
-// record type: among names where owner === a AND addr === a (the on-chain "set as my primary" signal —
+// record type: among names where owner === a AND addr === a (the on-chain "set as my primary" signal:
 // only the owner can nset, and pointing at self costs an anchor, so it is sybil/grief-proof), not lapsed
 // and not locked by an open offer, pick the unique winner by the resolver's own total order: lowest
 // effectiveHeight, then ordinal (code-unit) comparison of claimId. Returns null if no name round-trips.
@@ -9,7 +9,7 @@
 // the next-oldest self-pointing name becomes primary.
 //
 // NOT part of canonicalState (a bug here cannot fork the chain; it only mis-derives the reverse-resolution
-// display) — but every host MUST compute it identically or the wallet union (Granus vs clarvis / trade UI)
+// display), but every host MUST compute it identically or the wallet union (the resolver vs clarvis / the trade UI)
 // false-disagrees on reverse resolution. Until 2026-07-06 it lived as hand-mirrors in the cairnx service
 // (src/primary.ts) and the cairn trade UI (state.js primaryNameOf); both now import THIS. The query address
 // is lowercased here (record fields are canonical lowercase on chain), killing the one documented nuance

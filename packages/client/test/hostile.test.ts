@@ -165,7 +165,7 @@ console.log("verifyInputValues fail-closed:");
 }
 
 // M1: every failure branch NAMES the offending input (badInput) so buildSendVerified can exclude
-// exactly that coin and retry. Exercise all seven branches + the happy path. (Fable M1 QC nit.)
+// exactly that coin and retry. Exercise all seven branches + the happy path.
 console.log("verifyInputValues badInput naming (M1):");
 {
   const { txid: codecTxid } = await import("@inversealtruism/csd-codec");
@@ -200,8 +200,8 @@ console.log("verifyInputValues badInput naming (M1):");
     ok("branch: non-positive value → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: zeroBody }) as never }, [{ txid: zeroId, vout: 0 }]), { txid: zeroId, vout: 0 }));
   }
   // 7. total overflow: two DISTINCT coins each near 2^53; the SECOND coin overflows the running
-  //    total and must be the one named (Fable QC: the first cut reused one outpoint twice, which a
-  //    real selection never contains, so the naming couldn't be distinguished).
+  //    total and must be the one named (two distinct outpoints: a real selection never holds one outpoint
+  //    twice, and with one the named coin could not be told apart).
   {
     const bigBodyA = mkBody(Number.MAX_SAFE_INTEGER - 10);
     const bigBodyB = mkBody(Number.MAX_SAFE_INTEGER - 20);
