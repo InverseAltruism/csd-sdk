@@ -1,6 +1,6 @@
-// Generator for the rule vectors: five vectors pinning three resolver rules that move canonical state and that no other
+// Generator for the rule vectors: eight vectors pinning five resolver rules that move canonical state and that no other
 // vector, replay hash or differential decides (the within-block order, vectors 1 to 3; the canonical uri, 4; the
-// same-ticker offer, 5). expectedState is derived from the SHIPPING JS resolver (the built dist); the Python oracle
+// same-ticker offer, 5; the partial fill's tail, 6; the name contest's last key, 7 and 8). expectedState is derived from the SHIPPING JS resolver (the built dist); the Python oracle
 // replays the same events in crosscheck-resolve.mjs. Re-runnable: rewrites the whole cases-rules.json each run.
 // Run: node conformance/gen-rule-vectors.mjs (after building packages/cairnx).
 //
@@ -12,10 +12,14 @@
 //   3.    A seller cancel mined in its offer's own block, at the lower position, cancels it.
 //   4.    A record whose uri is not its canonical JSON is invalid even when payloadHash is the canonical form's hash.
 //   5.    A token offer whose give and want are the same ticker is invalid.
+//   6.    A partial offer's remainder below its min is bought by paying exactly the remainder (CONVENTION section 19,
+//         "the tail is always buyable"): 7 tokens for 10 units, min 4, filled 4, 4 and then 2.
+//   7, 8. Two reveals of one name with one commit height and one position: the lower id holds the reservation,
+//         whichever reveal is mined later (the contest's keys are effective height, position, id).
 import { writeFileSync } from "node:fs";
 import {
   resolve, canonicalState, requiredFillOutputs, canonicalJson, payloadHash, deploy, mint, offer, fclaim,
-  V28_HEIGHT, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, TREASURY_ADDR, epochOf,
+  nameCommit, nameCommitRecord, nameClaim, V28_HEIGHT, DEPLOY_FEE, SCORE_FILL, SCORE_CANCEL, TREASURY_ADDR, epochOf,
 } from "../packages/cairnx/dist/index.js";
 
 const A = "0x" + "a1".repeat(20), B = "0x" + "b2".repeat(20);
@@ -64,10 +68,34 @@ for (const [name, fillPos, fclaimPos] of [["rules-same-block-fclaim-fill-attest-
   add("rules-same-ticker-offer", [...roots(), PE(raw(canonicalJson(obj), obj), H, A, epochOf(H) + 100)], H + 10);
 }
 
+// 6. the partial fill's tail, paid exactly
+{
+  const o = nid();
+  const ev = [...roots(), PE(offer({ give: { ticker: "AAA", amount: "7" }, want: { value: "10", payto: A }, min: "4", taker: B }), H, A, epochOf(H) + 100, 0, {}, o)];
+  for (const [i, pay] of ["4", "4", "2"].entries()) {
+    const outs = requiredFillOutputs(resolve(ev, H + i).offers[o], pay);
+    if (!outs) throw new Error(`fill ${i} of ${pay} is not deliverable`);
+    ev.push(AE(o, B, H + 1 + i, Object.fromEntries(outs.map((x) => [x.to, String(x.value)]))));
+  }
+  add("rules-partial-fill-tail-below-min", ev, H + 10);
+}
+// 7, 8. the name contest's last key: the id, when effective height and position are equal
+for (const [name, laterLower] of [["rules-name-contest-id-later-reveal-lower", true], ["rules-name-contest-id-later-reveal-higher", false]]) {
+  const lo = nid(), hi = nid(), sa = "aa".repeat(8), sb = "bb".repeat(8);
+  const [aId, bId] = laterLower ? [hi, lo] : [lo, hi];
+  add(name, [
+    PE(nameCommitRecord({ commit: nameCommit("tiebreak", sa, A) }), H, A, epochOf(H) + 100, 0),
+    PE(nameCommitRecord({ commit: nameCommit("tiebreak", sb, B) }), H, B, epochOf(H) + 100, 1),
+    PE(nameClaim({ name: "tiebreak", salt: sa }), H + 1, A, epochOf(H) + 100, 0, {}, aId),
+    PE(nameClaim({ name: "tiebreak", salt: sb }), H + 2, B, epochOf(H) + 100, 0, {}, bId),
+  ], H + 3);
+}
+
 for (const c of built) {
   const s = c.expectedState;
   const offs = Object.values(s.offers || {}).map((o) => o.status).join(",");
-  console.log(`  ${c.name.padEnd(44)} tokens=[${Object.keys(s.tokens || {}).join(",")}] offers=[${offs}]`);
+  const names = Object.entries(s.names || {}).map(([n, v]) => `${n}:${v.owner.slice(0, 6)}`).join(",");
+  console.log(`  ${c.name.padEnd(44)} tokens=[${Object.keys(s.tokens || {}).join(",")}] offers=[${offs}] names=[${names}]`);
 }
 const path = new URL("../packages/cairnx/test/vectors/cases-rules.json", import.meta.url);
 writeFileSync(path, JSON.stringify({ format: 2, generatedFrom: "shipping JS resolver", cases: built }, null, 1) + "\n");

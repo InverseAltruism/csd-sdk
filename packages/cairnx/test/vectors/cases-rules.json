@@ -441,6 +441,315 @@
      }
     }
    }
+  },
+  {
+   "name": "rules-partial-fill-tail-below-min",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e0013",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"decimals\":0,\"mint\":\"issuer\",\"supply\":\"1000\",\"t\":\"deploy\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x06afa4ab117bc4d0bc5ccba146f79f39a92dbe7ab3741a2664189173ec0c7cf4",
+     "expiresEpoch": 9000000000,
+     "height": 60980,
+     "pos": 0,
+     "paidTo": {
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "100000000"
+     }
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e0014",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"amount\":\"1000\",\"t\":\"mint\",\"ticker\":\"AAA\",\"v\":1}",
+     "payloadHash": "0x44f8ddc94f8dfac9a0c48c9d1c799efb67cdf3d9edc33394ad3d6020e7d7bb7b",
+     "expiresEpoch": 9000000000,
+     "height": 60981,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e0012",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"give\":{\"amount\":\"7\",\"ticker\":\"AAA\"},\"min\":\"4\",\"t\":\"offer\",\"taker\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"v\":1,\"want\":{\"payto\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"value\":\"10\"}}",
+     "payloadHash": "0x4ab883069e89cbc03b598310a5bfba714ba3ec8546deeaad721f2d404268f032",
+     "expiresEpoch": 2133,
+     "height": 61000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "attest",
+     "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0015",
+     "proposalId": "0x000000000000000000000000000000000000000000000000000000002a1e0012",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 61001,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "4",
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1"
+     }
+    },
+    {
+     "kind": "attest",
+     "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0016",
+     "proposalId": "0x000000000000000000000000000000000000000000000000000000002a1e0012",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 61002,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "4",
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1"
+     }
+    },
+    {
+     "kind": "attest",
+     "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0017",
+     "proposalId": "0x000000000000000000000000000000000000000000000000000000002a1e0012",
+     "attester": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "score": 100,
+     "confidence": 0,
+     "height": 61003,
+     "pos": 0,
+     "paidTo": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": "2",
+      "0x6b09ce74e6070ebc982ab0fb793a211c4d24f016": "1"
+     }
+    }
+   ],
+   "tipHeight": 61010,
+   "expectedState": {
+    "balances": {
+     "AAA": {
+      "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+       "available": "993",
+       "locked": "0"
+      },
+      "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+       "available": "7",
+       "locked": "0"
+      }
+     }
+    },
+    "bids": {},
+    "feesPaid": "100000003",
+    "names": {},
+    "offers": {
+     "0x000000000000000000000000000000000000000000000000000000002a1e0012": {
+      "delivered": "7",
+      "expiresEpoch": 2133,
+      "feeBps": 150,
+      "fill": {
+       "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "fee": "1",
+       "got": "2",
+       "height": 61003,
+       "paid": "2",
+       "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0017"
+      },
+      "fills": [
+       {
+        "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "fee": "1",
+        "got": "2",
+        "height": 61001,
+        "paid": "4",
+        "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0015"
+       },
+       {
+        "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "fee": "1",
+        "got": "3",
+        "height": 61002,
+        "paid": "4",
+        "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0016"
+       },
+       {
+        "buyer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "fee": "1",
+        "got": "2",
+        "height": 61003,
+        "paid": "2",
+        "txid": "0x000000000000000000000000000000000000000000000000000000002a1e0017"
+       }
+      ],
+      "give": {
+       "amount": "7",
+       "ticker": "AAA"
+      },
+      "height": 61000,
+      "id": "0x000000000000000000000000000000000000000000000000000000002a1e0012",
+      "min": "4",
+      "paid": "10",
+      "seller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "status": "filled",
+      "taker": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "want": {
+       "payto": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "value": "10"
+      }
+     }
+    },
+    "tipHeight": 61010,
+    "tokens": {
+     "AAA": {
+      "decimals": 0,
+      "deployId": "0x000000000000000000000000000000000000000000000000000000002a1e0013",
+      "deployer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "height": 60980,
+      "mint": "issuer",
+      "minted": "1000",
+      "supply": "1000",
+      "ticker": "AAA"
+     }
+    }
+   }
+  },
+  {
+   "name": "rules-name-contest-id-later-reveal-lower",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001a",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"commit\":\"0xbe6eeb975b7009cd22149db0551aec890bdbc1a4e53bc644c7c05f5bd0bfa6cc\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0x21b2a57ce087cc1869f6e8c5b4850a6607d9f34771b2523fed47a17b4a00afe2",
+     "expiresEpoch": 2133,
+     "height": 61000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001b",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"commit\":\"0x4570ab5e75c800c4575f48774c00023aea52562c9b2a11c71326db436db985a8\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0xf71dba14aa3a85c71d29232ead02c2adfc4d26c8fde8fa09f687134ffb00f9d3",
+     "expiresEpoch": 2133,
+     "height": 61000,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e0019",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"tiebreak\",\"salt\":\"aaaaaaaaaaaaaaaa\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0xa9da69a7dc6d2fd6521987305c3979383e4e9b5194d343e2af10a1310ea10083",
+     "expiresEpoch": 2133,
+     "height": 61001,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e0018",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"name\":\"tiebreak\",\"salt\":\"bbbbbbbbbbbbbbbb\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0x13d048e1d455bf3e6f5a9e7ef4de86f06b175e762239ff773dc94a56227bbb2f",
+     "expiresEpoch": 2133,
+     "height": 61002,
+     "pos": 0,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 61003,
+   "expectedState": {
+    "balances": {},
+    "bids": {},
+    "feesPaid": "0",
+    "names": {
+     "tiebreak": {
+      "claimId": "0x000000000000000000000000000000000000000000000000000000002a1e0018",
+      "effectiveHeight": 61000,
+      "finalizeBy": 61028,
+      "height": 61002,
+      "locked": false,
+      "name": "tiebreak",
+      "owner": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "pending": true
+     }
+    },
+    "offers": {},
+    "tipHeight": 61003,
+    "tokens": {}
+   }
+  },
+  {
+   "name": "rules-name-contest-id-later-reveal-higher",
+   "events": [
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001e",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"commit\":\"0xbe6eeb975b7009cd22149db0551aec890bdbc1a4e53bc644c7c05f5bd0bfa6cc\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0x21b2a57ce087cc1869f6e8c5b4850a6607d9f34771b2523fed47a17b4a00afe2",
+     "expiresEpoch": 2133,
+     "height": 61000,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001f",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"commit\":\"0x4570ab5e75c800c4575f48774c00023aea52562c9b2a11c71326db436db985a8\",\"t\":\"ncommit\",\"v\":1}",
+     "payloadHash": "0xf71dba14aa3a85c71d29232ead02c2adfc4d26c8fde8fa09f687134ffb00f9d3",
+     "expiresEpoch": 2133,
+     "height": 61000,
+     "pos": 1,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001c",
+     "proposer": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "uri": "{\"name\":\"tiebreak\",\"salt\":\"aaaaaaaaaaaaaaaa\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0xa9da69a7dc6d2fd6521987305c3979383e4e9b5194d343e2af10a1310ea10083",
+     "expiresEpoch": 2133,
+     "height": 61001,
+     "pos": 0,
+     "paidTo": {}
+    },
+    {
+     "kind": "propose",
+     "id": "0x000000000000000000000000000000000000000000000000000000002a1e001d",
+     "proposer": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+     "uri": "{\"name\":\"tiebreak\",\"salt\":\"bbbbbbbbbbbbbbbb\",\"t\":\"name\",\"v\":1}",
+     "payloadHash": "0x13d048e1d455bf3e6f5a9e7ef4de86f06b175e762239ff773dc94a56227bbb2f",
+     "expiresEpoch": 2133,
+     "height": 61002,
+     "pos": 0,
+     "paidTo": {}
+    }
+   ],
+   "tipHeight": 61003,
+   "expectedState": {
+    "balances": {},
+    "bids": {},
+    "feesPaid": "0",
+    "names": {
+     "tiebreak": {
+      "claimId": "0x000000000000000000000000000000000000000000000000000000002a1e001c",
+      "effectiveHeight": 61000,
+      "finalizeBy": 61028,
+      "height": 61001,
+      "locked": false,
+      "name": "tiebreak",
+      "owner": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "pending": true
+     }
+    },
+    "offers": {},
+    "tipHeight": 61003,
+    "tokens": {}
+   }
   }
  ]
 }

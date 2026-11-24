@@ -4,6 +4,12 @@
 
 - `isIndex` is exported from the root: a position or height as CONVENTION section 33 takes it, a safe integer >= 0.
   cairnx-replica's Scanner checks a served merkle proof's position with it. `resolve()` is unchanged.
+- `test/vectors/cases-rules.json` grows from 5 to 8 vectors (`conformance/gen-rule-vectors.mjs`; the first 5 keep
+  their bytes), for two live rules that no vector, the replay corpus or the fuzz reached: a partial offer's remainder
+  below its min is bought by paying exactly the remainder (CONVENTION section 19), and of two reveals of a name with
+  one commit height and one position the lower id holds the reservation, in both orders of mining. Both the
+  TypeScript resolver and the Python reference replay them (`test/vectors.test.ts`, `conformance/crosscheck-resolve.mjs`).
+  `test/preflight.test.ts` compares `previewFill` with the resolver at such a tail. The rules are unchanged.
 
 ## 0.2.10
 

@@ -285,6 +285,28 @@ console.log("\nrequiredFillOutputs; overpay clamped to the remainder (fee on the
   ok("one unit under on the pay leg is ACCEPTED but does NOT complete (still ≥ effMin; 1 unit left owing)", (() => { const o = after({ ...par, [A]: (remaining - 1n).toString() }); return o.status === "open" && (o.fills?.length ?? 0) === 2; })());
 }
 
+// ── the tail below min: a remainder smaller than the offer's min is bought by paying exactly the remainder, in
+// previewFill (src/preflight.ts) and in the resolver (applyPartialFill), the two homes of `effMin` ──
+console.log("\npreviewFill == resolver at a partial offer's tail below its min:");
+{
+  const H3 = V27_HEIGHT + 3200;
+  const dep = prop(A, deploy({ ticker: "TAIL", decimals: 0, supply: "7", mint: "issuer" }), H3, { [T]: "100000000" });
+  const mintEv = prop(A, mint({ ticker: "TAIL", amount: "7" }), H3 + 1);
+  const offEv = prop(A, offer({ give: { ticker: "TAIL", amount: "7" }, want: { value: "10" }, min: "4", taker: B }), H3 + 2, {});
+  const fill = (pay: bigint, h: number) => att(B, offEv.id, h, { [A]: pay.toString(), [T]: tradeFee(pay, FEE_BPS_V16).toString() }, SCORE_FILL, 2);
+  const base3 = [dep, mintEv, offEv, fill(4n, H3 + 3), fill(4n, H3 + 4)];
+  const o3 = resolve(base3, H3 + 5).offers[offEv.id]!;
+  ok("two fills of 4 leave 2 of 10 owing and 2 of 7 tokens undelivered", o3.status === "open" && o3.paid === "8" && o3.delivered === "5");
+  const tailP = previewFill(o3, 2n);
+  const tailR = resolve([...base3, fill(2n, H3 + 6)], H3 + 7).offers[offEv.id]!;
+  ok("a payment of the remainder (2, below min 4): previewFill delivers 2, the resolver delivers the same 2 and fills the offer",
+    tailP.deliverable && tailP.got === 2n && tailP.pay === 2n && tailR.status === "filled" && tailR.delivered === "7");
+  const underP = previewFill(o3, 1n);
+  const underR = resolve([...base3, fill(1n, H3 + 6)], H3 + 7).offers[offEv.id]!;
+  ok("one unit under the remainder: previewFill refuses (below-min) and the resolver refuses the fill",
+    !underP.deliverable && underP.reason === "below-min" && underR.paid === "8" && (underR.fills?.length ?? 0) === 2);
+}
+
 // ── buildFeeHeight: the approach-the-gate build heuristic, pinned at every gate ± margin ──
 console.log("\nbuildFeeHeight; margin behavior at every name-fee gate:");
 {
