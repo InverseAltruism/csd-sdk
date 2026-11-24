@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `isIndex` is exported from the root: a position or height as CONVENTION section 33 takes it, a safe integer >= 0.
+  cairnx-replica's Scanner checks a served merkle proof's position with it. `resolve()` is unchanged.
+
 ## 0.2.10
 
 - A held replay context: `newReplayContext()` keeps `resolve()`'s fold between tips. `advance(toHeight, events)`

@@ -32,7 +32,8 @@ type ProposeApp = Extract<App, { type: "Propose" }>;
 type AttestApp = Extract<App, { type: "Attest" }>;
 
 const fail = (what: string): never => { throw new Error(`events rule: ${what}`); };
-/** A position or height the rule takes: a safe integer >= 0. A held replay context reads it for an event's position. */
+/** A position or height the rule takes: a safe integer >= 0. A held replay context and a reader of served positions
+ *  (the replica's Scanner) check an event's position with it. */
 export const isIndex = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 
 function hexOf(v: unknown, bytes: number, what: string): string {

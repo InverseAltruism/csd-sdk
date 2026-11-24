@@ -20,7 +20,9 @@
 //       cut is by height, never per record, because resolve() replays in (height, pos) order: the emitted
 //       events are always the prefix of the full replay up to the cutoff. The returned tipHeight is still
 //       the indexer tip (consumers compare it with their node's tip).
-//   (2) Event heights come from verifyTx's merkle-proven height; a row height that disagrees fails the scan.
+//   (2) Event heights and positions come from verifyTx's merkle proof, which csd-codec verifyMerkleProof proves at
+//       that position; a row height that disagrees fails the scan, and a proof position that is not a safe integer
+//       >= 0 fails it as SOURCE_MALFORMED.
 //   (3) A record's own fields come from the node's raw body (boundPropose/boundAttest): the app payload, which the
 //       txid recompute binds, and the author (csd-crypto authorOf): the owner of the coin the first input spends,
 //       read from that coin's source tx after its txid is recomputed, when the first input's scriptSig is that
@@ -29,7 +31,7 @@
 // None of these rules applies with the flag off.
 import { MAX_TX_OUTPUTS, verifyMerkleProof, txid as codecTxid, type App, type Tx } from "@inversealtruism/csd-codec";
 import { authorOf } from "@inversealtruism/csd-crypto";
-import { ADDR_RE, DOMAIN, EPOCH_LEN, FINAL_DEPTH, paidToFromOutputs, type AttestEvent, type ChainEvent, type ProposeEvent } from "@inversealtruism/cairnx-core";
+import { ADDR_RE, DOMAIN, EPOCH_LEN, FINAL_DEPTH, isIndex, paidToFromOutputs, type AttestEvent, type ChainEvent, type ProposeEvent } from "@inversealtruism/cairnx-core";
 import { SourceError, messageOf } from "./errors.js";
 import { either, waitMaxOf, waitingOut } from "./http.js";
 import { KEPT_REFRESH_SCANS, MAX_KEPT_EVENTS, eventsOf, fullPullOrder, keptFrom, type Block, type ChainPos, type Kept } from "./kept.js";
@@ -411,6 +413,9 @@ export class Scanner {
     const verifiedRoot = await this.headerMerkleAt!(proof.block_height);
     if (String(verifiedRoot).toLowerCase().replace(/^0x/, "") !== String(proof.merkle_root).toLowerCase().replace(/^0x/, ""))
       throw new Error(`F4: tx ${txid} merkle root != header merkle at ${proof.block_height}`);
+    // proof.pos becomes the event's position, which resolve() orders a block by (CONVENTION section 33.4).
+    if (!isIndex(proof.pos))
+      throw new SourceError("SOURCE_MALFORMED", `F4: tx ${txid} merkle proof has a position that is not a safe integer >= 0 (${String(proof.pos)})`);
     if (!verifyMerkleProof(txid, proof.pos, proof.merkle, proof.merkle_root))
       throw new Error(`F4: tx ${txid} does not merkle-prove into block ${proof.block_height}`);
     // (1) conf-depth gate, AFTER verification, on operands the indexer does not supply. A gate on the

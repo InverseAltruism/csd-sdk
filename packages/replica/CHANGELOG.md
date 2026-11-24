@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- With `verifyInclusion`, an event's position in its block is now proven, not the indexer's word. The position comes
+  from the transaction's merkle proof, and csd-codec's `verifyMerkleProof` used to accept a position the transaction
+  does not hold: in a block of two, the first at 2; in a block of six, the one at 4 at 6, after the one at 5. A lying
+  indexer could so reorder two proven records of one block (which of two mints of a capped token is filled first,
+  which of two deploys of a ticker holds it). With the codec that proves the position, such a proof fails the scan as
+  a proof that does not fold. A proof position that is not a safe integer >= 0 (negative, fractional, not a number)
+  fails it as `SourceError` `SOURCE_MALFORMED` before the fold; before, it became the event's position and reached
+  `resolve()` (`test/scan/scan-proof-pos.test.ts`). Honest scans are unchanged.
+- README: what a feed trusts the indexer for with `verifyInclusion` (which records exist; it can withhold one, or
+  prove the later copy of a transaction the chain holds twice) and without it (everything it reads).
+
 ## 0.2.1 (unreleased)
 
 - `nameHistory` with `check` no longer serves an address or profile record that a later one supersedes: of a name's

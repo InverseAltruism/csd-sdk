@@ -59,7 +59,7 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-codec and its dependents (2026-11-24, Plan 91 closing review; unreleased; reject-more in the merkle proof check, no consensus-surface change) - a merkle proof proves the position
+## csd-codec, cairnx-replica and their dependents (2026-11-24, Plan 91 closing review; unreleased; reject-more in the merkle proof check, no consensus-surface change) - a merkle proof proves the position
 
 csd-codec `verifyMerkleProof` returned true for a position the transaction does not hold, three ways: a position
 above the level count (`pos + k * 2^levels`), a non-integer or non-number position (`4.5`, `"4"`, read through
@@ -78,6 +78,11 @@ transactions, the largest block 8) and of synthetic blocks of 1 to 40 transactio
 as does every position of a block of 2,000 transactions; of the other positions below `2^levels`, the old check
 accepted 18 in the recorded blocks and 375 in the synthetic ones, the new one 0. `merkleRoot`, `merkleBranch`,
 txids, sighashes, headers and `resolve()` are unchanged; `resolve()` reads no merkle proof.
+
+cairnx-replica's Scanner, with `verifyInclusion` on, takes each event's position in its block from that proof, so a
+lying indexer could reorder two proven records of one block; with the codec above such a proof fails the scan. A
+proof position that is not a safe integer >= 0 fails it as `SOURCE_MALFORMED` before the fold, through cairnx-core's
+`isIndex`, now exported from the root; before, such a position became the event's and reached `resolve()`.
 
 ## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
