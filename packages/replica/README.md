@@ -590,11 +590,11 @@ header source the caller wires.
 With `verifyInclusion` the feed trusts the caller's verified headers for every block hash it holds and for the tip and
 its time, and the caller's node (`rawTxAt`) for each record's body and author. A record's height and its position in
 its block are those of its merkle proof, folded to the verified header's root at that position (a proof position
-that is not a safe integer >= 0 is `SOURCE_MALFORMED`), so the indexer cannot move a record it serves. It trusts the
-indexer for which records exist: the indexer can withhold a record, and of a transaction the chain holds in two blocks
-(CONVENTION section 33.2) it can prove the later copy alone, which is why the level stays 2 and not 3. Without
-`verifyInclusion` (level 1) the indexer is trusted for all of it: which records exist, their heights, positions,
-fields, authors and outputs, and the block hashes and tip.
+that is not a safe integer >= 0 is `SOURCE_MALFORMED`), so the indexer cannot move a record it serves
+(`test/scan/scan-proof-pos.test.ts`). It trusts the indexer for which records exist: the indexer can withhold a
+record, and of a transaction the chain holds in two blocks (CONVENTION section 33.2) it can prove the later copy
+alone, which is why the level stays 2 and not 3. Without `verifyInclusion` (level 1) the indexer is trusted for all
+of it: which records exist, their heights, positions, fields, authors and outputs, and the block hashes and tip.
 
 Each step reads one scan: a new one, or the scan of the step before when that step ended short of the scan's top (its
 budget, or its deadline) and the store's cursor is the one it returned, after one read that the indexer still gives
