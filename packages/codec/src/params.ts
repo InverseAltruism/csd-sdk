@@ -35,8 +35,7 @@ export const MAX_HALVINGS = 64;
 export const MIN_FEE_PROPOSE = 25_000_000; // 0.25 CSD
 export const MIN_FEE_ATTEST = 5_000_000; // 0.05 CSD
 
-/** Consensus block and tx limits. */
-export const MAX_BLOCK_TXS = 2_000; // node params: MAX_BLOCK_TXS
+/** Consensus tx limits. */
 export const MAX_TX_BYTES = 100_000; // 100 KB (node params: MAX_TX_BYTES)
 export const MAX_TX_INPUTS = 512;
 export const MAX_TX_OUTPUTS = 512;

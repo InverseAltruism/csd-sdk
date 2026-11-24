@@ -1,7 +1,7 @@
 // Input canon of the codec: hostile or malformed input is refused, and every honest input encodes to the
 // same bytes as before (the golden vectors in codec.test.ts and csd-vectors pin those bytes).
 import assert from "node:assert/strict";
-import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, canonicalJson, payloadHash, verifyContentBytes, sha256d, hx, MAX_BLOCK_TXS, type Tx } from "../src/index.js";
+import { serialize, txid, sighash, isWellFormedUtf16, merkleRoot, merkleBranch, verifyMerkleProof, canonicalJson, payloadHash, verifyContentBytes, sha256d, hx, hb, type Tx } from "../src/index.js";
 import { runInNewContext } from "node:vm";
 import { GOLDEN_PROPOSE_TX } from "@inversealtruism/csd-vectors";
 
@@ -112,17 +112,27 @@ console.log("verifyMerkleProof: the position is proven");
     assert.equal(honest, 820);
     console.log(`    ${honest} honest proofs verify, ${refused} other positions refused`);
   });
-  check(`a block of MAX_BLOCK_TXS (${MAX_BLOCK_TXS}) verifies at 11 levels; a 12-level branch is refused`, () => {
-    const t = ids(MAX_BLOCK_TXS), root = merkleRoot(t);
-    const sample = [0, 1, 2, 1023, 1024, 1999, ...Array.from({ length: 48 }, (_, i) => 1952 + i)];
-    for (const pos of sample) {
-      const br = merkleBranch(t, pos);
-      assert.equal(br.length, 11);
-      assert.equal(verifyMerkleProof(t[pos]!, pos, br, root), true, `pos ${pos}`);
-    }
-    const big = ids(MAX_BLOCK_TXS + 49), bigBr = merkleBranch(big, 3);
-    assert.equal(bigBr.length, 12);
-    assert.equal(verifyMerkleProof(big[3]!, 3, bigBr, merkleRoot(big)), false);
+  // The last 8 txs of each sit under an odd row's duplicated last node (2,000: the last of level 4's 125 nodes;
+  // 5,000: the last of level 3's 625), the positions that verified at a second position before.
+  for (const [n, levels] of [[2_000, 11], [5_000, 13]] as const) {
+    check(`a block of ${n} (${levels} levels): sampled txs verify at their position, the last 8 at no other below 2^${levels}`, () => {
+      const t = ids(n), root = merkleRoot(t);
+      const sample = [0, 1, 2, 1023, 1024, Math.floor(n / 2), ...Array.from({ length: 16 }, (_, i) => n - 16 + i)];
+      for (const pos of sample) {
+        const br = merkleBranch(t, pos);
+        assert.equal(br.length, levels);
+        assert.equal(verifyMerkleProof(t[pos]!, pos, br, root), true, `pos ${pos}`);
+        if (pos < n - 8) continue;
+        for (let p = 0; p < 2 ** levels; p++) if (p !== pos) assert.equal(verifyMerkleProof(t[pos]!, p, br, root), false, `tx ${pos} at ${p}`);
+      }
+    });
+  }
+  check("the level bound is 32: a branch of 32 levels that folds verifies, one of 33 is refused", () => {
+    const fold = (leaf: string, br: string[]) => br.reduce((cur, s) => { const b = new Uint8Array(64); b.set(hb(cur), 0); b.set(hb(s), 32); return hx(sha256d(b)); }, leaf);
+    const leaf = ids(1)[0]!, sibs = ids(33);
+    assert.equal(verifyMerkleProof(leaf, 0, sibs.slice(0, 32), fold(leaf, sibs.slice(0, 32))), true);
+    assert.equal(verifyMerkleProof(leaf, 2 ** 32 - 1, sibs.slice(0, 32), fold(leaf, sibs.slice(0, 32))), false);
+    assert.equal(verifyMerkleProof(leaf, 0, sibs, fold(leaf, sibs)), false);
   });
 }
 

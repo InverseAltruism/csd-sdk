@@ -65,18 +65,20 @@ csd-codec `verifyMerkleProof` returned true for a position the transaction does 
 above the level count (`pos + k * 2^levels`), a non-integer or non-number position (`4.5`, `"4"`, read through
 `idx & 1`), and, inside the level count, a position that reads an odd row's duplicated last node from the right
 (in a block of 6 transactions the one at 4 also verified at 6, after the one at 5). It now returns false for a
-`pos` that is not a safe integer in `[0, 2^levels)`, for a branch of more levels than a block of `MAX_BLOCK_TXS`
-(2,000, the node's count cap, now exported from params) has, which is 11, and for a level at which the node is the
-right child of a sibling equal to it. An honest proof has no such level: an odd row pairs its last node as the left
+`pos` that is not a safe integer in `[0, 2^levels)`, for a level at which the node is the right child of a sibling
+equal to it, and for a branch of more than 32 levels. The last is a sanity bound, not the chain's block cap, so a
+wallet that keeps this code for years still verifies blocks larger than today's (2^32 transactions of at least 28
+bytes is over 100 GiB, and below it every position is an exact integer); the position rests on the other two. An honest proof has no such level: an odd row pairs its last node as the left
 child of its own copy, and two equal adjacent subtrees would hold one txid twice, which the node refuses in a block
 (compute-substrate `src/state/utxo.rs`, "duplicate txid within block"; CONVENTION section 33.2). A true answer now
 proves membership and position; it still does not prove that the value is a transaction id (an inner node folds
 with the shorter branch above it) or that the root's header is on the chain.
 
 No honest proof is refused: every transaction of the 684 distinct recorded node blocks in this repo (789
-transactions, the largest block 8) and of synthetic blocks of 1 to 40 transactions (820) verifies at its position,
-as does every position of a block of 2,000 transactions; of the other positions below `2^levels`, the old check
-accepted 18 in the recorded blocks and 375 in the synthetic ones, the new one 0. `merkleRoot`, `merkleBranch`,
+transactions, the largest block 8), of synthetic blocks of 1 to 40 transactions (820), and of blocks of 2,000 (11
+levels) and 5,000 (13 levels) verifies at its position; of the other positions below `2^levels`, the old check
+accepted 18 in the recorded blocks, 375 in the blocks of 1 to 40, 48 in the block of 2,000 and 3,192 in the block of
+5,000, the new one 0. `merkleRoot`, `merkleBranch`,
 txids, sighashes, headers and `resolve()` are unchanged; `resolve()` reads no merkle proof.
 
 cairnx-replica's Scanner, with `verifyInclusion` on, takes each event's position in its block from that proof, so a

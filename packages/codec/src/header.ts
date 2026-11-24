@@ -1,7 +1,7 @@
 // Block header codec + PoW. Header is a fixed 84-byte little-endian struct; hash = sha256d.
 // (chain/index.rs serialize_header + header_hash; chain/pow.rs bits→target + check.)
 import { hb, hx, hbFixed, u32, u64, sha256d } from "./bytes.js";
-import { MAX_BLOCK_TXS, MAX_U128, POW_LIMIT_BITS } from "./params.js";
+import { MAX_U128, POW_LIMIT_BITS } from "./params.js";
 
 export interface BlockHeader {
   version: number;
@@ -164,8 +164,10 @@ export function merkleRoot(txidsHex: string[]): string {
   return hx(layer[0]!);
 }
 
-/** The most levels a branch has: a block holds at most MAX_BLOCK_TXS transactions. */
-const MAX_MERKLE_LEVELS = (() => { let l = 0; while (2 ** l < MAX_BLOCK_TXS) l++; return l; })();
+// A sanity bound on a branch, not the chain's block cap (a wallet keeps this code for years): 2^32 transactions of at
+// least 28 bytes each (the smallest encoding) is over 100 GiB in one block. Below it every position and 2^levels is an
+// exact integer, and a hostile branch cannot ask for more than 32 hashes.
+const MAX_MERKLE_LEVELS = 32;
 
 /**
  * Verify a merkle inclusion proof (Electrum format): fold `txid` up the branch to `merkleRootHex`, the bits of `pos`
@@ -176,11 +178,13 @@ const MAX_MERKLE_LEVELS = (() => { let l = 0; while (2 ** l < MAX_BLOCK_TXS) l++
  *
  * Refused with false (malformed input does not throw: test/codec.test.ts): a txid, sibling or root that is not 32
  * bytes; more than MAX_MERKLE_LEVELS levels; `pos` not a safe integer in [0, 2^levels); a level at which the node is
- * the right child of a sibling equal to it. That last shape reads an odd row's duplicated last node from the wrong
+ * the right child of a sibling equal to it. The position rests on that last refusal and the 2^levels bound, not on
+ * MAX_MERKLE_LEVELS. That last shape reads an odd row's duplicated last node from the wrong
  * side, so the transactions under it would verify at a later position too. An honest proof never has it: an odd row
  * pairs its last node as the left child of its own copy, and two equal adjacent subtrees hold one txid twice, which
  * the node refuses in a block ("duplicate txid within block"; the txid strips scriptSigs, so two signatures over one
- * body are one txid). test/input-canon.test.ts checks every position of blocks of 1 to 40 txs and 54 of 2,000.
+ * body are one txid). test/input-canon.test.ts checks every position of blocks of 1 to 40 txs, and samples blocks of
+ * 2,000 and 5,000 (13 levels), each against every other position below 2^levels.
  */
 export function verifyMerkleProof(txidHex: string, pos: number, branchHex: string[], merkleRootHex: string): boolean {
   try {
