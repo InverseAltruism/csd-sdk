@@ -88,6 +88,12 @@ cairnx-core's `fillEndorsement`, a helper `resolve()` does not read, refuses fro
 of an open CSD offer whose target is the offer id, which `resolve()` refuses at those heights whatever claim a
 resolver serves (the package CHANGELOG has the matrix against `resolve()`).
 
+csd-client, transport only: the error a request throws for a non-2xx answer also carries `status` and `body`, the
+first 4,096 bytes of the body as text (`ERROR_BODY_MAX_BYTES`, `HttpErrorFields`), so a caller can tell why a node or
+proxy refused a transaction; its message, its `terminal` flag and the retry rules are unchanged. A body that cannot be
+read leaves `body` empty. The client reads that body before it throws, so an error whose body stalls is thrown when
+the request's own timeout ends the read.
+
 ## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
 
 No rule changes. New root exports: `newReplayContext`, the type `ReplayContext`, `ReplayContextRefusal` (with its code

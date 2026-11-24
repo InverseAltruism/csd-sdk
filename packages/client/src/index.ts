@@ -79,10 +79,41 @@ export function parseJsonExact(text: string): unknown {
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+/** The most bytes of a non-2xx body an HTTP error carries. The node's refusal texts run to a few hundred bytes (its
+ *  longest error format, with 66-character arguments, is under 200 characters); a proxy's short HTML page fits too. */
+export const ERROR_BODY_MAX_BYTES = 4096;
+/** What the error a request throws for a non-2xx answer carries besides its message: the HTTP status and the first
+ *  ERROR_BODY_MAX_BYTES bytes of the body, decoded as UTF-8 (an invalid byte reads as U+FFFD), never parsed; an
+ *  unreadable body is "". */
+export interface HttpErrorFields { status: number; body: string }
 const DEFAULT_RETRIES = 0;
 // A non-finite option (NaN, Infinity) disables the bound it sets (`x > NaN` and `attempt >= NaN` are false),
 // so it falls back to the option's default.
 const finiteOr = (v: number | undefined, dflt: number): number => (v !== undefined && Number.isFinite(v) ? v : dflt);
+
+/** HttpErrorFields.body: at most ERROR_BODY_MAX_BYTES of `r`'s body, the stream cancelled there. */
+async function errorBody(r: Response): Promise<string> {
+  const cut = (b: Uint8Array): string => new TextDecoder().decode(b.subarray(0, ERROR_BODY_MAX_BYTES));
+  try {
+    const body = (r as { body?: ReadableStream<Uint8Array> | null }).body;
+    if (!body || typeof body.getReader !== "function") return cut(new TextEncoder().encode(await r.text()));
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (total < ERROR_BODY_MAX_BYTES) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) { chunks.push(value); total += value.length; }
+    }
+    if (total >= ERROR_BODY_MAX_BYTES) await reader.cancel().catch(() => undefined); // the rest is not read
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    return cut(buf);
+  } catch {
+    return ""; // the body could not be read: the status alone is the answer
+  }
+}
 
 export class CsdClient {
   private readonly base: string;
@@ -118,7 +149,10 @@ export class CsdClient {
         // 4xx is an answer, not an outage: mark it terminal so the catch below cannot spend the
         // retry budget on it (pre-fix, the thrown 4xx landed in the same catch as network errors
         // and WAS retried, violating the documented `retries` contract; found by hostile.test.ts).
-        else if (!r.ok) throw Object.assign(new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`), { terminal: r.status < 500 });
+        else if (!r.ok) {
+          const fields: HttpErrorFields = { status: r.status, body: await errorBody(r) };
+          throw Object.assign(new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`), { terminal: r.status < 500 }, fields);
+        }
         else return (await this.readCapped(r, path)) as T;
       } catch (e) {
         if (attempt >= maxRetries || (e as { terminal?: boolean } | null)?.terminal) throw e;

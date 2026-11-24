@@ -4,7 +4,7 @@
 // never submit), the readCapped byte ceiling (content-length up-front, mid-stream abort, and the
 // UTF-16-vs-bytes fallback subtlety), waitForTx's reorg/stale-sighting discipline, and
 // verifyInputValues fail-closed behavior on forged/unreachable sources.
-import { CsdClient, verifyInputValues, type RpcHealth } from "../src/index.js";
+import { CsdClient, ERROR_BODY_MAX_BYTES, verifyInputValues, type RpcHealth } from "../src/index.js";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -60,6 +60,34 @@ console.log("retry classification (network/5xx only):");
   const f = scripted(() => json({ ok: false, err: "not found" }));
   const err = await mk(f, { retries: 3 }).blockByHeight(99).then(() => null, (e: Error) => e);
   ok("app-level ok:false at HTTP 200 is not retried (getOk throws once)", err !== null && /not found/.test(String(err)) && f.calls === 1);
+}
+
+console.log("a non-2xx answer: the thrown error carries the status and the capped body text:");
+{
+  type HttpErr = Error & { status?: number; body?: string };
+  const errOf = (p: Promise<unknown>) => p.then(() => null, (e: HttpErr) => e);
+  const refusal = JSON.stringify({ ok: false, err: "already present in mempool" });
+  const f = scripted(() => new Response(refusal, { status: 400 }));
+  const e400 = await errOf(mk(f, { retries: 3 }).submit({}));
+  ok("a 400 with a body: status 400, body the text as sent, the message as before, no retry",
+    e400?.status === 400 && e400.body === refusal && e400.message === "POST /tx/submit → HTTP 400" && f.calls === 1);
+  const page = "<html><body>" + "502 Bad Gateway ".repeat(1000) + "</body></html>";
+  const e502 = await errOf(mk(scripted(() => new Response(page, { status: 502 }))).tip());
+  ok(`a 502 with an HTML page of ${page.length} bytes: status 502, body its first ERROR_BODY_MAX_BYTES (${ERROR_BODY_MAX_BYTES}) bytes`,
+    e502?.status === 502 && e502.body === page.slice(0, ERROR_BODY_MAX_BYTES) && e502.message === "GET /tip → HTTP 502");
+  const e5xxRetried = await errOf(mk(scripted(() => new Response("boom", { status: 500 }), () => new Response("down", { status: 503 })), { retries: 1 }).tip());
+  ok("a 5xx retried within budget: the error carries the last answer's status and body", e5xxRetried?.status === 503 && e5xxRetried.body === "down");
+  const notUtf8 = new Uint8Array([0x7b, 0xff, 0xfe, 0x41, 0xc3]);
+  const eBytes = await errOf(mk(scripted(() => new Response(notUtf8, { status: 400 }))).tip());
+  ok("a body that is not UTF-8: decoded with U+FFFD for each invalid byte, never parsed", eBytes?.status === 400 && eBytes.body === "{\uFFFD\uFFFDA\uFFFD");
+  const broken = new ReadableStream<Uint8Array>({ start(c) { c.error(new Error("connection reset")); } });
+  const eBroken = await errOf(mk(scripted(() => new Response(broken, { status: 502 }))).tip());
+  ok("a body that cannot be read: status 502, body empty, the same error", eBroken?.status === 502 && eBroken.body === "" && eBroken.message === "GET /tip → HTTP 502");
+  const noStream = { ok: false, status: 429, headers: new Headers(), body: null, text: async () => "slow down" } as unknown as Response;
+  const eNoStream = await errOf(mk(scripted(() => noStream)).tip());
+  ok("a runtime without a streaming body: the text, capped the same way", eNoStream?.status === 429 && eNoStream.body === "slow down");
+  const t = await mk(scripted(() => json({ tip: "0x" + "0".repeat(64), height: 7, chainwork: "1" }))).tip();
+  ok("paired: a 200 answer still resolves to its parsed body", t.height === 7);
 }
 
 console.log("readCapped byte ceiling:");
