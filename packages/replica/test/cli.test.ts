@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { applyOrder, eventsHash, resolve, stateHash, type ChainEvent } from "@inversealtruism/cairnx-core";
 import { derivePin } from "../src/server.js";
-import { runCheck } from "../src/cli.js";
+import { USAGE, runCheck } from "../src/cli.js";
 import type { BlockFixture } from "../src/testing.js";
 import { done, ok } from "./check.js";
 import { corpus, fx } from "./core-files.js";
@@ -104,6 +104,8 @@ console.log("usage and configuration errors exit 2; a sticky refusal ends the ru
   }
   const notCheck = await runCheck(["verify", "--node", NODE], { out: () => undefined, fetch: f });
   ok("a command other than check: exit 2", notCheck === 2);
+  const shown = await run([], f);
+  ok("the usage text is printed one line per line, with no escaped newline", shown.lines.slice(1).join("\n") === USAGE && !shown.lines.some((l) => l.includes("\\u000a")), shown.lines.join("\n"));
   const upTo = (to: number): BlockFixture => ({ ...fx, to, toHash: hashAt(to), blocks: fx.blocks.filter((b) => b.height <= to) });
   const d = await derivePin(upTo(30_000));
   let slept = 0;

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-22)
 
 - `ANCHORS` (`anchors.json`): the first table is the table cairn-wallet ships, read at its commit
   `39882ed95a8064e9b2d148192967d7f12fc2b361` (the merge of its 0.3.4 release pull request, `src/core/spvanchors.ts` and

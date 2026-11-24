@@ -12,8 +12,11 @@
   `resolve()` (`test/scan/scan-proof-pos.test.ts`). Honest scans are unchanged.
 - README: what a feed trusts the indexer for with `verifyInclusion` (which records exist; it can withhold one, or
   prove the later copy of a transaction the chain holds twice) and without it (everything it reads).
+- `cairnx-replica check` prints its usage one line per line; the whole text passed the print boundary as one line,
+  which wrote every newline as a literal `\u000a`. The README's and cairnx-pin's install lines no longer carry an
+  `@<version>` placeholder, which a shell reads as a redirection.
 
-## 0.2.1 (unreleased)
+## 0.2.1 (2026-11-23)
 
 - `nameHistory` with `check` no longer serves an address or profile record that a later one supersedes: of a name's
   `nset` records the scoped replay applies only the last stays, and none when an applied `nxfer` or a fill of the
