@@ -1,5 +1,5 @@
-// @inversealtruism/csd-client — a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
-// (a direct node, the Cairn proxy `…/api/rpc`, or — later — a csd:gateways-discovered endpoint)
+// @inversealtruism/csd-client: a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
+// (a direct node, the Cairn proxy `…/api/rpc`, or, later, a csd:gateways-discovered endpoint)
 // and a pluggable fetch (for tests / non-DOM runtimes). Read + broadcast; no trust assumptions
 // (the light client in @inversealtruism/csd-light verifies what this returns).
 import type { Tx, BlockHeader } from "@inversealtruism/csd-codec";
@@ -51,12 +51,12 @@ export interface WaitForTxResult { txid: string; height: number; confirmations: 
 export interface ClientOptions {
   baseUrl: string; fetch?: typeof fetch; timeoutMs?: number;
   /** retry NETWORK failures (timeouts, refused, 5xx) this many times with jittered backoff.
-   *  NEVER retries an application result (`ok:false`) or 4xx — those are answers, not outages. */
+   *  NEVER retries an application result (`ok:false`) or 4xx: those are answers, not outages. */
   retries?: number;
   /**
    * Hard ceiling (bytes) on a response body before it is parsed. A lying/malicious node can
    * otherwise stream a multi-hundred-MB body that the verifier buffers (`await r.json()`) and
-   * OOM-crashes BEFORE any PoW/merkle/LWMA check runs — a remote DoS of the trusted light-client
+   * OOM-crashes BEFORE any PoW/merkle/LWMA check runs: a remote DoS of the trusted light-client
    * path (audit M2). Default 16 MiB ≫ any real block; raise it for an unusually large block source.
    */
   maxResponseBytes?: number;
@@ -154,7 +154,7 @@ export class CsdClient {
   }
 
   private async req<T>(path: string, init?: RequestInit, opts?: { noRetry?: boolean }): Promise<T> {
-    // L13: a NON-idempotent broadcast (submit) must NOT be auto-resent on a 5xx/timeout — a re-send
+    // L13: a NON-idempotent broadcast (submit) must NOT be auto-resent on a 5xx/timeout: a re-send
     // can double-broadcast. Only idempotent GETs (and the pure template POSTs) use the retry budget.
     const maxRetries = opts?.noRetry ? 0 : this.retries;
     let lastErr: unknown;
@@ -185,7 +185,7 @@ export class CsdClient {
   /**
    * Read a response body as JSON with a hard byte ceiling (`maxResponseBytes`). Rejects an
    * oversized `Content-Length` up front, and otherwise streams the body and aborts the moment
-   * it exceeds the cap — so a malicious node cannot make us buffer a giant body and OOM before
+   * it exceeds the cap: so a malicious node cannot make us buffer a giant body and OOM before
    * we ever validate it (audit M2). Falls back to a size-checked `text()` on runtimes without a
    * streaming body (older MV3/Node), preserving the cap as a best effort.
    */
@@ -227,7 +227,7 @@ export class CsdClient {
 
   // The node returns application errors as `{ok:false, err}` with HTTP **200**, so a bare `get()`
   // can't see them. For endpoints whose `{ok:false}` result is useless to the caller (a missing
-  // block), surface it as a thrown error — otherwise a beyond-tip/not-found block flows downstream
+  // block), surface it as a thrown error: otherwise a beyond-tip/not-found block flows downstream
   // as a malformed object and crashes opaquely (e.g. the light client reading `header.prev`).
   private async getOk<T extends { ok?: boolean; err?: string | null }>(path: string): Promise<T> {
     const j = await this.get<T>(path);
@@ -247,7 +247,7 @@ export class CsdClient {
     return this.get(`/utxos/${addr}${opts.available === false ? "" : "?available=true"}`);
   }
   // getOk: a not-found proposal returns {ok:false}@200; without this the caller reads .domain/.uri off a
-  // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get — its
+  // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get: its
   // {ok:false} is a documented VALID "not yet in a block" state that waitForTx/verifyInputValues handle.)
   proposal(id: string): Promise<RpcProposal> { return this.getOk(`/proposal/${id}`); }
   proposals(domain: string, limit = 40): Promise<RpcProposals> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
@@ -256,11 +256,11 @@ export class CsdClient {
   mempool(): Promise<unknown> { return this.get("/mempool"); }
 
   /**
-   * Await a txid reaching `confirmations` (default 1) — the submit-then-confirm flow every
+   * Await a txid reaching `confirmations` (default 1): the submit-then-confirm flow every
    * consumer was hand-rolling. Polls /tx + /tip; resolves {txid, height, confirmations};
-   * rejects on timeout (default 10 min — CSD blocks are ~2 min but the live miner is lumpy).
+   * rejects on timeout (default 10 min: CSD blocks are ~2 min but the live miner is lumpy).
    * A tx that drops OUT of the chain mid-wait (reorg) keeps polling until it re-confirms or
-   * times out — never resolves on a stale sighting.
+   * times out: never resolves on a stale sighting.
    * The count is `tip.height - tx.height + 1` from the RPC's own /tx and /tip answers, with no PoW
    * or inclusion check, so a lying RPC can over-state it. Gate funds on csd-light, not on this.
    */
@@ -276,7 +276,7 @@ export class CsdClient {
           const conf = tip.height - t.height + 1;
           if (conf >= want) return { txid, height: t.height, confirmations: conf };
         }
-      } catch { /* transient read failure — keep waiting */ }
+      } catch { /* transient read failure: keep waiting */ }
       if (Date.now() > deadline) throw new Error(`waitForTx ${txid}: not at ${want} confirmation(s) within ${opts.timeoutMs ?? 600_000}ms`);
       await new Promise((res) => setTimeout(res, poll));
     }
@@ -284,7 +284,7 @@ export class CsdClient {
 
   /**
    * Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`).
-   * ⚠ The node returns `{ok:false, err}` with HTTP 200 on REJECTION — and **`txid` is populated even
+   * ⚠ The node returns `{ok:false, err}` with HTTP 200 on REJECTION, and **`txid` is populated even
    * then** (it's the computed id of the rejected tx). Callers MUST check `.ok`; reading `.txid`
    * alone mistakes a rejected tx for a broadcast one. Use `submitOrThrow` if you want a hard failure.
    */
@@ -316,7 +316,7 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
 /** UTXO-VALUE-1 cure (audit). A CSD fee is implicit (Σin − Σout) and uncapped by consensus, so a
  *  builder that trusts a hostile RPC's /utxos `value` can compute too-small a change and silently
  *  BURN the difference as fee. This confirms each selected input's REAL value by fetching its source
- *  tx and RECOMPUTING its txid with the consensus codec — the txid commits to the output values, so
+ *  tx and RECOMPUTING its txid with the consensus codec: the txid commits to the output values, so
  *  a forged body whose recomputed txid still matches the prevout is impossible. Fail-CLOSED: any
  *  unreachable/forged/missing source aborts. Returns the verified input total (use it to compute
  *  change from REAL values, not the reported ones). RPC-facing builders (wallet, cairn-sdk) should

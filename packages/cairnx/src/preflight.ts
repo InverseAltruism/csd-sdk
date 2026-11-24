@@ -1,4 +1,4 @@
-// preflight.ts — the shared "before you sign a value-bearing tx" surface (deep-review 2026-07-03 Tier 1).
+// preflight.ts: the shared "before you sign a value-bearing tx" surface (deep-review 2026-07-03 Tier 1).
 //
 // The substrate has NO escrow: a `paidTo` output is a real irreversible transfer the resolver only READS
 // to decide validity, so any value tx consensus later REJECTS has already moved the money and it is lost.
@@ -26,7 +26,7 @@
 // so what you do when the record cannot be fetched is part of the safety story. Before signing a fill,
 // FAIL CLOSED unless the resolver POSITIVELY answers with a parseable open offer: a clean 404 (a valid L1
 // proposal that is not a CairnX offer) and a 200 without a parseable `status` both mean the resolver will
-// NOT settle the fill — the payment moves on L1 and burns. Refuse with retryable copy (a brand-new offer
+// NOT settle the fill: the payment moves on L1 and burns. Refuse with retryable copy (a brand-new offer
 // appears after the resolver's next scan, ~15s); never treat "no data" as "safe to proceed".
 import {
   V13_HEIGHT, V16_HEIGHT, V17_HEIGHT, V18_HEIGHT, V24_HEIGHT, V28_HEIGHT, TREASURY_ADDR,
@@ -39,12 +39,12 @@ import { LEGACY_HOLD_SUNSET_HEIGHT } from "./holdcount.js";
 
 /** What a payment of `pay` (base units of CSD, the seller-paid amount to `want.payto`) would DELIVER
  *  against a CSD-priced offer, computed with the resolver's exact expressions. Returns the delivered
- *  token `got`, the treasury `fee`, and the maker `rebate` — plus a `deliverable` flag that is false
+ *  token `got`, the treasury `fee`, and the maker `rebate`, plus a `deliverable` flag that is false
  *  exactly when the resolver would reject the fill AFTER the CSD moved (the C3 zero-delivery trap).
  *
  *  Only meaningful for CSD-priced token offers (a `want.value`). For a name give, `got` is 1 (a name is
  *  indivisible) when `pay >= want.value`. Token-for-token offers (`want.ticker`) return deliverable:false
- *  with reason "not-csd-priced" — their deliverability depends on the buyer's balance, out of scope here. */
+ *  with reason "not-csd-priced": their deliverability depends on the buyer's balance, out of scope here. */
 export interface FillPreview {
   deliverable: boolean;
   reason?: "not-open" | "not-csd-priced" | "below-min" | "zero-delivery" | "ok";
@@ -87,7 +87,7 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
   // ── whole fill (name or token), src/resolve/attest.ts applyFill ──
   if (pay < want) return { deliverable: false, reason: "below-min", got: 0n, pay, fee: 0n, rebate: 0n };
   const fee = feeBps ? tradeFee(want, feeBps) : 0n;
-  // maker rebate — RESTING-LIQUIDITY lanes only (a taker-bound bid answer, or a v1.7 open ask)
+  // maker rebate: RESTING-LIQUIDITY lanes only (a taker-bound bid answer, or a v1.7 open ask)
   const restingLiquidity = (offer.taker !== undefined && offer.bid !== undefined) || (offer.height >= V17_HEIGHT && offer.taker === undefined);
   const rebate = (offer.height >= V16_HEIGHT && restingLiquidity) ? makerRebate(want) : 0n;
   const got = isNameGive(offer.give) ? 1n : BigInt((offer.give as { amount: string }).amount);
@@ -103,9 +103,9 @@ export function previewFill(offer: OfferState, payRaw: bigint | string | number)
  *  seller, zero-value entries omitted (a 0 output is unbuildable and the resolver requires nothing).
  *
  *  Returns [] for a token-priced offer (a token⇄token fill carries NO CSD outputs) and null when the
- *  payment is undeliverable — gate with fillIsSafe FIRST; this sizes outputs, it does not re-judge
+ *  payment is undeliverable: gate with fillIsSafe FIRST; this sizes outputs, it does not re-judge
  *  claims/takers. Until 2026-07-06 this map was hand-mirrored in the wallet's fillOffer, the cairnx
- *  service txbuild, and TWICE in the cairn trade UI — four copies of fund-loss-class math with no
+ *  service txbuild, and TWICE in the cairn trade UI: four copies of fund-loss-class math with no
  *  cross-repo lock. This is now the only place it lives; test/preflight.test.ts pins it against the
  *  real resolver (outputs accepted; any single-unit per-address underpayment refused).
  *
@@ -170,7 +170,7 @@ export function fillOutputPlan(offer: OfferState, payRaw: bigint | string | numb
  *  forfeit. Within FEE_GATE_MARGIN_BLOCKS below ANY upcoming fee gate, price the BUILD at that gate:
  *  overpay is always accepted (the resolver gate is strict `<`), so this only ever PREVENTS a forfeit,
  *  never causes one. Display paths must pass the SAME buildFeeHeight(tip) so the quoted price matches
- *  what gets signed. Owns the gate list: a future fee tier (V28+) is added HERE, once — the wallet and
+ *  what gets signed. Owns the gate list: a future fee tier (V28+) is added HERE, once: the wallet and
  *  the trade UI import this (they each hand-carried a copy of this function + list until 2026-07-06). */
 export const FEE_GATE_MARGIN_BLOCKS = 5;
 const NAME_FEE_GATES = [V18_HEIGHT, V24_HEIGHT];   // ascending name-fee activation heights
@@ -312,22 +312,22 @@ export function fillEndorsement(
  *
  *  TRUST SCOPE (read before relying on this): this is a STALE-STATE and displacement-race guard under an
  *  HONEST resolver, NOT a Byzantine-resolver defense. Its safety rests on `commitHeight` coming from a
- *  source INDEPENDENT of `nameState` — then `effectiveHeight !== commitHeight` genuinely detects a
+ *  source INDEPENDENT of `nameState`: then `effectiveHeight !== commitHeight` genuinely detects a
  *  displaced/forged reservation. A caller that passes `nameState.effectiveHeight` AS `commitHeight` makes
  *  that guard a tautology (`X !== X`), so `eff` becomes resolver-controlled and this helper gives
  *  window-SHAPE correctness only, not protection against a resolver that lies about `effectiveHeight`.
  *  No field arithmetic here can defeat a resolver that forges the whole record (owner/pending/eff at once);
  *  that closure is registration-state SPV (roadmapped), the same posture the fill path documents (a
  *  coherently lying resolver is the fill-SPV item, not this guard). Pass the AUTHORITATIVE (freshly
- *  re-fetched) name record — never a cached one — as `nameState` (undefined = 404 / unregistered = loss).
+ *  re-fetched) name record, never a cached one, as `nameState` (undefined = 404 / unregistered = loss).
  *
  *  Pass `tip` to ALSO gate the finalize WINDOW, both sides, mirroring the resolver's authoritative checks
  *  (`applyNfinalize` in src/resolve/names.ts rejects unless `ev.height > effHeight + REG_COMMIT_MAX_BLOCKS`, and rejects when
  *  `ev.height > finalizeBy`) with the client-side FINALIZE_TIP_MARGIN band the site's finalizeReady applies:
  *  the tx signs at `tip` but mines at tip+1 or later, so the margin keeps a boundary-signed finalize from
- *  mining outside the window (too early: rejected as unfrozen; too late: past the deadline — either way the
+ *  mining outside the window (too early: rejected as unfrozen; too late: past the deadline; either way the
  *  fee burns). The window is derived purely from `eff` (never the resolver's `finalizeBy`), so a lying
- *  `finalizeBy` cannot widen it — but per the trust scope above, a lying `eff` still can for a caller that
+ *  `finalizeBy` cannot widen it; but per the trust scope above, a lying `eff` still can for a caller that
  *  does not supply an independent `commitHeight`. `tip` is optional; without it the winner-only path runs. A
  *  supplied `tip` that is not a non-negative safe integer is refused. */
 export function finalizeWinnerCheck(
@@ -347,7 +347,7 @@ export function finalizeWinnerCheck(
   // commitHeight, pinned by the effectiveHeight guard above), NOT from the resolver-supplied finalizeBy:
   // the true on-chain deadline is ALWAYS `eff + REG_COMMIT_MAX_BLOCKS + REG_FINALIZE_GRACE_BLOCKS`
   // (`applyName` in src/resolve/names.ts constructs it that way, for reservations and recaptures), so a hostile/buggy resolver returning an inflated
-  // finalizeBy cannot widen the safe band and walk the caller into a fee burn — this keeps the module's
+  // finalizeBy cannot widen the safe band and walk the caller into a fee burn: this keeps the module's
   // "a deterministic function of record fields, no resolver boolean can induce a loss" invariant (S1).
   // The boundaries are byte-identical to the site's regstage freezeEnd for an honest record.
   if (tip !== undefined && tip !== null) {
