@@ -32,6 +32,8 @@ function stubNode(fail?: Fail) {
     const u = new URL(String(input)), key = `${init?.method ?? "GET"} ${u.pathname}${u.search}`, body = typeof init?.body === "string" ? init.body : null;
     log.push({ key, body });
     const failed = (await fail?.(key, init?.signal ?? undefined)) ?? null;
+    // A redirect is followed as fetch follows one, unless the request refuses or takes redirects as answers.
+    if (failed !== null && failed.status >= 300 && failed.status < 400 && init?.redirect !== "manual" && init?.redirect !== "error") return f(failed.headers.get("location") ?? "", init);
     if (failed !== null) return failed;
     let a = sub.node[key];
     if (Array.isArray(a)) { const j = JSON.parse(body ?? "null"); a = a.find((x) => Object.entries(x.when ?? {}).every(([p, v]) => isDeepStrictEqual(at(j, p), v))); }
@@ -111,7 +113,9 @@ console.log("the preflight, Retry-After exposed, no redirect:");
     }
   }
   ok(`no 3xx, and the same answer, with a trailing, a leading or an inner doubled slash or a query (${paths.length * 5} requests)`, bent.length === 0, bent.join(", "));
-  const moved = serverOf(stubNode(() => new Response(null, { status: 302, headers: { location: "http://127.0.0.1:1/" } })).f);
+  // The redirect's target answers every request, so a node read that followed it would come back 200.
+  const moved = serverOf(stubNode((key) => (key.endsWith(" /moved") ? new Response('{"ok":true,"height":1,"header":{},"hash":"0x01"}', { status: 200, headers: { "content-type": "application/json" } })
+    : new Response(null, { status: 302, headers: { location: `${NODE}/moved` } }))).f);
   const r = await Promise.all([get(moved, "/api/rpc/tip"), get(moved, "/api/headers/145408/2"), post(moved, "/api/rpc/tx/submit", enc(SUBMIT))]);
   ok("a node that redirects: 502 on a relay, a header range and a submit, never a 3xx", r.every((a) => a.status === 502), r.map((a) => a.status).join(","));
   seen.push(p, ...r, await get(srv, "/nothing/here"), await get(srv, "/api/rpc/utxos/0x12"));
@@ -168,8 +172,13 @@ console.log("each refusal, and the honest request beside it:");
   const notObject = await post(srv, "/api/rpc/tx/submit", enc(5)), text = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT), { "content-type": "text/plain" });
   ok("a body over the cap, compressed, not a JSON object, or not JSON: 400 invalid request body, nothing sent",
     [over, gz, notObject, text].every((a) => a.status === 400 && JSON.parse(a.body).error === "invalid request body") && n.log.length === before);
+  const badUtf8 = await post(srv, "/api/rpc/tx/submit", new Uint8Array([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]));
+  ok("a body that is not UTF-8, inside a JSON string: 400, nothing sent (the front door would send a replacement character)", badUtf8.status === 400 && n.log.length === before);
   const sent = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT));
   ok("paired: the wallet's submit (its body, content-type application/json) is sent and answered", sent.status === 200 && JSON.parse(sent.body).ok === true && n.log.length === before + 1);
+  const u64 = '{"tx":{"version":1,"locktime":0,"app":{"Propose":{"domain":"cairnx:v1","expires_epoch":9007199254740993}},"inputs":[],"outputs":[]}}';
+  await post(srv, "/api/rpc/tx/submit", new TextEncoder().encode(u64));
+  ok("the submit's bytes reach the node exactly, a number above 2^53 included", n.log.at(-1)?.body === u64, String(n.log.at(-1)?.body).slice(0, 120));
   ok("the cap is cairn's 512 KiB", OPEN_LIMITS.submitBytes === 512 * 1024);
 }
 {
@@ -196,6 +205,13 @@ console.log("each refusal, and the honest request beside it:");
   const srv = serverOf(n.f), [zero, huge] = await Promise.all([get(srv, "/api/headers/10/0"), get(srv, "/api/headers/10/100000")]);
   const z = JSON.parse(zero.body), g = JSON.parse(huge.body);
   ok("a count of 0 answers one row, a count over 512 answers 512, as cairn clamps them", z.count === 1 && z.headers.length === 1 && g.count === 512 && g.headers.length === 512 && n.log.length === 513, `${z.count} ${g.count} ${n.log.length}`);
+  const far = JSON.parse((await get(srv, "/api/headers/2000000000/1")).body);
+  ok("a from above 1e9 is read as 1e9, as cairn clamps it", far.from === 1e9 && far.headers[0].height === 1e9, JSON.stringify(far).slice(0, 120));
+  const shifted = serverOf(stubNode((key) => {
+    const h = /^GET \/block\/height\/(\d+)$/.exec(key)?.[1];
+    return h === undefined ? null : new Response(JSON.stringify({ ok: true, hash: `0x${"00".repeat(32)}`, height: Number(h) + 1, header: { version: 1 }, txs: [] }), { status: 200 });
+  }).f);
+  ok("a node answering another height than asked: 502, never a row at the wrong height", (await get(shifted, "/api/headers/10/2")).status === 502);
 }
 {
   // A node whose /tx reads hang until released: the read gate fills, then its queue, then the next is busy.
