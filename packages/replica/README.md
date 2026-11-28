@@ -756,7 +756,8 @@ carries `Access-Control-Allow-Origin: *` with the methods `GET, POST, OPTIONS` a
 `OPTIONS` preflight is answered 204, `Access-Control-Expose-Headers` names `retry-after` (and the name routes' own
 headers), and `Cache-Control` is `no-store`: unlike the front door no range is marked immutable, since this server
 holds no second view of the chain to say a height is final. No answer is a redirect: the path is read with each run of
-slashes as one and no trailing slash, and a node that redirects is a 502.
+slashes as one and no trailing slash (the front door answers a doubled slash 404), and a node that redirects is a
+502.
 
 What it refuses, each without asking the node: a parameter out of its shape (an address `0x` and 40 hex digits, a
 hash `0x` and 64, a height or count in decimal digits, a name as `NAME_RE` writes it) is a 400, so no request reaches

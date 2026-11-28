@@ -75,8 +75,8 @@ const NAMES = /^\/trade\/api\/cairnx\/(name|resolve|name-history)\/([^/]+)$/;
 const TXID = /^(?:0x)?([0-9a-fA-F]{64})$/;
 const MEMPOOL_LIST_CAP = 1000;
 
-/** The path routed on: no query, each run of slashes one slash and no trailing slash, as our front door's nginx and
- *  Express read it. */
+/** The path routed on: no query, each run of slashes one slash and no trailing slash. The front door answers a
+ *  trailing slash as Express reads it and a doubled slash 404; here both answer as the plain path, never a 3xx. */
 export const routedPath = (url: string): string => {
   const p = url.split(/[?#]/, 1)[0]!.replace(/\/{2,}/g, "/");
   return p.length > 1 ? p.replace(/\/$/, "") : p;
