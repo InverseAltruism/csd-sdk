@@ -135,6 +135,26 @@ try {
   r = run();
   ok("one core: a consumer on the replica built on its core passes, a cairnx-pin pin beside it asks no tag",
     r.code === 0 && /consumer-pin coherence OK \(2 npm-pinning consumers\)/.test(r.out) && !/cairnx-pin/.test(r.out), r.out);
+
+  // The replay a replica runs on its pinned core reads more than resolve(): the rule from a block to events, the held
+  // replay context and the hashes replicas compare. A lag across a change to one of them alone is consensus drift.
+  git("tag", "cairnx-core-1.5.0");
+  const REPLAY = ["events", "hashes", "paidto", "replay-context"];
+  for (const f of [...REPLAY, "verifyfill"]) write(join(sdk, `packages/cairnx/src/${f}.ts`), `export const v = 1;\n`);
+  setCore("1.5.1");
+  git("add", "-A"); git("commit", "-qm", "1.5.1"); git("tag", "cairnx-core-1.5.1");
+  let prev = "1.5.1";
+  for (const [i, f] of [...REPLAY, "verifyfill"].entries()) {
+    const next = `1.6.${i}`;
+    write(join(sdk, `packages/cairnx/src/${f}.ts`), `export const v = ${i + 2};\n`);
+    setCore(next);
+    git("commit", "-qam", next); git("tag", `cairnx-core-${next}`);
+    pin("cairnx", next); deps("cairn-sdk", { "cairnx-core": prev });
+    r = run();
+    if (f === "verifyfill") ok("graded, control: a lag across a change to verifyfill.ts alone stays a helpers-only lag", r.code === 0 && /helpers-only lag/.test(r.out), r.out);
+    else ok(`graded: a lag across a change to ${f}.ts alone fails`, r.code === 1 && /CONSENSUS-SURFACE DRIFT/.test(r.out) && new RegExp(`${f}\\.ts`).test(r.out), r.out);
+    prev = next;
+  }
 } finally {
   rmSync(parent, { recursive: true, force: true });
 }
