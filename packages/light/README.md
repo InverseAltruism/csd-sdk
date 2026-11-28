@@ -26,8 +26,13 @@ blocks of the real chain's work, and from there a block costs about one 58-milli
 `verifyTxInclusion` then answers `verified-inclusion` for a transaction in that branch when the same server serves its
 block. What exists around it:
 
-- `checkpoints` (and `syncFromCheckpoint`) pin block hashes at heights, so a branch must fork above the newest pinned
-  height; `@inversealtruism/csd-anchors` publishes such a table (an entry is a checkpoint, not a proof of work);
+- `checkpoints` pin block hashes at heights: a header at a pinned height must match, so a branch through one is
+  refused; `@inversealtruism/csd-anchors` publishes such a table (an entry is a checkpoint, not a proof of work). The
+  top of a seed (`syncFromCheckpoint`, `seedTrusted`) is checked once when it is seeded and is pinned only when its
+  height and hash are also in `checkpoints`; without that entry `tryReorg` replaces it with a heavier branch forking
+  below it. A branch that forks below a pinned height and ends below it never meets the pin, so `tryReorg` adopts it
+  only when it carries more work than the whole chain it replaces, the blocks above the pin included (the node's own
+  rule, with no checkpoint);
 - a second header source that the first does not control, its headers offered through `tryReorg`, which follows the
   heavier branch;
 - cairnx-replica compares the chain it holds with independent witnesses and marks its state `NOT_WITNESSED` until one

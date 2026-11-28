@@ -14,9 +14,10 @@
 //
 // Two start modes:
 //   • sync(to):                full verification from GENESIS (chainwork is absolute).
-//   • syncFromCheckpoint(...): seed a TRUSTED header window at a pinned checkpoint, then verify
+//   • syncFromCheckpoint(...): seed a TRUSTED header window ending at a checkpoint, then verify
 //                                forward (practical: no 27k-block genesis fetch). chainwork is
-//                                relative to the checkpoint; the seed is trusted, not re-verified.
+//                                relative to the checkpoint; the seed is trusted, not re-verified, and
+//                                its top is pinned only when `checkpoints` also lists it.
 import {
   type BlockHeader, headerHashBytes, hx, hb, sha256d, serializeHeader, deserializeHeader, HEADER_BYTES,
   GENESIS_HASH, INITIAL_BITS, LWMA_WINDOW, MAX_U128,
@@ -134,7 +135,8 @@ export interface LightClientOptions {
    *  sync() still hard-fails (incremental callers re-poll, so a failed tick heals itself). */
   headersBatchProvider?: HeadersBatchProvider;
   /** Pin checkpoints {height: expectedHash}: any header at a pinned height (whether synced forward,
-   *  seeded, or restored from a snapshot) must match, else it's rejected (optional trust anchor). */
+   *  seeded, offered to tryReorg, or restored from a snapshot) must match, else it's rejected (optional trust
+   *  anchor). A seed's top (seedTrusted, syncFromCheckpoint) is pinned only when it is also listed here. */
   checkpoints?: Record<number, string>;
 }
 
@@ -259,7 +261,9 @@ export class LightClient {
    * only a small window, not a 27k-block genesis fetch. The seed is the trust anchor (PoW links
    * are still spot-checked, but seed bits aren't LWMA-re-derived; that's the explicit trade for
    * not syncing from genesis). chainwork becomes RELATIVE to the seed. `checkpointHash` MUST match
-   * the last seeded header.
+   * the last seeded header. That match is checked once, here: the seeded top is not pinned unless
+   * `checkpoints` lists its height, so without that entry `tryReorg` replaces it with a branch forking
+   * below it that carries more work than the chain it replaces.
    */
   seedTrusted(seed: { height: number; header: BlockHeader; hash?: string }[], checkpointHash: string): void {
     if (this.chain.length) throw new Error("seedTrusted must be called on a fresh client");
@@ -326,6 +330,10 @@ export class LightClient {
    * Offer a competing branch (contiguous headers starting one above a common ancestor we hold).
    * Verifies it from the ancestor; if its cumulative chainwork EXCEEDS our current tip, we roll
    * back to the ancestor and adopt it (max-work rule). Otherwise we keep our chain.
+   * A header of the branch at a height in `checkpoints` must match it, so a branch through a checkpoint
+   * is refused. A branch that ends below a checkpoint never meets it and is adopted on work alone: a
+   * reorg below a checkpoint needs more work than the whole chain it replaces, the blocks above the
+   * checkpoint included. A seeded top not listed in `checkpoints` is no checkpoint here.
    */
   tryReorg(alt: { height: number; header: BlockHeader; hash?: string }[]): ReorgResult {
     if (!alt.length) return { adopted: false, reason: "empty branch" };

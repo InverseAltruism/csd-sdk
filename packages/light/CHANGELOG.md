@@ -15,6 +15,12 @@ Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
   not bound, or an output value) fails closed: `bindBlockBody` refuses it as `malformed`, and `verifyTxInclusion`
   refuses every transaction in it. npm only warns about `engines` (unless the consumer sets `engine-strict`), so the
   install still succeeds there.
+- Docs: the README and the JSDoc of `checkpoints`, `seedTrusted` and `tryReorg` say what a checkpoint holds against a
+  reorg. A seed's top (`syncFromCheckpoint`, `seedTrusted`) is checked once when it is seeded and is pinned only when
+  `checkpoints` also lists it; without that entry `tryReorg` replaces it with a heavier branch forking below it. A
+  branch through a checkpoint is refused; a branch ending below one never meets it and is adopted on work alone, so a
+  reorg below a checkpoint needs more work than the whole chain it replaces. `test/light-offline.test.ts`
+  ("checkpoints and tryReorg") pins the three cases. No code changes.
 
 ## 0.1.27
 

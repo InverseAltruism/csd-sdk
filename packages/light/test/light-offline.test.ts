@@ -530,5 +530,35 @@ if (inclBlock) {
     errOf(() => new LightClient({ headerProvider: provider }).ingest(0, g.header, g.hash)) === "" && errOf(() => LightClient.fromSnapshot(one(g.header) as any)) === "");
 }
 
+// ── What a checkpoint holds against tryReorg (README "What the client checks"). Seeds of real genesis headers 0..44
+// plus seeded tops mined at the proof-of-work limit (a seed's bits are trusted), and the real block 45, which carries
+// more work than both: so a branch of the real block 45 is the heavier one.
+console.log("\ncheckpoints and tryReorg:");
+{
+  const real = GFX.headers.slice(0, 45).map((h) => ({ height: h.height, header: h.header, hash: h.hash }));
+  const h44 = real[44]!, real45 = gByH.get(45)!;
+  const top45 = { version: 1, prev: h44.hash, merkle: "0x" + "aa".repeat(32), time: h44.header.time + 60, bits: POW_LIMIT_BITS, nonce: 22221739 } as BlockHeader;
+  const top46 = { version: 1, prev: headerHash(top45), merkle: "0x" + "bb".repeat(32), time: top45.time + 60, bits: POW_LIMIT_BITS, nonce: 12448470 } as BlockHeader;
+  const seed45 = [...real, { height: 45, header: top45, hash: headerHash(top45) }];
+  const seed46 = [...seed45, { height: 46, header: top46, hash: headerHash(top46) }];
+  const branch45 = [{ height: 45, header: real45.header, hash: real45.hash }];
+  ok("setup: the seeded tops pass proof of work at the limit", powOk(headerHashBytes(top45), POW_LIMIT_BITS) && powOk(headerHashBytes(top46), POW_LIMIT_BITS));
+
+  const unpinned = new LightClient({});
+  unpinned.seedTrusted(seed45, headerHash(top45));
+  const r1 = unpinned.tryReorg(branch45);
+  ok("a seeded top not in checkpoints is replaced by a heavier branch forking below it", r1.adopted && r1.rolledBack === 1 && unpinned.tip!.hash === real45.hash);
+
+  const pinned = new LightClient({ checkpoints: { 45: headerHash(top45) } });
+  pinned.seedTrusted(seed45, headerHash(top45));
+  const r2 = pinned.tryReorg(branch45);
+  ok("listed in checkpoints, the same branch through it is refused", !r2.adopted && /checkpoint mismatch at 45/.test(r2.reason ?? "") && pinned.tip!.hash === headerHash(top45));
+
+  const above = new LightClient({ checkpoints: { 46: headerHash(top46) } });
+  above.seedTrusted(seed46, headerHash(top46));
+  const r3 = above.tryReorg(branch45);
+  ok("a heavier branch ending below a checkpoint never meets it and is adopted on work alone", r3.adopted && r3.rolledBack === 2 && above.tip!.height === 45);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
