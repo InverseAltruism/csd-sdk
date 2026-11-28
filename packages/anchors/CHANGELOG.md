@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+- `ANCHORS` gains the next grid point: 29 entries from 32,767 to 147,455 (`0x00000000000054b5f8b49ddafb3fdde4054e61eb4505a7ddef509038e467a0fc`),
+  the newest chunk top at least 1,000 below the tip of 151,565. Every 0.1.0 entry is unchanged (the package test holds
+  0.1.0's table in `test/previous-published.json` and requires this one to extend it). The input came from cairn's
+  `bump-swapguard-cp.mjs --emit-json --target 147455` on 2026-11-28: the node, the miner and the second host's RPC
+  proxy each put that hash at that height, the third routed to its primary; the generator walked the headers from
+  the floor pin to it, and its `--check` against a headers source and the node's RPC passed.
+- The package test holds cairn-wallet's shipped table as a prefix of this one (the wallet's two files as fixtures,
+  unchanged), instead of equal to it: a wallet that renders its files from this table keeps every entry it has.
+- `scripts/table.mjs`: the comment on the canonical text says a refresh adds one line per entry and a comma to the
+  line before them.
+
 ## 0.1.0 (2026-11-22)
 
 - `ANCHORS` (`anchors.json`): the first table is the table cairn-wallet ships, read at its commit
