@@ -1778,6 +1778,27 @@ moves reproduces it.
   vectors that pin it, and a rollout table of every consumer with how its adoption is observed.
   `scripts/check-consensus-citations.mjs` checks the citations of the ledger and of every gate file, and that each
   gate file is linked from the ledger.
+- A gate follows one timeline. The steps it orders are those of the rollout checklist for a new gate at the bottom of
+  `CONSENSUS_CHANGES.md`, which stays the normative procedure; the timeline says when each is taken, not how. Days
+  count blocks at the 120 s target: 7 days is 5,040 blocks, 14 days 10,080, 21 days 15,120.
+  1. T0. The core change is complete (the checklist's steps 0 to 2: the gate file, the height, the vectors) and is
+     published as a pre-release, an npm version that is not `latest`. Each listed replica runs it in test only. When
+     the gate needs a wallet release, the wallet build that carries it is submitted to the store with publishing held
+     back (branch A), or is not submitted yet (branch B). The height is chosen at T0 so that it lies 14 days after go
+     in branch A and 21 days after go in branch B.
+  2. Go or no-go, at T0 plus 7 days. Go when every listed replica has confirmed its test or has been delisted for
+     silence, in branch A the store has approved the held-back build, and the height still lies at least 14 days
+     (branch A) or 21 days (branch B) above the tip. Otherwise no-go.
+  3. Go. The core is published as the release, and the checklist's remaining steps follow (the npm window, the
+     re-pins, the re-vendors, the purge). In branch A the approved wallet build is published; in branch B it is
+     submitted now, with the 21 days covering the store's review.
+  4. No-go publishes nothing beyond the pre-release: no release, no wallet build, so nothing has to be withdrawn. A
+     later attempt starts again at T0, with a height no earlier than the pre-release's.
+  5. A defect found after go is a new gate, on its own timeline.
+
+  The one open fact is whether the store lets an approved build be held back from publishing; it decides between
+  branch A and branch B and is asked of the store at the wallet's next upload. Until it is answered, a gate follows
+  branch B.
 - A published height never moves earlier. (The v2.4 to v2.7 heights were moved earlier once, on 2026-07-03, before
   this rule; see the note at the top of this file.)
 - Rule changes ride gates within `cairnx:v1`. A second domain is only for a deliberate restart of state: its records
