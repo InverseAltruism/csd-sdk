@@ -4,10 +4,11 @@
 
 - `isIndex` is exported from the root: a position or height as CONVENTION section 33 takes it, a safe integer >= 0.
   cairnx-replica's Scanner checks a served merkle proof's position with it. `resolve()` is unchanged.
-- `test/vectors/cases-rules.json` grows from 5 to 8 vectors (`conformance/gen-rule-vectors.mjs`; the first 5 keep
+- `test/vectors/cases-rules.json` grows from 5 to 12 vectors (`conformance/gen-rule-vectors.mjs`; the first 5 keep
   their bytes), for two live rules that no vector, the replay corpus or the fuzz reached: a partial offer's remainder
   below its min is bought by paying exactly the remainder (CONVENTION section 19), and of two reveals of a name with
-  one commit height and one position the lower id holds the reservation, in both orders of mining. Both the
+  one commit height and one position the lower id wins, in both orders of mining, at each of the contest's three
+  sites: the V25 reservation, the registration below V25 and the V26 recapture reservation. Both the
   TypeScript resolver and the Python reference replay them (`test/vectors.test.ts`, `conformance/crosscheck-resolve.mjs`).
   `test/preflight.test.ts` compares `previewFill` with the resolver at such a tail. The rules are unchanged.
 - `fillEndorsement` refuses, at a tip at or above `LEGACY_HOLD_SUNSET_HEIGHT` (60,044), a fill of an open CSD offer
