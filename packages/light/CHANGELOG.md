@@ -2,7 +2,7 @@
 
 Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
 
-## Unreleased
+## 0.1.28
 
 - Docs: the README says what the client checks for every header and what it does not establish alone, that the
   chain it holds is the heaviest one that exists: the LWMA rule lowers the difficulty of a branch timed at its longest
@@ -21,6 +21,8 @@ Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
   branch through a checkpoint is refused; a branch ending below one never meets it and is adopted on work alone, so a
   reorg below a checkpoint needs more work than the whole chain it replaces. `test/light-offline.test.ts`
   ("checkpoints and tryReorg") pins the three cases. No code changes.
+- Pins `@inversealtruism/csd-codec` 0.1.19 and `@inversealtruism/csd-client` 0.1.21 (a non-2xx error carries its
+  status and, when it arrives within 1 second, its body).
 
 ## 0.1.27
 

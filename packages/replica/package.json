@@ -1,6 +1,6 @@
 {
   "name": "@inversealtruism/cairnx-replica",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "engines": { "node": ">=22" },
   "description": "A CairnX replica: the chain's records replayed by cairnx-core, with the level of every answer derived from the one basis its store was filled from.",
   "author": "InverseAltruism",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.22
+
+- Pins `@inversealtruism/csd-codec` 0.1.19 (`verifyMerkleProof` proves the position). No csd-crypto source change;
+  signing and verification are unchanged.
+
 ## 0.1.21
 
 - `verifyDigest` reads the 64 signature bytes as compact r || s only, the node's rule (`verify_sig` in the node's

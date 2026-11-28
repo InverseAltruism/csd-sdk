@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.11
 
 - `isIndex` is exported from the root: a position or height as CONVENTION section 33 takes it, a safe integer >= 0.
   cairnx-replica's Scanner checks a served merkle proof's position with it. `resolve()` is unchanged.
@@ -21,6 +21,7 @@
   (`test/preflight.test.ts` checks the rule against `resolve()` at both tips and below the sunset). Consumers that
   carry this rule themselves (cairn-sdk 0.9.1's `preverifyOffer`, the wallet's fill preflight) may drop it once they
   take this version. The deprecated `fillIsSafe` keeps its frozen verdicts.
+- Pins `@inversealtruism/csd-codec` 0.1.19 (`verifyMerkleProof` proves the position).
 
 ## 0.2.10
 

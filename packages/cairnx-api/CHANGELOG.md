@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Peers on `@inversealtruism/cairnx-core` 0.2.11 exactly, and `CAIRNX_API_VERSION` is 1.0.1, so the `rev` a server
+  emits names the new versions. No change to the routes, the rows, the envelope or the error codes.
+
 ## 1.0.0
 
 The contract of version 1 of the read API. 0.1.3 was never published; its change is listed here.

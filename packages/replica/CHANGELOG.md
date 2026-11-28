@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
 - With `verifyInclusion`, an event's position in its block is now proven, not the indexer's word. The position comes
   from the transaction's merkle proof, and csd-codec's `verifyMerkleProof` used to accept a position the transaction
@@ -31,6 +31,8 @@
   and `fullRecord: undefined` it was flagged insufficient). The route answers 404 for it before the selector runs, so
   no served answer changes; on cairnx-core's replay corpus at 117,000, the route's call shape answers its 140 names
   and `constructor` as before (`test/namehist.test.ts`, "fclaim-lane sale" and "constructor").
+- Pins csd-codec 0.1.19, csd-client 0.1.21, csd-crypto 0.1.22 and csd-light 0.1.28, and peers on cairnx-core 0.2.11
+  exactly; cairnx-pin 0.1.1's range `^0.2.0` holds this version.
 
 ## 0.2.1 (2026-11-23)
 

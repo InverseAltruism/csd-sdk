@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.25
 
 - `txToNodeJson` decodes its hex fields with csd-codec's `hb`, the decode `serialize`, `txid` and `sighash` use. Its
   own decoder read a pair that is not hex as a zero byte and dropped an odd last digit, so a direct call with such a
@@ -9,6 +9,8 @@
   changes: over 20,000 seeded serializable transactions (upper- and lower-case hex, empty and long scriptSigs, the
   three app types) the node JSON is byte-equal to 0.1.24's, and a send, a propose and an attest built with one key
   give equal signed bytes, txids and sighashes.
+- Pins `@inversealtruism/csd-codec` 0.1.19 and `@inversealtruism/csd-crypto` 0.1.22, so an install does not nest the
+  older copies.
 
 ## 0.1.24
 

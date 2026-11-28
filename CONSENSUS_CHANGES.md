@@ -59,7 +59,14 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## csd-codec, cairnx-replica, cairnx-core and their dependents (2026-11-24, Plan 91 closing review; unreleased; reject-more in the merkle proof check, no consensus-surface change) - a merkle proof proves the position
+## csd-codec 0.1.19, csd-client 0.1.21, csd-crypto 0.1.22, csd-light 0.1.28, csd-tx 0.1.25, csd-siwc 0.1.23, cairnx-core 0.2.11, cairnx-api 1.0.1, cairnx-replica 0.2.2 (2026-11-24 to 2026-11-28, Plan 91 closing review; unreleased; reject-more in the merkle proof check, no consensus-surface change) - a merkle proof proves the position
+
+No replay output changes in this wave. Against db9e0fa (the last merge before it), `resolve()` over the recorded replay
+corpus at each of its block heights (state hash, events hash, canonical state and log) and over every case file of
+db9e0fa's vectors gives byte-equal output, the held replay context equals `resolve()` at every one of those heights,
+the tuple tests print the same, and `pnpm test:crosslang` is byte-identical in every mode. csd-crypto and csd-siwc
+only pin the new csd-codec; csd-tx's `txToNodeJson` decodes hex through csd-codec's `hb` (a direct call with a field
+that is not hex now throws), and the bytes a builder signs and submits are unchanged.
 
 csd-codec `verifyMerkleProof` returned true for a position the transaction does not hold, three ways: a position
 above the level count (`pos + k * 2^levels`), a non-integer or non-number position (`4.5`, `"4"`, read through
