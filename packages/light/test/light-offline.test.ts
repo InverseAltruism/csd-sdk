@@ -537,8 +537,8 @@ console.log("\ncheckpoints and tryReorg:");
 {
   const real = GFX.headers.slice(0, 45).map((h) => ({ height: h.height, header: h.header, hash: h.hash }));
   const h44 = real[44]!, real45 = gByH.get(45)!;
-  const top45 = { version: 1, prev: h44.hash, merkle: "0x" + "aa".repeat(32), time: h44.header.time + 60, bits: POW_LIMIT_BITS, nonce: 22221739 } as BlockHeader;
-  const top46 = { version: 1, prev: headerHash(top45), merkle: "0x" + "bb".repeat(32), time: top45.time + 60, bits: POW_LIMIT_BITS, nonce: 12448470 } as BlockHeader;
+  const top45 = { version: 1, prev: h44.hash, merkle: "0x" + "aa".repeat(32), time: Number(h44.header.time) + 60, bits: POW_LIMIT_BITS, nonce: 22221739 } as BlockHeader;
+  const top46 = { version: 1, prev: headerHash(top45), merkle: "0x" + "bb".repeat(32), time: Number(top45.time) + 60, bits: POW_LIMIT_BITS, nonce: 12448470 } as BlockHeader;
   const seed45 = [...real, { height: 45, header: top45, hash: headerHash(top45) }];
   const seed46 = [...seed45, { height: 46, header: top46, hash: headerHash(top46) }];
   const branch45 = [{ height: 45, header: real45.header, hash: real45.hash }];
