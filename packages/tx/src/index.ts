@@ -1,7 +1,7 @@
 // @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
-import { type Tx, type TxOutput, type App, serialize, txid, sighash, isWellFormedUtf16, strip0x, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
+import { type Tx, type TxOutput, type App, serialize, txid, sighash, isWellFormedUtf16, strip0x, hb, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
 import { addrFromPriv, signDigest, buildScriptSig, isValidAddr } from "@inversealtruism/csd-crypto";
 
 export interface Utxo { txid: string; vout: number; value: number; confirmations?: number; coinbase?: boolean }
@@ -52,8 +52,7 @@ export function selectInputs(utxos: Utxo[], need: number, exclude?: ReadonlySet<
 export function txSize(tx: Tx): number { return serialize(tx).length; }
 
 // ── node-submit JSON (serde external tagging; hashes as byte arrays) ──
-const bytesArr = (hex: string): number[] => Array.from(hex.startsWith("0x") ? hexToU8(hex.slice(2)) : hexToU8(hex));
-function hexToU8(h: string): Uint8Array { const o = new Uint8Array(h.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16); return o; }
+const bytesArr = (hex: string): number[] => Array.from(hb(hex));
 /**
  * Encode a u64 field for the node's serde-JSON submit shape. The node parses these from a BARE JSON
  * integer (serde u64 — full precision, but rejects strings); JS Numbers lose precision above 2^53 and
