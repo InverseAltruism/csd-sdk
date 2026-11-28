@@ -675,6 +675,13 @@ tokens, comments, whitespace and import paths aside, are the resolver's. The res
 the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
 
+`scopedReplaySufficient: false` in a name history means the name's own records do not prove its owner. A name sold
+through an open-lane claim-to-fill (V17, and from V28 the fclaim lane) is the common case: the claim was valid only
+if the claimer held fewer than the cap of live claims across all offers, which no name-scoped set of records shows, so
+a replay of the hints can reach another owner than the chain did. A name-for-token sale (the buyer's balance) and any
+name whose scoped replay the `check` compare finds different are flagged the same way. Such a name is served with the
+flag false and a client proves its owner only by a full replay; a second source runs the same selector and cannot help.
+
 Who runs the scan, by design: an outside replica's feed owns its Scanner and scans in each step, and a hosted resolver
 runs its own scan, publishes from it and writes a store after publication, off that path. A loop whose store cannot
 commit (held by another process, broken, or a full disk) backs off for up to 300 seconds and takes no step, so a
