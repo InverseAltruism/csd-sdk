@@ -1,4 +1,4 @@
-// @inversealtruism/csd-tx — Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
+// @inversealtruism/csd-tx: Compute Substrate transaction builder. p2pkh-only (no scripts), so far simpler
 // than Bitcoin: one sighash signs ALL inputs (CSD blanks every input in the sighash), change
 // always returns to the sender. Coin selection is hardened against a hostile/buggy RPC.
 import { type Tx, type TxOutput, type App, serialize, txid, sighash, isWellFormedUtf16, strip0x, hb, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_DOMAIN_BYTES, MAX_URI_BYTES, MIN_FEE_PROPOSE, MIN_FEE_ATTEST } from "@inversealtruism/csd-codec";
@@ -48,16 +48,16 @@ export function selectInputs(utxos: Utxo[], need: number, exclude?: ReadonlySet<
   return take(confirmed.filter((x) => !x.coinbase)) ?? take(confirmed);
 }
 
-/** Exact serialized byte size of a tx (deterministic — no scripts/witness). */
+/** Exact serialized byte size of a tx (deterministic: no scripts/witness). */
 export function txSize(tx: Tx): number { return serialize(tx).length; }
 
 // ── node-submit JSON (serde external tagging; hashes as byte arrays) ──
 const bytesArr = (hex: string): number[] => Array.from(hb(hex));
 /**
  * Encode a u64 field for the node's serde-JSON submit shape. The node parses these from a BARE JSON
- * integer (serde u64 — full precision, but rejects strings); JS Numbers lose precision above 2^53 and
+ * integer (serde u64: full precision, but rejects strings); JS Numbers lose precision above 2^53 and
  * JSON cannot emit a bigint as a bare literal. So a value beyond MAX_SAFE_INTEGER cannot be submitted
- * faithfully — REFUSE it loudly rather than `Number()`-truncating, which would make the SUBMITTED json
+ * faithfully: REFUSE it loudly rather than `Number()`-truncating, which would make the SUBMITTED json
  * differ from the SIGNED bytes (the sig/txid commit to the exact u64). Mirrors the codec u64 guard.
  * At CSD emission rates 2^53 sats (~90M CSD) is unreachable for years; >2^53-sat single outputs are a
  * documented limit, not a silent corruption. (Confirms/closes finding C-S2/A2, 2026-06-08 baseline.)
@@ -105,16 +105,16 @@ export interface BuildResult extends Partial<Signed> { ok: boolean; error?: stri
 // A CSD fee is IMPLICIT (Σin − Σout) and the chain enforces NO maximum (net/mempool.rs only has a
 // MIN feerate; max_feerate_ppm is an eviction-sort hint, not a rejection rule). So if a hostile/buggy
 // RPC UNDER-reports a UTXO's value, coin selection computes too-small a change and the difference is
-// silently burned to the miner as fee — the user's own funds, gone, with no on-chain protection.
+// silently burned to the miner as fee: the user's own funds, gone, with no on-chain protection.
 // EXPLICIT-fee backstop only. This caps the `fee` the CALLER passes (a fat-finger / absurd-fee
 // guard); the cap is generous so every honest fee passes (fee-only Propose 0.25 CSD; transfer fee
-// ~0.01 CSD). IMPORTANT (audit UTXO-VALUE-1): it does NOT detect the IMPLICIT under-report burn —
+// ~0.01 CSD). IMPORTANT (audit UTXO-VALUE-1): it does NOT detect the IMPLICIT under-report burn:
 // these builders are PURE and trust the `Utxo.value` they are given, so a hostile RPC that
 // under-reports an input still makes change computed too small and burns the gap as fee. The real
 // cure is to fetch+verify each input's source tx at the RPC layer BEFORE building: see
 // `verifyInputValues` in @inversealtruism/csd-client (used by the wallet and recommended for all
 // RPC-facing builders). A caller that legitimately wants a larger explicit fee passes `maxFee`.
-export const MAX_FEE_BACKSTOP = 100_000_000;   // 1 CSD absolute floor — every honest fee is well under this
+export const MAX_FEE_BACKSTOP = 100_000_000;   // 1 CSD absolute floor: every honest fee is well under this
 // Exported (Plan 57 B4): cairnx/txbuild.ts carried a KEEP-IN-SYNC copy of this fraction exactly
 // because it was module-private. One source now; the copy retires at the next cairnx re-pin.
 export const MAX_FEE_INPUT_FRACTION = 0.10;    // …and ≤ 10% of inputs; a burned-change fee is ~100% of inputs
@@ -160,7 +160,7 @@ function assemble(sel: Selection, total: number, outs: TxOutput[], sumOut: numbe
   const signed = signTx(tx, priv);
   // Node mempool rule (net/mempool.rs): feerate_ppm = fee*1e6/bytes must be ≥ MIN_FEERATE_PPM (=1),
   // i.e. fee*1e6 ≥ (signed) tx_bytes. Without this, buildSend({fee:0}) returns ok:true for a tx the
-  // node rejects with "feerate too low" — a silent build-success/broadcast-failure.
+  // node rejects with "feerate too low": a silent build-success/broadcast-failure.
   const bytes = serialize(signed.tx).length;
   if (fee * 1_000_000 < bytes) {
     return { ok: false, error: `fee ${fee} below the node feerate floor (need ≥ ${Math.ceil(bytes / 1_000_000)} for a ${bytes}-byte tx)` };
@@ -196,7 +196,7 @@ async function selectAndVerify(
   for (let round = 0; ; round++) {
     const sel = selectInputs(utxos, need, exclude);          // selection by REPORTED values
     // M1 QC: after exclusions a short remainder must not report a bare "insufficient confirmed
-    // balance" — the user's displayed balance contradicts it. Name the excluded coins.
+    // balance": the user's displayed balance contradicts it. Name the excluded coins.
     if (!sel) return { error: exclude.size > 0
       ? `insufficient verifiable balance for outputs + fee — ${exclude.size} coin(s) could not be verified against the chain and were excluded`
       : "insufficient confirmed balance for outputs + fee" };
@@ -210,7 +210,7 @@ async function selectAndVerify(
 }
 
 /**
- * H2 — the UTXO-VALUE-1-protected send. Selects by reported UTXO values, then VERIFIES the real value
+ * H2: the UTXO-VALUE-1-protected send. Selects by reported UTXO values, then VERIFIES the real value
  * of the selected inputs against the chain via `verify` (e.g. `verifyInputValues` from
  * @inversealtruism/csd-client, which recomputes each source tx's txid so a lying RPC cannot under-report),
  * and computes change from the VERIFIED total. A hostile/buggy RPC that under-reports an input can no
@@ -235,7 +235,7 @@ export async function buildSendVerified(p: { outputs: { to: string; value: numbe
  * under-reports a coin makes the change too small and the difference is burned as fee.
  *
  * Build + sign a 1→many transfer (None app). Change → sender.
- * `maxFee` (optional) overrides the generous max-fee backstop — pass it only to deliberately
+ * `maxFee` (optional) overrides the generous max-fee backstop: pass it only to deliberately
  * authorize a fee above the default cap (default: max(1 CSD, 10% of inputs)).
  */
 export function buildSend(p: { outputs: { to: string; value: number }[]; fee: number; utxos: Utxo[]; priv: string; maxFee?: number }): BuildResult {
@@ -245,7 +245,7 @@ export function buildSend(p: { outputs: { to: string; value: number }[]; fee: nu
   return selectAndAssemble(p.utxos, outs, p.fee, { type: "None" }, p.priv, p.maxFee);
 }
 
-// Consensus fact F4: a Propose/Attest tx's value outputs are UNRESTRICTED — one tx can carry an
+// Consensus fact F4: a Propose/Attest tx's value outputs are UNRESTRICTED: one tx can carry an
 // app payload AND pay arbitrary addresses. That is the chain's native delivery-versus-payment
 // kernel (a CairnX "fill" = an Attest whose same tx pays the seller; a fee-bearing record = a
 // Propose whose same tx pays the treasury). `outputs` makes that shape first-class so consumers
@@ -288,7 +288,7 @@ export function buildPropose(p: { domain: string; payloadHash: string; uri: stri
 /**
  * Build + sign an Attest (fee = weight). Optional `outputs` ride in the SAME tx (atomic DvP).
  * Here the fee IS the user's deliberate attestation weight (stake) and is the SIGNED fee, so the
- * default backstop is the generous max(explicit weight, cap) — the explicit weight is always
+ * default backstop is the generous max(explicit weight, cap): the explicit weight is always
  * honored as intent, and any larger implied burn (e.g. from an under-reporting RPC) is still caught
  * at the RPC-facing layers that compute change from verified values. Pass `maxFee` to tighten/raise.
  */
@@ -308,7 +308,7 @@ export function buildAttest(p: { proposalId: string; score: number; confidence: 
 }
 
 /**
- * F9-C — the input-value-VERIFIED Propose (the UTXO-VALUE-1 fund-burn cure applied to a money-out board
+ * F9-C: the input-value-VERIFIED Propose (the UTXO-VALUE-1 fund-burn cure applied to a money-out board
  * post). Mirrors buildSendVerified: select by REPORTED utxo values, VERIFY the selected inputs' real value
  * against the chain via `verify` (fail-closed), then assemble the Propose from the VERIFIED total, so an
  * under-reporting/lying RPC can no longer collapse change and burn the surplus as an implicit fee. Optional
@@ -329,7 +329,7 @@ export async function buildProposeVerified(p: { domain: string; payloadHash: str
 }
 
 /**
- * F9-C — the input-value-VERIFIED Attest (fee = weight). Mirrors buildProposeVerified; the attest weight is
+ * F9-C: the input-value-VERIFIED Attest (fee = weight). Mirrors buildProposeVerified; the attest weight is
  * the user's deliberate stake so the default backstop honors it (max(weight, backstop)), while change is
  * still computed from the RPC-VERIFIED input total so a lying RPC can't burn the surplus. Optional `outputs`
  * ride in the SAME tx (atomic DvP). Same score/confidence + fee-floor checks as the pure `buildAttest`.
