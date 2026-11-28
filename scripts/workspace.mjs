@@ -1,10 +1,26 @@
 // The workspace packages and their npm registry entries, read by check-lockstep.mjs, npm-window.mjs and
-// verify-tarball.mjs.
+// verify-tarball.mjs, and the caret-range rule check-lockstep.mjs and the replica's exit check apply to the one range peer.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { headTree, readBlobs } from "./git-head.mjs";
 
 export const REGISTRY = "https://registry.npmjs.org";
+
+/**
+ * Whether `version` lies in `range`, a caret range `^X.Y.Z` as npm reads one; any other form is no range.
+ * @param {unknown} range
+ * @param {unknown} version
+ * @returns {boolean}
+ */
+export function caretAllows(range, version) {
+  const r = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(String(range)), v = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version));
+  if (!r || !v) return false;
+  /** @type {(m: RegExpExecArray) => [number, number, number]} */
+  const parts = (m) => [Number(m[1]), Number(m[2]), Number(m[3])];
+  const [a, b, c] = parts(r), [x, y, z] = parts(v);
+  const atLeast = x > a || (x === a && (y > b || (y === b && z >= c)));
+  return atLeast && (a > 0 ? x === a : b > 0 ? x === 0 && y === b : x === 0 && y === 0 && z === c);
+}
 
 /**
  * Every packages/<dir>/package.json under `root`, parsed, with `__dir` set to <dir>. A directory without a readable

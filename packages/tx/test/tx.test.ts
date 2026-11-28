@@ -72,6 +72,19 @@ throws("REFUSES negative output value", () => txToNodeJson({ ...baseTx, outputs:
 throws("REFUSES non-integer output value", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1.5, scriptPubkey: RCPT }] }));
 throws("REFUSES Propose expires_epoch > 2^53", () => txToNodeJson({ ...baseTx, app: { type: "Propose", domain: "d", payloadHash: "0x" + "ab".repeat(32), uri: "u", expiresEpoch: 9007199254740993n } }));
 
+console.log("\nnode JSON hex: the codec's decode, which the signed bytes use:");
+// A direct call with a field that is not hex throws, as serialize and sighash do; it does not submit zero bytes.
+throws("REFUSES a prevout txid that is not hex", () => txToNodeJson({ ...baseTx, inputs: [{ prevTxid: "0x" + "GG".repeat(32), vout: 0, scriptSig: "0x" }] }));
+throws("REFUSES an odd-length script_pubkey", () => txToNodeJson({ ...baseTx, outputs: [{ value: 1000, scriptPubkey: "0x" + "c".repeat(41) }] }));
+throws("REFUSES a payload_hash that is not hex", () => txToNodeJson({ ...baseTx, app: { type: "Propose", domain: "d", payloadHash: "0x" + "zz".repeat(32), uri: "u", expiresEpoch: 1 } }));
+// honest: a built and signed send gives the bytes its fields name, upper-case hex and an empty scriptSig included
+{
+  const up = txToNodeJson({ ...baseTx, inputs: [{ prevTxid: "0x" + "AB".repeat(32), vout: 0, scriptSig: "0x" }] });
+  ok("upper-case hex decodes to its bytes and an empty scriptSig to none", up.inputs[0]!.prevout.txid.every((b) => b === 0xab) && up.inputs[0]!.script_sig.length === 0);
+  const sig = send.tx!.inputs[0]!.scriptSig, sigBytes = (sig.slice(2).match(/../g) ?? []).map((h) => parseInt(h, 16));
+  ok("a signed send's node JSON carries its scriptSig byte for byte", JSON.stringify(nj.inputs[0]!.script_sig) === JSON.stringify(sigBytes) && sigBytes.length > 0);
+}
+
 console.log("\nDvP value outputs on Propose/Attest (consensus F4):");
 {
   const dvp = buildAttest({ proposalId: "0x" + "cd".repeat(32), score: 100, confidence: 100, fee: 5_000_000,
@@ -151,14 +164,14 @@ console.log("\nM1: buildSendVerified exclude-and-retry (a poison coin is exclude
   const r = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, good], priv: PRIV, verify });
   ok("a poison coin is EXCLUDED and the spend still builds (not bricked)", r.ok === true && calls >= 2);
   ok("the good coin funded it (verified total excludes the poison)", r.ok === true && r.inTotal === 2_000_000_000);
-  // bounded, NON-VACUOUS (Fable M1 QC): FOUR coins each large enough that selection can never fail,
+  // bounded, NON-VACUOUS: FOUR coins each large enough that selection can never fail,
   // so the ROUND CAP is the only exit. Assert exactly MAX_SELECT_ROUNDS verify calls + the cap's
   // message (the old 2-UTXO version exited via selection failure and passed pre-fix with n===1).
   let n = 0;
   const coins = [0, 1, 2, 3].map((i) => ({ txid: "0x" + String(i).padStart(2, "0").repeat(32), vout: 0, value: 5_000_000_000, confirmations: 6, coinbase: false }));
   const rb = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: coins, priv: PRIV, verify: async (inp) => { n++; return { ok: false as const, total: 0, badInput: inp[0]! }; } });
   ok("bounded: always-bad inputs fail closed at EXACTLY MAX_SELECT_ROUNDS (the cap, not selection failure)", rb.ok === false && n === 3 && /could not verify/.test(String(rb.error)));
-  // the exclusion-aware shortfall message (Fable M1 QC): a remainder shortfall after exclusions must
+  // the exclusion-aware shortfall message: a remainder shortfall after exclusions must
   // say WHY: a bare "insufficient confirmed balance" contradicts the user's displayed balance.
   const dust = { txid: "0x" + "dd".repeat(32), vout: 0, value: 100, confirmations: 6, coinbase: false };
   const rs = await buildSendVerified({ outputs: [{ to: RCPT, value: 100 }], fee: 10_000_000, utxos: [poison, dust], priv: PRIV, verify: async (inp) => inp.some((i) => i.txid.toLowerCase() === poison.txid.toLowerCase()) ? { ok: false as const, total: 0, badInput: { txid: poison.txid, vout: poison.vout } } : { ok: true as const, total: (inp as Utxo[]).reduce((a, i) => a + i.value, 0) } });

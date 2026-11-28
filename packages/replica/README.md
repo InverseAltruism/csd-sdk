@@ -18,13 +18,14 @@ root and bodies names the same store, which is kept only on the conditions of "P
 ## Install
 
 ```bash
-npm install @inversealtruism/cairnx-replica @inversealtruism/cairnx-core@<version>
+npm install @inversealtruism/cairnx-replica   # npm 7 or later also installs the cairnx-core it names
 npm install @inversealtruism/cairnx-pin        # for a replica that starts from the release's pin
 ```
 
-`@inversealtruism/cairnx-core` is an exact peer dependency: install the version this package's `peerDependencies`
-name, so that a process runs one `resolve()`. Node 18 or later, or a browser. ESM only: a Node whose `require` loads
-ES modules loads every entry with it too, which the exit check runs on CI's Node 22.
+`@inversealtruism/cairnx-core` is an exact peer dependency, so that a process runs one `resolve()`: the version this
+package's `peerDependencies` name (`npm view @inversealtruism/cairnx-replica peerDependencies`), which npm 7 or later
+installs with it; with another package manager install that version beside it. Node 22 or later, or a browser. ESM
+only: a Node whose `require` loads ES modules loads every entry with it too, which the exit check runs on CI's Node 22.
 
 ## One example per level
 
@@ -586,9 +587,14 @@ header source the caller wires.
 | `headerMerkleAt(height)`, `rawTxAt(txid)`, `verifiedTipHeight()`, `merkleProofAt(txid)` | the Scanner's reads of the caller's verified side, for inclusion |
 | `headerAt(height)` | the feed's, required with `verifyInclusion`: `{ hash, time }` of the block at a height on the caller's verified headers (the same source as `headerMerkleAt` and `verifiedTipHeight`), asked at or below the final height; without it `indexerFeed` throws `ReplicaConfigError` |
 
-With `verifyInclusion` the feed trusts the caller's verified headers for the records' inclusion, for every block hash
-it holds and for the tip and its time; it trusts the indexer only for which records exist. The indexer can still
-withhold a record, which is why the level stays 2 and not 3.
+With `verifyInclusion` the feed trusts the caller's verified headers for every block hash it holds and for the tip and
+its time, and the caller's node (`rawTxAt`) for each record's body and author. A record's height and its position in
+its block are those of its merkle proof, folded to the verified header's root at that position (a proof position
+that is not a safe integer >= 0 is `SOURCE_MALFORMED`), so the indexer cannot move a record it serves
+(`test/scan/scan-proof-pos.test.ts`). It trusts the indexer for which records exist: the indexer can withhold a
+record, and of a transaction the chain holds in two blocks (CONVENTION section 33.2) it can prove the later copy
+alone, which is why the level stays 2 and not 3. Without `verifyInclusion` (level 1) the indexer is trusted for all
+of it: which records exist, their heights, positions, fields, authors and outputs, and the block hashes and tip.
 
 Each step reads one scan: a new one, or the scan of the step before when that step ended short of the scan's top (its
 budget, or its deadline) and the store's cursor is the one it returned, after one read that the indexer still gives
@@ -668,6 +674,13 @@ applied, which the resolver passes to `nameHistory` as `fullApplied`. `scripts/m
 tokens, comments, whitespace and import paths aside, are the resolver's. The resolver's hash tuple book is not moved:
 the loop's boundaries are this package's book ("Tuples and a reference" below). The `F4:` that starts some of the Scanner's thrown messages (a failed output, height or body binding
 with `verifyInclusion`) is a stable prefix: the resolver serves these messages and its tests match it.
+
+`scopedReplaySufficient: false` in a name history means the name's own records do not prove its owner. A name sold
+through an open-lane claim-to-fill (V17, and from V28 the fclaim lane) is the common case: the claim was valid only
+if the claimer held fewer than the cap of live claims across all offers, which no name-scoped set of records shows, so
+a replay of the hints can reach another owner than the chain did. A name-for-token sale (the buyer's balance) and any
+name whose scoped replay the `check` compare finds different are flagged the same way. Such a name is served with the
+flag false and a client proves its owner only by a full replay; a second source runs the same selector and cannot help.
 
 Who runs the scan, by design: an outside replica's feed owns its Scanner and scans in each step, and a hosted resolver
 runs its own scan, publishes from it and writes a store after publication, off that path. A loop whose store cannot

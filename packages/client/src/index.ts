@@ -1,5 +1,5 @@
-// @inversealtruism/csd-client — a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
-// (a direct node, the Cairn proxy `…/api/rpc`, or — later — a csd:gateways-discovered endpoint)
+// @inversealtruism/csd-client: a typed HTTP client over the Compute Substrate node RPC. Pluggable base URL
+// (a direct node, the Cairn proxy `…/api/rpc`, or, later, a csd:gateways-discovered endpoint)
 // and a pluggable fetch (for tests / non-DOM runtimes). Read + broadcast; no trust assumptions
 // (the light client in @inversealtruism/csd-light verifies what this returns).
 import type { Tx, BlockHeader } from "@inversealtruism/csd-codec";
@@ -51,12 +51,12 @@ export interface WaitForTxResult { txid: string; height: number; confirmations: 
 export interface ClientOptions {
   baseUrl: string; fetch?: typeof fetch; timeoutMs?: number;
   /** retry NETWORK failures (timeouts, refused, 5xx) this many times with jittered backoff.
-   *  NEVER retries an application result (`ok:false`) or 4xx — those are answers, not outages. */
+   *  NEVER retries an application result (`ok:false`) or 4xx: those are answers, not outages. */
   retries?: number;
   /**
    * Hard ceiling (bytes) on a response body before it is parsed. A lying/malicious node can
    * otherwise stream a multi-hundred-MB body that the verifier buffers (`await r.json()`) and
-   * OOM-crashes BEFORE any PoW/merkle/LWMA check runs — a remote DoS of the trusted light-client
+   * OOM-crashes BEFORE any PoW/merkle/LWMA check runs: a remote DoS of the trusted light-client
    * path (audit M2). Default 16 MiB ≫ any real block; raise it for an unusually large block source.
    */
   maxResponseBytes?: number;
@@ -79,10 +79,57 @@ export function parseJsonExact(text: string): unknown {
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+/** The most bytes of a non-2xx body an HTTP error carries. The node's refusal texts run to a few hundred bytes (its
+ *  longest error format, with 66-character arguments, is under 200 characters); a proxy's short HTML page fits too. */
+export const ERROR_BODY_MAX_BYTES = 4096;
+/** What the error a request throws for a non-2xx answer carries besides its message: the HTTP status, and the first
+ *  ERROR_BODY_MAX_BYTES bytes of the body, decoded as UTF-8 (an invalid byte reads as U+FFFD), never parsed, when the
+ *  body arrives within ERROR_BODY_WAIT_MS (or the request's remaining time, if less); else no `body`. */
+export interface HttpErrorFields { status: number; body?: string }
+/** The longest a non-2xx answer's body is waited for, so that a refusal is thrown at most this much later than the
+ *  status arrived (test/hostile.test.ts). */
+const ERROR_BODY_WAIT_MS = 1_000;
+const LATE = Symbol("late");
 const DEFAULT_RETRIES = 0;
 // A non-finite option (NaN, Infinity) disables the bound it sets (`x > NaN` and `attempt >= NaN` are false),
 // so it falls back to the option's default.
 const finiteOr = (v: number | undefined, dflt: number): number => (v !== undefined && Number.isFinite(v) ? v : dflt);
+
+/** HttpErrorFields.body: at most ERROR_BODY_MAX_BYTES of `r`'s body, the stream cancelled there, or undefined when it
+ *  has not arrived within `ms` or cannot be read. */
+async function errorBody(r: Response, ms: number): Promise<string | undefined> {
+  if (!(ms > 0)) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<typeof LATE>((res) => { timer = setTimeout(() => res(LATE), ms); });
+  // a read the wait leaves behind settles later: its rejection is handled here
+  const within = <T>(p: Promise<T>): Promise<T | typeof LATE> => { p.catch(() => undefined); return Promise.race([p, late]); };
+  const cut = (b: Uint8Array): string => new TextDecoder().decode(b.subarray(0, ERROR_BODY_MAX_BYTES));
+  try {
+    const body = (r as { body?: ReadableStream<Uint8Array> | null }).body;
+    if (!body || typeof body.getReader !== "function") {
+      const t = await within(r.text());
+      return t === LATE ? undefined : cut(new TextEncoder().encode(t));
+    }
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (total < ERROR_BODY_MAX_BYTES) {
+      const step = await within(reader.read());
+      if (step === LATE) { reader.cancel().catch(() => undefined); return undefined; }
+      if (step.done) break;
+      if (step.value) { chunks.push(step.value); total += step.value.length; }
+    }
+    if (total >= ERROR_BODY_MAX_BYTES) reader.cancel().catch(() => undefined); // the rest is not read
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    return cut(buf);
+  } catch {
+    return undefined; // the body could not be read: the status alone is the answer
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class CsdClient {
   private readonly base: string;
@@ -107,18 +154,23 @@ export class CsdClient {
   }
 
   private async req<T>(path: string, init?: RequestInit, opts?: { noRetry?: boolean }): Promise<T> {
-    // L13: a NON-idempotent broadcast (submit) must NOT be auto-resent on a 5xx/timeout — a re-send
+    // L13: a NON-idempotent broadcast (submit) must NOT be auto-resent on a 5xx/timeout: a re-send
     // can double-broadcast. Only idempotent GETs (and the pure template POSTs) use the retry budget.
     const maxRetries = opts?.noRetry ? 0 : this.retries;
     let lastErr: unknown;
     for (let attempt = 0; ; attempt++) {
       try {
+        const sent = Date.now();
         const r = await this.f(`${this.base}${path}`, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
         if (r.status >= 500 && attempt < maxRetries) { lastErr = new Error(`HTTP ${r.status}`); }
         // 4xx is an answer, not an outage: mark it terminal so the catch below cannot spend the
         // retry budget on it (pre-fix, the thrown 4xx landed in the same catch as network errors
         // and WAS retried, violating the documented `retries` contract; found by hostile.test.ts).
-        else if (!r.ok) throw Object.assign(new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`), { terminal: r.status < 500 });
+        else if (!r.ok) {
+          const body = await errorBody(r, Math.min(ERROR_BODY_WAIT_MS, this.timeoutMs - (Date.now() - sent)));
+          const fields: HttpErrorFields = body === undefined ? { status: r.status } : { status: r.status, body };
+          throw Object.assign(new Error(`${init?.method ?? "GET"} ${path} → HTTP ${r.status}`), { terminal: r.status < 500 }, fields);
+        }
         else return (await this.readCapped(r, path)) as T;
       } catch (e) {
         if (attempt >= maxRetries || (e as { terminal?: boolean } | null)?.terminal) throw e;
@@ -133,7 +185,7 @@ export class CsdClient {
   /**
    * Read a response body as JSON with a hard byte ceiling (`maxResponseBytes`). Rejects an
    * oversized `Content-Length` up front, and otherwise streams the body and aborts the moment
-   * it exceeds the cap — so a malicious node cannot make us buffer a giant body and OOM before
+   * it exceeds the cap: so a malicious node cannot make us buffer a giant body and OOM before
    * we ever validate it (audit M2). Falls back to a size-checked `text()` on runtimes without a
    * streaming body (older MV3/Node), preserving the cap as a best effort.
    */
@@ -175,7 +227,7 @@ export class CsdClient {
 
   // The node returns application errors as `{ok:false, err}` with HTTP **200**, so a bare `get()`
   // can't see them. For endpoints whose `{ok:false}` result is useless to the caller (a missing
-  // block), surface it as a thrown error — otherwise a beyond-tip/not-found block flows downstream
+  // block), surface it as a thrown error: otherwise a beyond-tip/not-found block flows downstream
   // as a malformed object and crashes opaquely (e.g. the light client reading `header.prev`).
   private async getOk<T extends { ok?: boolean; err?: string | null }>(path: string): Promise<T> {
     const j = await this.get<T>(path);
@@ -195,7 +247,7 @@ export class CsdClient {
     return this.get(`/utxos/${addr}${opts.available === false ? "" : "?available=true"}`);
   }
   // getOk: a not-found proposal returns {ok:false}@200; without this the caller reads .domain/.uri off a
-  // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get — its
+  // malformed object instead of seeing the error (audit M6). (tx() deliberately keeps its bare get: its
   // {ok:false} is a documented VALID "not yet in a block" state that waitForTx/verifyInputValues handle.)
   proposal(id: string): Promise<RpcProposal> { return this.getOk(`/proposal/${id}`); }
   proposals(domain: string, limit = 40): Promise<RpcProposals> { return this.get(`/proposals/${encodeURIComponent(domain)}/${limit}`); }
@@ -204,11 +256,11 @@ export class CsdClient {
   mempool(): Promise<unknown> { return this.get("/mempool"); }
 
   /**
-   * Await a txid reaching `confirmations` (default 1) — the submit-then-confirm flow every
+   * Await a txid reaching `confirmations` (default 1): the submit-then-confirm flow every
    * consumer was hand-rolling. Polls /tx + /tip; resolves {txid, height, confirmations};
-   * rejects on timeout (default 10 min — CSD blocks are ~2 min but the live miner is lumpy).
+   * rejects on timeout (default 10 min: CSD blocks are ~2 min but the live miner is lumpy).
    * A tx that drops OUT of the chain mid-wait (reorg) keeps polling until it re-confirms or
-   * times out — never resolves on a stale sighting.
+   * times out: never resolves on a stale sighting.
    * The count is `tip.height - tx.height + 1` from the RPC's own /tx and /tip answers, with no PoW
    * or inclusion check, so a lying RPC can over-state it. Gate funds on csd-light, not on this.
    */
@@ -224,7 +276,7 @@ export class CsdClient {
           const conf = tip.height - t.height + 1;
           if (conf >= want) return { txid, height: t.height, confirmations: conf };
         }
-      } catch { /* transient read failure — keep waiting */ }
+      } catch { /* transient read failure: keep waiting */ }
       if (Date.now() > deadline) throw new Error(`waitForTx ${txid}: not at ${want} confirmation(s) within ${opts.timeoutMs ?? 600_000}ms`);
       await new Promise((res) => setTimeout(res, poll));
     }
@@ -232,7 +284,7 @@ export class CsdClient {
 
   /**
    * Broadcast a node-JSON tx (from @inversealtruism/csd-tx `txToNodeJson`).
-   * ⚠ The node returns `{ok:false, err}` with HTTP 200 on REJECTION — and **`txid` is populated even
+   * ⚠ The node returns `{ok:false, err}` with HTTP 200 on REJECTION, and **`txid` is populated even
    * then** (it's the computed id of the rejected tx). Callers MUST check `.ok`; reading `.txid`
    * alone mistakes a rejected tx for a broadcast one. Use `submitOrThrow` if you want a hard failure.
    */
@@ -264,7 +316,7 @@ export function rpcTxToTx(j: RpcTxJson): Tx {
 /** UTXO-VALUE-1 cure (audit). A CSD fee is implicit (Σin − Σout) and uncapped by consensus, so a
  *  builder that trusts a hostile RPC's /utxos `value` can compute too-small a change and silently
  *  BURN the difference as fee. This confirms each selected input's REAL value by fetching its source
- *  tx and RECOMPUTING its txid with the consensus codec — the txid commits to the output values, so
+ *  tx and RECOMPUTING its txid with the consensus codec: the txid commits to the output values, so
  *  a forged body whose recomputed txid still matches the prevout is impossible. Fail-CLOSED: any
  *  unreachable/forged/missing source aborts. Returns the verified input total (use it to compute
  *  change from REAL values, not the reported ones). RPC-facing builders (wallet, cairn-sdk) should

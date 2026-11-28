@@ -59,7 +59,62 @@ change adds a feature the audit fuel does not exercise, extend the fuel first (s
 
 ## History
 
-## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; unreleased; consensus-surface files edited, no rule change, new exports) - a held replay context
+## csd-codec 0.1.19, csd-client 0.1.21, csd-crypto 0.1.22, csd-light 0.1.28, csd-tx 0.1.25, csd-siwc 0.1.23, cairnx-core 0.2.11, cairnx-api 1.0.1, cairnx-replica 0.2.2 (2026-11-24 to 2026-11-28, Plan 91 closing review; unreleased; reject-more in the merkle proof check; consensus-surface files edited (comments only), no rule change) - a merkle proof proves the position
+
+No replay output changes in this wave. Against db9e0fa (the last merge before it), `resolve()` over the recorded replay
+corpus at each of its block heights (state hash, events hash, canonical state and log) and over every case file of
+db9e0fa's vectors gives byte-equal output, the held replay context equals `resolve()` at every one of those heights,
+the tuple tests print the same, and `pnpm test:crosslang` is byte-identical in every mode. Of the files on the
+consensus surface (`scripts/check-consumer-pins.mjs`, `CONSENSUS_SURFACE`), `types.ts`, `resolve/names.ts` and
+`events.ts` are edited in comments only: each compiled at db9e0fa and at this release by the esbuild the package build
+(tsup) loads gives byte-equal JavaScript, as do the surface files this wave does not edit. csd-crypto and csd-siwc
+only pin the new csd-codec; csd-tx's `txToNodeJson` decodes hex through csd-codec's `hb` (a direct call with a field
+that is not hex now throws), and the bytes a builder signs and submits are unchanged.
+
+csd-codec `verifyMerkleProof` returned true for a position the transaction does not hold, three ways: a position
+above the level count (`pos + k * 2^levels`), a non-integer or non-number position (`4.5`, `"4"`, read through
+`idx & 1`), and, inside the level count, a position that reads an odd row's duplicated last node from the right
+(in a block of 6 transactions the one at 4 also verified at 6, after the one at 5). It now returns false for a
+`pos` that is not a safe integer in `[0, 2^levels)`, for a level at which the node is the right child of a sibling
+equal to it, and for a branch of more than 32 levels. The last is a sanity bound, not the chain's block cap, so a
+wallet that keeps this code for years still verifies blocks larger than today's (2^32 transactions of at least 28
+bytes is over 100 GiB, and below it every position is an exact integer); the position rests on the other two. An honest proof has no such level: an odd row pairs its last node as the left
+child of its own copy, and two equal adjacent subtrees would hold one txid twice, which the node refuses in a block
+(compute-substrate `src/state/utxo.rs`, "duplicate txid within block"; CONVENTION section 33.2). A true answer now
+proves membership and position; it still does not prove that the value is a transaction id (an inner node folds
+with the shorter branch above it) or that the root's header is on the chain.
+
+No honest proof is refused: every transaction of the 684 distinct recorded node blocks in this repo (789
+transactions, the largest block 8), of synthetic blocks of 1 to 40 transactions (820), and of blocks of 2,000 (11
+levels) and 5,000 (13 levels) verifies at its position; of the other positions below `2^levels`, the old check
+accepted 18 in the recorded blocks, 375 in the blocks of 1 to 40, 48 in the block of 2,000 and 3,192 in the block of
+5,000, the new one 0. `merkleRoot`, `merkleBranch`,
+txids, sighashes, headers and `resolve()` are unchanged; `resolve()` reads no merkle proof.
+
+cairnx-replica's Scanner, with `verifyInclusion` on, takes each event's position in its block from that proof, so a
+lying indexer could reorder two proven records of one block; with the codec above such a proof fails the scan. A
+proof position that is not a safe integer >= 0 fails it as `SOURCE_MALFORMED` before the fold, through cairnx-core's
+`isIndex`, now exported from the root; before, such a position became the event's and reached `resolve()`.
+
+cairnx-core's `fillEndorsement`, a helper `resolve()` does not read, refuses from `LEGACY_HOLD_SUNSET_HEIGHT` a fill
+of an open CSD offer whose target is the offer id, which `resolve()` refuses at those heights whatever claim a
+resolver serves (the package CHANGELOG has the matrix against `resolve()`).
+
+csd-client, transport only: the error a request throws for a non-2xx answer also carries `status` and, when the body
+arrives within 1 second or the request's remaining time if less, `body`, the first 4,096 bytes as text
+(`ERROR_BODY_MAX_BYTES`, `HttpErrorFields`), so a caller can tell why a node or proxy refused a transaction. Its
+message, its `terminal` flag and the retry rules are unchanged: a 5xx within the retry budget is retried without
+reading its body. A body that is late or cannot be read is not waited for further and leaves no `body`, so a refusal
+is thrown at most 1 second later than its status arrived.
+
+csd-client, csd-light and cairnx-replica declare `engines.node` `>=22` (the others keep `>=18`). `parseJsonExact`
+keeps an integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text, which Node 18 and 20
+lack; there such a value comes back rounded, so a block holding one (a Propose's `expires_epoch`, which the node does
+not bound) fails closed: csd-light refuses to bind it (`malformed`) and the replica does not step past it. npm and
+pnpm warn and install unless the consumer sets a strict engines option; a manager that enforces `engines` refuses the
+install on an older Node.
+
+## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; published 2026-11-22; consensus-surface files edited, no rule change, new exports) - a held replay context
 
 No rule changes. New root exports: `newReplayContext`, the type `ReplayContext`, `ReplayContextRefusal` (with its code
 type) and `isChainHeight`. CONVENTION.md section 5 gains one paragraph: a resolver may hold its replay between tips and
@@ -115,7 +170,7 @@ context unchanged (positions and ids outside the domain among them), a fed event
 generator as the events, an answer's name profile written over, and the sloppy-mode refusal. cairnx-api 1.0.0 (0.1.3
 was never published) adds `order=length` on `names`, takes this core as its exact peer and is the read API's contract.
 
-## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; unreleased; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
+## cairnx-core 0.2.9, cairnx-api 0.1.2 (2026-11-21, Plan 91 G6 slice 1; published 2026-11-22; consensus-surface files edited, no rule change) - the replay as a fold, and the expiry sweep by due height
 
 No rule changes. `resolve.ts` runs the replay as a fold: one step per event in apply order, and an end at the tip
 (the last flush of deferred cancels, the closing sweep at `tipHeight + 1`, the materialized state) that is the only
@@ -197,7 +252,7 @@ outside the domain left to the differential); the token moves of 28,607 inputs; 
 records; 1,418 client-surface checks; crosslang green, with the inert-event check in the three fuzz modes. cairnx-api
 0.1.2 is a peer-only step onto this core.
 
-## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; unreleased; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
+## csd-light 0.1.27 (2026-11-19, Plan 91 wallet audit F4; published 2026-11-19; reject-more in the block bind, no consensus-surface change) - a block binds only in the node's text form
 
 `bindBlockTxs`, and with it `bindBlockBody` and `verifyTxInclusion`, refuses as `body-mismatch` a served tx whose
 `txid` field is absent or not exactly the id its body hashes to, whose `prev_txid`, `script_sig`, `script_pubkey`,
@@ -222,7 +277,7 @@ the node's form) and values. Txids, sighashes, signatures and replay output are 
 CHANGELOG listed in `files`. Its one workspace dependent, cairnx-replica, is private and has no published version,
 so it keeps 0.1.0 and packs with csd-light 0.1.27.
 
-## cairnx-core 0.2.8, cairnx-api 0.1.1 (2026-11-21, Plan 91; unreleased; consensus-surface files edited, no state change) - forward resolution, token moves in the log, the version and the gate table; the convention text follows the code
+## cairnx-core 0.2.8, cairnx-api 0.1.1 (2026-11-21, Plan 91; published 2026-11-21; consensus-surface files edited, no state change) - forward resolution, token moves in the log, the version and the gate table; the convention text follows the code
 
 New root exports, each in a new file, none of which writes state: `resolveNameIn(names, name)` and `nameView(names,
 name)` in `src/forward.ts`, forward resolution moved from the reference service without a change to its body (the
@@ -266,7 +321,7 @@ zero token price, the recapture premium staircase and the recaptured record's an
 reservation expiry and duplicate feeds below V29. Sixteen new vectors (`cases-convention.json`,
 `conformance/gen-convention-vectors.mjs`) pin them in JS and Python; no rule changed.
 
-## cairnx-core 0.2.7 (2026-11-18, Plan 91 G1; unreleased; consensus-surface files edited, no state change) - replay cost
+## cairnx-core 0.2.7 (2026-11-18, Plan 91 G1; published 2026-11-18; consensus-surface files edited, no state change) - replay cost
 
 No state change; replay cost. The replay's walks that grew with total state leave the per-event path: before each
 event the sweep walked every open offer, open bid, pending reservation and recapture reservation, and each reveal
@@ -302,7 +357,7 @@ visits the seller's matching offers that a live fclaim hold freezes, on each can
 most `FCLAIM_MAX_HOLD_SPAN`, 89 blocks, after its grant); and below V29 a duplicated offer id applied after a same-block bulk cancel leaves the new
 copy open with its id out of the open set, so it never expires (only a feed that repeats an event can produce it).
 
-## cairnx-core 0.2.6 (2026-11-18, Plan 91 codes; unreleased; consensus-surface files edited, no state change) - stable reason codes
+## cairnx-core 0.2.6 (2026-11-18, Plan 91 codes; not published as 0.2.6, first on npm in 0.2.7, published 2026-11-18; consensus-surface files edited, no state change) - stable reason codes
 
 `CONVENTION.md` section 40 adds a reason code to every entry of the applied log and to every record refusal
 (`explainRecord`, `RecordError`), from a table of 113 in `src/codes.ts`. The log is outside canonical state (section
@@ -323,7 +378,7 @@ mutations); the client helpers equal over 1,418 checks. Every input agreed. So t
 replayer on it forks") is accepted for this release: such a replayer derives the same state, and re-pinning it brings
 the codes, not convergence.
 
-## cairnx-core 0.2.5 (2026-11-18, Plan 91 events-rule-a; unreleased; `resolve()` unchanged, its input form made normative) - the rule from a block to events
+## cairnx-core 0.2.5 (2026-11-18, Plan 91 events-rule-a; not published as 0.2.5, first on npm in 0.2.7, published 2026-11-18; `resolve()` unchanged, its input form made normative) - the rule from a block to events
 
 The input of the replay is written down: `CONVENTION.md` section 33 states which transactions of a block are events
 for a domain and an activation height, at which occurrence, in which order, with which field forms and author, and the
@@ -353,7 +408,7 @@ running sha256 from 32 zero bytes over each event-holding block: its height (8 b
 ascending position the position (4 bytes big endian), the transaction id (32 bytes) and the author (20 bytes).
 `test/vectors/hashes.json` pins both, over synthetic cases and over the replay corpus at its 21 pinned heights.
 
-## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; unreleased; no consensus-surface change) - records, tests and docs
+## cairnx-core 0.2.4 (2026-11-02, Plan 90 SDK2; published 2026-11-06; no consensus-surface change) - records, tests and docs
 
 Client-side and docs only: `resolve()`, canonical state and every `verifyFillSpv` verdict are unchanged (the
 vectors, the 21 pinned replay heights and the fuzz are byte-identical). `verifyFillSpv`'s contract says what its
@@ -362,7 +417,7 @@ later item. Five new vectors (`cases-rules.json`) pin three existing resolver ru
 within-block order, the canonical uri, the same-ticker offer); no rule changed. New exports `offerFillTooLate`, the offer-id
 lanes' expiry predicate, and `FCLAIM_MAX_HOLD_SPAN` (89, the longest fclaim hold; `GAP_NEEDED` keeps its value).
 
-## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; unreleased; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
+## csd-crypto 0.1.21, csd-siwc 0.1.22, csd-tx 0.1.24, csd-vectors 0.1.17 (2026-11-02, Plan 90 SDK1; published 2026-11-06; signature acceptance aligned with the node) - verifyDigest reads compact signatures only
 
 `verifyDigest` passes `format: "compact"` to noble's `secp256k1.verify`, so the 64 signature bytes are read as
 r || s only, as the node reads them (compute-substrate `src/crypto/mod.rs` `verify_sig`: `Signature::from_compact`,
@@ -379,7 +434,7 @@ same acceptance set. The site and wallet bundles take the change when re-vendore
 re-pinned. Publish order (pnpm only): (1) `csd-vectors`, `csd-crypto`; (2) `csd-tx`, `csd-siwc`. No byte, txid,
 sighash, LWMA, chainwork or replay change.
 
-## cairnx-core 0.2.3, csd-client 0.1.20, csd-light 0.1.26 (2026-10-24, Plan 85 23.1; unreleased, npm window 5; no consensus-surface change) - the admission check's two activation gates, the node's answer types
+## cairnx-core 0.2.3, csd-client 0.1.20, csd-light 0.1.26 (2026-10-24, Plan 85 23.1; published 2026-10-26, npm window 5; no consensus-surface change) - the admission check's two activation gates, the node's answer types
 
 `provenOfferRefusal` refuses an offer anchored below `ACTIVATION_HEIGHT` (29,860) and a name offer anchored below
 `V11_HEIGHT` (29,960), the two record-only rules it lacked (client-side; `resolve()` does not call it). Each rule has
@@ -402,7 +457,7 @@ fields the node never sent. csd-light bumps as a dependent of csd-client and exp
 `bindBlockBody` and `verifyTxInclusion` already run, for a caller that parses the body with its own exact parser;
 no behaviour change.
 
-## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; unreleased; no consensus-surface change) - each verification rule in one home
+## csd-client 0.1.19, csd-light 0.1.25, csd-crypto 0.1.20, csd-tx 0.1.23, csd-siwc 0.1.21, cairnx-core 0.2.2 (2026-10-23, Plan 85 22.1 to 22.3; published 2026-10-23, npm window 4; no consensus-surface change) - each verification rule in one home
 
 csd-client parses node bodies with `parseJsonExact` by default and exports it: an integer literal outside the safe
 JS range (a Propose's `expires_epoch` is an unbounded u64) comes back as an exact bigint read from its source text,
@@ -439,7 +494,7 @@ the parse is unchanged.
 
 No byte, txid, sighash, LWMA, chainwork or replay change.
 
-## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; unreleased, publish window 3; no consensus-surface change) - shared route checks and script address
+## csd-light 0.1.24, csd-crypto 0.1.19, csd-tx 0.1.22, csd-siwc 0.1.20 (2026-10-19, Plan 85 13b.1; published 2026-10-20, publish window 3; no consensus-surface change) - shared route checks and script address
 
 csd-light adds `tipHeaderPowOk` and `contenderPlausible`, the checks cairn and csd-indexer each carry before a
 non-primary RPC backend may win routing; csd-crypto adds `addrFromScriptPubkey`, the node's address parser
@@ -487,7 +542,7 @@ also carries 12.1b below). csd-vectors and csd-indexwire are unchanged. Publish 
 (1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) `csd-tx`, `csd-light`, `csd-registry`, `csd-siwc`,
 `cairnx-core` in any order.
 
-## cairnx-core 0.2.1 (2026-10-19, Plan 85 12.5; unreleased; no consensus-surface change) - `resolve.ts` split into handlers
+## cairnx-core 0.2.1 (2026-10-19, Plan 85 12.5; published 2026-10-20, publish window 3; no consensus-surface change) - `resolve.ts` split into handlers
 
 `resolve()` keeps the sort, the V29 de-dup, the replay loop, the block-boundary cancel flush and the
 materialization in `src/resolve.ts`; each record kind's apply step moved verbatim into `src/resolve/`
@@ -536,7 +591,7 @@ Publish order (pnpm only): (1) `csd-codec`; (2) `csd-crypto`, `csd-client`; (3) 
 `csd-registry`, `csd-siwc`, `cairnx-core` in any order. If `packages/registry` is deleted before the publish
 (Plan 85 P-5), drop it from step 3.
 
-## csd-crypto 0.1.16 + csd-tx 0.1.19 + csd-registry 0.1.18 + csd-siwc 0.1.17 (2026-10-09, Plan 83 W2; STAGED, not published; no consensus-surface change) - one csd-codec in the published graph
+## csd-crypto 0.1.16 + csd-tx 0.1.19 + csd-registry 0.1.18 + csd-siwc 0.1.17 (2026-10-09, Plan 83 W2; published 2026-10-10; no consensus-surface change) - one csd-codec in the published graph
 
 Published `csd-crypto@0.1.15` pins `csd-codec@0.1.15`, while every other package pins `csd-codec@0.1.16`, so
 any consumer of crypto (directly or through `csd-tx@0.1.18`, `csd-registry@0.1.17`, `csd-siwc@0.1.16`, which

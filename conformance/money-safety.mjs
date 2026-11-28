@@ -1,16 +1,16 @@
-// MONEY-SAFETY ANALYSIS PASS — internal audit tool. It REPORTS, it never gates.
+// MONEY-SAFETY ANALYSIS PASS: internal audit tool. It REPORTS, it never gates.
 //
 // The class of bug the operator kept finding by racing two wallets: an honest user pays a fee, the
 // base node anchors the fee output (it is a pure data-anchor with only a feerate floor), and the
 // off-chain resolver then REJECTS the record. The fee is a real on-chain UTXO to the treasury and is
 // never returned. Past audits scored "can an ATTACKER steal?" (no) and missed this. This tool asks the
 // right question: "did an honest, correctly-formed record get rejected AFTER its treasury fee was
-// already anchored?" — i.e. a silent honest-user burn.
+// already anchored?", i.e. a silent honest-user burn.
 //
 // Mechanism (no consensus-code change): the compiled resolver already returns its applied-event log
 // (resolve().events = [{height,pos,id,kind,ok,note}], stripped from canonicalState) and every event
 // carries paidTo. A burn is EXACTLY a rejected event whose paidTo pays the treasury. We do not
-// enumerate record types — the treasury-output test covers every fee-bearing record, including any
+// enumerate record types: the treasury-output test covers every fee-bearing record, including any
 // future one. The ~0.25 CSD miner propose fee is separate from paidTo and is NOT counted (it is the
 // unavoidable anchor cost of touching the chain at all).
 //
@@ -18,7 +18,7 @@
 //   node conformance/money-safety.mjs             # run the built-in scenario corpus, print the burn table
 //   node conformance/money-safety.mjs --selftest  # additionally assert the DETECTOR classifies correctly
 //                                                 # (exit 1 only if the tool itself is broken, never because
-//                                                 #  a burn exists — a burn is an informational finding)
+//                                                 #  a burn exists: a burn is an informational finding)
 //   cat seqs.json | node conformance/money-safety.mjs --stdin   # detect over your own sequences
 //        seqs.json = {"sequences":[{"label":"...","events":[...],"tipHeight":N}, ...]}
 //
@@ -68,7 +68,7 @@ function corpus() {
   const out = [];
   const push = (label, expect, events, tipHeight, note) => out.push({ label, expect, events, tipHeight, note });
 
-  // 1. REGISTER RACE, pre-V25 (reachable at any tip < 51000). A registers "test" and wins; B reveals the
+  // 1. REGISTER RACE, pre-V25 (reachable at any tip below V25_HEIGHT, 46,440). A registers "test" and wins; B reveals the
   //    same name two blocks later, paying the full reg fee, and is rejected "name taken" → B burns 6.7 CSD.
   //    This is the W2 "test" @h44662 incident, reproduced. Closed for registrations at height ≥ V25.
   {
@@ -311,7 +311,7 @@ function corpus() {
 
 // ── structural note on recapture (finding #1 from the go-live race audit) ────────────────────────────
 // The recapture-premium burn (a lost lapsed-name reclaim burning up to ~300 CSD) was real pre-V26. With
-// V26 staged at height 51200 it is now STRUCTURALLY unreachable: a lease can only lapse term+grace after
+// V26 at height 46,480 it is now STRUCTURALLY unreachable: a lease can only lapse term+grace after
 // its earliest possible registration (V11), which is far above V26. Report the arithmetic so the closure
 // is auditable rather than assumed.
 function recaptureClosureNote() {

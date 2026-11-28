@@ -1,5 +1,5 @@
-// The shipped table: shape and grid, equality with the wallet's table as it shipped (the copy of its two generated
-// files in fixtures/), the wallet files rendered from it byte for byte, the floor and the activation root against the
+// The shipped table: shape and grid, the wallet's table as it shipped (the copy of its two generated files in
+// fixtures/) as a prefix of it, the wallet's files rendered from that prefix byte for byte, the floor and the activation root against the
 // recorded blocks the replica's tests hold, the build and its refusals, and the module the package exports. What an
 // entry is on the chain is not checked here: the generator's --check does that against a headers source and a second
 // RPC (generate.test.ts runs it against stubs).
@@ -20,7 +20,10 @@ const why = (fn: () => unknown) => { const e = thrown(fn); return e instanceof E
 const text = read("../anchors.json"), table = tableMod.parseTable(text);
 const pkg = JSON.parse(read("../package.json")) as { name: string; version: string; private?: boolean; exports: Record<string, unknown> } & Record<string, unknown>;
 
-console.log("the table is the wallet's, as it shipped:");
+// The fixtures are the wallet's record, not this table's: they move only when the wallet ships a new table. What they
+// hold is that every anchor the wallet trusts today is in this table unchanged, so a wallet that switches to the
+// package keeps each checkpoint it had and gains only newer ones: the wallet's table is a prefix of the package's.
+console.log("the wallet's table, as it shipped, is a prefix of this table:");
 // cairn-wallet origin/master at its 0.3.4 release: src/core/spvanchors.ts and src/core/spvnewest.ts, copied byte for byte.
 const WALLET_COMMIT = "39882ed95a8064e9b2d148192967d7f12fc2b361";
 const walletAnchors = read("./fixtures/wallet-spvanchors.txt"), walletNewest = read("./fixtures/wallet-spvnewest.txt");
@@ -30,15 +33,21 @@ ok(`the fixtures are the wallet's two files at ${WALLET_COMMIT.slice(0, 7)} (sha
 const fl = /export const SPV_FLOOR = \{ height: (\d+), hash: "(0x[0-9a-f]{64})" \} as const;/.exec(walletAnchors);
 const walletEntries = [...walletAnchors.matchAll(/^ {2}"(0x[0-9a-f]{64})", \/\/ (\d+)$/gm)].map((m): Anchor => ({ height: Number(m[2]), hash: m[1]! }));
 const walletChunk = Number(/export const SPV_CHUNK = (\d+);/.exec(walletAnchors)?.[1]);
-ok("the floor, the chunk and each of the entries (hash and height) equal the wallet's",
+const walletTable = { ...table, anchors: walletEntries };
+ok("the floor and the chunk equal the wallet's, and each wallet entry (hash and height) is this table's entry at its index",
   fl !== null && table.floor.height === Number(fl[1]) && table.floor.hash === fl[2] && table.chunk === walletChunk &&
-  JSON.stringify(table.anchors) === JSON.stringify(walletEntries));
+  table.anchors.length >= walletEntries.length && JSON.stringify(table.anchors.slice(0, walletEntries.length)) === JSON.stringify(walletEntries) &&
+  tableMod.extensionFault(walletTable, table) === null);
 ok(`the wallet's table has 28 entries from 32,767 to 143,359 on the 4,096 grid, floor 29,960 (${walletEntries.length} read)`,
   walletEntries.length === 28 && walletEntries[0]?.height === 32_767 && walletEntries.at(-1)?.height === 143_359 && walletChunk === 4096 && table.floor.height === 29_960);
-ok("the renderer gives the wallet's spvanchors.ts byte for byte", wallet.renderSpvAnchors(table) === walletAnchors);
-ok("the renderer gives the wallet's spvnewest.ts byte for byte", wallet.renderSpvNewest(table) === walletNewest);
+ok("the renderer gives the wallet's spvanchors.ts byte for byte from the wallet's prefix", wallet.renderSpvAnchors(walletTable) === walletAnchors);
+ok("the renderer gives the wallet's spvnewest.ts byte for byte from the wallet's prefix", wallet.renderSpvNewest(walletTable) === walletNewest);
 const cli = (which: string) => spawnSync(process.execPath, [new URL("../scripts/render-wallet.mjs", import.meta.url).pathname, which], { encoding: "utf8" });
-ok("the script as the wallet will call it prints both files byte for byte", cli("anchors").stdout === walletAnchors && cli("newest").stdout === walletNewest);
+const nextAnchors = cli("anchors").stdout, nextNewest = cli("newest").stdout;
+ok("the script as the wallet will call it prints both files of this table", nextAnchors === wallet.renderSpvAnchors(table) && nextNewest === wallet.renderSpvNewest(table));
+const added = table.anchors.slice(walletEntries.length).map((a) => `  "${a.hash}", // ${a.height}\n`).join("");
+ok(`a wallet that renders this table changes spvanchors.ts by the added entries' lines only and spvnewest.ts by its height`,
+  nextAnchors === walletAnchors.replace(/\];\n$/, `${added}];\n`) && nextNewest === walletNewest.replace(String(walletEntries.at(-1)!.height), String(table.anchors.at(-1)!.height)));
 ok("the script refuses an unknown file name, exit 2", cli("everything").status === 2);
 ok("the renderer refuses a table that fails the shape rules", /ascend/.test(why(() => wallet.renderSpvAnchors({ ...table, anchors: table.anchors.filter((_, i) => i !== 10) }))));
 
@@ -48,8 +57,8 @@ const pkgDir = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 symlinkSync(pkgDir, join(linkDir, "pkg"));
 const viaLink = (script: string, ...args: string[]) => spawnSync(process.execPath, [join(linkDir, "pkg/scripts", script), ...args], { encoding: "utf8" });
 const linked = viaLink("render-wallet.mjs", "anchors");
-ok("render-wallet.mjs through a symlinked package directory prints the wallet's spvanchors.ts (sha256 5b79a4a4...) and exits 0",
-  linked.status === 0 && sha(linked.stdout) === sha(walletAnchors), `exit ${linked.status}, ${linked.stdout.length} bytes`);
+ok("render-wallet.mjs through a symlinked package directory prints this table's spvanchors.ts and exits 0",
+  linked.status === 0 && sha(linked.stdout) === sha(nextAnchors), `exit ${linked.status}, ${linked.stdout.length} bytes`);
 const unknown = viaLink("render-wallet.mjs", "bogus");
 ok("render-wallet.mjs through the symlink refuses an unknown table name: exit 2 with its usage", unknown.status === 2 && /usage: render-wallet/.test(unknown.stderr), `exit ${unknown.status}`);
 const copy = join(linkDir, "copy");
@@ -59,7 +68,7 @@ copyFileSync(here("../anchors.json"), join(copy, "anchors.json"));
 symlinkSync(copy, join(linkDir, "copy-link"));
 const builtVia = spawnSync(process.execPath, [join(linkDir, "copy-link/scripts/build.mjs")], { encoding: "utf8" });
 ok("build.mjs through a symlinked package directory builds: exit 0, its line printed, the module written byte for byte",
-  builtVia.status === 0 && /csd-anchors build: 28 entries/.test(builtVia.stdout) && existsSync(join(copy, "dist/index.js")) && readFileSync(join(copy, "dist/index.js"), "utf8") === read("../dist/index.js"),
+  builtVia.status === 0 && builtVia.stdout.includes(`csd-anchors build: ${table.anchors.length} entries`) && existsSync(join(copy, "dist/index.js")) && readFileSync(join(copy, "dist/index.js"), "utf8") === read("../dist/index.js"),
   `exit ${builtVia.status}: ${builtVia.stdout}${builtVia.stderr}`);
 rmSync(linkDir, { recursive: true, force: true });
 
@@ -105,11 +114,12 @@ if (existsSync(prevFile)) {
   ok(`no table has been published, which only the first version may say (this is ${pkg.version}); from the next version on previous-published.json must exist`, pkg.version === "0.1.0");
 }
 const more = structuredClone(table);
-more.anchors.push({ height: 147_455, hash: `0x${"ab".repeat(32)}` });
+more.anchors.push({ height: table.anchors.at(-1)!.height + 4096, hash: `0x${"ab".repeat(32)}` });
 ok("the rule accepts a table with one entry added", tableMod.extensionFault(table, more) === null);
 const edited = structuredClone(more); edited.anchors[3]!.hash = `0x${"cd".repeat(32)}`;
 ok("the rule refuses a changed entry, naming it", /entry 3\)/.test(tableMod.extensionFault(table, edited) ?? ""));
-ok("the rule refuses a lost last entry, naming it", /entry 27\)/.test(tableMod.extensionFault(table, { ...table, anchors: table.anchors.slice(0, 27) }) ?? ""));
+const last = table.anchors.length - 1;
+ok("the rule refuses a lost last entry, naming it", new RegExp(`entry ${last}\\)`).test(tableMod.extensionFault(table, { ...table, anchors: table.anchors.slice(0, last) }) ?? ""));
 const shifted = structuredClone(more); shifted.anchors[3]!.height += 4096;
 ok("the rule refuses an entry kept at another height, naming it", /entry 3\)/.test(tableMod.extensionFault(table, shifted) ?? ""));
 const moved = structuredClone(more); moved.floor.hash = `0x${"ef".repeat(32)}`;
@@ -121,7 +131,7 @@ console.log("the build and the module:");
 const tmp = mkdtempSync(join(tmpdir(), "anchors-build-"));
 const rootWith = (name: string, body: string) => { const d = join(tmp, name); mkdirSync(d); writeFileSync(join(d, "anchors.json"), body); return d; };
 const built = rootWith("ok", text);
-ok("the build of the committed text passes and writes the module the package exports, byte for byte", builder.build(built).anchors.length === 28 &&
+ok("the build of the committed text passes and writes the module the package exports, byte for byte", builder.build(built).anchors.length === table.anchors.length &&
   readFileSync(join(built, "dist/index.js"), "utf8") === read("../dist/index.js") && readFileSync(join(built, "dist/index.d.ts"), "utf8") === read("../dist/index.d.ts"));
 const refusedBuild = (name: string, body: string, re: RegExp) => { const m = why(() => builder.build(rootWith(name, body))); ok(`the build refuses ${name}`, re.test(m), m); };
 refusedBuild("a hash in upper case", text.replace(table.anchors[0]!.hash, upper(table.anchors[0]!.hash)), /at least one/);

@@ -2,13 +2,13 @@
 // records a fill; the replay decides delivery), and a leased name registry for Compute Substrate, carried
 // entirely in the chain's Propose/Attest `uri` payloads (the Ordinals/Runes trust class,
 // stated plainly). CONVENTION.md in this package is the normative spec; test/vectors/ is the
-// conformance bar — an independent implementation is conformant iff it reproduces every
+// conformance bar: an independent implementation is conformant iff it reproduces every
 // vector byte-for-byte and the pinned live-chain replay hashes.
 //
-//   records  — parseRecord (the validation gate) and explainRecord (its reason code) + canonical builders for every
+//   records  - parseRecord (the validation gate) and explainRecord (its reason code) + canonical builders for every
 //              record type (RecordError names the rule they refuse) + the decoy-key allowlists (*_KEYS)
-//   resolve  — THE pure deterministic resolver: (events, tipHeight) → CairnXState
-//   types    — constants (activation heights, fees, lease parameters) + state/record types + the pure
+//   resolve  - THE pure deterministic resolver: (events, tipHeight) → CairnXState
+//   types    - constants (activation heights, fees, lease parameters) + state/record types + the pure
 //              client selectors (claimWindowAt/Of, claimGraceOf, offerExpiryHeightOf, epochOf, fee math)
 //   client   - the claim-burial depth a client waits for before paying, sized against a minority miner (requiredClaimDepth)
 export * from "./types.js";
@@ -16,11 +16,11 @@ export * from "./records.js";
 export { resolve, canonicalState, ptAmt, applyOrder, eventId } from "./resolve.js";
 export { newReplayContext, ReplayContextRefusal, type ReplayContext, type ReplayContextRefusalCode } from "./replay-context.js";
 export * from "./client.js";
-// preflight — the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
+// preflight: the pure "before you sign a value tx" surface (previewFill / fillIsSafe / finalizeWinnerCheck /
 // requiredFillOutputs / buildFeeHeight); mirrors the resolver's fill + claim + freeze math so every
 // value-bearing builder inherits loss-safety.
 export * from "./preflight.js";
-// primary — the reverse-resolution (addr→primary name) selector every host must compute identically.
+// primary: the reverse-resolution (addr→primary name) selector every host must compute identically.
 export * from "./primary.js";
 // forward: CONVENTION §35.4, the address a name receives at (resolveNameIn) and the view of a name a reader shows (nameView).
 export { nameView, resolveNameIn, type NameView, type NameViewState, type ResolvedName } from "./forward.js";
@@ -34,7 +34,7 @@ export * from "./verifyfill.js";
 export { paidToFromOutputs, burnedPayment } from "./paidto.js";
 // events: CONVENTION §33, the rule from a block to the events resolve() replays.
 export {
-  CAIRNX_EVENT_RULE, blockEvents, blockMembers, eventOfTx, type EventMember, type EventRule, type EventRuleTx, type EventsSoFar,
+  CAIRNX_EVENT_RULE, blockEvents, blockMembers, eventOfTx, isIndex, type EventMember, type EventRule, type EventRuleTx, type EventsSoFar,
 } from "./events.js";
 // hashes: CONVENTION §34, the state hash and the events hash two replicas compare at one block.
 export { EVENTS_HASH_START, FINAL_DEPTH, eventsHash, eventsHashStep, stateHash, type HashedEvent } from "./hashes.js";

@@ -1,12 +1,12 @@
-// Compute Substrate consensus constants — frozen, lifted from
-// /opt/substrate_miner/src/compute-substrate/src/params/mod.rs. These are NOT tunable;
+// Compute Substrate consensus constants, frozen, lifted from the node's src/params/mod.rs
+// (compute-substrate). These are NOT tunable;
 // they define the chain. Verified against the node's golden vectors.
 import { hexToBytes } from "@noble/hashes/utils";
 
 /** CHAIN_ID = "compute-substrate-mainnet". */
 export const CHAIN_ID = "compute-substrate-mainnet";
 
-/** sha256(CHAIN_ID) — domain-separation tail in the sighash preimage. */
+/** sha256(CHAIN_ID): domain-separation tail in the sighash preimage. */
 export const CHAIN_ID_HASH: Uint8Array = hexToBytes("1b17c7b04d05394674ca2c8e24f7433e251a1973cac2000c7b60966546e0b875");
 
 /** Genesis block header hash (the chain's anchor; pin this in the light client). */
@@ -45,10 +45,10 @@ export const MAX_TX_OUTPUTS = 512;
 export const MAX_DOMAIN_BYTES = 128;
 export const MAX_URI_BYTES = 512;
 
-/** Largest u128 — the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
+/** Largest u128: the node clamps per-block work to u128 and saturating_adds cumulative chainwork. */
 export const MAX_U128 = (1n << 128n) - 1n;
 
-/** block_reward(height) — INITIAL_REWARD halved every HALVING_INTERVAL, 0 after MAX_HALVINGS. */
+/** block_reward(height): INITIAL_REWARD halved every HALVING_INTERVAL, 0 after MAX_HALVINGS. */
 export function blockReward(height: number): number {
   const halvings = Math.floor(height / HALVING_INTERVAL);
   if (halvings >= MAX_HALVINGS) return 0;

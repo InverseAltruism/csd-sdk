@@ -2,6 +2,28 @@
 
 Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
 
+## 0.1.28
+
+- Docs: the README says what the client checks for every header and what it does not establish alone, that the
+  chain it holds is the heaviest one that exists: the LWMA rule lowers the difficulty of a branch timed at its longest
+  counted solvetime, so a sole header source can serve a valid branch with less work. The source comments that said a
+  server "cannot feed a low-difficulty fork" say this instead. The README and the package description no longer name a
+  "verified-RPC facade", which the package does not export. No code changes.
+- `engines.node` is `>=22`, as csd-client's. A block body is read with csd-client's `parseJsonExact`, which keeps an
+  integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text (Node 22 and later here; 18
+  and 20 lack it). On an older Node a block holding such a value (a Propose's `expires_epoch`, which the node does
+  not bound, or an output value) fails closed: `bindBlockBody` refuses it as `malformed`, and `verifyTxInclusion`
+  refuses every transaction in it. npm and pnpm warn and install unless the consumer sets a strict engines option;
+  a manager that enforces `engines` refuses the install on an older Node.
+- Docs: the README and the JSDoc of `checkpoints`, `seedTrusted` and `tryReorg` say what a checkpoint holds against a
+  reorg. A seed's top (`syncFromCheckpoint`, `seedTrusted`) is checked once when it is seeded and is pinned only when
+  `checkpoints` also lists it; without that entry `tryReorg` replaces it with a heavier branch forking below it. A
+  branch through a checkpoint is refused; a branch ending below one never meets it and is adopted on work alone, so a
+  reorg below a checkpoint needs more work than the whole chain it replaces. `test/light-offline.test.ts`
+  ("checkpoints and tryReorg") pins the three cases. No code changes.
+- Pins `@inversealtruism/csd-codec` 0.1.19 and `@inversealtruism/csd-client` 0.1.21 (a non-2xx error carries its
+  status and, when it arrives within 1 second, its body).
+
 ## 0.1.27
 
 - `bindBlockTxs`, and with it `bindBlockBody` and `LightClient.verifyTxInclusion`, refuses as `body-mismatch` a

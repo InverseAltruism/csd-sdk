@@ -5,12 +5,12 @@ hash and state hash there, for `pinned()` of `@inversealtruism/cairnx-replica`. 
 blocks above the pin. Below the pin the trust is this release.
 
 ```bash
-npm install @inversealtruism/cairnx-pin @inversealtruism/cairnx-replica@<version> @inversealtruism/cairnx-core@<version>
+npm install @inversealtruism/cairnx-pin @inversealtruism/cairnx-replica   # npm 7 or later adds the cairnx-core the replica names
 ```
 
 `@inversealtruism/cairnx-replica` is an optional peer with a range (`^` the replica version this release was built
-with): the package uses it for the `Pin` type alone. Install a replica inside that range and the cairnx-core that
-replica names.
+with): the package uses it for the `Pin` type alone. Install a replica inside that range (`npm view
+@inversealtruism/cairnx-pin peerDependencies`) and the cairnx-core that replica names.
 
 ```ts
 import { PIN } from "@inversealtruism/cairnx-pin";

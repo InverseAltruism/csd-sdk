@@ -114,11 +114,11 @@ export function targetToBits(target: Uint8Array): number {
 }
 
 /**
- * The largest (easiest) target consensus allows — the value of POW_LIMIT_BITS as an integer.
+ * The largest (easiest) target consensus allows: the value of POW_LIMIT_BITS as an integer.
  * The Rust node gates EVERY PoW/work check on "not easier than the pow limit" (chain/pow.rs
  * bits_within_pow_limit, reached from pow_ok_strict and work_from_bits). Without this gate the JS
- * verifier would deem valid a header whose `bits` encode a difficulty easier than the limit — one
- * the node rejects at chain/index.rs ("bits beyond pow limit") — a consensus-conformance divergence
+ * verifier would deem valid a header whose `bits` encode a difficulty easier than the limit, one
+ * the node rejects at chain/index.rs ("bits beyond pow limit"), a consensus-conformance divergence
  * (audit NEW-1). The `target > POW_LIMIT_TARGET` check below mirrors the node at 0 differential divergence.
  */
 const POW_LIMIT_TARGET = targetToBigInt(bitsToTarget(POW_LIMIT_BITS));
@@ -132,7 +132,7 @@ export function powOk(headerHashBE: Uint8Array, bits: number): boolean {
 
 /**
  * Chainwork contributed by a header at difficulty `bits`: floor(2^256 / (target + 1)), CLAMPED to
- * u128 — faithful to the node's `work_from_bits` (pow.rs), which returns `w.to_u128().unwrap_or(MAX)`.
+ * u128, faithful to the node's `work_from_bits` (pow.rs), which returns `w.to_u128().unwrap_or(MAX)`.
  * A no-op at any realistic difficulty (work ≪ 2^128), but keeps the SDK a byte-exact port at extremes
  * instead of diverging from the node's u128 accounting (finding A-S4).
  */
@@ -164,25 +164,42 @@ export function merkleRoot(txidsHex: string[]): string {
   return hx(layer[0]!);
 }
 
+// A sanity bound on a branch, not the chain's block cap (a wallet keeps this code for years): 2^32 transactions of at
+// least 28 bytes each (the smallest encoding) is over 100 GiB in one block. Below it every position and 2^levels is an
+// exact integer, and a hostile branch cannot ask for more than 32 hashes.
+const MAX_MERKLE_LEVELS = 32;
+
 /**
- * Verify a merkle inclusion proof (Electrum format): fold `txid` up the branch and assert it
- * equals `merkleRootHex`. `pos` is the tx index in the block; its bits select sibling side.
+ * Verify a merkle inclusion proof (Electrum format): fold `txid` up the branch to `merkleRootHex`, the bits of `pos`
+ * selecting each sibling's side. True proves membership and position: `txidHex` is the node at index `pos` of the
+ * row `branchHex.length` levels below that root. It does not prove that `txidHex` is a transaction id (an inner node
+ * folds with the shorter branch above it, so pass an id hashed from a body you hold), how many transactions the
+ * block holds, or that the root's header is on the chain.
  *
- * B8-sdklow (REBIND, audit LOW): declared boolean and now BEHAVES boolean - malformed proof material
- * (non-hex / odd-length txid, sibling, or root) returns false instead of throwing. A verifier that
- * crashes on hostile input is an availability hole at a trust boundary, and every refusal path here is
- * fail-closed either way (false and throw both refuse; nothing formerly rejected is now accepted).
+ * Refused with false (malformed input does not throw: test/codec.test.ts): a txid, sibling or root that is not 32
+ * bytes; more than MAX_MERKLE_LEVELS levels; `pos` not a safe integer in [0, 2^levels); a level at which the node is
+ * the right child of a sibling equal to it. The position rests on that last refusal and the 2^levels bound, not on
+ * MAX_MERKLE_LEVELS. That last shape reads an odd row's duplicated last node from the wrong
+ * side, so the transactions under it would verify at a later position too. An honest proof never has it: an odd row
+ * pairs its last node as the left child of its own copy, and two equal adjacent subtrees hold one txid twice, which
+ * the node refuses in a block ("duplicate txid within block"; the txid strips scriptSigs, so two signatures over one
+ * body are one txid). test/input-canon.test.ts checks every position of blocks of 1 to 40 txs, and samples blocks of
+ * 2,000 and 5,000 (13 levels), each against every other position below 2^levels.
  */
 export function verifyMerkleProof(txidHex: string, pos: number, branchHex: string[], merkleRootHex: string): boolean {
   try {
+    if (branchHex.length > MAX_MERKLE_LEVELS) return false;
+    if (!Number.isSafeInteger(pos) || pos < 0 || pos >= 2 ** branchHex.length) return false;
     let cur = hbFixed(txidHex, 32);
     let idx = pos;
     for (const sibHex of branchHex) {
       const sib = hbFixed(sibHex, 32);
+      const right = idx % 2 === 1;
+      if (right && hx(sib) === hx(cur)) return false;
       const buf = new Uint8Array(64);
-      if (idx & 1) { buf.set(sib, 0); buf.set(cur, 32); } else { buf.set(cur, 0); buf.set(sib, 32); }
+      if (right) { buf.set(sib, 0); buf.set(cur, 32); } else { buf.set(cur, 0); buf.set(sib, 32); }
       cur = sha256d(buf);
-      idx >>= 1;
+      idx = Math.floor(idx / 2);
     }
     // Every node is exactly 32 bytes: a shorter value would be zero-padded into the 64-byte buffer, and an
     // empty txid with an empty branch would equal an empty root. Normalizing the root through hbFixed->hx

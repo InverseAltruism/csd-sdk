@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (unreleased)
+## 0.1.1 (2026-11-23)
 
 - The peer range on cairnx-replica moves to `^0.2.0`, the replica's release that adds a note code; the pin, its log and
   `pin.json` are unchanged.

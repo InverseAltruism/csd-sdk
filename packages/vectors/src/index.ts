@@ -1,7 +1,7 @@
 // @inversealtruism/csd-vectors: the golden conformance contract, from three sources.
 //
 // These fixtures are transcribed verbatim from the Compute Substrate node's frozen test
-// suite at /opt/substrate_miner/src/compute-substrate/tests/golden_vectors.rs (the canonical
+// suite, tests/golden_vectors.rs of compute-substrate (the canonical
 // source of truth) plus the consensus params. Any @inversealtruism/csd-* codec/crypto/header impl whose
 // output diverges from these is wrong. `live.ts` holds additional real on-chain fixtures
 // pulled from the node (regenerate with scripts/gen-live-vectors.ts). `signatures.ts` holds signature

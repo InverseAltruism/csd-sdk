@@ -40,8 +40,10 @@ contributor here:
 
 - One home per concept: a rule, constant, type or encoder lives in one place and is imported everywhere else.
 - TypeScript `strict` with `noUncheckedIndexedAccess`, no `@ts-ignore`, `any` only at a parse boundary. Money is
-  integer base units (`bigint`), never floats. No empty `catch {}`; on money paths no catch-and-continue that hides a
-  failure.
+  integer base units, never floats: `bigint` in cairnx-core; csd-tx and csd-client take and return CSD amounts (coin
+  values, outputs, fees, totals) as `number`, each checked with `Number.isSafeInteger` and refused at 2^53 or above,
+  and csd-codec's `u64` takes a `bigint` or refuses a `number` that is not a safe integer. No empty `catch {}`; on
+  money paths no catch-and-continue that hides a failure.
 - Tests check behaviour at boundaries. A fix ships with a test that fails without it, plus an assertion that the
   honest path still passes with the call shape production sends. A skipped test names its reason and when it
   un-skips. No test reads another repo's working tree.

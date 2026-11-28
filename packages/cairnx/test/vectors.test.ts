@@ -11,7 +11,8 @@ assert.equal(format, 2);
 const v29 = JSON.parse(readFileSync(new URL("./vectors/cases-v29.json", import.meta.url), "utf8"));
 assert.equal(v29.format, 2);
 // The rule vectors (conformance/gen-rule-vectors.mjs, also in the Python crosscheck): the within-block apply order, the
-// canonical-uri check and the same-ticker offer refusal, each of which no other vector decides.
+// canonical-uri check, the same-ticker offer refusal, the partial fill's tail and the name contest's id key, each of
+// which no other vector decides.
 const rules = JSON.parse(readFileSync(new URL("./vectors/cases-rules.json", import.meta.url), "utf8"));
 assert.equal(rules.format, 2);
 // The convention vectors (conformance/gen-convention-vectors.mjs, also in the Python crosscheck): rules CONVENTION.md

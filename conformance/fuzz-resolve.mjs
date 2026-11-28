@@ -29,8 +29,8 @@ let gV23Clears = 0; // count of owned-name V23 nset-clears the fuzz exercised (d
 // batch exists to remove. Behavioural coverage of the deny ladder and of the legacy-claim rejection in `applyLegacyClaim`
 // (packages/cairnx/src/resolve/attest.ts) is carried by the
 // deterministic self-check at the bottom (which drives real sequences through resolve) and by the
-// state-derived cov.* counters. Caught at the B0a gate by Opus-B (B0a-R1/R2) after the first cut asserted
-// these; the PoC changed one token so the resolver never reached :799 while the counter still read 27.
+// state-derived cov.* counters. A review found that the first cut asserted these: a change of one token kept the
+// resolver from reaching :799 while the counter still read 27.
 let gFclaimGrants = 0, gFclaimDenies = 0, gV28LegacyEmitted = 0;
 
 const ARGS = process.argv.slice(2);
@@ -591,7 +591,7 @@ function genSeq() {
     const pos = ri(0, 6);
     const ee = pick(BIGEXP);
     // REBIND B0a: an fclaim propose referencing a real-ish id, so the random path reaches the §31 handler
-    // at all. MEASURED REACH, so nobody reads more into this than it delivers (Opus-A, B0a-1): over 1500
+    // at all. MEASURED REACH, so nobody reads more into this than it delivers: over 1500
     // sequences this emits ~286 fclaims, ~75 at or above V28 (the rest exit at the `height < V28_HEIGHT`
     // inertness check, which is itself worth covering), and of those ~75 only a handful target a real offer
     // record and effectively none target a CSD-priced untaken one. So in practice this path exercises the
@@ -806,7 +806,7 @@ if (EXPIRY) {
 {
   const D = "0x" + "f0".repeat(20), B = "0x" + "fb".repeat(20), NMT = "FCHK";
   // Derive the hold epoch from the live cap rather than hardcoding +1, so a future gate that lowers
-  // FCLAIM_MAX_EPOCH_AHEAD cannot make this self-check fail while blaming resolve (Opus-A, B0a-3).
+  // FCLAIM_MAX_EPOCH_AHEAD cannot make this self-check fail while blaming resolve.
   const base = R.V28_HEIGHT + 5, EE = Math.floor(base / R.EPOCH_LEN) + Math.min(1, R.FCLAIM_MAX_EPOCH_AHEAD), holdEnd = (EE + 1) * R.EPOCH_LEN - 1;
   const P = (rec, who, hh, pt, ee) => ({ kind: "propose", id: nid(), proposer: who, uri: rec.uri, payloadHash: rec.payloadHash, height: hh, pos: 0, expiresEpoch: ee ?? 9_000_000_000_000_000, paidTo: pt || {} });
   const dep = P(R.deploy({ ticker: NMT, decimals: 0, supply: "1000000", mint: "issuer" }), D, base - 4, { [TREAS]: String(R.DEPLOY_FEE) });
@@ -821,7 +821,7 @@ if (EXPIRY) {
   // `applyLegacyClaim` (packages/cairnx/src/resolve/attest.ts) rejects every legacy SCORE_CLAIM from V28. Asserting only "claimedBy is undefined above
   // the gate" would also pass if the attest were simply malformed or aimed at nothing, so pair it with a
   // BELOW-gate control built the same way: the identical claim must be GRANTED there. The pair is what makes
-  // the gate the cause. (Opus-B, B0a-R2: an assertion that passes on absence is not an assertion.)
+  // the gate the cause (an assertion that passes on absence is not an assertion).
   const legOnly = resolve([dep, mnt, off, legacy], base + 5).offers[off.id];
   if (legOnly.claimedBy !== undefined) { console.error("✗ v28 self-check FAILED, a legacy SCORE_CLAIM at >=V28 was honoured; src/resolve/attest.ts applyAttest should reject it"); process.exit(1); }
   {
@@ -837,12 +837,11 @@ if (EXPIRY) {
     // CLAIM's own height. Without this, a resolver keyed on `o.height` instead of `ev.height` passes both
     // and silently honours every legacy claim against a pre-gate offer, defeating the v2.8 sunset. That is
     // the grant-height keying class this ecosystem already had to correct once (SEAM-V28).
-    // Found at the B0a re-gate by Opus-B (M4).
     const legAcross = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT + 40, pos: 0, paidTo: {} };
     const across = resolve([depL, mntL, offL, legAcross], R.V28_HEIGHT + 60).offers[offL.id];
     if (across.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim ABOVE the gate was honoured against a BELOW-gate offer (claimedBy=${across.claimedBy}); src/resolve/attest.ts applyAttest must key on the CLAIM's height, not the offer's`); process.exit(1); }
     // Exact-boundary pin: nothing else in the suite probes height === V28_HEIGHT itself, so a `>` for `>=`
-    // slip is invisible. The gate is inclusive, so a claim AT the gate must already be rejected (Opus-B, M3).
+    // slip is invisible. The gate is inclusive, so a claim AT the gate must already be rejected.
     const legAt = { kind: "attest", txid: nid(), proposalId: offL.id, attester: B, score: 50, confidence: 0, height: R.V28_HEIGHT, pos: 0, paidTo: {} };
     const atGate = resolve([depL, mntL, offL, legAt], R.V28_HEIGHT + 20).offers[offL.id];
     if (atGate.claimedBy !== undefined) { console.error(`✗ v28 self-check FAILED, a legacy claim AT exactly V28_HEIGHT was honoured (claimedBy=${atGate.claimedBy}); the gate is inclusive (>=), not exclusive`); process.exit(1); }

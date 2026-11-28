@@ -10,9 +10,9 @@ import {
 import type { NameRec, ResolveCtx } from "./context.js";
 
 // ── v1.5 leases ── a name claimed pre-v1.5 is GRANDFATHERED one full term from activation
-// (computed lazily — no state mutation at the activation boundary). A lease past its grace is
+// (computed lazily: no state mutation at the activation boundary). A lease past its grace is
 // LAPSED: the name is unowned again (premium re-claim; viaFill immunity does not survive a
-// lapse — immunity protects a PAID basis, and an unpaid lease is an abandoned one).
+// lapse: immunity protects a PAID basis, and an unpaid lease is an abandoned one).
 const V15_EPOCH = epochOf(V15_HEIGHT);
 export const paidThrough = (n: NameRec): number => n.paidThroughEpoch ?? (V15_EPOCH + NAME_TERM_EPOCHS);
 export const lapsed = (n: NameRec, ep: number): boolean => ep > paidThrough(n) + NAME_GRACE_EPOCHS;
@@ -58,15 +58,15 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
   }
   const cur = names.get(rec.name);
   const epClaim = epochOf(ev.height);
-  // v2.5: a pending reservation past its finalize window auto-expires — the name reopens (lazy, like a
+  // v2.5: a pending reservation past its finalize window auto-expires: the name reopens (lazy, like a
   // lapsed lease). Below V25 no name is ever `pending`, so curActive === cur (pre-V25 byte-identical).
   const curActive = (cur && cur.pending && cur.finalizeBy !== undefined && ev.height > cur.finalizeBy) ? undefined : cur;
-  // v1.5: a LAPSED lease makes the name unowned again — claimable by anyone at the
+  // v1.5: a LAPSED lease makes the name unowned again: claimable by anyone at the
   // decaying premium (squat recapture). The prior holder's basis is void, BUT the premium
   // re-claim establishes a fresh PAID basis, so it is itself displacement-immune (viaFill):
   // without this, a griefer who pre-commits the name before the lapse could reveal a
   // back-dated claim within COMMIT_MAX_BLOCKS and take the just-reclaimed name from the
-  // premium payer for only the base reg fee — stealing it AND bypassing the premium entirely.
+  // premium payer for only the base reg fee: stealing it AND bypassing the premium entirely.
   // (Recapture stays PAY-NOW until V26; a `pending` reservation holds no lease so it is never lapsed.)
   if (curActive && !curActive.pending && v15 && lapsed(curActive, epClaim)) {
     // v2.6 SEALED RECAPTURE: the lapsed-name reclaim is PAYMENT-FREE and reserves the name in the internal
@@ -90,7 +90,7 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
     // NOTE: this pay-now reclaim (the pre-V26 rule) is UNREACHABLE under production constants: the
     // earliest a lease can be `lapsed` is epoch > paidThrough + NAME_GRACE_EPOCHS, and the minimum
     // paidThrough (V15_EPOCH + NAME_TERM_EPOCHS) puts the first possible lapse near height ~316k, far
-    // past V26 (51,200), so `v26` above is always true whenever `lapsed()` holds here. It is the
+    // past V26 (46,480), so `v26` above is always true whenever `lapsed()` holds here. It is the
     // correct historical rule (mirrored in Python, kept for replay integrity), but no production event
     // sequence executes it, so no vector/fuzz can cover it.
     const fee = expiredClaimFee(rec.name, epClaim - (paidThrough(curActive) + NAME_GRACE_EPOCHS), ev.height);
@@ -125,7 +125,7 @@ export function applyName(c: ResolveCtx, ev: ProposeEvent, rec: NameRecord, who:
   const cand: NameRec = { owner: who, effHeight, pos: ev.pos, id: ev.id, height: ev.height, locked: false,
     ...(v15 ? { paidThroughEpoch: epClaim + NAME_TERM_EPOCHS } : {}) };
   // lowest (effectiveHeight, pos, id) wins; a back-dated reveal can DISPLACE a squatter.
-  // v1.3: displacement arbitrates claim-vs-claim ONLY — a record acquired by a paid fill
+  // v1.3: displacement arbitrates claim-vs-claim ONLY: a record acquired by a paid fill
   // (viaFill, only ever set at v1.3+ fills) is immune, so a back-dated reveal can never
   // take a name from the innocent buyer of a completed sale (red-team H3).
   const better = !curActive || (!curActive.viaFill && earlierAnchor(effHeight, ev.pos, ev.id, curActive));
@@ -146,7 +146,7 @@ export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinaliz
   const v25 = ev.height >= V25_HEIGHT;
   const v26 = ev.height >= V26_HEIGHT;
   // v2.5 winner-only register finalize: pay the reg fee AFTER the displacement contest is frozen, so a
-  // losing reveal never pays. Promotes the reservation to a NORMAL registered name (NOT viaFill — a
+  // losing reveal never pays. Promotes the reservation to a NORMAL registered name (NOT viaFill: a
   // finalized registration is not a purchase, and marking it viaFill would trip the wallet's namespv
   // caution on every fresh name; it is already displacement-immune by the freeze-window arithmetic).
   if (!v25) { refused(ev, ev.id, "nfinalize", "GATE_NOT_ACTIVE", "before v2.5 activation"); return; }
@@ -169,7 +169,7 @@ export function applyNfinalize(c: ResolveCtx, ev: ProposeEvent, rec: NameFinaliz
   // ── v2.6 RECAPTURE finalize (decaying premium) ──
   // The reservation is in `recaptures`; the lapsed record is still in `names` (its paidThrough is the
   // premium basis). The winner pays the premium priced at the FINALIZE height (slightly more decayed =
-  // favors the payer); the name becomes a NORMAL fresh lease (NOT viaFill — displacement-immune by the
+  // favors the payer); the name becomes a NORMAL fresh lease (NOT viaFill: displacement-immune by the
   // freeze-window arithmetic, exactly like a registration finalize).
   const r = v26 ? recaptures.get(rec.name) : undefined;
   if (r && r.owner === who) {
@@ -221,7 +221,7 @@ export function applyNprofile(c: ResolveCtx, ev: ProposeEvent, rec: NameProfileR
   const { names, applied, refused } = c;
   const v15 = ev.height >= V15_HEIGHT;
   const v19 = ev.height >= V19_HEIGHT;
-  // v1.9 ENS-class identity (doc 36). INERT metadata — no value/fee/paidTo, never a send target
+  // v1.9 ENS-class identity (doc 36). INERT metadata: no value/fee/paidTo, never a send target
   // (the verified address stays in `nset`). Owner-gated, last-write-wins; an empty `p` clears it.
   // Cleared on every ownership change (nxfer/fill/reclaim) exactly like `addr`.
   if (!v19) { refused(ev, ev.id, "nprofile", "GATE_NOT_ACTIVE", "before v1.9 activation"); return; }
@@ -242,7 +242,7 @@ export function applyNrenew(c: ResolveCtx, ev: ProposeEvent, rec: NameRenewRecor
   if (n && n.pending) { refused(ev, ev.id, "nrenew", "NAME_PENDING", "name reservation not yet finalized"); return; }
   if (!n || lapsed(n, ep)) { refused(ev, ev.id, "nrenew", "NAME_NO_LIVE_LEASE", "no live lease (lapsed names are claimed, not renewed)"); return; }
   // anyone may renew a LIVE lease (third-party gifting, ENS-style); in GRACE the owner
-  // alone may — otherwise a squatter could extend a lapsing name they intend to take
+  // alone may: otherwise a squatter could extend a lapsing name they intend to take
   if (inGrace(n, ep) && who !== n.owner) { refused(ev, ev.id, "nrenew", "NAME_GRACE_OWNER_ONLY", "grace period: only the owner may renew"); return; }
   if (feeToTreasury < nameRegFee(rec.name, ev.height)) { refused(ev, ev.id, "nrenew", "TREASURY_FEE_UNPAID", "renewal fee unpaid"); return; }
   n.paidThroughEpoch = paidThrough(n) + NAME_TERM_EPOCHS;

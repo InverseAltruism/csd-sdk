@@ -9,7 +9,7 @@ import path from "node:path";
 import {
   resolve, offer, deploy, mint, previewFill, fillIsSafe, finalizeWinnerCheck,
   requiredFillOutputs, buildFeeHeight, FEE_GATE_MARGIN_BLOCKS,
-  fillEndorsement, fillOutputPlan, fillTargetId, CONF_TOKEN_FILL, V28_HEIGHT,
+  fillEndorsement, fillOutputPlan, fillTargetId, CONF_TOKEN_FILL, V28_HEIGHT, LEGACY_HOLD_SUNSET_HEIGHT, fclaim, fclaimEpochFor,
   tradeFee, makerRebate, nameCommit, nameCommitRecord, nameClaim, nameFinalize, nameRegFee,
   TREASURY_ADDR, FEE_BPS_V16, SCORE_CLAIM, SCORE_FILL, V27_HEIGHT, V25_HEIGHT, V24_HEIGHT, V18_HEIGHT,
   REG_COMMIT_MAX_BLOCKS, REG_FINALIZE_GRACE_BLOCKS, FINALIZE_TIP_MARGIN, epochOf,
@@ -285,6 +285,28 @@ console.log("\nrequiredFillOutputs; overpay clamped to the remainder (fee on the
   ok("one unit under on the pay leg is ACCEPTED but does NOT complete (still ≥ effMin; 1 unit left owing)", (() => { const o = after({ ...par, [A]: (remaining - 1n).toString() }); return o.status === "open" && (o.fills?.length ?? 0) === 2; })());
 }
 
+// ── the tail below min: a remainder smaller than the offer's min is bought by paying exactly the remainder, in
+// previewFill (src/preflight.ts) and in the resolver (applyPartialFill), the two homes of `effMin` ──
+console.log("\npreviewFill == resolver at a partial offer's tail below its min:");
+{
+  const H3 = V27_HEIGHT + 3200;
+  const dep = prop(A, deploy({ ticker: "TAIL", decimals: 0, supply: "7", mint: "issuer" }), H3, { [T]: "100000000" });
+  const mintEv = prop(A, mint({ ticker: "TAIL", amount: "7" }), H3 + 1);
+  const offEv = prop(A, offer({ give: { ticker: "TAIL", amount: "7" }, want: { value: "10" }, min: "4", taker: B }), H3 + 2, {});
+  const fill = (pay: bigint, h: number) => att(B, offEv.id, h, { [A]: pay.toString(), [T]: tradeFee(pay, FEE_BPS_V16).toString() }, SCORE_FILL, 2);
+  const base3 = [dep, mintEv, offEv, fill(4n, H3 + 3), fill(4n, H3 + 4)];
+  const o3 = resolve(base3, H3 + 5).offers[offEv.id]!;
+  ok("two fills of 4 leave 2 of 10 owing and 2 of 7 tokens undelivered", o3.status === "open" && o3.paid === "8" && o3.delivered === "5");
+  const tailP = previewFill(o3, 2n);
+  const tailR = resolve([...base3, fill(2n, H3 + 6)], H3 + 7).offers[offEv.id]!;
+  ok("a payment of the remainder (2, below min 4): previewFill delivers 2, the resolver delivers the same 2 and fills the offer",
+    tailP.deliverable && tailP.got === 2n && tailP.pay === 2n && tailR.status === "filled" && tailR.delivered === "7");
+  const underP = previewFill(o3, 1n);
+  const underR = resolve([...base3, fill(1n, H3 + 6)], H3 + 7).offers[offEv.id]!;
+  ok("one unit under the remainder: previewFill refuses (below-min) and the resolver refuses the fill",
+    !underP.deliverable && underP.reason === "below-min" && underR.paid === "8" && (underR.fills?.length ?? 0) === 2);
+}
+
 // ── buildFeeHeight: the approach-the-gate build heuristic, pinned at every gate ± margin ──
 console.log("\nbuildFeeHeight; margin behavior at every name-fee gate:");
 {
@@ -374,6 +396,48 @@ console.log("\nB6b fillEndorsement (W10) + fillOutputPlan (M1):");
   ok("MUTATION[undeliverable branch removed]: below-min degrades to zero-delivery -> the branch is what names the refusal",
     (await withLineRemoved("MUTATE_PLAN_UNDELIVERABLE", (m) => m.fillOutputPlan(plain, "1"))).kind === "undeliverable"
     && (await withLineRemoved("MUTATE_PLAN_UNDELIVERABLE", (m) => m.fillOutputPlan(plain, "1")) as { reason?: string }).reason === "zero-delivery");
+
+  // From LEGACY_HOLD_SUNSET_HEIGHT no pre-V28 hold is live, so resolve() refuses every offer-id fill of an open CSD
+  // offer; fillEndorsement now says so whatever claim the served offer shows. Each case: the offer object resolve()
+  // holds (as a resolver serves it, with the case's lie), the endorsement at the tip with the target the attest
+  // carries (txbuild's call shape), and resolve()'s verdict on that fill mined at tip + 1.
+  console.log("\nfillEndorsement at and around LEGACY_HOLD_SUNSET_HEIGHT, against resolve():");
+  const caseAt = (tip: number, o: { taker?: string; legacyClaim?: boolean; reserve?: boolean; lie?: boolean }) => {
+    const H0 = o.legacyClaim ? V28_HEIGHT - 200 : tip - 100;
+    const base: ChainEvent[] = [
+      prop(A, deploy({ ticker: "SUN", decimals: 0, supply: "100", mint: "issuer" }), H0 - 2, { [T]: "100000000" }),
+      prop(A, mint({ ticker: "SUN", amount: "100" }), H0 - 1),
+    ];
+    const off = prop(A, offer({ give: { ticker: "SUN", amount: "10" }, want: { value: "500000000" }, ...(o.taker ? { taker: o.taker } : {}) }), H0, {}, 1, epochOf(tip) + 200);
+    base.push(off);
+    if (o.legacyClaim) base.push(att(B, off.id, V28_HEIGHT - 1, {}, SCORE_CLAIM));
+    if (o.reserve) base.push(prop(B, fclaim({ offer: off.id }), tip - 5, {}, 1, fclaimEpochFor(tip - 5, epochOf(tip) + 200)));
+    const held = resolve(base, tip).offers[off.id]!;
+    const served: OfferState = JSON.parse(JSON.stringify(held));
+    if (o.lie) { served.claimedBy = B; served.claimUntilHeight = tip + 15; delete served.claimTxid; }
+    const target = fillTargetId(served, tip);
+    const e = fillEndorsement(served, B, "500000000", tip, { fillTargetId: target });
+    const outs = Object.fromEntries(requiredFillOutputs(held, "500000000")!.map((x) => [x.to, x.value.toString()]));
+    const fill = att(B, target, tip + 1, outs, SCORE_FILL);
+    const chain = resolve([...base, fill], tip + 2).events.find((x) => x.id === (fill as { txid: string }).txid)!;
+    return { e, chain, served, target };
+  };
+  const SUNSET = LEGACY_HOLD_SUNSET_HEIGHT;
+  for (const tip of [SUNSET, 148_000]) {
+    const mine = caseAt(tip, { reserve: true });
+    ok(`@${tip} paired: my reservation, attest on its fclaim txid: endorsed, and the chain applies it`, mine.e.verdict === "endorsed" && mine.chain.ok);
+    const lie = caseAt(tip, { lie: true });
+    ok(`@${tip} a served hold by me with no reservation, attest on the offer id: refused, and the chain refuses it`,
+      lie.e.verdict === "refused" && /only through a reservation/.test(lie.e.reason) && !lie.chain.ok && lie.chain.code === "FILL_NO_LIVE_CLAIM");
+    const bound = caseAt(tip, { taker: B });
+    ok(`@${tip} paired: a taker-bound CSD offer, attest on the offer id: endorsed, and the chain applies it`, bound.e.verdict === "endorsed" && bound.chain.ok);
+  }
+  const legacy = caseAt(SUNSET - 2, { legacyClaim: true });
+  ok(`paired: the last legacy claim (granted ${V28_HEIGHT - 1}), its offer-id fill judged at ${SUNSET - 2}: endorsed, and the chain applies it`,
+    legacy.e.verdict === "endorsed" && legacy.chain.ok && legacy.target === legacy.served.id);
+  const lieAt = caseAt(SUNSET, { lie: true });
+  ok("MUTATION[sunset line removed]: the served-hold offer-id fill the chain refuses is endorsed again -> the line is its sole rejecter",
+    (await withLineRemoved("MUTATE_END_LEGACY_SUNSET", (m) => m.fillEndorsement(lieAt.served, B, "500000000", SUNSET, { fillTargetId: lieAt.target }))).verdict === "endorsed");
 }
 
 console.log(`\npreflight: ${pass} passed, ${fail} failed`);

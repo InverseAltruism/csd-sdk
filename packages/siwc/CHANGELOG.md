@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.23
+
+- Pins `@inversealtruism/csd-codec` 0.1.19 and `@inversealtruism/csd-crypto` 0.1.22. No csd-siwc source change.
+
 ## 0.1.22
 
 - Pins `@inversealtruism/csd-crypto` 0.1.21, whose `verifyDigest` reads a signature as compact r || s only, the node's

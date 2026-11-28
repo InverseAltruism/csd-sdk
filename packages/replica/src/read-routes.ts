@@ -6,7 +6,7 @@ import { FINAL_DEPTH, NAME_RE, canonicalState, type ChainEvent } from "@inversea
 import type { Answer, Snapshot } from "./answer.js";
 import type { NoteCode, NotVerifiedCode } from "./codes.js";
 import { readName, readNameHistory, readProfile, readResolve, readState, type ReadAnswer, type ReadSnapshot } from "./handlers.js";
-import { appliedIds, nameHistory, type NameHistory } from "./namehist.js";
+import { appliedIds, nameHistory, recordOf, type NameHistory } from "./namehist.js";
 import type { Reader } from "./reader.js";
 
 /** The codes on which the server answers 503: the state is not complete, not this chain's or not the store's to
@@ -69,7 +69,7 @@ export function replicaReads(reader: Pick<Reader, "snapshot">, o: { readonly wai
         if (kept !== undefined) return kept;
         if (histories.size >= HISTORIES) histories.clear();
         // nameHistory reads its events and changes none of them; the snapshot's are frozen, so a change would throw.
-        const h = nameHistory(v.events as ChainEvent[], name, { tipHeight: s.tipHeight, fullRecord: s.names[name], fullApplied: (applied ??= appliedIds(s.events)) });
+        const h = nameHistory(v.events as ChainEvent[], name, { tipHeight: s.tipHeight, fullRecord: recordOf(s, name), fullApplied: (applied ??= appliedIds(s.events)) });
         histories.set(name, h);
         return h;
       },

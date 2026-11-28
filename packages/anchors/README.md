@@ -57,12 +57,14 @@ arguments. The age of the newest entry is not checked: how old a table may be is
 rule below.
 
 The package test (`pnpm test`) runs offline. It holds the shape rules, a copy of cairn-wallet's two generated files as
-they shipped (`test/fixtures/`, with their sha256 and the wallet commit they were read at) and proves that every value
-in `anchors.json` equals the wallet's and that `scripts/render-wallet.mjs` renders those two files from `anchors.json`
-byte for byte. It re-derives the floor and the activation root from recorded headers, runs the build's refusals, and
-runs every refusal of the generator and of `--check` against stub sources. That the entries are on the chain is not
-something the offline test can say. Only `--check` against a headers source and a second RPC says it, so
-`.github/workflows/anchors-check.yml` runs it by hand (`workflow_dispatch` only) with both bases as inputs.
+they shipped (`test/fixtures/`, with their sha256 and the wallet commit they were read at) and proves that the wallet's
+table is a prefix of `anchors.json` (same floor and chunk, each wallet entry equal at its index), that
+`scripts/render-wallet.mjs` renders those two files byte for byte from that prefix, and that rendering the whole table
+changes them only by the added entries' lines and the newest height. It re-derives the floor and the activation root
+from recorded headers, runs the build's refusals, and runs every refusal of the generator and of `--check` against stub
+sources. That the entries are on the chain is not something the offline test can say. Only `--check` against a headers
+source and a second RPC says it, so `.github/workflows/anchors-check.yml` runs it by hand (`workflow_dispatch` only)
+with both bases as inputs.
 
 The wallet's generated files come from the package with `node scripts/render-wallet.mjs anchors` and `newest`, which
 print `spvanchors.ts` and `spvnewest.ts` to stdout.

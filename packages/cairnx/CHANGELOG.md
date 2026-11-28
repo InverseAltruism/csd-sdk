@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.11
+
+- `isIndex` is exported from the root: a position or height as CONVENTION section 33 takes it, a safe integer >= 0.
+  cairnx-replica's Scanner checks a served merkle proof's position with it. `resolve()` is unchanged.
+- `test/vectors/cases-rules.json` grows from 5 to 12 vectors (`conformance/gen-rule-vectors.mjs`; the first 5 keep
+  their bytes), for two live rules that no vector, the replay corpus or the fuzz reached: a partial offer's remainder
+  below its min is bought by paying exactly the remainder (CONVENTION section 19), and of two reveals of a name with
+  one commit height and one position the lower id wins, in both orders of mining, at each of the contest's three
+  sites: the V25 reservation, the registration below V25 and the V26 recapture reservation. Both the
+  TypeScript resolver and the Python reference replay them (`test/vectors.test.ts`, `conformance/crosscheck-resolve.mjs`).
+  `test/preflight.test.ts` compares `previewFill` with the resolver at such a tail. The rules are unchanged.
+- `fillEndorsement` refuses, at a tip at or above `LEGACY_HOLD_SUNSET_HEIGHT` (60,044), a fill of an open CSD offer
+  whose target is the offer id. From that height no claim hold made before V28 is live, so `resolve()` refuses every
+  such fill (`FILL_WRONG_TARGET` or `FILL_NO_LIVE_CLAIM`) after the payment moved, while `fillEndorsement` endorsed it
+  when the served offer showed a hold by the caller without a reservation. Only the answer on fills the chain
+  refuses changes: over the 54 cases of cairn-sdk 0.9.1's review (offer shapes at the sunset and at 148,000, a
+  reservation's fclaim target with ids in either case, taker-bound offers and a maker's RFQ answer, token wants, a
+  name sale, a partial offer's second fill, the last legacy claim below the sunset, and 24 served lies), 16 verdicts
+  change, each from endorsed to refused on a fill `resolve()` refuses, and none on a fill it applies
+  (`test/preflight.test.ts` checks the rule against `resolve()` at both tips and below the sunset). Consumers that
+  carry this rule themselves (cairn-sdk 0.9.1's `preverifyOffer`, the wallet's fill preflight) may drop it once they
+  take this version. The deprecated `fillIsSafe` keeps its frozen verdicts.
+- Pins `@inversealtruism/csd-codec` 0.1.19 (`verifyMerkleProof` proves the position).
+
 ## 0.2.10
 
 - A held replay context: `newReplayContext()` keeps `resolve()`'s fold between tips. `advance(toHeight, events)`

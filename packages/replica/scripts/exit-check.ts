@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packedOffences } from "../../../scripts/check-dashes-paths.mjs";
 import { untar } from "../../../scripts/published-dist.mjs";
-import { workspacePackagesAtHead } from "../../../scripts/workspace.mjs";
+import { caretAllows, workspacePackagesAtHead } from "../../../scripts/workspace.mjs";
 import { done, ok } from "../test/check.js";
 import { fx } from "../test/core-files.js";
 import { frontDoor } from "../test/front-door.js";
@@ -132,9 +132,9 @@ try {
     }
   }
   // The pin peers on the replica for a type alone: a range, so a replica release inside it needs no pin release.
-  const pinPeer = installed("cairnx-pin").peerDependencies?.[`${SCOPE}cairnx-replica`];
-  ok(`cairnx-pin ships its replica peer as the range ^${installed("cairnx-replica").version}, optional`,
-    pinPeer === `^${installed("cairnx-replica").version}` && installed("cairnx-pin").peerDependenciesMeta?.[`${SCOPE}cairnx-replica`]?.optional === true, String(pinPeer));
+  const pinPeer = installed("cairnx-pin").peerDependencies?.[`${SCOPE}cairnx-replica`], replicaVersion = installed("cairnx-replica").version;
+  ok(`cairnx-pin ships its replica peer as an optional range that holds the installed cairnx-replica ${replicaVersion}`,
+    caretAllows(pinPeer, replicaVersion) && installed("cairnx-pin").peerDependenciesMeta?.[`${SCOPE}cairnx-replica`]?.optional === true, String(pinPeer));
   const bin = join(work, "node_modules", ".bin", "cairnx-replica");
   const usage = await child(bin, [], work);
   ok("the command is installed: cairnx-replica with no arguments prints its usage and exits 2", usage.code === 2 && usage.out.includes("usage: cairnx-replica check"), usage.out + usage.err);

@@ -4,7 +4,7 @@
 // never submit), the readCapped byte ceiling (content-length up-front, mid-stream abort, and the
 // UTF-16-vs-bytes fallback subtlety), waitForTx's reorg/stale-sighting discipline, and
 // verifyInputValues fail-closed behavior on forged/unreachable sources.
-import { CsdClient, verifyInputValues, type RpcHealth } from "../src/index.js";
+import { CsdClient, ERROR_BODY_MAX_BYTES, verifyInputValues, type RpcHealth } from "../src/index.js";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean) => { c ? pass++ : fail++; console.log(`  ${c ? "✅" : "❌"} ${n}`); };
@@ -60,6 +60,58 @@ console.log("retry classification (network/5xx only):");
   const f = scripted(() => json({ ok: false, err: "not found" }));
   const err = await mk(f, { retries: 3 }).blockByHeight(99).then(() => null, (e: Error) => e);
   ok("app-level ok:false at HTTP 200 is not retried (getOk throws once)", err !== null && /not found/.test(String(err)) && f.calls === 1);
+}
+
+console.log("a non-2xx answer: the thrown error carries the status and the capped body text:");
+{
+  type HttpErr = Error & { status?: number; body?: string };
+  const errOf = (p: Promise<unknown>) => p.then(() => null, (e: HttpErr) => e);
+  const refusal = JSON.stringify({ ok: false, err: "already present in mempool" });
+  const f = scripted(() => new Response(refusal, { status: 400 }));
+  const e400 = await errOf(mk(f, { retries: 3 }).submit({}));
+  ok("a 400 with a body: status 400, body the text as sent, the message as before, no retry",
+    e400?.status === 400 && e400.body === refusal && e400.message === "POST /tx/submit → HTTP 400" && f.calls === 1);
+  const page = "<html><body>" + "502 Bad Gateway ".repeat(1000) + "</body></html>";
+  const e502 = await errOf(mk(scripted(() => new Response(page, { status: 502 }))).tip());
+  ok(`a 502 with an HTML page of ${page.length} bytes: status 502, body its first ERROR_BODY_MAX_BYTES (${ERROR_BODY_MAX_BYTES}) bytes`,
+    e502?.status === 502 && e502.body === page.slice(0, ERROR_BODY_MAX_BYTES) && e502.message === "GET /tip → HTTP 502");
+  const e5xxRetried = await errOf(mk(scripted(() => new Response("boom", { status: 500 }), () => new Response("down", { status: 503 })), { retries: 1 }).tip());
+  ok("a 5xx retried within budget: the error carries the last answer's status and body", e5xxRetried?.status === 503 && e5xxRetried.body === "down");
+  const notUtf8 = new Uint8Array([0x7b, 0xff, 0xfe, 0x41, 0xc3]);
+  const eBytes = await errOf(mk(scripted(() => new Response(notUtf8, { status: 400 }))).tip());
+  ok("a body that is not UTF-8: decoded with U+FFFD for each invalid byte, never parsed", eBytes?.status === 400 && eBytes.body === "{\uFFFD\uFFFDA\uFFFD");
+  const broken = new ReadableStream<Uint8Array>({ start(c) { c.error(new Error("connection reset")); } });
+  const eBroken = await errOf(mk(scripted(() => new Response(broken, { status: 502 }))).tip());
+  ok("a body that cannot be read: status 502, no body, the same error", eBroken?.status === 502 && !("body" in eBroken) && eBroken.message === "GET /tip → HTTP 502");
+  let pulls = 0, cancelled = false;
+  const long = new ReadableStream<Uint8Array>({   // 1 MiB in 1 KiB chunks, one per pull
+    pull(c) { if (++pulls > 1024) c.close(); else c.enqueue(new Uint8Array(1024).fill(0x61)); },
+    cancel() { cancelled = true; },
+  });
+  const eLong = await errOf(mk(scripted(() => new Response(long, { status: 502 }))).tip());
+  ok("a 1 MiB error body: read only to the cap, then the stream is cancelled",
+    eLong?.body === "a".repeat(ERROR_BODY_MAX_BYTES) && cancelled && pulls <= ERROR_BODY_MAX_BYTES / 1024 + 2);
+  const noStream = { ok: false, status: 429, headers: new Headers(), body: null, text: async () => "slow down" } as unknown as Response;
+  const eNoStream = await errOf(mk(scripted(() => noStream)).tip());
+  ok("a runtime without a streaming body: the text, capped the same way", eNoStream?.status === 429 && eNoStream.body === "slow down");
+  // A refusal is not slower for its body: a body that has not arrived within 1 s (or the request's remaining time)
+  // is not waited for. The error then carries what it carried before, its message and `terminal`, plus `status`.
+  const stalled = () => new Response(new ReadableStream<Uint8Array>({ start() { /* never sends a byte */ } }), { status: 503 });
+  const timed = async <T,>(p: Promise<T>) => { const t0 = Date.now(); const v = await p; return { v, ms: Date.now() - t0 }; };
+  const s1 = await timed(errOf(mk(scripted(stalled), { timeoutMs: 10_000 }).tip()));
+  ok(`a 503 whose body stalls, request timeout 10 s: thrown after ${s1.ms} ms (within the 1 s bound), message, terminal and status only`,
+    s1.ms >= 900 && s1.ms < 2_000 && s1.v?.message === "GET /tip → HTTP 503" && JSON.stringify(Object.keys(s1.v ?? {})) === '["terminal","status"]' && s1.v?.status === 503);
+  const s2 = await timed(errOf(mk(scripted(stalled), { timeoutMs: 300 }).tip()));
+  ok(`a stalled body with 300 ms of the request left: thrown after ${s2.ms} ms, no body`, s2.ms < 800 && s2.v?.status === 503 && !("body" in (s2.v ?? {})));
+  const slow = () => new Response(new ReadableStream<Uint8Array>({ start(c) { setTimeout(() => { c.enqueue(new TextEncoder().encode("busy")); c.close(); }, 200); } }), { status: 503 });
+  const s3 = await timed(errOf(mk(scripted(slow)).tip()));
+  ok(`a body that arrives after 200 ms is attached (${s3.ms} ms)`, s3.v?.body === "busy" && s3.ms < 900);
+  const fRetry = scripted(stalled, () => json({ tip: "0x" + "0".repeat(64), height: 8, chainwork: "1" }));
+  const s4 = await timed(mk(fRetry, { retries: 1 }).tip());
+  ok(`a 5xx within the retry budget is retried without reading its body: 2 requests, ${s4.ms} ms`, s4.v.height === 8 && fRetry.calls === 2 && s4.ms < 900);
+  const f200 = scripted(() => json({ tip: "0x" + "0".repeat(64), height: 7, chainwork: "1" }));
+  const t = await timed(mk(f200).tip());
+  ok(`paired: a 200 answer still resolves to its parsed body, one request, ${t.ms} ms`, t.v.height === 7 && f200.calls === 1 && t.ms < 500);
 }
 
 console.log("readCapped byte ceiling:");
@@ -129,7 +181,7 @@ console.log("verifyInputValues fail-closed:");
 }
 
 // M1: every failure branch NAMES the offending input (badInput) so buildSendVerified can exclude
-// exactly that coin and retry. Exercise all seven branches + the happy path. (Fable M1 QC nit.)
+// exactly that coin and retry. Exercise all seven branches + the happy path.
 console.log("verifyInputValues badInput naming (M1):");
 {
   const { txid: codecTxid } = await import("@inversealtruism/csd-codec");
@@ -164,8 +216,8 @@ console.log("verifyInputValues badInput naming (M1):");
     ok("branch: non-positive value → names the coin", names(await verifyInputValues({ tx: async () => ({ ok: true, tx: zeroBody }) as never }, [{ txid: zeroId, vout: 0 }]), { txid: zeroId, vout: 0 }));
   }
   // 7. total overflow: two DISTINCT coins each near 2^53; the SECOND coin overflows the running
-  //    total and must be the one named (Fable QC: the first cut reused one outpoint twice, which a
-  //    real selection never contains, so the naming couldn't be distinguished).
+  //    total and must be the one named (two distinct outpoints: a real selection never holds one outpoint
+  //    twice, and with one the named coin could not be told apart).
   {
     const bigBodyA = mkBody(Number.MAX_SAFE_INTEGER - 10);
     const bigBodyB = mkBody(Number.MAX_SAFE_INTEGER - 20);

@@ -202,7 +202,7 @@ export async function runCheck(argv: readonly string[], raw: CheckIo): Promise<n
   let a: Args;
   let o: OpenOptions;
   try { a = parse(argv); o = await options(a, io); } catch (e) {
-    if (e instanceof Usage || e instanceof ReplicaConfigError) { io.out(`cairnx-replica: ${e.message}`); if (e instanceof Usage) io.out(USAGE); return 2; }
+    if (e instanceof Usage || e instanceof ReplicaConfigError) { io.out(`cairnx-replica: ${e.message}`); if (e instanceof Usage) for (const l of USAGE.split("\n")) io.out(l); return 2; }
     throw e;
   }
   let replica;
