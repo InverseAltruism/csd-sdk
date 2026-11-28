@@ -6,6 +6,7 @@ import { diskStore } from "./disk-store.js";
 import { ReplicaConfigError } from "./errors.js";
 import { parseHosts, serverNode } from "./node-address.js";
 import { nodeBlocksAt, type NodeBlocksOptions } from "./node-blocks.js";
+import { openServerAt, type OpenAnswer, type OpenRequest, type OpenServerOptions } from "./open-server.js";
 import { localOf } from "./presets.js";
 import { POLL_MS_RANGE, polled } from "./poll.js";
 import { openWith, type OpenOptions, type Reader } from "./reader.js";
@@ -25,6 +26,7 @@ export { indexerFeed, type IndexerFeedOptions } from "./indexer-feed.js";
 export { RETRY_WAIT_MAX_MS } from "./http.js";
 export { STEP_UNIT } from "./scanner.js";
 export { READ_HEADERS, WITHHELD, WITHHELD_NOTES, replicaReads, withheldBy, type ReadResponse } from "./read-routes.js";
+export { OPEN_HOST, OPEN_LIMITS, OPEN_PORT, listen, type OpenAnswer, type OpenRequest, type OpenServerOptions } from "./open-server.js";
 /** Internal, for the pin generator: the gate table this package was built against, and the compare open() makes. */
 export { BUILT_GATES, gatesDiffer, gatesOf } from "./gates.js";
 
@@ -41,6 +43,10 @@ function hosts(): ReadonlySet<string> {
 /** Complete blocks from one's own node: loopback, a private range, or a host in CAIRNX_OWN_NODE_HOSTS; any other
  *  address throws ReplicaConfigError. */
 export const nodeBlocks = (o: NodeBlocksOptions): BlocksSource => nodeBlocksAt(serverNode(o.node, hosts()), o);
+
+/** The open server's answer to each request (open-server.ts): the wallet's paths relayed to one's own node at `node`,
+ *  under nodeBlocks's address rule (any other address throws ReplicaConfigError), and the name routes from `reads`. */
+export const openServer = (o: OpenServerOptions & { readonly node: string }): ((q: OpenRequest) => Promise<OpenAnswer>) => openServerAt(serverNode(o.node, hosts()), o);
 
 /** What open() takes for a replica of one's own node held in memory: nodeBlocks at `node`, above `pin` when one is
  *  given, and memoryStore(). */
