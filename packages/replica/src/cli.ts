@@ -26,9 +26,10 @@ export const USAGE = `usage: cairnx-replica check <source> [--pin] [--reference 
   --timeout-ms <ms>   the deadline, 1 to 2147483647 (default 7200000)
 exit: 0 the check passed (equal, held); 1 the sides differ (branch, records, rules); 2 usage or configuration;
       3 could not check (missing, unavailable, no-tuple, timeout)`;
-export const SERVE_USAGE = `usage: cairnx-replica serve --node <url> --dir <path> [--listen <address>] [--port <port>]
+export const SERVE_USAGE = `usage: cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]
   --node <url>        one's own node (loopback, a private address or a host in CAIRNX_OWN_NODE_HOSTS)
   --dir <path>        the replica's store directory, created when missing
+  --pin               start from @inversealtruism/cairnx-pin (installed beside this package), not from activation
   --listen <address>  the address to bind (default ${OPEN_HOST}); any other, 0.0.0.0 among them, is a public bind
   --port <port>       1 to 65535 (default ${OPEN_PORT}), 0 for a free one
 exit: 0 stopped by SIGINT or SIGTERM; 2 usage or configuration, or the address could not be bound`;
@@ -250,27 +251,31 @@ export async function runCheck(argv: readonly string[], raw: CheckIo): Promise<n
   }
 }
 
-export interface ServeArgs { readonly node: string; readonly dir: string; readonly host: string; readonly port: number }
-/** serve's options, parsed once: `--node` and `--dir` required, `--listen` OPEN_HOST and `--port` OPEN_PORT by default. */
+export interface ServeArgs { readonly node: string; readonly dir: string; readonly pin: boolean; readonly host: string; readonly port: number }
+/** serve's options, parsed once: `--node` and `--dir` required, `--pin` off, `--listen` OPEN_HOST and `--port`
+ *  OPEN_PORT by default. */
 export function parseServe(argv: readonly string[]): ServeArgs {
   const fail = (why: string): never => usage(why, SERVE_USAGE);
   if (argv[0] !== "serve") fail("this is serve's parser");
   const got: Record<string, string> = {};
-  for (let i = 1; i < argv.length; i += 2) {
+  for (let i = 1; i < argv.length; i++) {
     const k = argv[i]!;
-    if (!["--node", "--dir", "--listen", "--port"].includes(k)) fail(`unknown argument ${k}`);
     if (got[k] !== undefined) fail(`${k} is given twice: give it once`);
-    got[k] = argv[i + 1] ?? fail(`${k} needs a value`);
+    if (k === "--pin") { got[k] = ""; continue; }
+    if (!["--node", "--dir", "--listen", "--port"].includes(k)) fail(`unknown argument ${k}`);
+    got[k] = argv[++i] ?? fail(`${k} needs a value`);
   }
   const port = got["--port"] === undefined ? OPEN_PORT : heightOf(got["--port"]);
   if (port === null || port > 65_535) fail("--port is a whole number from 0 to 65535");
   if (got["--node"] === undefined || got["--dir"] === undefined) fail("serve needs --node and --dir");
-  return { node: got["--node"]!, dir: resolve(got["--dir"]!), host: got["--listen"] ?? OPEN_HOST, port: port! };
+  return { node: got["--node"]!, dir: resolve(got["--dir"]!), pin: got["--pin"] !== undefined, host: got["--listen"] ?? OPEN_HOST, port: port! };
 }
 
 export interface ServeIo {
   readonly out: (line: string) => void;
   readonly fetch?: typeof fetch;
+  /** The pin's module for --pin; default an import of @inversealtruism/cairnx-pin. */
+  readonly loadPin?: () => Promise<unknown>;
   /** Called once the server listens, with a stop that closes it and the replica and ends the run with exit 0. */
   readonly ready?: (server: Server, stop: () => Promise<void>) => void;
 }
@@ -280,7 +285,8 @@ export async function runServe(argv: readonly string[], raw: ServeIo): Promise<n
   let a: ServeArgs, reader: Awaited<ReturnType<typeof open>>, answer: ReturnType<typeof openServer>;
   try {
     a = parseServe(argv);
-    const own = ownNode({ node: a.node, dir: a.dir, ...http });
+    const pin = a.pin ? checkPin(((await pinModule({ out, ...(raw.loadPin === undefined ? {} : { loadPin: raw.loadPin }) })) as { PIN?: unknown }).PIN) : undefined;
+    const own = ownNode({ node: a.node, dir: a.dir, ...http, ...(pin === undefined ? {} : { pin }) });
     reader = await open({ ...own, pollMs: READ_ADVANCE_MS });
     answer = openServer({ node: a.node, reads: replicaReads(reader), ...http });
   } catch (e) {

@@ -2,7 +2,7 @@
 
 ## 0.2.3
 
-- The open server: `cairnx-replica serve --node <url> --dir <path> [--listen <address>] [--port <port>]`, and
+- The open server: `cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]`, and
   `openServer` with `listen` in `./server`. It serves the paths cairn-wallet sends to a server its user adds, on one
   origin: `/api/rpc/tip`, `/utxos/:addr`, `/utxos-all/:addr`, `/tx/:id`, `/tx/:id/status`, `/block/:hash`,
   `/proposal/:id` and POST `/api/rpc/tx/submit` relayed to one's own node as our front door relays them,

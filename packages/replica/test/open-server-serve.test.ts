@@ -9,9 +9,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LightClient, rpcHeaderToHeader } from "@inversealtruism/csd-light";
-import { OPEN_LIMITS } from "../src/server.js";
+import { OPEN_LIMITS, derivePin } from "../src/server.js";
+import type { BlockFixture } from "../src/testing.js";
 import { SERVE_USAGE, parseServe, runServe } from "../src/cli.js";
 import { done, ok, thrown } from "./check.js";
+import { fx } from "./core-files.js";
 import { blockAt, cap, json, node } from "./node-harness.js";
 
 const NODE = "http://127.0.0.1:8789";
@@ -22,6 +24,10 @@ console.log("serve's options:");
 {
   const a = parseServe(["serve", "--node", NODE, "--dir", "rel"]);
   ok("loopback by default: --listen 127.0.0.1, --port 8796, --dir made absolute", a.host === "127.0.0.1" && a.port === 8796 && a.dir === join(process.cwd(), "rel"), JSON.stringify(a));
+  ok("--pin is off unless given, and takes no value", !a.pin && parseServe(["serve", "--pin", "--node", NODE, "--dir", root]).pin);
+  const missing = Object.assign(new Error("Cannot find package '@inversealtruism/cairnx-pin'"), { code: "ERR_MODULE_NOT_FOUND" }), said: string[] = [];
+  ok("--pin without cairnx-pin installed exits 2 naming the package", (await runServe(["serve", "--node", NODE, "--dir", root, "--pin"], { out: (l) => said.push(l), loadPin: async () => { throw missing; } })) === 2 &&
+    said.some((l) => l.includes("--pin needs @inversealtruism/cairnx-pin")), said.join("\n"));
   ok("a public bind is an explicit --listen", parseServe(["serve", "--node", NODE, "--dir", root, "--listen", "0.0.0.0", "--port", "0"]).host === "0.0.0.0");
   for (const bad of [["serve", "--dir", root], ["serve", "--node", NODE, "--dir", root, "--port", "70000"], ["serve", "--node", NODE, "--dir", root, "--tls"], ["serve", "--node", NODE, "--node", NODE, "--dir", root]]) {
     ok(`refused: ${bad.slice(1).join(" ")}`, thrown(() => parseServe(bad)) !== null);
@@ -66,7 +72,7 @@ const code = runServe(["serve", "--node", NODE, "--dir", join(root, "store"), "-
   ok("the submit's preflight on the wire: 204, origin *, POST, content-type", pre.status === 204 && pre.headers["access-control-allow-origin"] === "*" && String(pre.headers["access-control-allow-methods"]).includes("POST") && String(pre.headers["access-control-allow-headers"]).includes("content-type"));
   // A valid JSON object one byte over the cap, once declared by content-length and once sent chunked without it.
   const big = new TextEncoder().encode(`{"tx":{"version":1}}${" ".repeat(OPEN_LIMITS.submitBytes - 19)}`), asked = n.log.length;
-  const over = await Promise.all([{ "content-type": "application/json" }, { "content-type": "application/json", "transfer-encoding": "chunked" }]
+  const over = await Promise.all(([{ "content-type": "application/json" }, { "content-type": "application/json", "transfer-encoding": "chunked" }] as Record<string, string>[])
     .map((headers) => call("/api/rpc/tx/submit", { method: "POST", headers, body: big })));
   ok("a body one byte over 512 KiB, declared or chunked: 400 invalid request body, the connection closed, nothing sent",
     over.every((r) => r.status === 400 && JSON.parse(r.body).error === "invalid request body" && r.headers.connection === "close") && n.log.length === asked, over.map((r) => r.status).join(","));
@@ -80,4 +86,20 @@ const code = runServe(["serve", "--node", NODE, "--dir", join(root, "store"), "-
   await stop();
 } });
 ok("stop ends serve with exit 0", (await code) === 0);
+
+console.log("serve --pin:");
+{
+  const upTo = (to: number): BlockFixture => ({ ...fx, to, toHash: blockAt(cap.answers, to).hash, blocks: fx.blocks.filter((b) => b.height <= to) });
+  const d = await derivePin(upTo(30_000)), pn = node({ answers: cap.answers });
+  let at = "";
+  const pinned = await runServe(["serve", "--node", NODE, "--dir", join(root, "pinned"), "--pin", "--port", "0"], { out: () => undefined, fetch: pn.f,
+    loadPin: async () => ({ PIN: { ...d.pin, log: async () => d.log } }),
+    ready: async (server, stop) => {
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      for (let i = 0; i < 200 && !at.startsWith(`${cap.to}:`); i++) { at = String((await call("/trade/api/cairnx/name/zzcontracttest")).headers["x-cairnx-at"] ?? ""); await new Promise((r) => setTimeout(r, 50)); }
+      await stop();
+    } });
+  const below = pn.log.filter((l) => Number(/^\/block\/height\/(\d+)$/.exec(l.path)?.[1] ?? Number.POSITIVE_INFINITY) < 30_000).length;
+  ok("paired: --pin with cairnx-pin installed starts at the pin, no block below it read, and reaches the tip", pinned === 0 && below === 0 && at.startsWith(`${cap.to}:`), `${pinned} ${below} ${at}`);
+}
 done("open-server-serve");

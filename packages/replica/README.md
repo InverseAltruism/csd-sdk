@@ -732,9 +732,10 @@ still answer from the old state when the step is slower than the wait.
 
 ## The open server
 
-`cairnx-replica serve --node <url> --dir <path> [--listen <address>] [--port <port>]` serves the paths cairn-wallet
-sends to a server its user adds, on one origin, from one's own node and a replica of it kept in `--dir`
-(`ownNode`, polled every `READ_ADVANCE_MS`). It signs nothing and holds no key; the only write it passes on is a
+`cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]` serves the paths
+cairn-wallet sends to a server its user adds, on one origin, from one's own node and a replica of it kept in `--dir`
+(`ownNode`, polled every `READ_ADVANCE_MS`). With `--pin` the replica starts from `@inversealtruism/cairnx-pin`,
+installed beside this package, and reads only the blocks above it; without it, every block from activation. It signs nothing and holds no key; the only write it passes on is a
 signed transaction to the node. `--node` is held to `nodeBlocks`'s server rule (loopback, a private range or
 `CAIRNX_OWN_NODE_HOSTS`). It listens on 127.0.0.1 port 8796 unless told otherwise: any other `--listen`, `0.0.0.0`
 among them, is a public bind. It stops on SIGINT or SIGTERM.
