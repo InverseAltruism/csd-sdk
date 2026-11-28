@@ -746,7 +746,7 @@ among them, is a public bind. It stops on SIGINT or SIGTERM.
 | `GET /api/rpc/utxos/:addr` | `/utxos/:addr?available=true` | nothing |
 | `GET /api/rpc/utxos-all/:addr` | `/utxos/:addr` | nothing |
 | `GET /api/rpc/tx/:id`, `/api/rpc/block/:hash`, `/api/rpc/proposal/:id` | the same path | nothing |
-| `GET /api/rpc/tx/:id/status` | `/mempool/txids`, then `/tx/:id` | builds `{ ok, txid, state, height? \| definite? }`: mined, pending, or unknown with `definite` only when the scan was complete and the pool list whole; a node without `/mempool/txids` (upstream's) never gives `definite: true` |
+| `GET /api/rpc/tx/:id/status` | `/mempool/txids`, then `/tx/:id`, both within one 10 s deadline | builds `{ ok, txid, state, height? \| definite? }`: mined, pending, or unknown with `definite` only when the scan was complete and the pool list whole; a node without `/mempool/txids` (upstream's) never gives `definite: true`; the server's own full gate is the busy 503 below, not an unknown |
 | `GET /api/headers/:from/:count` | `/block/height/:h` per height, 8 at a time | `{ ok, from, count, headers: [{ height, header, hash }] }`, `count` read as 1 to 512, dense or a 502 within 10 s |
 | `POST /api/rpc/tx/submit` | `POST /tx/submit` with the body as sent | the node's JSON sent again with its status |
 | `GET /trade/api/cairnx/{name,resolve,name-history}/:name` | none: `replicaReads` | nothing: its status, body and headers |

@@ -16,6 +16,9 @@
 - The open server's socket: header, request, idle and response timeouts and a connection cap (README "The open
   server"), and a body is read only for a submit whose headers pass; any other request carrying a body is answered at
   once and its connection closed (`test/open-server-wire.test.ts`).
+- `/api/rpc/tx/:id/status` reads the pool and the transaction under one 10 s deadline, inside the wallet's 12 s
+  (two 10 s timeouts in a row answered a hung node at 20 s), and answers the server's own full read gate with the busy
+  503 and `Retry-After`, where it answered 200 unknown.
 - A test that no `Reader` read throws for "not verified" (`test/unverified.test.ts`).
 - The capped body read of `http.ts` is shared as `cappedText`; `cappedJson` reads through it, unchanged.
 

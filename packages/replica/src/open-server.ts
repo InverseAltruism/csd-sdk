@@ -118,9 +118,15 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
     } catch (e) { return e instanceof Busy ? busy(503) : UNREACHABLE; }
   }
 
-  // cairn's readTxStatus over one node: its pool before its /tx, any failure a read that knows nothing.
+  // cairn's readTxStatus over one node: its pool before its /tx, under one deadline for both; a node failure is a read
+  // that knows nothing, the server's own full gate the busy answer.
   async function txStatus(txid: string): Promise<OpenAnswer> {
-    const get = (path: string) => ask(reads, path, L.readMs).then((r) => ({ status: r.status, j: parsed(r.text) as Record<string, unknown> | undefined }), () => null);
+    const deadline = AbortSignal.timeout(L.readMs);
+    const get = (path: string) => ask(reads, path, L.readMs, {}, deadline).then((r) => ({ status: r.status, j: parsed(r.text) as Record<string, unknown> | undefined }),
+      (e: unknown) => { if (e instanceof Busy) throw e; return null; });
+    try { return await statusOf(txid, get); } catch (e) { if (e instanceof Busy) return busy(503); throw e; }
+  }
+  async function statusOf(txid: string, get: (path: string) => Promise<{ status: number; j: Record<string, unknown> | undefined } | null>): Promise<OpenAnswer> {
     const p = await get("/mempool/txids");
     const pool = p?.status === 200 && p.j?.ok === true && Array.isArray(p.j.txids)
       ? { ids: new Set((p.j.txids as { txid?: unknown }[]).map((x) => String(x?.txid).toLowerCase())), complete: p.j.txids.length < MEMPOOL_LIST_CAP } : null;

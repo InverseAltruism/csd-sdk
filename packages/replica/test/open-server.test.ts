@@ -207,6 +207,8 @@ console.log("each refusal, and the honest request beside it:");
   ok(`${OPEN_LIMITS.reads} node reads in flight while ${OPEN_LIMITS.queued} wait`, held.length === OPEN_LIMITS.reads, `${held.length}`);
   const t0 = Date.now(), refused = await get(srv, `/api/rpc/tx/0x${"ff".repeat(32)}`);
   ok("the next read: 503 at once with Retry-After 1, exposed", refused.status === 503 && refused.headers["retry-after"] === "1" && exposes(refused) && Date.now() - t0 < 1000);
+  const status = await get(srv, `/api/rpc/tx/0x${"ff".repeat(32)}/status`);
+  ok("a status on the full gate: 503 busy with Retry-After 1, never 200 unknown", status.status === 503 && status.headers["retry-after"] === "1", `${status.status} ${status.body}`);
   const sent = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT));
   ok("paired: a submit while the reads are full is sent at once (its own gate)", sent.status === 200 && JSON.parse(sent.body).ok === true);
   let released = 0;
@@ -229,6 +231,16 @@ console.log("each refusal, and the honest request beside it:");
   held.splice(0).forEach((go) => go());
   await Promise.all(busyAt);
   clearInterval(alive);
+}
+
+{
+  // A node that never answers: the status's two reads share one deadline, inside the wallet's 12 s GET timeout.
+  const n = stubNode((_key, signal) => new Promise((_, stop) => { if (signal?.aborted) stop(signal.reason); signal?.addEventListener("abort", () => stop(signal.reason), { once: true }); }));
+  const alive = setInterval(() => undefined, 1000), t0 = Date.now();
+  const a = await get(serverOf(n.f), `/api/rpc/tx/0x${"ed".repeat(32)}/status`), took = Date.now() - t0;
+  clearInterval(alive);
+  ok(`a hung node: the status answers unknown, not definite, within ${OPEN_LIMITS.readMs} ms and a second, under the wallet's 12,000`,
+    a.status === 200 && JSON.parse(a.body).definite === false && took < OPEN_LIMITS.readMs + 1_000 && took < 12_000, `${took} ms ${n.log.map((l) => l.key).join(",")}`);
 }
 
 console.log("the node address rule, and the name routes over a replica of the recorded node:");
