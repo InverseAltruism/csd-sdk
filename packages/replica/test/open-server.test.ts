@@ -117,6 +117,7 @@ console.log("the preflight, Retry-After exposed, no redirect:");
   seen.push(p, ...r, await get(srv, "/nothing/here"), await get(srv, "/api/rpc/utxos/0x12"));
   ok(`access-control-expose-headers names retry-after on every answer, the name routes' x-cairnx-at too (${seen.length})`,
     seen.every(exposes) && seen.filter((a) => a.headers["x-cairnx-at"] !== undefined).every((a) => a.headers["access-control-expose-headers"]!.includes("x-cairnx-at")));
+  ok("cache-control no-store and origin * on every answer", seen.every((a) => a.headers["cache-control"] === "no-store" && a.headers["access-control-allow-origin"] === "*"));
 }
 
 console.log("the wallet's reading of each failure:");
