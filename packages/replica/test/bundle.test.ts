@@ -48,9 +48,9 @@ ok(`./display carries neither resolve() nor the block reads, and minified is ${g
   !display.text.includes("function resolve(") && !display.text.includes("/api/blocks/") && display.text.includes("/trade/api/cairnx/"));
 const nodeOnly = await bundle({ contents: 'import { readFileSync } from "node:fs"; export const f = readFileSync;' });
 ok("control: an entry importing node:fs does not bundle for the browser", "error" in nodeOnly);
-// ./server imports Node built-ins (diskStore; the build writes them without the node: prefix), left outside its bundle
-// here so that the scan runs.
-const server = await bundle({ file: "server.js" }, false, ["node:*", "crypto", "fs", "fs/promises", "path"]);
+// ./server imports Node built-ins (diskStore, and the open server's http; the build writes them without the node:
+// prefix), left outside its bundle here so that the scan runs.
+const server = await bundle({ file: "server.js" }, false, ["node:*", "crypto", "fs", "fs/promises", "http", "path"]);
 ok("control: the scan finds process.env in ./server", "text" in server && BANNED.test(server.text) && server.text.includes("process.env.CAIRNX_OWN_NODE_HOSTS"));
 ok("control: ./server carries the Scanner", "text" in server && server.text.includes(SCANNER));
 

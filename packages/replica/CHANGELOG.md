@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.3
+
+- The open server: `cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]`, and
+  `openServer` with `listen` in `./server`. It serves the paths cairn-wallet sends to a server its user adds, on one
+  origin: `/api/rpc/tip`, `/utxos/:addr`, `/utxos-all/:addr`, `/tx/:id`, `/tx/:id/status`, `/block/:hash`,
+  `/proposal/:id` and POST `/api/rpc/tx/submit` relayed to one's own node as our front door relays them,
+  `/api/headers/:from/:count` built from the node's `/block/height/:h` in the front door's JSON, and
+  `/trade/api/cairnx/{name,resolve,name-history}/:name` from `replicaReads`. CORS and `no-store` on every answer, the
+  submit's preflight, `Retry-After` exposed, no redirect; parameters held to their shape before any node request, the
+  front door's 512 KiB submit cap, a timeout on every node read, and bounds on node requests in flight, with submits
+  apart. Loopback is the default bind. README "The open server". Its test runs the front door's wallet contract for
+  these routes (copied from cairn at `2331f7ca` with the sha256 of each source file) against a stub node, and the
+  command over the recorded node through a socket, the served header range checked by csd-light.
+- The open server's socket: header, request, idle and response timeouts and a connection cap (README "The open
+  server"), and a body is read only for a submit whose headers pass; any other request carrying a body is answered at
+  once and its connection closed (`test/open-server-wire.test.ts`).
+- `/api/rpc/tx/:id/status` reads the pool and the transaction under one 10 s deadline, inside the wallet's 12 s
+  (two 10 s timeouts in a row answered a hung node at 20 s), and answers the server's own full read gate with the busy
+  503 and `Retry-After`, where it answered 200 unknown.
+- `/api/headers/:from/:count` answers the server's own full read gate with the busy 503 and `Retry-After`, where it
+  answered 502; a node body with `ok: false` stays no row.
+- A test that no `Reader` read throws for "not verified" (`test/unverified.test.ts`).
+- The capped body read of `http.ts` is shared as `cappedText`; `cappedJson` reads through it, unchanged.
+
 ## 0.2.2
 
 - With `verifyInclusion`, an event's position in its block is now proven, not the indexer's word. The position comes

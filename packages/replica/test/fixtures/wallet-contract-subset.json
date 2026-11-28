@@ -1,0 +1,1222 @@
+{
+ "about": "The subset of cairn's wallet contract the open server serves (open-server.ts): the route entries copied verbatim, the node's and the resolver's stub answers for them copied verbatim from cairn's upstream fixture, with two /block/height answers constructed from its recorded indexer blocks for the header route, which the open server reads from the node. Regenerate from the cairn commit below, never by hand.",
+ "source": {
+  "repo": "cairn",
+  "commit": "2331f7cab02d5713000c2d885a56e248abf2e33e",
+  "sha256": {
+   "test/fixtures/wallet-contract.json": "38d84f6d50abe6f6aa9b5b023b44ca8a8a2f41334334b6378be3d5d95734a96d",
+   "test/fixtures/wallet-contract-upstream.json": "841535c52e60d2687af6509ec7eebabcb8b50c6bf7378a9449d730571311fbb3"
+  }
+ },
+ "shapeSyntax": "A key is a path into the parsed body: `a.b` a member, `a[]` every element of an array, `a.*` every value of an object used as a map, the empty key the body itself. `fieldReads`, where present, lists where the wallet reads each field. A `?` after a segment marks what the wallet tolerates absent; if present it must have the type. A required path must match at least one value. A type is integer, number, string, boolean, object, array, null, hex20 (0x and 40 hex digits), hex32 (0x and 64), digits (a string of decimal digits), alternatives joined by |; `=<json>` is a value the wallet compares against, `one-of:a,b` one of those strings. `lengths` gives an array's exact length.",
+ "routes": [
+  {
+   "id": "rpc-tip",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/tip",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:76 tip() is Number(height ?? 0): a missing height reads as tip 0, against which fees are priced and leases lapse. core/namespv.ts:852 the header sync reads tip().height. A non-2xx throws and wallet.tip() is null.",
+   "cases": [
+    {
+     "name": "tip",
+     "request": {
+      "path": "/api/rpc/tip"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "height": "integer"
+     },
+     "cairn": {
+      "upstream": "node GET /tip",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-utxos",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/utxos/:addr",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:101-105 balance(), before every spend and for the shown balance: a body without a utxos array refuses the spend as VERIFY_UNAVAILABLE; confirmed_balance is the balance shown (missing reads 0); truncated marks a list the node cut. vendor/cairnx-spv.js:3547 selectInputs spends a coin only with confirmations >= 1 and a positive safe-integer value, so a missing confirmations leaves every coin unspendable; txid and vout name the coin whose source tx is then fetched and recomputed (rpc-tx).",
+   "cases": [
+    {
+     "name": "one coin",
+     "request": {
+      "path": "/api/rpc/utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "utxos": "array",
+      "utxos[].txid": "hex32",
+      "utxos[].vout": "integer",
+      "utxos[].value": "integer",
+      "utxos[].confirmations": "integer",
+      "confirmed_balance": "integer",
+      "truncated?": "boolean"
+     },
+     "cairn": {
+      "upstream": "node GET /utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec?available=true",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-utxos-all",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/utxos-all/:addr",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:110-118 confirmedUtxos(), from core/history.ts:297 (a pending row whose coins are gone): only a 2xx with a utxos array counts, and truncated true makes the list incomplete; a 404 falls back to /utxos only on a bare node origin, so through cairn a 404 reads as unknowable and the row stays open.",
+   "cases": [
+    {
+     "name": "one coin",
+     "request": {
+      "path": "/api/rpc/utxos-all/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "utxos": "array",
+      "utxos[].txid": "hex32",
+      "utxos[].vout": "integer",
+      "truncated?": "boolean"
+     },
+     "cairn": {
+      "upstream": "node GET /utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-tx",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/tx/:id",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:263-292 verifyOne, for every input before signing: 404 is a coin to skip, 503 with code SCAN_HORIZON a coin to skip, any other non-2xx refuses the spend as transient; the body's tx is rebuilt from version, locktime, app, inputs and outputs and must recompute its txid, else the whole spend is refused as tampered, and a number JSON cannot hold exactly is its own verdict, so the bytes must reach the wallet unchanged. core/node.ts:80-94 txInclusion reads ok, height and complete. core/namespv.ts:934 the name proof binds a record's spent coin from tx.",
+   "cases": [
+    {
+     "name": "mined",
+     "request": {
+      "path": "/api/rpc/tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "height": "integer",
+      "tx": "object",
+      "tx.version": "integer",
+      "tx.locktime": "integer",
+      "tx.app": "object",
+      "tx.app.type": "string",
+      "tx.inputs": "array",
+      "tx.inputs[].prev_txid": "hex32",
+      "tx.inputs[].vout": "integer",
+      "tx.inputs[].script_sig": "string",
+      "tx.outputs": "array",
+      "tx.outputs[].value": "integer",
+      "tx.outputs[].script_pubkey": "hex20"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "not found",
+     "request": {
+      "path": "/api/rpc/tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=false",
+      "complete?": "boolean"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "scan horizon",
+     "request": {
+      "path": "/api/rpc/tx/0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+     },
+     "status": 503,
+     "contentType": "application/json",
+     "shape": {
+      "code": "one-of:SCAN_HORIZON"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-tx-status",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/tx/:id/status",
+   "handler": "cairn",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:80-94 txInclusion, for the history rows (display only): only ok true with state mined, pending or unknown is used, and mined needs a safe-integer height. core/inclusion.ts:24-31 inclusionVerdict reads definite only for unknown: definite true with an input missing from the mined coin set marks the row spent (gone after two tips, core/inclusion.ts:37-47); anything but true reads as no reading, so a dropped send's row never closes. For mined and pending definite is not read. A 404 sends the wallet to /tx/:id, which only a bare node origin needs; any other non-2xx or body leaves the row open.",
+   "cases": [
+    {
+     "name": "mined",
+     "request": {
+      "path": "/api/rpc/tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c/status"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "state": "one-of:mined",
+      "height": "integer"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c"
+     }
+    },
+    {
+     "name": "pending",
+     "request": {
+      "path": "/api/rpc/tx/0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/status"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "state": "one-of:pending"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+     }
+    },
+    {
+     "name": "unknown, every scan complete",
+     "request": {
+      "path": "/api/rpc/tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2/status"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "state": "one-of:unknown",
+      "definite": "=true"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+     }
+    },
+    {
+     "name": "unknown, the node's scan stopped short",
+     "request": {
+      "path": "/api/rpc/tx/0xc4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4/status"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "state": "one-of:unknown",
+      "definite": "=false"
+     },
+     "cairn": {
+      "upstream": "node GET /tx/0xc4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-block",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/block/:hash",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/namespv.ts:916-921 blockAt and core/fillspv.ts read the body as text under the client's byte cap; vendor/cairnx-spv.js:967-1002 bindBlockBody parses it exactly (u64 fields above 2^53 included), refuses ok false, rebuilds each tx's txid from version, locktime, app, inputs and outputs, refuses a field not written the way the node writes it, and matches the merkle root of the header the wallet verified. A non-2xx throws: the name or fill check fails closed.",
+   "cases": [
+    {
+     "name": "recorded block",
+     "request": {
+      "path": "/api/rpc/block/0x0000000000005cf706c3878103a6afe49bcbd12a0e12b066d6a85ea9eeb8d5d0"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok?": "=true",
+      "txs": "array",
+      "txs[].version": "integer",
+      "txs[].locktime": "integer",
+      "txs[].app?": "object",
+      "txs[].inputs": "array",
+      "txs[].inputs[].prev_txid": "hex32",
+      "txs[].inputs[].vout": "integer",
+      "txs[].inputs[].script_sig": "string",
+      "txs[].outputs": "array",
+      "txs[].outputs[].value": "integer",
+      "txs[].outputs[].script_pubkey": "hex20"
+     },
+     "cairn": {
+      "upstream": "node GET /block/0x0000000000005cf706c3878103a6afe49bcbd12a0e12b066d6a85ea9eeb8d5d0",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "u64 field above 2^53",
+     "request": {
+      "path": "/api/rpc/block/0x000000000000f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok?": "=true",
+      "txs": "array",
+      "txs[].version": "integer",
+      "txs[].locktime": "integer",
+      "txs[].app?": "object",
+      "txs[].inputs": "array",
+      "txs[].inputs[].prev_txid": "hex32",
+      "txs[].inputs[].vout": "integer",
+      "txs[].inputs[].script_sig": "string",
+      "txs[].outputs": "array",
+      "txs[].outputs[].value": "integer",
+      "txs[].outputs[].script_pubkey": "hex20"
+     },
+     "cairn": {
+      "upstream": "node GET /block/0x000000000000f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-proposal",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/rpc/proposal/:id",
+   "handler": "node-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/node.ts:95-97 getProposal returns proposal (or a flat body carrying payload_hash), null on any non-2xx; core/claims.ts:148 and core/wallet.ts:1062 take a payload_hash as mined before they reveal or register content; core/cairnxview.ts:150-158 attestTargetView reads proposer, domain, uri and payload_hash for a cancel's title (display only).",
+   "cases": [
+    {
+     "name": "proposal",
+     "request": {
+      "path": "/api/rpc/proposal/0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "proposal": "object",
+      "proposal.payload_hash": "hex32",
+      "proposal.proposer": "hex20",
+      "proposal.domain": "string",
+      "proposal.uri": "string"
+     },
+     "cairn": {
+      "upstream": "node GET /proposal/0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "rpc-submit",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "POST",
+   "path": "/api/rpc/tx/submit",
+   "handler": "node-relay",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "preflight": true,
+   "reads": "core/node.ts:33-74 post() and 559-596 signAndSubmit, after signing: a 2xx JSON object is the answer, ok with err or error (the echoed txid is a cross-check only, the wallet's own txid is used); a 4xx is a refusal before any node; a 5xx, a network error or an unreadable body is \"may already be in flight\". An err naming \"already present\" or \"mempool conflict\" is a pending duplicate. The body is {tx} with hashes and scripts as byte arrays.",
+   "cases": [
+    {
+     "name": "accepted",
+     "request": {
+      "path": "/api/rpc/tx/submit",
+      "body": {
+       "tx": {
+        "version": 1,
+        "locktime": 0,
+        "app": "None",
+        "inputs": [
+         {
+          "prevout": {
+           "txid": [
+            237,
+            96,
+            115,
+            4,
+            134,
+            15,
+            80,
+            144,
+            27,
+            90,
+            249,
+            172,
+            186,
+            2,
+            77,
+            98,
+            211,
+            147,
+            126,
+            9,
+            171,
+            82,
+            250,
+            202,
+            131,
+            179,
+            164,
+            0,
+            42,
+            13,
+            56,
+            76
+           ],
+           "vout": 0
+          },
+          "script_sig": [
+           64,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           33,
+           2,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9
+          ]
+         }
+        ],
+        "outputs": [
+         {
+          "value": 949000000,
+          "script_pubkey": [
+           68,
+           217,
+           40,
+           114,
+           165,
+           182,
+           93,
+           55,
+           214,
+           14,
+           213,
+           50,
+           244,
+           30,
+           254,
+           124,
+           90,
+           237,
+           89,
+           236
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "txid?": "hex32"
+     },
+     "cairn": {
+      "upstream": "node POST /tx/submit",
+      "relay": "json"
+     }
+    },
+    {
+     "name": "refused",
+     "request": {
+      "path": "/api/rpc/tx/submit",
+      "body": {
+       "tx": {
+        "version": 1,
+        "locktime": 1,
+        "app": "None",
+        "inputs": [
+         {
+          "prevout": {
+           "txid": [
+            237,
+            96,
+            115,
+            4,
+            134,
+            15,
+            80,
+            144,
+            27,
+            90,
+            249,
+            172,
+            186,
+            2,
+            77,
+            98,
+            211,
+            147,
+            126,
+            9,
+            171,
+            82,
+            250,
+            202,
+            131,
+            179,
+            164,
+            0,
+            42,
+            13,
+            56,
+            76
+           ],
+           "vout": 0
+          },
+          "script_sig": [
+           64,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           7,
+           33,
+           2,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9,
+           9
+          ]
+         }
+        ],
+        "outputs": [
+         {
+          "value": 949000000,
+          "script_pubkey": [
+           68,
+           217,
+           40,
+           114,
+           165,
+           182,
+           93,
+           55,
+           214,
+           14,
+           213,
+           50,
+           244,
+           30,
+           254,
+           124,
+           90,
+           237,
+           89,
+           236
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=false",
+      "err": "string"
+     },
+     "cairn": {
+      "upstream": "node POST /tx/submit",
+      "relay": "json"
+     }
+    }
+   ]
+  },
+  {
+   "id": "headers",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/api/headers/:from/:count",
+   "handler": "cairn",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/namespv.ts:646-662 headersBatch: a 429 waits Retry-After, a 502 or 503 retries, any other non-2xx throws; the headers array must hold exactly count rows, each {header, hash}, and the light client checks every header (prev link, PoW, LWMA bits) before use; core/namespv.ts fetchChunk serializes each header for the stored chain.",
+   "cases": [
+    {
+     "name": "two rows",
+     "request": {
+      "path": "/api/headers/145408/2"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "lengths": {
+      "headers": 2
+     },
+     "shape": {
+      "headers": "array",
+      "headers[].hash": "hex32",
+      "headers[].header": "object",
+      "headers[].header.version": "integer",
+      "headers[].header.prev": "hex32",
+      "headers[].header.merkle": "hex32",
+      "headers[].header.time": "integer",
+      "headers[].header.bits": "integer",
+      "headers[].header.nonce": "integer"
+     },
+     "cairn": {
+      "upstream": "indexer GET /block-height/145408"
+     }
+    }
+   ]
+  },
+  {
+   "id": "trade-resolve",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com",
+    "clarvis.cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/trade/api/cairnx/resolve/:name",
+   "handler": "resolver-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/names.ts:31-74 resolveName, a send to a name: a 404 from the primary is \"not registered\", any other failure asks clarvis, whose 404 is not taken as definitive; lapsed sends the name to the two-source check; addr must be 0x and 40 hex, and the address is then proven from name-history (trade-name-history).",
+   "cases": [
+    {
+     "name": "registered",
+     "request": {
+      "path": "/trade/api/cairnx/resolve/cairn"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "addr": "hex20",
+      "lapsed?": "boolean",
+      "via?": "string",
+      "owner?": "hex20"
+     },
+     "cairn": {
+      "upstream": "resolver GET /cairnx/resolve/cairn",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "not registered",
+     "request": {
+      "path": "/trade/api/cairnx/resolve/zzcontracttest"
+     },
+     "status": 404,
+     "contentType": "application/json",
+     "shape": {},
+     "cairn": {
+      "upstream": "resolver GET /cairnx/resolve/zzcontracttest",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "trade-name-history",
+   "versions": "0.3.3-0.3.4",
+   "hosts": [
+    "cairn-substrate.com",
+    "clarvis.cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/trade/api/cairnx/name-history/:name",
+   "handler": "resolver-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/namespv.ts:292-301 fetchNameHistory, per source: a 404 is unregistered at that source, any other non-2xx or ok not true makes it unusable; events are the txids and heights the wallet proves against its own headers; resolve is compared with the proven answer, never trusted; scopedReplaySufficient false fails closed.",
+   "cases": [
+    {
+     "name": "history",
+     "request": {
+      "path": "/trade/api/cairnx/name-history/cairn"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "ok": "=true",
+      "events": "array",
+      "events[].txid": "hex32",
+      "events[].height": "integer",
+      "resolve?": "object",
+      "resolve?.addr?": "hex20",
+      "resolve?.owner?": "hex20",
+      "resolve?.via?": "string",
+      "resolve?.lapsed?": "boolean",
+      "scopedReplaySufficient?": "boolean"
+     },
+     "cairn": {
+      "upstream": "resolver GET /cairnx/name-history/cairn",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "trade-name",
+   "versions": "0.3.3",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/trade/api/cairnx/name/:name",
+   "handler": "resolver-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "core/namegate.ts:16-23 readNameRecord, before a renew or a set primary: a 404 is no record (both are refused, the fee would burn), any other non-2xx is no verdict; core/namegate.ts:34-61 nameActApproveGate reads owner, pending, expired and lease.inGrace.",
+   "cases": [
+    {
+     "name": "registered",
+     "request": {
+      "path": "/trade/api/cairnx/name/cairn"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "owner": "hex20",
+      "pending?": "boolean",
+      "expired?": "boolean",
+      "lease?": "object",
+      "lease?.inGrace?": "boolean"
+     },
+     "cairn": {
+      "upstream": "resolver GET /cairnx/name/cairn",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "not registered",
+     "request": {
+      "path": "/trade/api/cairnx/name/zzcontracttest"
+     },
+     "status": 404,
+     "contentType": "application/json",
+     "shape": {},
+     "cairn": {
+      "upstream": "resolver GET /cairnx/name/zzcontracttest",
+      "relay": "bytes"
+     }
+    }
+   ]
+  },
+  {
+   "id": "trade-name",
+   "versions": "0.3.4",
+   "hosts": [
+    "cairn-substrate.com"
+   ],
+   "method": "GET",
+   "path": "/trade/api/cairnx/name/:name",
+   "handler": "resolver-proxy",
+   "cors": {
+    "access-control-allow-origin": "*"
+   },
+   "reads": "As 0.3.3, and core/namegate.ts:69-81 nameRecordCaution, before a transfer or a profile write, also reads locked (an open offer holds the name).",
+   "cases": [
+    {
+     "name": "registered",
+     "request": {
+      "path": "/trade/api/cairnx/name/cairn"
+     },
+     "status": 200,
+     "contentType": "application/json",
+     "shape": {
+      "owner": "hex20",
+      "pending?": "boolean",
+      "expired?": "boolean",
+      "lease?": "object",
+      "lease?.inGrace?": "boolean",
+      "locked?": "boolean"
+     },
+     "cairn": {
+      "upstream": "resolver GET /cairnx/name/cairn",
+      "relay": "bytes"
+     }
+    },
+    {
+     "name": "not registered",
+     "request": {
+      "path": "/trade/api/cairnx/name/zzcontracttest"
+     },
+     "status": 404,
+     "contentType": "application/json",
+     "shape": {},
+     "cairn": {
+      "upstream": "resolver GET /cairnx/name/zzcontracttest",
+      "relay": "bytes"
+     }
+    }
+   ]
+  }
+ ],
+ "node": {
+  "GET /tip": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"tip\":\"0x00000000000054576a7f35d421d8a90b179615a11bde0f3d452df594cb143973\",\"height\":146829,\"chainwork\":\"92588665827737472197\"}",
+   "recorded": {
+    "path": "/api/rpc/tip",
+    "at": "2026-11-21T21:42:14.038Z"
+   }
+  },
+  "GET /utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec?available=true": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"addr20\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"count\":28,\"confirmed_balance\":228803922,\"mined_lifetime\":null,\"mined_unspent\":0,\"coinbase_lifetime_outputs\":null,\"coinbase_unspent_outputs\":0,\"utxos\":[{\"txid\":\"0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c\",\"vout\":0,\"value\":75000000,\"height\":139667,\"confirmations\":7324,\"coinbase\":false},{\"txid\":\"0x4120478e30cb94b2551b6e65f3b7eccef6c263be7a430e1eccb0342db7752ae0\",\"vout\":0,\"value\":14000000,\"height\":139663,\"confirmations\":7328,\"coinbase\":false},{\"txid\":\"0xad0b0675b7294750479a092d1f0b953c31158d1e60668395c0991d7dc4d4aa60\",\"vout\":0,\"value\":3884212,\"height\":139663,\"confirmations\":7328,\"coinbase\":false},{\"txid\":\"0x47144e3866ad802e702fa1cc73e6edaeb9ae1d773a5d74e54ced57ece6ca713f\",\"vout\":2,\"value\":24803922,\"height\":128771,\"confirmations\":18220,\"coinbase\":false},{\"txid\":\"0x21f3a9f5b02e47d111db3daec453d7e1d4e1a3f70d6364fff3f352990aa48484\",\"vout\":1,\"value\":24500000,\"height\":123271,\"confirmations\":23720,\"coinbase\":false},{\"txid\":\"0x04ab14ceeb0b88004948217a578c385c4929958a9b5e6a9edfc36d9e067dd395\",\"vout\":0,\"value\":10000000,\"height\":51343,\"confirmations\":95648,\"coinbase\":false},{\"txid\":\"0x25773ff9126cdd665a6a76bc542aab456ba1311a193a507a83b70a144f472031\",\"vout\":0,\"value\":10000000,\"height\":51341,\"confirmations\":95650,\"coinbase\":false},{\"txid\":\"0x15f442a222028ca257458e43d467fa87e7b956a0ede2a6cc9e1244103e258003\",\"vout\":8,\"value\":16489738,\"height\":50948,\"confirmations\":96043,\"coinbase\":false},{\"txid\":\"0xddbb6455daa0754af30e1745e00ee3cf9cf22dd083dc1baf65d1b34dbb77ddfb\",\"vout\":0,\"value\":10000000,\"height\":48154,\"confirmations\":98837,\"coinbase\":false},{\"txid\":\"0x7766b565a5ce8c56417a5608b2c0f0a6837fbf29654a5c2a6e120f1389b3343d\",\"vout\":0,\"value\":10000000,\"height\":47413,\"confirmations\":99578,\"coinbase\":false},{\"txid\":\"0x8761760387297531f5285c3f7c37edf040fbaa87dffed09fbc4dd359855055dd\",\"vout\":0,\"value\":10000000,\"height\":47412,\"confirmations\":99579,\"coinbase\":false},{\"txid\":\"0xbc8d127ec38c592ac247bcf31d459a197f4171349a8c0598c8f4507f0c8d2d77\",\"vout\":1,\"value\":700000,\"height\":37175,\"confirmations\":109816,\"coinbase\":false},{\"txid\":\"0x7ffcd2890fc3302814904acfe02bed7e3d1a21bf265b5cde3da00e774288a04d\",\"vout\":1,\"value\":1940000,\"height\":37172,\"confirmations\":109819,\"coinbase\":false},{\"txid\":\"0x6bd6297279a4909d60b4ec20457c074fede7da6e08becb8ecfe80188a108b43f\",\"vout\":0,\"value\":5000000,\"height\":36330,\"confirmations\":110661,\"coinbase\":false},{\"txid\":\"0xbceba851eebf6ee0d0fa1719ffa3ed92342027aa09b8cc6f75e9e3aaeb400adc\",\"vout\":0,\"value\":4696000,\"height\":35989,\"confirmations\":111002,\"coinbase\":false},{\"txid\":\"0xc9601ab1bcd653d7792941fb99152f4f3dc3b0414e7dcbcdf7aadbb6e7384e76\",\"vout\":0,\"value\":505000,\"height\":33148,\"confirmations\":113843,\"coinbase\":false},{\"txid\":\"0xda67f40a40b6077fe28b0123a98aaddeb7fc5b422ea1ad48dcf268e2bb70a60d\",\"vout\":0,\"value\":500000,\"height\":32862,\"confirmations\":114129,\"coinbase\":false},{\"txid\":\"0xda67f40a40b6077fe28b0123a98aaddeb7fc5b422ea1ad48dcf268e2bb70a60d\",\"vout\":1,\"value\":380000,\"height\":32862,\"confirmations\":114129,\"coinbase\":false},{\"txid\":\"0x9a7b45969d7f7a1500e90786c64326349b9ee78c3fa67b0d14e566625f41184f\",\"vout\":0,\"value\":100000,\"height\":32790,\"confirmations\":114201,\"coinbase\":false},{\"txid\":\"0x9a7b45969d7f7a1500e90786c64326349b9ee78c3fa67b0d14e566625f41184f\",\"vout\":1,\"value\":190000,\"height\":32790,\"confirmations\":114201,\"coinbase\":false},{\"txid\":\"0x757edacc2c52dff4f6e864dbfbc3c914660587042ac49c0cad35cb1748259737\",\"vout\":0,\"value\":1000000,\"height\":32716,\"confirmations\":114275,\"coinbase\":false},{\"txid\":\"0xcbb1a57dcf842597c07d3a27ff0648d094bfbd3ec149e5958c887c017bb26efd\",\"vout\":2,\"value\":515050,\"height\":32699,\"confirmations\":114292,\"coinbase\":false},{\"txid\":\"0xfb1190beb0b5ac8bec61a3007051dcb0f1d349e06ff879cd8c77b02ba45e32fc\",\"vout\":0,\"value\":1000000,\"height\":32695,\"confirmations\":114296,\"coinbase\":false},{\"txid\":\"0xa5ea2cf0a60362cdb1a3bbaa029b9815c1b72d3bdf88549b361c66ddf37f4f42\",\"vout\":0,\"value\":1000000,\"height\":31310,\"confirmations\":115681,\"coinbase\":false},{\"txid\":\"0x60c6566f253bdbb9df58b1f96f858854b63e09b1e9a9b7e84a0c58b60a4d5032\",\"vout\":0,\"value\":1000000,\"height\":27586,\"confirmations\":119405,\"coinbase\":false},{\"txid\":\"0x60c6566f253bdbb9df58b1f96f858854b63e09b1e9a9b7e84a0c58b60a4d5032\",\"vout\":1,\"value\":1000000,\"height\":27586,\"confirmations\":119405,\"coinbase\":false},{\"txid\":\"0xa2ef976ee18800cc4995cdc8a4e12f95c42db71a2d71acba0e051e5c7d3eb0d0\",\"vout\":0,\"value\":100000,\"height\":27079,\"confirmations\":119912,\"coinbase\":false},{\"txid\":\"0x8adb0ae3bc24d451f53620247cdd0754ede1fa753958dfce4750266741328d03\",\"vout\":0,\"value\":500000,\"height\":27025,\"confirmations\":119966,\"coinbase\":false}],\"tip\":\"0x00000000000050cd7a02a55f47fc8ec7e5ae907ff7320c5c58ebdb51f2829038\"}",
+   "recorded": {
+    "path": "/api/rpc/utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec",
+    "at": "2026-11-22T03:06:39.349Z"
+   }
+  },
+  "GET /utxos/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"addr20\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"count\":28,\"confirmed_balance\":228803922,\"mined_lifetime\":null,\"mined_unspent\":0,\"coinbase_lifetime_outputs\":null,\"coinbase_unspent_outputs\":0,\"utxos\":[{\"txid\":\"0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c\",\"vout\":0,\"value\":75000000,\"height\":139667,\"confirmations\":7324,\"coinbase\":false},{\"txid\":\"0x4120478e30cb94b2551b6e65f3b7eccef6c263be7a430e1eccb0342db7752ae0\",\"vout\":0,\"value\":14000000,\"height\":139663,\"confirmations\":7328,\"coinbase\":false},{\"txid\":\"0xad0b0675b7294750479a092d1f0b953c31158d1e60668395c0991d7dc4d4aa60\",\"vout\":0,\"value\":3884212,\"height\":139663,\"confirmations\":7328,\"coinbase\":false},{\"txid\":\"0x47144e3866ad802e702fa1cc73e6edaeb9ae1d773a5d74e54ced57ece6ca713f\",\"vout\":2,\"value\":24803922,\"height\":128771,\"confirmations\":18220,\"coinbase\":false},{\"txid\":\"0x21f3a9f5b02e47d111db3daec453d7e1d4e1a3f70d6364fff3f352990aa48484\",\"vout\":1,\"value\":24500000,\"height\":123271,\"confirmations\":23720,\"coinbase\":false},{\"txid\":\"0x04ab14ceeb0b88004948217a578c385c4929958a9b5e6a9edfc36d9e067dd395\",\"vout\":0,\"value\":10000000,\"height\":51343,\"confirmations\":95648,\"coinbase\":false},{\"txid\":\"0x25773ff9126cdd665a6a76bc542aab456ba1311a193a507a83b70a144f472031\",\"vout\":0,\"value\":10000000,\"height\":51341,\"confirmations\":95650,\"coinbase\":false},{\"txid\":\"0x15f442a222028ca257458e43d467fa87e7b956a0ede2a6cc9e1244103e258003\",\"vout\":8,\"value\":16489738,\"height\":50948,\"confirmations\":96043,\"coinbase\":false},{\"txid\":\"0xddbb6455daa0754af30e1745e00ee3cf9cf22dd083dc1baf65d1b34dbb77ddfb\",\"vout\":0,\"value\":10000000,\"height\":48154,\"confirmations\":98837,\"coinbase\":false},{\"txid\":\"0x7766b565a5ce8c56417a5608b2c0f0a6837fbf29654a5c2a6e120f1389b3343d\",\"vout\":0,\"value\":10000000,\"height\":47413,\"confirmations\":99578,\"coinbase\":false},{\"txid\":\"0x8761760387297531f5285c3f7c37edf040fbaa87dffed09fbc4dd359855055dd\",\"vout\":0,\"value\":10000000,\"height\":47412,\"confirmations\":99579,\"coinbase\":false},{\"txid\":\"0xbc8d127ec38c592ac247bcf31d459a197f4171349a8c0598c8f4507f0c8d2d77\",\"vout\":1,\"value\":700000,\"height\":37175,\"confirmations\":109816,\"coinbase\":false},{\"txid\":\"0x7ffcd2890fc3302814904acfe02bed7e3d1a21bf265b5cde3da00e774288a04d\",\"vout\":1,\"value\":1940000,\"height\":37172,\"confirmations\":109819,\"coinbase\":false},{\"txid\":\"0x6bd6297279a4909d60b4ec20457c074fede7da6e08becb8ecfe80188a108b43f\",\"vout\":0,\"value\":5000000,\"height\":36330,\"confirmations\":110661,\"coinbase\":false},{\"txid\":\"0xbceba851eebf6ee0d0fa1719ffa3ed92342027aa09b8cc6f75e9e3aaeb400adc\",\"vout\":0,\"value\":4696000,\"height\":35989,\"confirmations\":111002,\"coinbase\":false},{\"txid\":\"0xc9601ab1bcd653d7792941fb99152f4f3dc3b0414e7dcbcdf7aadbb6e7384e76\",\"vout\":0,\"value\":505000,\"height\":33148,\"confirmations\":113843,\"coinbase\":false},{\"txid\":\"0xda67f40a40b6077fe28b0123a98aaddeb7fc5b422ea1ad48dcf268e2bb70a60d\",\"vout\":0,\"value\":500000,\"height\":32862,\"confirmations\":114129,\"coinbase\":false},{\"txid\":\"0xda67f40a40b6077fe28b0123a98aaddeb7fc5b422ea1ad48dcf268e2bb70a60d\",\"vout\":1,\"value\":380000,\"height\":32862,\"confirmations\":114129,\"coinbase\":false},{\"txid\":\"0x9a7b45969d7f7a1500e90786c64326349b9ee78c3fa67b0d14e566625f41184f\",\"vout\":0,\"value\":100000,\"height\":32790,\"confirmations\":114201,\"coinbase\":false},{\"txid\":\"0x9a7b45969d7f7a1500e90786c64326349b9ee78c3fa67b0d14e566625f41184f\",\"vout\":1,\"value\":190000,\"height\":32790,\"confirmations\":114201,\"coinbase\":false},{\"txid\":\"0x757edacc2c52dff4f6e864dbfbc3c914660587042ac49c0cad35cb1748259737\",\"vout\":0,\"value\":1000000,\"height\":32716,\"confirmations\":114275,\"coinbase\":false},{\"txid\":\"0xcbb1a57dcf842597c07d3a27ff0648d094bfbd3ec149e5958c887c017bb26efd\",\"vout\":2,\"value\":515050,\"height\":32699,\"confirmations\":114292,\"coinbase\":false},{\"txid\":\"0xfb1190beb0b5ac8bec61a3007051dcb0f1d349e06ff879cd8c77b02ba45e32fc\",\"vout\":0,\"value\":1000000,\"height\":32695,\"confirmations\":114296,\"coinbase\":false},{\"txid\":\"0xa5ea2cf0a60362cdb1a3bbaa029b9815c1b72d3bdf88549b361c66ddf37f4f42\",\"vout\":0,\"value\":1000000,\"height\":31310,\"confirmations\":115681,\"coinbase\":false},{\"txid\":\"0x60c6566f253bdbb9df58b1f96f858854b63e09b1e9a9b7e84a0c58b60a4d5032\",\"vout\":0,\"value\":1000000,\"height\":27586,\"confirmations\":119405,\"coinbase\":false},{\"txid\":\"0x60c6566f253bdbb9df58b1f96f858854b63e09b1e9a9b7e84a0c58b60a4d5032\",\"vout\":1,\"value\":1000000,\"height\":27586,\"confirmations\":119405,\"coinbase\":false},{\"txid\":\"0xa2ef976ee18800cc4995cdc8a4e12f95c42db71a2d71acba0e051e5c7d3eb0d0\",\"vout\":0,\"value\":100000,\"height\":27079,\"confirmations\":119912,\"coinbase\":false},{\"txid\":\"0x8adb0ae3bc24d451f53620247cdd0754ede1fa753958dfce4750266741328d03\",\"vout\":0,\"value\":500000,\"height\":27025,\"confirmations\":119966,\"coinbase\":false}],\"tip\":\"0x00000000000050cd7a02a55f47fc8ec7e5ae907ff7320c5c58ebdb51f2829038\"}",
+   "recorded": {
+    "path": "/api/rpc/utxos-all/0x44d92872a5b65d37d60ed532f41efe7c5aed59ec",
+    "at": "2026-11-22T03:06:40.389Z"
+   }
+  },
+  "GET /tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"txid\":\"0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c\",\"block_hash\":\"0x00000000000014775e798504099fe49769fb98304985e7e3c2c840fc960f8ead\",\"height\":139667,\"time\":1794428574,\"tx\":{\"app\":{\"domain\":\"cp.profile\",\"expires_epoch\":10004655,\"payload_hash\":\"0x375a969fd0fcdc1688b7cd3559a16ffcea25b7567cbe263840512d8a91796e10\",\"type\":\"Propose\",\"uri\":\"cp:profile:12:Test\"},\"inputs\":[{\"prev_txid\":\"0x061f5d2fd432207013b5b19888d36c0d542362f7449f321e19808d212cd19e80\",\"script_sig\":\"0x401c6f2b43a82f55d4feedabbd2ae51927500b334a1ac2ad06215dd04ddf2268637b8b80a0107f685de4b368855bbbc65e77ef691c28375d3dda06b1f30b0e59ae21038e2468cae294322e242d476f20b581cd06def39782a4e76a12139b150338a35d\",\"script_sig_text\":null,\"vout\":0}],\"locktime\":0,\"outputs\":[{\"script_pubkey\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"value\":75000000}],\"txid\":\"0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c\",\"version\":1},\"err\":null}",
+   "recorded": {
+    "path": "/api/rpc/tx/0xed607304860f50901b5af9acba024d62d3937e09ab52faca83b3a4002a0d384c",
+    "at": "2026-11-22T03:07:00.400Z"
+   }
+  },
+  "GET /tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"txid\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"block_hash\":null,\"height\":null,\"time\":null,\"tx\":null,\"err\":\"not found\",\"complete\":true,\"scanned\":146991}",
+   "recorded": {
+    "path": "/api/rpc/tx/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "at": "2026-11-22T03:06:41.434Z"
+   }
+  },
+  "GET /tx/0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"txid\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"block_hash\":null,\"height\":null,\"time\":null,\"tx\":null,\"err\":\"not found\",\"complete\":true,\"scanned\":146991}",
+   "constructed": "a tx in the mempool cannot be had on demand; the node's miss answer as recorded for another txid"
+  },
+  "GET /tx/0xc4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"txid\":\"0xc4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4\",\"block_hash\":null,\"height\":null,\"time\":null,\"tx\":null,\"err\":\"not found\",\"complete\":false,\"scanned\":146991}",
+   "constructed": "a scan that stopped short cannot be asked for; the recorded miss answer with complete false"
+  },
+  "GET /tx/0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3": {
+   "status": 503,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"code\":\"SCAN_HORIZON\",\"err\":\"the scan reached its budget before finding or ruling out this tx\"}",
+   "constructed": "a scan horizon cannot be asked for; the 503 SCAN_HORIZON pair of the node's README"
+  },
+  "GET /mempool/txids": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"txids\":[{\"txid\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"age_secs\":12}]}",
+   "constructed": "the site does not relay /mempool/txids; the node's shape as src/lib/txstatus.ts reads it"
+  },
+  "GET /block/0x0000000000005cf706c3878103a6afe49bcbd12a0e12b066d6a85ea9eeb8d5d0": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"hash\":\"0x0000000000005cf706c3878103a6afe49bcbd12a0e12b066d6a85ea9eeb8d5d0\",\"height\":144451,\"chainwork\":\"90898726229520326814\",\"header\":{\"bits\":442586024,\"merkle\":\"0x71c8ede823e8b83682566e1954ac201f2179c1f9c410b06e94e748982e679f86\",\"nonce\":575783149,\"prev\":\"0x0000000000005c5ae3de1d475272ec3307d479af28157b4f807ad193dd333f99\",\"time\":1795009271,\"version\":1},\"txs\":[{\"app\":{\"type\":\"None\"},\"inputs\":[{\"prev_txid\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"script_sig\":\"0x433402000000000000015d471900f6d3d6\",\"script_sig_text\":null,\"vout\":4294967295}],\"locktime\":144451,\"outputs\":[{\"script_pubkey\":\"0x40379fb123bec901080bb94deeda2f457062b7bd\",\"value\":5075000000}],\"txid\":\"0xdc8b740a8cc45f668c7ea90df5d023dd141af77804301f26762fedf8d5fb2f04\",\"version\":1},{\"app\":{\"domain\":\"cairnx:v1\",\"expires_epoch\":104814,\"payload_hash\":\"0x1173645e922a042bd5d9aed1c20eae0a7045dc36bc1bfffc9409c187eefbf9c4\",\"type\":\"Propose\",\"uri\":\"{\\\"addr\\\":\\\"0x4ef9bdd63b75beba9827a105e632bffee04c7815\\\",\\\"name\\\":\\\"commonplace\\\",\\\"t\\\":\\\"nset\\\",\\\"v\\\":1}\"},\"inputs\":[{\"prev_txid\":\"0xf723c006e57c3c656aa5665551ad30c09cec416e54a96c62067dcde0c7136a7f\",\"script_sig\":\"0x404b9603f5cdabaa088f55c6a224d362795726a702544607fd447eb6727cf08b13331b131ec560b174388d02f345a946045e4255d38a5de86c8bdbef423ecc6fb6210283fbf3e15d8fa964c26beae25b43ac12ea1586e9dec2916b779f9aad5524e864\",\"script_sig_text\":null,\"vout\":0}],\"locktime\":0,\"outputs\":[{\"script_pubkey\":\"0x4ef9bdd63b75beba9827a105e632bffee04c7815\",\"value\":75000000}],\"txid\":\"0xabd6d1eea248c291fe3af3005a0fe698d934c5e7e1f9727636f1188df6624cb7\",\"version\":1},{\"app\":{\"domain\":\"frontier.covering-20-7-4\",\"expires_epoch\":10004814,\"payload_hash\":\"0x3f4f8dfdc03157cab2a59a623214cce95000e31172b05b89a27f96cfadf705fa\",\"type\":\"Propose\",\"uri\":\"cp:page:-:ar://H1MdcBcI4rt-ajkfDjmBSF46BM67RJ6XQdVYy5nsg9Q:-:-\\nPosed + seeded with LJCR 198; ~7100 exact MILP neighbourhoods find no 197\"},\"inputs\":[{\"prev_txid\":\"0x2d48ca7566873b28c6d4c840ee25ee4ee2ecf8dfbcbec14ca945ee8ea0e5881a\",\"script_sig\":\"0x4029f44eab7dc707f105a2722f6a2d36abcdf7c0d37e7fda0a9d364abeb346651a17f1d6c10e32d834b3fc7afff465ef971b87f9e083f1df9f1688baf609f514bd2102693008810e52dbd3a6b18263581e09701452865301e0398dc4405967b863ac93\",\"script_sig_text\":null,\"vout\":1}],\"locktime\":0,\"outputs\":[{\"script_pubkey\":\"0xd2f1ccd9d1f6191297b4d9f403442612a0ef7bc5\",\"value\":13671875}],\"txid\":\"0xd9d4e45bf852fb824d500560764cccc1ad1576caf6269ec246dee0d1988eafb9\",\"version\":1},{\"app\":{\"domain\":\"frontier.covering-20-7-4\",\"expires_epoch\":10004814,\"payload_hash\":\"0x9f9dcdd8464cbf3b53dfaa9f97c53296ae101c8b8e06c337d41ed68e098e33df\",\"type\":\"Propose\",\"uri\":\"cp:result:198:ar://0oa_sA5J_uU5M7SkUDNlodvG5lsQ8cnf9yBDLMYSCLk:\\nKnown, not ours: the 198-block covering of de Heer & Muir (2006), from the final La Jolla Covering Repository data (Zenodo record 24119701). Seeded as the baseline to beat.\"},\"inputs\":[{\"prev_txid\":\"0x2d48ca7566873b28c6d4c840ee25ee4ee2ecf8dfbcbec14ca945ee8ea0e5881a\",\"script_sig\":\"0x40fd1a6b1e7a575753915a4939397128c5b48a22edd3b2258fb763d6803aadd6a25de334665ad34696e6fa9a3d0424ff1e5b6926d31511dd85f3027579d72edda22102693008810e52dbd3a6b18263581e09701452865301e0398dc4405967b863ac93\",\"script_sig_text\":null,\"vout\":0}],\"locktime\":0,\"outputs\":[{\"script_pubkey\":\"0xd2f1ccd9d1f6191297b4d9f403442612a0ef7bc5\",\"value\":13671875}],\"txid\":\"0x644797779df55234eacfe5e3a372503aac132eb95786a2569dfa0a6ec6aa76ab\",\"version\":1}]}",
+   "recorded": {
+    "path": "/api/rpc/block/0x0000000000005cf706c3878103a6afe49bcbd12a0e12b066d6a85ea9eeb8d5d0",
+    "at": "2026-11-21T21:51:08.714Z"
+   }
+  },
+  "GET /block/0x000000000000f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"hash\":\"0x000000000000f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6\",\"height\":146000,\"chainwork\":\"92000000000000000000\",\"header\":{\"bits\":442586024,\"merkle\":\"0x5555555555555555555555555555555555555555555555555555555555555555\",\"nonce\":1,\"prev\":\"0x6666666666666666666666666666666666666666666666666666666666666666\",\"time\":1795200000,\"version\":1},\"txs\":[{\"app\":{\"domain\":\"csd:apps\",\"expires_epoch\":9007199254740993,\"payload_hash\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"type\":\"Propose\",\"uri\":\"cairn:v1:111111111111\"},\"inputs\":[{\"prev_txid\":\"0x2222222222222222222222222222222222222222222222222222222222222222\",\"script_sig\":\"0x4033333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333\",\"script_sig_text\":null,\"vout\":1}],\"locktime\":0,\"outputs\":[{\"script_pubkey\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"value\":1000}],\"txid\":\"0x4444444444444444444444444444444444444444444444444444444444444444\",\"version\":1}]}",
+   "constructed": "no block on chain carries a number above 2^53; the ND-1 shape"
+  },
+  "GET /proposal/0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"proposal\":{\"created_epoch\":1007,\"created_height\":30224,\"domain\":\"cairnx:v1\",\"expires_epoch\":101007,\"fee\":25000000,\"payload_hash\":\"0x618e723cd9e8e05e80580fa3d0eeac64feb7c532cb5ae8b6a783fb0469f5a959\",\"proposal_id\":\"0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93\",\"proposer\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"uri\":\"{\\\"name\\\":\\\"cairn\\\",\\\"t\\\":\\\"name\\\",\\\"v\\\":1}\"}}",
+   "recorded": {
+    "path": "/api/rpc/proposal/0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93",
+    "at": "2026-11-22T03:06:42.458Z"
+   }
+  },
+  "GET /proposal/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"err\":\"not found\",\"ok\":false}",
+   "recorded": {
+    "path": "/api/rpc/proposal/0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "at": "2026-11-22T03:07:32.973Z"
+   }
+  },
+  "GET /proposal/0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"proposal\":{\"domain\":\"csd:apps\",\"proposal_id\":\"0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"proposer\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"uri\":\"cairn:v1:8cbe9a3f60d1\",\"payload_hash\":\"0x8cbe9a3f60d160b7fe89171cbfef3fab58952a9bb95bd7d5f121668dbe479003\",\"created_height\":146800,\"expires_epoch\":4900,\"fee\":1000000}}",
+   "constructed": "its payload_hash must be the commitment of the content the test posts; no such proposal is on chain"
+  },
+  "GET /proposal/0xe5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"proposal\":{\"domain\":\"csd:signals\",\"proposal_id\":\"0xe5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5\",\"proposer\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"uri\":\"cairn:v1:44201e193819\",\"payload_hash\":\"0x44201e193819e2641cf3fe7292c66a6ce98c4426c624aa93305d5ebd6b57da7b\",\"created_height\":146800,\"expires_epoch\":4900,\"fee\":1000000}}",
+   "constructed": "its payload_hash must be the commitment of the content the test posts; no such proposal is on chain"
+  },
+  "POST /tx/submit": [
+   {
+    "when": {
+     "tx.locktime": 0
+    },
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":true,\"txid\":\"0x7777777777777777777777777777777777777777777777777777777777777777\"}",
+    "constructed": "a submit is a POST, which the recording may not send"
+   },
+   {
+    "when": {
+     "tx.locktime": 1
+    },
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": "{\"ok\":false,\"txid\":\"0x7878787878787878787878787878787878787878787878787878787878787878\",\"err\":\"mempool conflict: an input is already spent by a pending tx\"}",
+    "constructed": "a submit is a POST, which the recording may not send"
+   }
+  ],
+  "GET /block/height/145408": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"hash\":\"0x00000000000019745655e9d8e43b0c12ce451376cbcf71621603631e4f5a54e1\",\"height\":145408,\"chainwork\":\"91563966376068582514\",\"header\":{\"bits\":443192749,\"merkle\":\"0x915925015057e027e1c95c7ecba6e4256881a03e1a5e30027f080ecc863dfa68\",\"nonce\":1888514191,\"prev\":\"0x00000000000028e16bfad591073198f58b07b6be353c76bc057982a7ab1a6842\",\"time\":1795125045,\"version\":1},\"txs\":[]}",
+   "constructed": "the node's /block/height shape (header keys sorted, as serde_json writes them) from the indexer's recorded block at 145408; txs left empty: the header route reads none",
+   "indexer": {
+    "height": 145408,
+    "hash": "0x00000000000019745655e9d8e43b0c12ce451376cbcf71621603631e4f5a54e1",
+    "prev": "0x00000000000028e16bfad591073198f58b07b6be353c76bc057982a7ab1a6842",
+    "merkle": "0x915925015057e027e1c95c7ecba6e4256881a03e1a5e30027f080ecc863dfa68",
+    "time": 1795125045,
+    "bits": 443192749,
+    "nonce": 1888514191,
+    "version": 1,
+    "tx_count": 1,
+    "chainwork": "91563966376068582514",
+    "orphaned": 0
+   }
+  },
+  "GET /block/height/145409": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"hash\":\"0x00000000000022cdd5f40fe8c398e1bfacd5df6b0b207038a5a84b84858e8d1d\",\"height\":145409,\"chainwork\":\"91564660742270080953\",\"header\":{\"bits\":443008590,\"merkle\":\"0xad7a1a9bedae9529ecc5385669b2fca721254e5c1fa3af8ab50e410d5a45f071\",\"nonce\":1085336020,\"prev\":\"0x00000000000019745655e9d8e43b0c12ce451376cbcf71621603631e4f5a54e1\",\"time\":1795125105,\"version\":1},\"txs\":[]}",
+   "constructed": "the node's /block/height shape (header keys sorted, as serde_json writes them) from the indexer's recorded block at 145409; txs left empty: the header route reads none",
+   "indexer": {
+    "height": 145409,
+    "hash": "0x00000000000022cdd5f40fe8c398e1bfacd5df6b0b207038a5a84b84858e8d1d",
+    "prev": "0x00000000000019745655e9d8e43b0c12ce451376cbcf71621603631e4f5a54e1",
+    "merkle": "0xad7a1a9bedae9529ecc5385669b2fca721254e5c1fa3af8ab50e410d5a45f071",
+    "time": 1795125105,
+    "bits": 443008590,
+    "nonce": 1085336020,
+    "version": 1,
+    "tx_count": 1,
+    "chainwork": "91564660742270080953",
+    "orphaned": 0
+   }
+  }
+ },
+ "resolver": {
+  "GET /cairnx/resolve/cairn": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"name\":\"cairn\",\"addr\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"via\":\"owner\",\"lapsed\":false,\"owner\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"tipHeight\":146831}",
+   "recorded": {
+    "path": "/trade/api/cairnx/resolve/cairn",
+    "at": "2026-11-21T21:51:38.780Z"
+   }
+  },
+  "GET /cairnx/resolve/zzcontracttest": {
+   "status": 404,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"error\":\"unregistered name\",\"name\":\"zzcontracttest\"}",
+   "recorded": {
+    "path": "/trade/api/cairnx/resolve/zzcontracttest",
+    "at": "2026-11-22T03:07:06.721Z"
+   }
+  },
+  "GET /cairnx/name-history/cairn": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":true,\"name\":\"cairn\",\"tipHeight\":146829,\"resolve\":{\"name\":\"cairn\",\"addr\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"via\":\"owner\",\"lapsed\":false,\"owner\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\"},\"record\":{\"name\":\"cairn\",\"owner\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"claimId\":\"0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93\",\"height\":30224,\"effectiveHeight\":30224,\"locked\":false,\"paidThroughEpoch\":9826},\"events\":[{\"txid\":\"0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93\",\"height\":30224,\"pos\":1,\"kind\":\"name\"}],\"scopedReplaySufficient\":true}",
+   "recorded": {
+    "path": "/trade/api/cairnx/name-history/cairn",
+    "at": "2026-11-21T21:42:42.610Z"
+   }
+  },
+  "GET /cairnx/name/cairn": {
+   "status": 200,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"name\":\"cairn\",\"owner\":\"0x44d92872a5b65d37d60ed532f41efe7c5aed59ec\",\"claimId\":\"0xd9dd9f4b7aa91c104f43cb5ec712365abe2f5092c7f14036f4ff856ca08a1f93\",\"height\":30224,\"effectiveHeight\":30224,\"locked\":false,\"paidThroughEpoch\":9826,\"offer\":null,\"recapture\":null,\"tipHeight\":146990,\"tipEpoch\":4899,\"lease\":{\"leased\":true,\"paidThroughEpoch\":9826,\"graceEndEpoch\":10546,\"epochsLeft\":4927,\"graceEpochsLeft\":5647,\"inGrace\":false,\"lapsed\":false}}",
+   "recorded": {
+    "path": "/trade/api/cairnx/name/cairn",
+    "at": "2026-11-22T03:07:07.767Z"
+   }
+  },
+  "GET /cairnx/name/zzcontracttest": {
+   "status": 404,
+   "contentType": "application/json; charset=utf-8",
+   "body": "{\"ok\":false,\"error\":\"unregistered name\"}",
+   "recorded": {
+    "path": "/trade/api/cairnx/name/zzcontracttest",
+    "at": "2026-11-22T03:07:08.809Z"
+   }
+  }
+ }
+}

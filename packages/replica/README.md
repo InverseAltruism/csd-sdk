@@ -53,7 +53,8 @@ the same read as one command.
   `resolve()` or the block machinery.
 - `./server` also has `diskStore({ dir })` ("The disk store" below), `ownNode({ node, dir, pin?, witness? })`
   ("One's own node on disk" below), `indexerFeed`, `Scanner`, `branchRefusal`, `RETRY_WAIT_MAX_MS` and `STEP_UNIT` ("A csd-indexer feed" below) and
-  `replicaReads` with `WITHHELD`, `withheldBy` and `READ_HEADERS` ("The resolver's reads" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
+  `replicaReads` with `WITHHELD`, `withheldBy` and `READ_HEADERS` ("The resolver's reads" below), and `openServer`
+  with `listen`, `OPEN_LIMITS`, `OPEN_HOST` and `OPEN_PORT` ("The open server" below); `./browser` has `idbStore({ name, slot })` and `sessionSlot(key)` ("The browser
   store" below).
 - `./browser` and `./server`: everything in `.`, and `nodeBlocks({ node, fetch?, paceMs?, timeoutMs? })`, a level 3
   source of complete blocks from one's own node (`/block/height/:h`), the node being the header root. `./browser`
@@ -728,6 +729,60 @@ A `pollMs` that is not a whole number from 1,000 to 2,147,483,647 throws `Replic
 nothing advances on its own, and a host that drives `advance()` itself is unchanged (`test/poll.test.ts`). A poll
 rather than a wait in a read: a wait would put a step's time on the first read after a gap, a user's request, and
 still answer from the old state when the step is slower than the wait.
+
+## The open server
+
+`cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]` serves the paths
+cairn-wallet sends to a server its user adds, on one origin, from one's own node and a replica of it kept in `--dir`
+(`ownNode`, polled every `READ_ADVANCE_MS`). With `--pin` the replica starts from `@inversealtruism/cairnx-pin`,
+installed beside this package, and reads only the blocks above it; without it, every block from activation. It signs nothing and holds no key; the only write it passes on is a
+signed transaction to the node. `--node` is held to `nodeBlocks`'s server rule (loopback, a private range or
+`CAIRNX_OWN_NODE_HOSTS`). It listens on 127.0.0.1 port 8796 unless told otherwise: any other `--listen`, `0.0.0.0`
+among them, is a public bind. It stops on SIGINT or SIGTERM.
+
+| Path | From the node | What it changes on the way |
+|---|---|---|
+| `GET /api/rpc/tip` | `/tip` | nothing: the node's status, content type and bytes |
+| `GET /api/rpc/utxos/:addr` | `/utxos/:addr?available=true` | nothing |
+| `GET /api/rpc/utxos-all/:addr` | `/utxos/:addr` | nothing |
+| `GET /api/rpc/tx/:id`, `/api/rpc/block/:hash`, `/api/rpc/proposal/:id` | the same path | nothing |
+| `GET /api/rpc/tx/:id/status` | `/mempool/txids`, then `/tx/:id`, both within one 10 s deadline | builds `{ ok, txid, state, height? \| definite? }`: mined, pending, or unknown with `definite` only when the scan was complete and the pool list whole; a node without `/mempool/txids` (upstream's) never gives `definite: true`; the server's own full gate is the busy 503 below, not an unknown |
+| `GET /api/headers/:from/:count` | `/block/height/:h` per height, 8 at a time | `{ ok, from, count, headers: [{ height, header, hash }] }`, `count` read as 1 to 512, dense or a 502 within 10 s (a node body with `ok: false` is no row), the busy 503 on the server's own full gate |
+| `POST /api/rpc/tx/submit` | `POST /tx/submit` with the body as sent | the node's JSON sent again with its status |
+| `GET /trade/api/cairnx/{name,resolve,name-history}/:name` | none: `replicaReads` | nothing: its status, body and headers |
+
+These are our front door's answers for the same node reads, and the wallet reads them the same way. Every answer
+carries `Access-Control-Allow-Origin: *` with the methods `GET, POST, OPTIONS` and the header `content-type`, an
+`OPTIONS` preflight is answered 204, `Access-Control-Expose-Headers` names `retry-after` (and the name routes' own
+headers), and `Cache-Control` is `no-store`: unlike the front door no range is marked immutable, since this server
+holds no second view of the chain to say a height is final. No answer is a redirect: the path is read with each run of
+slashes as one and no trailing slash (the front door answers a doubled slash 404), and a node that redirects is a
+502.
+
+What it refuses, each without asking the node: a parameter out of its shape (an address `0x` and 40 hex digits, a
+hash `0x` and 64, a height or count in decimal digits, a name as `NAME_RE` writes it) is a 400, so no request reaches
+another node route; a submit body over 512 KiB, compressed, not `application/json`, not UTF-8 or not a JSON object or array is a 400
+`invalid request body` (where the front door's parser would send a body that is not UTF-8 on with a replacement
+character). As the front door, a JSON array is sent on (the node refuses it) and a leading byte order mark is
+dropped; unlike it, the body's bytes are sent as received, so a number above 2^53 is not rounded. Each node read times out after 10 s and a submit after 15 s (502 `node unreachable`), under
+the wallet's own 12 s and 20 s. At most 16 node reads are in flight with 256 waiting; one more, or one that waited
+its whole timeout, is a 503 with `Retry-After: 1`. Submits have their own 4 in flight and 64 waiting, so a send never
+waits behind reads; one more is a 429 with `Retry-After: 1`, which the wallet reads as a refusal of a transaction that
+was not sent. A node that is busy, down or answers what is not JSON never gives a 200 the wallet takes for an answer
+(`test/open-server.test.ts`). On the socket (`test/open-server-wire.test.ts`): a request's headers must arrive within
+10 s and the whole request within 20 s, the wallet's own POST timeout; an answer its reader has not taken within 20 s
+loses its socket; a socket idle for 30 s is closed, above the longest node wait (15 s); at most 256 sockets are open.
+Only a submit's body is read, and only once its headers say `application/json` without an encoding; any other
+request that carries a body is answered at once without reading it, and its connection closed.
+
+A public instance goes behind a TLS proxy, and three things there matter: the proxy must not redirect any of these
+paths (the wallet refuses redirects), it must pass `OPTIONS` through, and the public origin must be `https`, which
+the wallet's content policy requires. Limits per client belong at that proxy: the server bounds what reaches the
+node, not who sends it.
+
+`openServer({ node, reads, fetch? })` (`./server`) is the same server as a function of a request
+(`{ method, url, headers, body }`) to `{ status, headers, body }`, and `listen(answer, { host?, port? })` puts it on a
+socket under those limits, reading only a submit's body and at most 512 KiB of it.
 
 ## Tuples and a reference
 

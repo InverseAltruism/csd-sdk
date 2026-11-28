@@ -2,12 +2,17 @@
 // cairnx-replica check: from an install alone, opens a replica in memory on the one source the caller names, reads it
 // until it is caught up, and prints the level, the tuple at the newest final boundary and its comparison with a
 // reference. It asks no host the caller did not name. The exit codes are EXIT_OF's, frozen with 0.1.0.
+// cairnx-replica serve: the open server (open-server.ts) over one's own node and a replica of it kept on disk.
 import { realpathSync } from "node:fs";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HASH_RE } from "@inversealtruism/cairnx-core";
 import { serverBase } from "./node-address.js";
 import { PIN_REFUSALS } from "./pinned.js";
-import { ReplicaConfigError, checkPin, hostedBlocks, indexerFeed, local, memoryStore, open, pinned, type OpenOptions, type Pin, type ReplicaStatus, type Tuple } from "./server.js";
+import { OPEN_HOST, OPEN_PORT, READ_ADVANCE_MS, ReplicaConfigError, checkPin, hostedBlocks, indexerFeed, listen, local, memoryStore, open, openServer, ownNode, pinned, replicaReads,
+  type OpenOptions, type Pin, type ReplicaStatus, type Tuple } from "./server.js";
 
 export const USAGE = `usage: cairnx-replica check <source> [--pin] [--reference <base> | --expect <tuple>] [--json] [--timeout-ms <ms>]
   <source>, one of:
@@ -21,6 +26,13 @@ export const USAGE = `usage: cairnx-replica check <source> [--pin] [--reference 
   --timeout-ms <ms>   the deadline, 1 to 2147483647 (default 7200000)
 exit: 0 the check passed (equal, held); 1 the sides differ (branch, records, rules); 2 usage or configuration;
       3 could not check (missing, unavailable, no-tuple, timeout)`;
+export const SERVE_USAGE = `usage: cairnx-replica serve --node <url> --dir <path> [--pin] [--listen <address>] [--port <port>]
+  --node <url>        one's own node (loopback, a private address or a host in CAIRNX_OWN_NODE_HOSTS)
+  --dir <path>        the replica's store directory, created when missing
+  --pin               start from @inversealtruism/cairnx-pin (installed beside this package), not from activation
+  --listen <address>  the address to bind (default ${OPEN_HOST}); any other, 0.0.0.0 among them, is a public bind
+  --port <port>       1 to 65535 (default ${OPEN_PORT}), 0 for a free one
+exit: 0 stopped by SIGINT or SIGTERM; 2 usage or configuration, or the address could not be bound`;
 
 /** A one-shot read of the whole range: wide steps, since every commit is in memory. */
 const STEP = { maxBlocks: 512, maxRequests: 600 } as const;
@@ -64,8 +76,8 @@ export interface CheckIo {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-class Usage extends Error {}
-const usage = (why: string): never => { throw new Usage(why); };
+class Usage extends Error { constructor(why: string, readonly text = USAGE) { super(why); } }
+const usage = (why: string, text = USAGE): never => { throw new Usage(why, text); };
 
 interface Args { node?: string; hosted?: string; feed?: string; anchor?: string; pin: boolean; reference?: string; expect?: string; want: Tuple | null; json: boolean; timeoutMs: number }
 /** setTimeout's largest delay; a larger one fires at once. */
@@ -73,7 +85,7 @@ const TIMEOUT_MAX = 2_147_483_647;
 /** A height in its one decimal spelling: no sign, no leading zero, no exponent, no space. */
 const heightOf = (h: string | undefined): number | null => (h !== undefined && /^(0|[1-9][0-9]{0,15})$/.test(h) && Number.isSafeInteger(Number(h)) ? Number(h) : null);
 function parse(argv: readonly string[]): Args {
-  if (argv[0] !== "check") usage("the one command is check");
+  if (argv[0] !== "check") usage("the commands are check and serve", `${USAGE}\n${SERVE_USAGE}`);
   const a: Args = { pin: false, json: false, timeoutMs: 7_200_000, want: null };
   const seen = new Set<string>();
   const value = (i: number) => argv[i + 1] ?? usage(`${argv[i]} needs a value`);
@@ -202,7 +214,7 @@ export async function runCheck(argv: readonly string[], raw: CheckIo): Promise<n
   let a: Args;
   let o: OpenOptions;
   try { a = parse(argv); o = await options(a, io); } catch (e) {
-    if (e instanceof Usage || e instanceof ReplicaConfigError) { io.out(`cairnx-replica: ${e.message}`); if (e instanceof Usage) for (const l of USAGE.split("\n")) io.out(l); return 2; }
+    if (e instanceof Usage || e instanceof ReplicaConfigError) { io.out(`cairnx-replica: ${e.message}`); if (e instanceof Usage) for (const l of e.text.split("\n")) io.out(l); return 2; }
     throw e;
   }
   let replica;
@@ -239,8 +251,76 @@ export async function runCheck(argv: readonly string[], raw: CheckIo): Promise<n
   }
 }
 
+export interface ServeArgs { readonly node: string; readonly dir: string; readonly pin: boolean; readonly host: string; readonly port: number }
+/** serve's options, parsed once: `--node` and `--dir` required, `--pin` off, `--listen` OPEN_HOST and `--port`
+ *  OPEN_PORT by default. */
+export function parseServe(argv: readonly string[]): ServeArgs {
+  const fail = (why: string): never => usage(why, SERVE_USAGE);
+  if (argv[0] !== "serve") fail("this is serve's parser");
+  const got: Record<string, string> = {};
+  for (let i = 1; i < argv.length; i++) {
+    const k = argv[i]!;
+    if (got[k] !== undefined) fail(`${k} is given twice: give it once`);
+    if (k === "--pin") { got[k] = ""; continue; }
+    if (!["--node", "--dir", "--listen", "--port"].includes(k)) fail(`unknown argument ${k}`);
+    got[k] = argv[++i] ?? fail(`${k} needs a value`);
+  }
+  const port = got["--port"] === undefined ? OPEN_PORT : heightOf(got["--port"]);
+  if (port === null || port > 65_535) fail("--port is a whole number from 0 to 65535");
+  if (got["--node"] === undefined || got["--dir"] === undefined) fail("serve needs --node and --dir");
+  return { node: got["--node"]!, dir: resolve(got["--dir"]!), pin: got["--pin"] !== undefined, host: got["--listen"] ?? OPEN_HOST, port: port! };
+}
+
+export interface ServeIo {
+  readonly out: (line: string) => void;
+  readonly fetch?: typeof fetch;
+  /** The pin's module for --pin; default an import of @inversealtruism/cairnx-pin. */
+  readonly loadPin?: () => Promise<unknown>;
+  /** Called once the server listens, with a stop that closes it and the replica and ends the run with exit 0. */
+  readonly ready?: (server: Server, stop: () => Promise<void>) => void;
+}
+/** The serve command: listens until SIGINT, SIGTERM or `ready`'s stop, then returns the exit code. */
+export async function runServe(argv: readonly string[], raw: ServeIo): Promise<number> {
+  const out = (l: string) => raw.out(printable(l)), http = raw.fetch === undefined ? {} : { fetch: raw.fetch };
+  let a: ServeArgs, reader: Awaited<ReturnType<typeof open>>, answer: ReturnType<typeof openServer>;
+  try {
+    a = parseServe(argv);
+    const pin = a.pin ? checkPin(((await pinModule({ out, ...(raw.loadPin === undefined ? {} : { loadPin: raw.loadPin }) })) as { PIN?: unknown }).PIN) : undefined;
+    const own = ownNode({ node: a.node, dir: a.dir, ...http, ...(pin === undefined ? {} : { pin }) });
+    reader = await open({ ...own, pollMs: READ_ADVANCE_MS });
+    answer = openServer({ node: a.node, reads: replicaReads(reader), ...http });
+  } catch (e) {
+    if (e instanceof Usage || e instanceof ReplicaConfigError) { out(`cairnx-replica: ${e.message}`); if (e instanceof Usage) for (const l of e.text.split("\n")) out(l); return 2; }
+    throw e;
+  }
+  let server: Server;
+  try { server = await listen(answer, { host: a.host, port: a.port }); } catch (e) {
+    out(`cairnx-replica: cannot listen on ${a.host}:${a.port}: ${clip(e instanceof Error ? e.message : String(e))}`);
+    await reader.close();
+    return 2;
+  }
+  const port = (server.address() as AddressInfo).port, host = a.host.includes(":") ? `[${a.host}]` : a.host;
+  out(`serving http://${host}:${port} from the node ${a.node}, the replica in ${a.dir}`);
+  if (!["127.0.0.1", "::1", "localhost"].includes(a.host)) out("a public bind: put a TLS proxy in front of it and limit requests per client there (README)");
+  return new Promise((done) => {
+    let stopping = false;
+    const stop = async () => {
+      if (stopping) return;
+      stopping = true;
+      process.off("SIGINT", stop).off("SIGTERM", stop);
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+      await reader.close();
+      done(0);
+    };
+    process.once("SIGINT", stop).once("SIGTERM", stop);
+    raw.ready?.(server, stop);
+  });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  const code = await runCheck(process.argv.slice(2), { out: (l) => console.log(l) });
+  const argv = process.argv.slice(2), io = { out: (l: string) => console.log(l) };
+  const code = argv[0] === "serve" ? await runServe(argv, io) : await runCheck(argv, io);
   // A source that did not stop holds the event loop: exit once both streams have flushed.
   await Promise.all([process.stdout, process.stderr].map((w) => new Promise<void>((r) => w.write("", () => r()))));
   process.exit(code);

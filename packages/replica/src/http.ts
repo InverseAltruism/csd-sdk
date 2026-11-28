@@ -77,16 +77,20 @@ const CLIENT_TIMEOUT_MS = 2 ** 31 - 1;
 // stream reader as text and check its bytes, and parse u64 literals exactly. Unlike csd-client it throws
 // SourceError SOURCE_MALFORMED, so a step reports a code. A body refused unread is cancelled, which lets its
 // connection go; left unread, Node's fetch holds the connection until the response is garbage collected.
-const MAX_BYTES = 16 * 1024 * 1024;
+export const MAX_BYTES = 16 * 1024 * 1024;
 export async function cappedJson(r: Response, what: string, max = MAX_BYTES): Promise<unknown> {
+  const text = await cappedText(r, what, max);
+  try { return parseJsonExact(text); } catch (e) { throw new SourceError("SOURCE_MALFORMED", `${what}: ${messageOf(e)}`); }
+}
+/** The body of `r` as text, read under the cap of cappedJson. */
+export async function cappedText(r: Response, what: string, max = MAX_BYTES): Promise<string> {
   const over = () => new SourceError("SOURCE_MALFORMED", `${what}: the answer is over ${max} bytes`);
   if (Number(r.headers.get("content-length") ?? 0) > max) { await r.body?.cancel(); throw over(); }
-  const parse = (text: string) => { try { return parseJsonExact(text); } catch (e) { throw new SourceError("SOURCE_MALFORMED", `${what}: ${messageOf(e)}`); } };
   const body = r.body as ReadableStream<Uint8Array> | null | undefined;
   if (body === null || body === undefined || typeof body.getReader !== "function") {
     const text = await r.text();
     if (new TextEncoder().encode(text).length > max) throw over();
-    return parse(text);
+    return text;
   }
   const reader = body.getReader(), parts: Uint8Array[] = [];
   let n = 0;
@@ -97,7 +101,7 @@ export async function cappedJson(r: Response, what: string, max = MAX_BYTES): Pr
   }
   const all = new Uint8Array(n);
   parts.reduce((at, p) => { all.set(p, at); return at + p.length; }, 0);
-  return parse(new TextDecoder().decode(all));
+  return new TextDecoder().decode(all);
 }
 
 /** A factory of sessions over `base`, the client's paths below `base + rpc`; the pace holds across them. `waitMaxMs`
