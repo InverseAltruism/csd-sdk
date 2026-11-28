@@ -10,10 +10,10 @@
 import assert from "node:assert/strict";
 import { nameCommit } from "@inversealtruism/cairnx-core";
 import { resolve } from "@inversealtruism/cairnx-core";
-import { nameHistory } from "../src/namehist.js";
+import { appliedIds, nameHistory, recordOf } from "../src/namehist.js";
 import {
   COMMIT_MAX_BLOCKS, CONF_TOKEN_FILL, EPOCH_LEN, NAME_GRACE_EPOCHS, NAME_TERM_EPOCHS, REG_COMMIT_MAX_BLOCKS, SCORE_CANCEL, SCORE_CLAIM, SCORE_FILL,
-  TREASURY_ADDR, DEPLOY_FEE, V15_HEIGHT, V17_HEIGHT, V19_HEIGHT, V25_HEIGHT, epochOf, expiredClaimFee, makerRebate, nameRegFee, tradeFee,
+  TREASURY_ADDR, DEPLOY_FEE, FEE_BPS_V16, V15_HEIGHT, V17_HEIGHT, V19_HEIGHT, V25_HEIGHT, V28_HEIGHT, epochOf, expiredClaimFee, makerRebate, nameRegFee, tradeFee,
   type CairnXRecord, type ChainEvent, type ProposeEvent,
 } from "@inversealtruism/cairnx-core";
 import { fixtures } from "../src/factories.js";
@@ -372,6 +372,66 @@ console.log("\nName-for-token fill (scoped-insufficient via out-of-scope buyer t
   const served = nameHistory(withCancel, "tokname", { tipHeight: tip });
   ok("token want: a later ocancel by the seller reaches the guard's fallback: the whole selection is served, flagged",
     JSON.stringify(served.events) === JSON.stringify(nameHistory(withCancel, "tokname").events) && served.events.length === 5 && served.scopedReplaySufficient === false);
+}
+
+// ── The fclaim lane without `check`: the fill attests the fclaim's id, which the selector does not route, so the
+// hints hold the offer and not the sale; an fclaim naming one of the name's offers flags the name by its syntax ──
+console.log("\nfclaim-lane sale, no check (the hints cannot carry the sale):");
+{
+  const H = V28_HEIGHT, salt = "aa".repeat(16), tip = H + 40;
+  const reg = [
+    prop({ v: 1, t: "ncommit", commit: nameCommit("demo", salt, A) } as CairnXRecord, { proposer: A, height: H + 10, expiresEpoch: 999_999 }),
+    prop({ v: 1, t: "name", name: "demo", salt } as CairnXRecord, { proposer: A, height: H + 12, expiresEpoch: 999_999 }),
+    prop({ v: 1, t: "nfinalize", name: "demo", salt } as CairnXRecord, { proposer: A, height: H + 20, expiresEpoch: 999_999, paidTo: feeTo(TREASURY_ADDR, nameRegFee("demo", H + 20)) }),
+  ];
+  const offer = prop({ v: 1, t: "offer", give: { name: "demo" }, want: { value: VAL.toString() } } as CairnXRecord, { proposer: A, height: H + 30, expiresEpoch: 3000 });
+  const hold = prop({ v: 1, t: "fclaim", offer: offer.id } as CairnXRecord, { proposer: B, height: H + 32, expiresEpoch: epochOf(H + 32) + 2 });
+  const fill = att({ proposalId: hold.id, attester: B, score: SCORE_FILL, height: H + 35,
+    paidTo: { [A]: (VAL + makerRebate(VAL)).toString(), [TREASURY_ADDR]: tradeFee(VAL, FEE_BPS_V16).toString() } });
+  const full = [...reg, offer, hold, fill] as ChainEvent[];
+  ok("fclaim lane: the full chain sells demo to the fclaim's holder", resolve(full, tip).names["demo"]?.owner === B);
+  ok("fclaim lane: a replay of the unchecked hints keeps the seller (the fclaim and its fill are not hints)", resolve(pick(full, "demo"), tip).names["demo"]?.owner === A);
+  ok("fclaim lane: without check the name is flagged scopedReplaySufficient=false", nameHistory(full, "demo").scopedReplaySufficient === false);
+  ok("fclaim lane: check mode (library and the service's shape) flags it too",
+    nameHistory(full, "demo", { tipHeight: tip }).scopedReplaySufficient === false &&
+    nameHistory(full, "demo", { tipHeight: tip, fullRecord: resolve(full, tip).names["demo"] }).scopedReplaySufficient === false);
+  // honest: the offer alone, and an fclaim on another name's offer, leave demo provable from its own records
+  ok("fclaim lane, control: the listed offer without an fclaim stays sufficient without check", nameHistory([...reg, offer] as ChainEvent[], "demo").scopedReplaySufficient === true);
+  const otherOffer = prop({ v: 1, t: "offer", give: { name: "otherx" }, want: { value: VAL.toString() } } as CairnXRecord, { proposer: C, height: H + 30, expiresEpoch: 3000 });
+  const otherHold = prop({ v: 1, t: "fclaim", offer: otherOffer.id } as CairnXRecord, { proposer: B, height: H + 33, expiresEpoch: epochOf(H + 33) + 2 });
+  ok("fclaim lane, control: an fclaim on another name's offer does not flag demo",
+    nameHistory([...reg, offer, ...regCommitReveal("otherx", C, H + 1, H + 3), otherOffer, otherHold] as ChainEvent[], "demo").scopedReplaySufficient === true);
+}
+
+// ── `constructor`: the one Object.prototype key NAME_RE admits. Its record is read as an own key of the resolved
+// names, so an unregistered `constructor` is answered as any unregistered name is, in every call shape ──
+console.log("\nconstructor, the name that is also an Object.prototype key:");
+{
+  const tip = V25_HEIGHT + 100;
+  // a stranger's nset on an unregistered name: refused by both replays, so check mode prunes it
+  const hist = (name: string) => {
+    const evs = [prop({ v: 1, t: "nset", name, addr: D } as CairnXRecord, { proposer: D, height: tip - 5 })] as ChainEvent[];
+    const st = resolve(evs, tip);
+    return [nameHistory(evs, name), nameHistory(evs, name, { tipHeight: tip }), nameHistory(evs, name, { tipHeight: tip, fullRecord: recordOf(st, name) })]
+      .map((h) => ({ n: h.events.length, ok: h.scopedReplaySufficient, caveat: h.caveat ?? null }));
+  };
+  const plain = hist("zzunreg"), ctor = hist("constructor");
+  ok("constructor: recordOf reads no inherited key", recordOf(resolve([], tip), "constructor") === undefined && Object.hasOwn(Object.getPrototypeOf({}), "constructor"));
+  ok("constructor, control: an unregistered ordinary name is 1 hint without check, 0 hints and sufficient with check",
+    JSON.stringify(plain) === JSON.stringify([{ n: 1, ok: true, caveat: null }, { n: 0, ok: true, caveat: null }, { n: 0, ok: true, caveat: null }]));
+  ok("constructor: an unregistered constructor gets the same answers in all three call shapes", JSON.stringify(ctor) === JSON.stringify(plain));
+  ok("constructor: the caller's explicit fullRecord undefined (unregistered) is sufficient",
+    nameHistory([], "constructor", { tipHeight: tip, fullRecord: undefined }).scopedReplaySufficient === true);
+  // a registered constructor is an own key: owner and flag as for any registered name
+  const salt = "bb".repeat(16), H = V25_HEIGHT + 10;
+  const reg = [
+    prop({ v: 1, t: "ncommit", commit: nameCommit("constructor", salt, A) } as CairnXRecord, { proposer: A, height: H, expiresEpoch: 999_999 }),
+    prop({ v: 1, t: "name", name: "constructor", salt } as CairnXRecord, { proposer: A, height: H + 2, expiresEpoch: 999_999 }),
+    prop({ v: 1, t: "nfinalize", name: "constructor", salt } as CairnXRecord, { proposer: A, height: H + 10, expiresEpoch: 999_999, paidTo: feeTo(TREASURY_ADDR, nameRegFee("constructor", H + 10)) }),
+  ] as ChainEvent[];
+  const st = resolve(reg, tip), h = nameHistory(reg, "constructor", { tipHeight: tip, fullRecord: recordOf(st, "constructor"), fullApplied: appliedIds(st.events) });
+  ok("constructor, control: registered, its owner is the registrant and the service's answer is sufficient with its 3 records",
+    recordOf(st, "constructor")?.owner === A && h.scopedReplaySufficient === true && h.events.length === 3 && equiv(reg, "constructor", tip));
 }
 
 // ── The MAX_PENDING_REG reservation-cap scoping gap, closed by the

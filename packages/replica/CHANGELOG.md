@@ -20,6 +20,17 @@
   2^53 - 1 (a Propose's `expires_epoch`, which the node does not bound) fails closed: its read is `SOURCE_MALFORMED`,
   so the replica does not step past that block and serves its last state until the source is withheld as failing.
   npm only warns about `engines` (unless the consumer sets `engine-strict`); the README says Node 22 or later.
+- `nameHistory` without `check` flags a name `scopedReplaySufficient: false` when an `fclaim` names one of its offers.
+  The fill of an fclaim-lane sale attests the fclaim's id, which the selector does not route, so the hints held the
+  offer and not the sale, and a replay of them gave the seller as owner while the answer said it was provable. With
+  `check` the compare already flagged it. A name with an fclaim on one of its offers is flagged whether or not a fill
+  followed. Both real callers pass `check`.
+- The name record `nameHistory` compares is read as an own key of the resolved `names`, in the selector and in
+  `replicaReads`: `constructor` matches NAME_RE, and a bare `names["constructor"]` read `Object.prototype.constructor`
+  for an unregistered name. An unregistered `constructor` is now answered as any unregistered name is (with `check`
+  and `fullRecord: undefined` it was flagged insufficient). The route answers 404 for it before the selector runs, so
+  no served answer changes; on cairnx-core's replay corpus at 117,000, the route's call shape answers its 140 names
+  and `constructor` as before (`test/namehist.test.ts`, "fclaim-lane sale" and "constructor").
 
 ## 0.2.1 (2026-11-23)
 

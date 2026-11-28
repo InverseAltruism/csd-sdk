@@ -73,8 +73,8 @@ export interface NameHistory {
 export interface NameHistoryCheck {
   /** the tip height BOTH replays are evaluated at (the caller's current tip). */
   tipHeight: number;
-  /** the full-chain `resolve(events, tipHeight).names[name]`, when the caller already holds it (the
-   *  service passes its memoized state record; `undefined` meaning "unregistered on the full chain" is
+  /** the full chain's record for `name`, read as an own key of `resolve(events, tipHeight).names` (`constructor`
+   *  matches NAME_RE), when the caller already holds it (the service passes its memoized state record; `undefined` meaning "unregistered on the full chain" is
    *  meaningful and distinct from omission). Omit the KEY entirely (library mode) to have nameHistory
    *  compute the full side itself with one linear resolve(). */
   fullRecord?: NameState;
@@ -114,6 +114,9 @@ interface Pick extends NameHistEntry {
 const eventId = (e: ChainEvent) => (e.kind === "propose" ? e.id : e.txid).toLowerCase();
 const subset = (events: readonly ChainEvent[], ids: ReadonlySet<string>) => events.filter((e) => ids.has(eventId(e)));
 const sameRecord = (a: NameState | undefined, b: NameState | undefined) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+/** `name`'s own record in a resolved state, else undefined: `names` is a plain object and NAME_RE admits `constructor`,
+ *  so a bare `names[name]` would read Object.prototype.constructor for an unregistered name. */
+export const recordOf = (s: { readonly names: CairnXState["names"] }, name: string): NameState | undefined => (Object.hasOwn(s.names, name) ? s.names[name] : undefined);
 const NAME_KINDS = new Set<NameEventKind>(["name", "nfinalize", "nxfer", "nset", "nrenew", "nprofile", "offer"]);
 
 /** Every record that can bear on `name`, chosen by its syntax alone: the name's own records, the offers giving it,
@@ -122,6 +125,8 @@ interface Candidates {
   picked: Map<string, Pick>;
   /** commitment hash -> the ids of the reveals and finalizes that name it (each listed once, never per commit) */
   revealsByHash: Map<string, string[]>;
+  /** an fclaim names one of the picked offers: its fill attests the fclaim's id, which this selector does not route */
+  fclaimed: boolean;
 }
 
 function selectCandidates(events: readonly ChainEvent[], name: string): Candidates {
@@ -129,6 +134,7 @@ function selectCandidates(events: readonly ChainEvent[], name: string): Candidat
   const picked = new Map<string, Pick>();
   const reveals: Array<{ id: string; salt: string; proposer: string }> = [];
   const sellers = new Set<string>();
+  let fclaimed = false;
   const add = (ev: ChainEvent, kind: NameEventKind, extra: Partial<Pick> = {}): Pick => {
     const k = eventId(ev);
     let p = picked.get(k);
@@ -187,10 +193,10 @@ function selectCandidates(events: readonly ChainEvent[], name: string): Candidat
       const rec = parseRecord(ev.uri, ev.payloadHash);
       if (rec?.t === "ocancel" && sellers.has(ev.proposer.toLowerCase()) && (rec.name === name || (rec.name === undefined && rec.ticker === undefined))) {
         add(ev, "ocancel", { seller: ev.proposer.toLowerCase() });
-      }
+      } else if (rec?.t === "fclaim" && picked.get(rec.offer)?.kind === "offer") fclaimed = true;
     }
   }
-  return { picked, revealsByHash };
+  return { picked, revealsByHash, fclaimed };
 }
 
 /** resolve()'s apply order over the records as the stream carries them (raw ids, not the lowercased keys). */
@@ -263,13 +269,14 @@ export function keepPruned(events: readonly ChainEvent[], name: string, tipHeigh
   prunes: readonly ReadonlySet<string>[], selectedRecord: NameState | undefined): ReadonlySet<string> {
   for (const kept of prunes) {
     if (kept.size === selected.size) return selected;
-    if (sameRecord(resolve(subset(events, kept), tipHeight).names[name], selectedRecord)) return kept;
+    if (sameRecord(recordOf(resolve(subset(events, kept), tipHeight), name), selectedRecord)) return kept;
   }
   return selected;
 }
 
 /** The ordered, name-scoped txids a wallet must verify+replay to recompute `name`'s ownership. Without `check` nothing
- *  is replayed: the hints are every candidate and a fill on a scoped-unsound offer flags the name by its syntax. */
+ *  is replayed: the hints are every candidate, and a fill on a scoped-unsound offer or an fclaim on one of the name's
+ *  offers flags the name by its syntax. */
 export function nameHistory(events: ChainEvent[], name: string, check?: NameHistoryCheck): NameHistory {
   if (!isName(name)) return { name, events: [], scopedReplaySufficient: true };
   const candidates = selectCandidates(events, name);
@@ -293,7 +300,7 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     let full: CairnXState | undefined;
     const fullState = () => (full ??= resolve(events, check.tipHeight));
     const fullApplied = check.fullApplied ?? appliedIds(fullState().events);
-    const fullRec = "fullRecord" in check ? check.fullRecord : fullState().names[name];
+    const fullRec = "fullRecord" in check ? check.fullRecord : recordOf(fullState(), name);
     const scopedApplied = appliedIds(scoped.events);
     // A record a stranger can anchor for a fee and that neither replay applies (a non-owner's nset, a refused offer
     // of the name and the attests on it, its proposer's ocancels) must not grow the hints past a wallet's cap or flag
@@ -303,7 +310,7 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     // superseded-record prune serves what the applied-record prune alone would.
     const appliedKept = keptIds(candidates, applied);
     const latest = dropSuperseded(picked, appliedKept, (id) => scopedApplied.has(id));
-    ids = keepPruned(events, name, check.tipHeight, all, latest.size < appliedKept.size ? [latest, appliedKept] : [appliedKept], scoped.names[name]);
+    ids = keepPruned(events, name, check.tipHeight, all, latest.size < appliedKept.size ? [latest, appliedKept] : [appliedKept], recordOf(scoped, name));
     // The class flags keep marking where an adversarially WITHHELD subset can diverge even when this server's own
     // subset does not, but only for a fill a replay applied: a refused fill decided nothing. Kept ids are applied
     // already; `applied(id)` matters only when keepPruned fell back to the whole selection, so the fallback follows
@@ -311,9 +318,9 @@ export function nameHistory(events: ChainEvent[], name: string, check?: NameHist
     // offer in the full replay only, the ocancel that closes it in the scoped replay is pruned, and the guard rejects
     // the set; the applied fill flags the name (test/namehist.test.ts, "a later ocancel by the seller").
     scopedInsufficient = [...ids].some((id) => unsoundFill(id) && applied(id));
-    compareInsufficient = !sameRecord(scoped.names[name], fullRec);
+    compareInsufficient = !sameRecord(recordOf(scoped, name), fullRec);
   } else {
-    scopedInsufficient = [...all].some(unsoundFill);
+    scopedInsufficient = candidates.fclaimed || [...all].some(unsoundFill);
   }
 
   // Apply order (height, then pos, then ordinal txid), purely for readability; resolve() re-sorts.
