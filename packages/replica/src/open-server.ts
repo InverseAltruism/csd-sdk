@@ -137,7 +137,8 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
     return json(200, { ok: true, txid, state: "unknown", definite });
   }
 
-  // cairn's /api/headers from the node's /block/height/:h: dense and ascending, or a 502, never partial.
+  // cairn's /api/headers from the node's /block/height/:h: dense and ascending, or a 502, never partial; the busy 503
+  // when the server's own gate is full. A body with ok false (the node's not-found {ok:false, header:{err}}) is no row.
   async function headers(fromText: string, countText: string): Promise<OpenAnswer> {
     if (!/^\d+$/.test(fromText) || !/^\d+$/.test(countText)) return bad("from/count must be non-negative integers");
     const from = clamp(fromText, 0, 0, 1e9), count = clamp(countText, 1, 1, L.headersMax);
@@ -159,7 +160,7 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
       await Promise.all(Array.from({ length: Math.min(L.fanout, count) }, worker));
       if (stop.aborted) throw new Error("the deadline passed");
       return json(200, { ok: true, from, count, headers: rows });
-    } catch { return json(502, { ok: false, error: "headers unavailable" }); }
+    } catch (e) { return e instanceof Busy ? busy(503) : json(502, { ok: false, error: "headers unavailable" }); }
   }
 
   async function submit(q: OpenRequest): Promise<OpenAnswer> {

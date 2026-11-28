@@ -179,6 +179,11 @@ console.log("each refusal, and the honest request beside it:");
   const u64 = '{"tx":{"version":1,"locktime":0,"app":{"Propose":{"domain":"cairnx:v1","expires_epoch":9007199254740993}},"inputs":[],"outputs":[]}}';
   await post(srv, "/api/rpc/tx/submit", new TextEncoder().encode(u64));
   ok("the submit's bytes reach the node exactly, a number above 2^53 included", n.log.at(-1)?.body === u64, String(n.log.at(-1)?.body).slice(0, 120));
+  // The front door's parser (express.json, body-parser 1.20.9) sends an array on and drops a byte order mark.
+  await post(srv, "/api/rpc/tx/submit", enc([]));
+  const arrayOn = n.log.at(-1)?.body === "[]";
+  await post(srv, "/api/rpc/tx/submit", new Uint8Array([0xef, 0xbb, 0xbf, ...enc({ tx: 1 })]));
+  ok("as the front door: a JSON array is sent on, a leading byte order mark dropped", arrayOn && n.log.at(-1)?.body === '{"tx":1}', String(n.log.at(-1)?.body));
   ok("the cap is cairn's 512 KiB", OPEN_LIMITS.submitBytes === 512 * 1024);
 }
 {
@@ -212,6 +217,11 @@ console.log("each refusal, and the honest request beside it:");
     return h === undefined ? null : new Response(JSON.stringify({ ok: true, hash: `0x${"00".repeat(32)}`, height: Number(h) + 1, header: { version: 1 }, txs: [] }), { status: 200 });
   }).f);
   ok("a node answering another height than asked: 502, never a row at the wrong height", (await get(shifted, "/api/headers/10/2")).status === 502);
+  // The node's not-found body for a block (compute-substrate src/api/mod.rs block_get), at HTTP 200.
+  const notFound = serverOf(stubNode((key) => (key.startsWith("GET /block/height/") ? new Response('{"ok":false,"hash":"","height":null,"chainwork":null,"header":{"err":"not found"},"txs":[]}', { status: 200 }) : null)).f);
+  ok("the node's not-found body {ok:false, header:{err}} is no header: 502", (await get(notFound, "/api/headers/10/1")).status === 502);
+  const okFalse = serverOf(stubNode((key) => (key.startsWith("GET /block/height/") ? new Response('{"ok":false,"hash":"0x01","height":10,"header":{"err":"not found"},"txs":[]}', { status: 200 }) : null)).f);
+  ok("an ok false body is no header even with the height and a hash: 502", (await get(okFalse, "/api/headers/10/1")).status === 502);
 }
 {
   // A node whose /tx reads hang until released: the read gate fills, then its queue, then the next is busy.
@@ -223,6 +233,8 @@ console.log("each refusal, and the honest request beside it:");
   ok(`${OPEN_LIMITS.reads} node reads in flight while ${OPEN_LIMITS.queued} wait`, held.length === OPEN_LIMITS.reads, `${held.length}`);
   const t0 = Date.now(), refused = await get(srv, `/api/rpc/tx/0x${"ff".repeat(32)}`);
   ok("the next read: 503 at once with Retry-After 1, exposed", refused.status === 503 && refused.headers["retry-after"] === "1" && exposes(refused) && Date.now() - t0 < 1000);
+  const range = await get(srv, "/api/headers/145408/2");
+  ok("a header range on the full gate: 503 busy with Retry-After 1", range.status === 503 && range.headers["retry-after"] === "1", `${range.status} ${range.body}`);
   const status = await get(srv, `/api/rpc/tx/0x${"ff".repeat(32)}/status`);
   ok("a status on the full gate: 503 busy with Retry-After 1, never 200 unknown", status.status === 503 && status.headers["retry-after"] === "1", `${status.status} ${status.body}`);
   const sent = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT));

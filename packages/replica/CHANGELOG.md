@@ -19,6 +19,8 @@
 - `/api/rpc/tx/:id/status` reads the pool and the transaction under one 10 s deadline, inside the wallet's 12 s
   (two 10 s timeouts in a row answered a hung node at 20 s), and answers the server's own full read gate with the busy
   503 and `Retry-After`, where it answered 200 unknown.
+- `/api/headers/:from/:count` answers the server's own full read gate with the busy 503 and `Retry-After`, where it
+  answered 502; a node body with `ok: false` stays no row.
 - A test that no `Reader` read throws for "not verified" (`test/unverified.test.ts`).
 - The capped body read of `http.ts` is shared as `cappedText`; `cappedJson` reads through it, unchanged.
 

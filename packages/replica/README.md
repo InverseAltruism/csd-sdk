@@ -747,7 +747,7 @@ among them, is a public bind. It stops on SIGINT or SIGTERM.
 | `GET /api/rpc/utxos-all/:addr` | `/utxos/:addr` | nothing |
 | `GET /api/rpc/tx/:id`, `/api/rpc/block/:hash`, `/api/rpc/proposal/:id` | the same path | nothing |
 | `GET /api/rpc/tx/:id/status` | `/mempool/txids`, then `/tx/:id`, both within one 10 s deadline | builds `{ ok, txid, state, height? \| definite? }`: mined, pending, or unknown with `definite` only when the scan was complete and the pool list whole; a node without `/mempool/txids` (upstream's) never gives `definite: true`; the server's own full gate is the busy 503 below, not an unknown |
-| `GET /api/headers/:from/:count` | `/block/height/:h` per height, 8 at a time | `{ ok, from, count, headers: [{ height, header, hash }] }`, `count` read as 1 to 512, dense or a 502 within 10 s |
+| `GET /api/headers/:from/:count` | `/block/height/:h` per height, 8 at a time | `{ ok, from, count, headers: [{ height, header, hash }] }`, `count` read as 1 to 512, dense or a 502 within 10 s (a node body with `ok: false` is no row), the busy 503 on the server's own full gate |
 | `POST /api/rpc/tx/submit` | `POST /tx/submit` with the body as sent | the node's JSON sent again with its status |
 | `GET /trade/api/cairnx/{name,resolve,name-history}/:name` | none: `replicaReads` | nothing: its status, body and headers |
 
@@ -761,8 +761,10 @@ slashes as one and no trailing slash (the front door answers a doubled slash 404
 
 What it refuses, each without asking the node: a parameter out of its shape (an address `0x` and 40 hex digits, a
 hash `0x` and 64, a height or count in decimal digits, a name as `NAME_RE` writes it) is a 400, so no request reaches
-another node route; a submit body over 512 KiB, compressed, not `application/json` or not a JSON object is a 400
-`invalid request body`. Each node read times out after 10 s and a submit after 15 s (502 `node unreachable`), under
+another node route; a submit body over 512 KiB, compressed, not `application/json`, not UTF-8 or not a JSON object or array is a 400
+`invalid request body` (where the front door's parser would send a body that is not UTF-8 on with a replacement
+character). As the front door, a JSON array is sent on (the node refuses it) and a leading byte order mark is
+dropped; unlike it, the body's bytes are sent as received, so a number above 2^53 is not rounded. Each node read times out after 10 s and a submit after 15 s (502 `node unreachable`), under
 the wallet's own 12 s and 20 s. At most 16 node reads are in flight with 256 waiting; one more, or one that waited
 its whole timeout, is a 503 with `Retry-After: 1`. Submits have their own 4 in flight and 64 waiting, so a send never
 waits behind reads; one more is a 429 with `Retry-After: 1`, which the wallet reads as a refusal of a transaction that
