@@ -13,8 +13,8 @@ Releases before 0.1.27 are recorded in the repo's `CONSENSUS_CHANGES.md`.
   integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text (Node 22 and later here; 18
   and 20 lack it). On an older Node a block holding such a value (a Propose's `expires_epoch`, which the node does
   not bound, or an output value) fails closed: `bindBlockBody` refuses it as `malformed`, and `verifyTxInclusion`
-  refuses every transaction in it. npm only warns about `engines` (unless the consumer sets `engine-strict`), so the
-  install still succeeds there.
+  refuses every transaction in it. npm and pnpm warn and install unless the consumer sets a strict engines option;
+  a manager that enforces `engines` refuses the install on an older Node.
 - Docs: the README and the JSDoc of `checkpoints`, `seedTrusted` and `tryReorg` say what a checkpoint holds against a
   reorg. A seed's top (`syncFromCheckpoint`, `seedTrusted`) is checked once when it is seeded and is pinned only when
   `checkpoints` also lists it; without that entry `tryReorg` replaces it with a heavier branch forking below it. A

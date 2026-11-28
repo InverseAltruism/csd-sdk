@@ -110,8 +110,9 @@ is thrown at most 1 second later than its status arrived.
 csd-client, csd-light and cairnx-replica declare `engines.node` `>=22` (the others keep `>=18`). `parseJsonExact`
 keeps an integer above 2^53 - 1 exact only where `JSON.parse` hands its reviver the source text, which Node 18 and 20
 lack; there such a value comes back rounded, so a block holding one (a Propose's `expires_epoch`, which the node does
-not bound) fails closed: csd-light refuses to bind it (`malformed`) and the replica does not step past it. npm only
-warns about `engines` unless the consumer sets `engine-strict`.
+not bound) fails closed: csd-light refuses to bind it (`malformed`) and the replica does not step past it. npm and
+pnpm warn and install unless the consumer sets a strict engines option; a manager that enforces `engines` refuses the
+install on an older Node.
 
 ## cairnx-core 0.2.10, cairnx-api 1.0.0 (2026-11-22, Plan 91 G6 slice 2; published 2026-11-22; consensus-surface files edited, no rule change, new exports) - a held replay context
 

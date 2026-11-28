@@ -19,7 +19,7 @@
   to hand its reviver the source text, which Node 18 and 20 lack. On an older Node a block holding an integer above
   2^53 - 1 (a Propose's `expires_epoch`, which the node does not bound) fails closed: its read is `SOURCE_MALFORMED`,
   so the replica does not step past that block and serves its last state until the source is withheld as failing.
-  npm only warns about `engines` (unless the consumer sets `engine-strict`); the README says Node 22 or later.
+  npm and pnpm warn and install unless the consumer sets a strict engines option; a manager that enforces `engines` refuses the install on an older Node. The README says Node 22 or later.
 - `nameHistory` without `check` flags a name `scopedReplaySufficient: false` when an `fclaim` names one of its offers.
   The fill of an fclaim-lane sale attests the fclaim's id, which the selector does not route, so the hints held the
   offer and not the sale, and a replay of them gave the seller as owner while the answer said it was provable. With
