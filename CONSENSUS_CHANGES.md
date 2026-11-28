@@ -1034,7 +1034,9 @@ pre-gate replay stays byte-identical and the pinned conformance corpus is unaffe
 ## Rollout checklist for a NEW GATE or FEE TIER (V28+)
 
 Since the 2026-07-06 promotions, a new name-fee tier is a ONE-FILE core change; the rest is
-mechanical refresh. In order:
+mechanical refresh. When each step is taken, the go or no-go step between 2c and 3, and the wallet's two store
+branches (a build approved and held back from publishing, or one submitted at go with 21 days before the height) are
+in CONVENTION.md §39. In order:
 
 0. Write the gate's own file, `docs/gates/<gate>.md`, from `docs/gates/TEMPLATE.md`, and link it from the gate's
    entry in this file (CONVENTION.md §39). `scripts/check-consensus-citations.mjs` checks its citations and fails
@@ -1050,6 +1052,11 @@ mechanical refresh. In order:
    DELIBERATELY_UNBOUND_WITH_REASON - classify it in the SAME change. This is the executable
    tripwire against the 2026-07-19 theme (a served field nothing binds and nobody decided about:
    the W1/W2/W3/W7/W10 class).
+2c. The test build for T0 of the timeline (CONVENTION.md §39), after step 3's version bump and `pnpm -r build`:
+   `node scripts/npm-window.mjs --out <dir>` in check mode packs each unpublished package, runs its publish guard and verify-tarball, and keeps the tarballs with
+   SHA1SUMS and SHA256SUMS in `<dir>`; it publishes nothing. Those tarballs and SHA256SUMS go to the listed replicas,
+   which run them in test only. The window publishes under npm's `latest` tag alone (`npm publish` without `--tag`),
+   so no version reaches npm before go.
 3. Bump `packages/cairnx` version, `pnpm -r build`, then the npm window `node scripts/npm-window.mjs` (it runs the publish guard and verify-tarball on each tarball).
 4. Re-pin the npm consumers: cairnx svc + cairn-sdk package.json, `node scripts/check-consumer-pins.mjs`,
    reinstall, restart the cairnx service off-peak (never during a gate crossing).

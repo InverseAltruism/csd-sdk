@@ -1781,19 +1781,22 @@ moves reproduces it.
 - A gate follows one timeline. The steps it orders are those of the rollout checklist for a new gate at the bottom of
   `CONSENSUS_CHANGES.md`, which stays the normative procedure; the timeline says when each is taken, not how. Days
   count blocks at the 120 s target: 7 days is 5,040 blocks, 14 days 10,080, 21 days 15,120.
-  1. T0. The core change is complete (the checklist's steps 0 to 2: the gate file, the height, the vectors) and is
-     published as a pre-release, an npm version that is not `latest`. Each listed replica runs it in test only. When
-     the gate needs a wallet release, the wallet build that carries it is submitted to the store with publishing held
+  1. T0. The core change is complete (the checklist's steps 0, 1, 2 and 2b: the gate file, the height, the vectors,
+     the offer-field classification), and its test build is packed (step 2c, with step 3's version bump and build:
+     tarballs checked by the npm window in check mode, nothing published) and handed to each listed replica with
+     their SHA256SUMS; each runs it in test only. When the gate needs a wallet release, the wallet build that carries it is submitted to the store with publishing held
      back (branch A), or is not submitted yet (branch B). The height is chosen at T0 so that it lies 14 days after go
      in branch A and 21 days after go in branch B.
   2. Go or no-go, at T0 plus 7 days. Go when every listed replica has confirmed its test or has been delisted for
      silence, in branch A the store has approved the held-back build, and the height still lies at least 14 days
      (branch A) or 21 days (branch B) above the tip. Otherwise no-go.
-  3. Go. The core is published as the release, and the checklist's remaining steps follow (the npm window, the
-     re-pins, the re-vendors, the purge). In branch A the approved wallet build is published; in branch B it is
+  3. Go. The checklist's remaining steps follow in order: 3 the npm window, which publishes the release (its bump was taken at T0),
+     4 the re-pins of the npm consumers, 5 the re-vendors of the bundled consumers, 6 the search for the height as a
+     raw literal, 7 the cache purge. In branch A the approved wallet build is published; in branch B it is
      submitted now, with the 21 days covering the store's review.
-  4. No-go publishes nothing beyond the pre-release: no release, no wallet build, so nothing has to be withdrawn. A
-     later attempt starts again at T0, with a height no earlier than the pre-release's.
+  4. No-go publishes nothing: the test build reached the listed replicas only, and no release or wallet build was
+     published, so nothing has to be withdrawn. A later attempt starts again at T0, with a height no earlier than the
+     test build's.
   5. A defect found after go is a new gate, on its own timeline.
 
   The one open fact is whether the store lets an approved build be held back from publishing; it decides between
