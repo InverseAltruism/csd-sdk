@@ -13,6 +13,9 @@
   apart. Loopback is the default bind. README "The open server". Its test runs the front door's wallet contract for
   these routes (copied from cairn at `2331f7ca` with the sha256 of each source file) against a stub node, and the
   command over the recorded node through a socket, the served header range checked by csd-light.
+- The open server's socket: header, request, idle and response timeouts and a connection cap (README "The open
+  server"), and a body is read only for a submit whose headers pass; any other request carrying a body is answered at
+  once and its connection closed (`test/open-server-wire.test.ts`).
 - A test that no `Reader` read throws for "not verified" (`test/unverified.test.ts`).
 - The capped body read of `http.ts` is shared as `cappedText`; `cappedJson` reads through it, unchanged.
 

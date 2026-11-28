@@ -11,11 +11,15 @@ import type { ReadResponse } from "./read-routes.js";
 /** Node requests of the GET routes in flight (`reads`) and waiting (`queued`), and of submits apart, so a send never
  *  waits behind reads; per request timeouts from the moment it queues, each under the wallet's own (12 s GET, 20 s
  *  POST) so the server answers first; a header range's deadline, size and fan-out, cairn's; the submit's body cap,
- *  cairn's. */
+ *  cairn's. The socket's: a request's headers within `requestHeadersMs` and the whole request within `requestMs`, the
+ *  wallet's POST timeout, past which it has given up; an answer handed to the reader within `responseMs`, likewise; a
+ *  socket idle for `idleMs` closed, above the longest node wait (`submitMs`); at most `connections` sockets. */
 export const OPEN_LIMITS = Object.freeze({
   reads: 16, queued: 256, submits: 4, submitsQueued: 64,
   readMs: 10_000, submitMs: 15_000, headersMs: 10_000, headersMax: 512, fanout: 8, submitBytes: 512 * 1024,
+  requestHeadersMs: 10_000, requestMs: 20_000, responseMs: 20_000, idleMs: 30_000, keepAliveMs: 5_000, connections: 256,
 });
+export const SUBMIT_PATH = "/api/rpc/tx/submit";
 /** The default listen address and port: loopback, so a public bind is the runner's explicit choice. */
 export const OPEN_HOST = "127.0.0.1";
 export const OPEN_PORT = 8796;
@@ -74,6 +78,12 @@ const TX_STATUS = /^\/api\/rpc\/tx\/([^/]+)\/status$/, HEADERS = /^\/api\/header
 const NAMES = /^\/trade\/api\/cairnx\/(name|resolve|name-history)\/([^/]+)$/;
 const TXID = /^(?:0x)?([0-9a-fA-F]{64})$/;
 const MEMPOOL_LIST_CAP = 1000;
+type Headers = Readonly<Record<string, string | undefined>>;
+/** A submit body this server reads: `application/json` (any parameters), no content encoding, as cairn's parser. */
+const submitHeadersOk = (h: Headers): boolean =>
+  (h["content-type"] ?? "").split(";")[0]!.trim().toLowerCase() === "application/json" && (h["content-encoding"] ?? "identity").trim().toLowerCase() === "identity";
+/** Whether `listen` reads a request's body: a POST to the submit path whose headers pass; any other body is not read. */
+export const readsBody = (method: string, url: string, h: Headers): boolean => method === "POST" && routedPath(url) === SUBMIT_PATH && submitHeadersOk(h);
 
 /** The path routed on: no query, each run of slashes one slash and no trailing slash. The front door answers a
  *  trailing slash as Express reads it and a doubled slash 404; here both answer as the plain path, never a 3xx. */
@@ -147,9 +157,7 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
   }
 
   async function submit(q: OpenRequest): Promise<OpenAnswer> {
-    const media = (q.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
-    const encoding = (q.headers["content-encoding"] ?? "identity").trim().toLowerCase();
-    if (q.body === null || q.body === "over" || media !== "application/json" || encoding !== "identity") return INVALID_BODY;
+    if (q.body === null || q.body === "over" || !submitHeadersOk(q.headers)) return INVALID_BODY;
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(q.body); } catch { return INVALID_BODY; }
     const tx = parsed(text);
@@ -171,7 +179,7 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
     const path = routedPath(q.url);
     if (q.method === "OPTIONS") return { status: 204, headers: BASE, body: "" };
     try {
-      if (q.method === "POST" && path === "/api/rpc/tx/submit") return await submit(q);
+      if (q.method === "POST" && path === SUBMIT_PATH) return await submit(q);
       if (q.method !== "GET") return json(404, { ok: false, error: "no such route" });
       for (const [re, to] of RELAY) { const m = re.exec(path); if (m !== null) return await relay(to(m[1] ?? "")); }
       let m = TX_STATUS.exec(path);
@@ -185,10 +193,16 @@ export function openServerAt(node: string, o: OpenServerOptions): (q: OpenReques
 }
 
 /** Starts an HTTP server answering with `answer` at `host` (default OPEN_HOST) and `port` (default OPEN_PORT; 0 picks a
- *  free one). A request body over OPEN_LIMITS.submitBytes is not read past the cap: it is answered and the connection
- *  closed. */
+ *  free one), under OPEN_LIMITS's socket limits. Only a submit's body is read (readsBody), at most
+ *  OPEN_LIMITS.submitBytes of it; a request whose body is not read, or is over the cap, is answered at once and its
+ *  connection closed. */
 export function listen(answer: (q: OpenRequest) => Promise<OpenAnswer>, o: { readonly host?: string; readonly port?: number } = {}): Promise<Server> {
-  const server = createServer((req, res) => { void handle(answer, req, res); });
+  const L = OPEN_LIMITS;
+  // connectionsCheckingInterval: how often Node enforces the header and request timeouts (its default is 30 s).
+  const server = createServer({ headersTimeout: L.requestHeadersMs, requestTimeout: L.requestMs, keepAliveTimeout: L.keepAliveMs, connectionsCheckingInterval: 1_000 },
+    (req, res) => { void handle(answer, req, res); });
+  server.setTimeout(L.idleMs);
+  server.maxConnections = L.connections;
   return new Promise((done, fail) => {
     server.once("error", fail);
     server.listen(o.port ?? OPEN_PORT, o.host ?? OPEN_HOST, () => { server.off("error", fail); done(server); });
@@ -211,18 +225,23 @@ function bodyOf(req: IncomingMessage, cap: number): Promise<Uint8Array | "over">
       done(all);
     });
     req.once("error", fail);
+    req.once("close", () => { if (!req.complete) fail(new Error("the request ended before its body")); });
   });
 }
 
 async function handle(answer: (q: OpenRequest) => Promise<OpenAnswer>, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: Uint8Array | "over" | null = null;
-  try {
-    if (req.method === "POST") body = await bodyOf(req, OPEN_LIMITS.submitBytes);
-    else req.resume();
-  } catch { res.destroy(); return; }
   const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v]));
-  const a = await answer({ method: req.method ?? "GET", url: req.url ?? "/", headers, body });
-  if (body === "over") { res.setHeader("connection", "close"); res.once("finish", () => req.destroy()); }
+  const method = req.method ?? "GET", url = req.url ?? "/";
+  const declared = Number(req.headers["content-length"] ?? 0) > 0 || req.headers["transfer-encoding"] !== undefined;
+  let body: Uint8Array | "over" | null = null;
+  if (readsBody(method, url, headers)) {
+    try { body = await bodyOf(req, OPEN_LIMITS.submitBytes); } catch { res.destroy(); return; }
+  }
+  const a = await answer({ method, url, headers, body });
+  if (body === "over" || (body === null && declared)) { res.setHeader("connection", "close"); res.once("finish", () => req.destroy()); }
+  // A reader that does not take the answer within responseMs loses its socket.
+  const late = setTimeout(() => res.destroy(), OPEN_LIMITS.responseMs);
+  res.once("close", () => clearTimeout(late));
   res.writeHead(a.status, a.headers);
   res.end(a.body);
 }

@@ -767,7 +767,11 @@ the wallet's own 12 s and 20 s. At most 16 node reads are in flight with 256 wai
 its whole timeout, is a 503 with `Retry-After: 1`. Submits have their own 4 in flight and 64 waiting, so a send never
 waits behind reads; one more is a 429 with `Retry-After: 1`, which the wallet reads as a refusal of a transaction that
 was not sent. A node that is busy, down or answers what is not JSON never gives a 200 the wallet takes for an answer
-(`test/open-server.test.ts`).
+(`test/open-server.test.ts`). On the socket (`test/open-server-wire.test.ts`): a request's headers must arrive within
+10 s and the whole request within 20 s, the wallet's own POST timeout; an answer its reader has not taken within 20 s
+loses its socket; a socket idle for 30 s is closed, above the longest node wait (15 s); at most 256 sockets are open.
+Only a submit's body is read, and only once its headers say `application/json` without an encoding; any other
+request that carries a body is answered at once without reading it, and its connection closed.
 
 A public instance goes behind a TLS proxy, and three things there matter: the proxy must not redirect any of these
 paths (the wallet refuses redirects), it must pass `OPTIONS` through, and the public origin must be `https`, which
@@ -776,7 +780,7 @@ node, not who sends it.
 
 `openServer({ node, reads, fetch? })` (`./server`) is the same server as a function of a request
 (`{ method, url, headers, body }`) to `{ status, headers, body }`, and `listen(answer, { host?, port? })` puts it on a
-socket, reading at most 512 KiB of a body.
+socket under those limits, reading only a submit's body and at most 512 KiB of it.
 
 ## Tuples and a reference
 
