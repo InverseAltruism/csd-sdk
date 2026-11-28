@@ -94,6 +94,12 @@ console.log("verifyMerkleProof: the position is proven");
     assert.equal(verifyMerkleProof(t6[4]!, "4" as unknown as number, b4, r6), false);
     assert.equal(verifyMerkleProof(t6[0]!, 0, merkleBranch(t6, 0), r6), true);
   });
+  check("the bound is exclusive: position 2^levels is refused even where its bits read as position 0", () => {
+    assert.equal(verifyMerkleProof(t6[0]!, 8, merkleBranch(t6, 0), r6), false);
+    const one = ids(1);
+    assert.equal(verifyMerkleProof(one[0]!, 0, [], merkleRoot(one)), true);
+    assert.equal(verifyMerkleProof(one[0]!, 1, [], merkleRoot(one)), false);
+  });
   check("every tx of blocks of 1 to 40 verifies at its position and at no other below 2^levels", () => {
     let honest = 0, refused = 0;
     for (let n = 1; n <= 40; n++) {
@@ -133,6 +139,19 @@ console.log("verifyMerkleProof: the position is proven");
     assert.equal(verifyMerkleProof(leaf, 0, sibs.slice(0, 32), fold(leaf, sibs.slice(0, 32))), true);
     assert.equal(verifyMerkleProof(leaf, 2 ** 32 - 1, sibs.slice(0, 32), fold(leaf, sibs.slice(0, 32))), false);
     assert.equal(verifyMerkleProof(leaf, 0, sibs, fold(leaf, sibs)), false);
+  });
+  check("a position at or above 2^31 on a 32-level branch takes each level's side from its own bit", () => {
+    // Fold a leaf to the root of position `pos`: at level k the node is the right child when bit k of pos is set.
+    const foldAt = (leaf: string, br: string[], pos: number) => br.reduce((cur, s, k) => {
+      const b = new Uint8Array(64), right = Math.floor(pos / 2 ** k) % 2 === 1;
+      b.set(hb(right ? s : cur), 0); b.set(hb(right ? cur : s), 32); return hx(sha256d(b));
+    }, leaf);
+    const leaf = ids(1)[0]!, br = ids(33).slice(0, 32);
+    for (const pos of [2 ** 31, 2 ** 31 + 5, 2 ** 32 - 1]) {
+      const root = foldAt(leaf, br, pos);
+      assert.equal(verifyMerkleProof(leaf, pos, br, root), true, `at ${pos}`);
+      assert.equal(verifyMerkleProof(leaf, pos - 2 ** 31, br, root), false, `the same root at ${pos - 2 ** 31}`);
+    }
   });
 }
 
