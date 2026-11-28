@@ -36,7 +36,8 @@ export function validateTable(t, chunk = CHUNK) {
 
 const row = (a) => `{ "height": ${a.height}, "hash": "${a.hash}" }`;
 
-/** The canonical text of anchors.json: one entry per line, so a refresh is a diff of added lines. */
+/** The canonical text of anchors.json: one entry per line, so a refresh adds one line per entry and a comma to the
+ *  line of the entry before them. */
 export const renderJson = (t) => `${[
   "{",
   `  "format": ${t.format},`,
