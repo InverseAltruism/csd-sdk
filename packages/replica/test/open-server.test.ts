@@ -143,6 +143,9 @@ console.log("the wallet's reading of each failure:");
     ok(`node ${what}: a submit is a 5xx, which core/submitverdict.ts reads as "may already be in flight"`, sent.status >= 500, `${sent.status}`);
   }
   const srv = serverOf(stubNode().f);
+  const noPool = serverOf(stubNode((key) => (key === "GET /mempool/txids" ? new Response("{}", { status: 404 }) : null)).f);
+  const upstream = JSON.parse((await get(noPool, `/api/rpc/tx/0x${"b2".repeat(32)}/status`)).body);
+  ok("a node without /mempool/txids (upstream's): a complete miss is unknown and not definite, so no row closes on it", upstream.state === "unknown" && upstream.definite === false);
   const miss = await get(srv, `/api/rpc/tx/0x${"b2".repeat(32)}`), missStatus = JSON.parse((await get(srv, `/api/rpc/tx/0x${"b2".repeat(32)}/status`)).body);
   ok("a transaction the node does not have: /tx is 200 without tx (notfound), its status unknown and definite", miss.status === 200 && JSON.parse(miss.body).tx === null && missStatus.state === "unknown" && missStatus.definite === true);
   const unreg = await Promise.all(["resolve", "name"].map((r) => get(srv, `/trade/api/cairnx/${r}/zzcontracttest`)));
@@ -168,6 +171,31 @@ console.log("each refusal, and the honest request beside it:");
   const sent = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT));
   ok("paired: the wallet's submit (its body, content-type application/json) is sent and answered", sent.status === 200 && JSON.parse(sent.body).ok === true && n.log.length === before + 1);
   ok("the cap is cairn's 512 KiB", OPEN_LIMITS.submitBytes === 512 * 1024);
+}
+{
+  // Submits whose node answer hangs until released: the submit gate fills, then its queue, then the next is refused
+  // unsent with 429 and Retry-After, which core/submitverdict.ts reads as a definite BUSY refusal (nothing was sent).
+  const held: (() => void)[] = [];
+  const n = stubNode((key) => (key === "POST /tx/submit" ? new Promise((go) => held.push(() => go(new Response('{"ok":true}', { status: 200, headers: { "content-type": "application/json" } })))) : null));
+  const srv = serverOf(n.f), full = OPEN_LIMITS.submits + OPEN_LIMITS.submitsQueued;
+  const waiting = Array.from({ length: full }, () => post(srv, "/api/rpc/tx/submit", enc(SUBMIT)));
+  await new Promise((r) => setTimeout(r, 50));
+  const sentBefore = n.asked(/^POST /), refused = await post(srv, "/api/rpc/tx/submit", enc(SUBMIT));
+  ok("a submit past the full submit gate: 429 with Retry-After 1, not sent", refused.status === 429 && refused.headers["retry-after"] === "1" && n.asked(/^POST /) === sentBefore && sentBefore === OPEN_LIMITS.submits);
+  let released = 0;
+  for (let spins = 0; released < full && spins < 1000; spins++) { const now = held.splice(0); released += now.length; now.forEach((go) => go()); await new Promise((r) => setTimeout(r, 5)); }
+  const all = await Promise.all(waiting);
+  ok(`paired: every queued submit is sent and answered (${all.length})`, all.every((a) => a.status === 200) && n.asked(/^POST /) === full);
+}
+{
+  // A node that answers every height: the header count is cairn's, 0 read as 1 and anything above 512 as 512.
+  const n = stubNode((key) => {
+    const h = /^GET \/block\/height\/(\d+)$/.exec(key)?.[1];
+    return h === undefined ? null : new Response(JSON.stringify({ ok: true, hash: `0x${"00".repeat(32)}`, height: Number(h), header: { bits: 1, merkle: "0x", nonce: 0, prev: "0x", time: 0, version: 1 }, txs: [] }), { status: 200 });
+  });
+  const srv = serverOf(n.f), [zero, huge] = await Promise.all([get(srv, "/api/headers/10/0"), get(srv, "/api/headers/10/100000")]);
+  const z = JSON.parse(zero.body), g = JSON.parse(huge.body);
+  ok("a count of 0 answers one row, a count over 512 answers 512, as cairn clamps them", z.count === 1 && z.headers.length === 1 && g.count === 512 && g.headers.length === 512 && n.log.length === 513, `${z.count} ${g.count} ${n.log.length}`);
 }
 {
   // A node whose /tx reads hang until released: the read gate fills, then its queue, then the next is busy.

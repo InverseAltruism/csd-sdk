@@ -64,9 +64,12 @@ const code = runServe(["serve", "--node", NODE, "--dir", join(root, "store"), "-
 
   const pre = await call("/api/rpc/tx/submit", { method: "OPTIONS", headers: { origin: "chrome-extension://x", "access-control-request-method": "POST", "access-control-request-headers": "content-type" } });
   ok("the submit's preflight on the wire: 204, origin *, POST, content-type", pre.status === 204 && pre.headers["access-control-allow-origin"] === "*" && String(pre.headers["access-control-allow-methods"]).includes("POST") && String(pre.headers["access-control-allow-headers"]).includes("content-type"));
-  const big = new Uint8Array(OPEN_LIMITS.submitBytes + 1).fill(0x20), asked = n.log.length;
-  const over = await call("/api/rpc/tx/submit", { method: "POST", headers: { "content-type": "application/json" }, body: big });
-  ok("a body one byte over 512 KiB: 400 invalid request body, the connection closed, nothing sent", over.status === 400 && JSON.parse(over.body).error === "invalid request body" && over.headers.connection === "close" && n.log.length === asked);
+  // A valid JSON object one byte over the cap, once declared by content-length and once sent chunked without it.
+  const big = new TextEncoder().encode(`{"tx":{"version":1}}${" ".repeat(OPEN_LIMITS.submitBytes - 19)}`), asked = n.log.length;
+  const over = await Promise.all([{ "content-type": "application/json" }, { "content-type": "application/json", "transfer-encoding": "chunked" }]
+    .map((headers) => call("/api/rpc/tx/submit", { method: "POST", headers, body: big })));
+  ok("a body one byte over 512 KiB, declared or chunked: 400 invalid request body, the connection closed, nothing sent",
+    over.every((r) => r.status === 400 && JSON.parse(r.body).error === "invalid request body" && r.headers.connection === "close") && n.log.length === asked, over.map((r) => r.status).join(","));
   const fine = await call("/api/rpc/tx/submit", { method: "POST", headers: { "content-type": "application/json" }, body: new TextEncoder().encode(`{"tx":{"version":1}}${" ".repeat(OPEN_LIMITS.submitBytes - 20)}`) });
   ok("paired: a body of exactly 512 KiB is sent and the node's answer relayed", fine.status === 200 && JSON.parse(fine.body).ok === true);
   const slashes = await Promise.all(["//api/rpc/tip", "/api/rpc/tip/", "/api//rpc/tip"].map((p) => call(p)));
